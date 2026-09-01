@@ -162,6 +162,7 @@ class ReceiverSensitiveStore {
   titleQuery = '';
   threadSearchVisible = false;
   threadSearchSelectedSessionKey = null;
+  threadSearchRevision = 0;
   calls = [];
   threads = [
     { sessionKey: 'claude:match', title: 'Claude search match' },
@@ -182,15 +183,24 @@ class ReceiverSensitiveStore {
     this.calls.push(['setTitleDraft', value]);
     this.titleDraft = value;
     this.titleQuery = value;
+    this.threadSearchSelectedSessionKey = this.threadSearchResults[0]?.sessionKey ?? null;
   }
 
   openThreadSearch() {
     this.calls.push(['openThreadSearch']);
+    this.threadSearchRevision += 1;
+    this.titleDraft = '';
+    this.titleQuery = '';
+    this.threadSearchSelectedSessionKey = null;
     this.threadSearchVisible = true;
   }
 
   closeThreadSearch() {
+    this.threadSearchRevision += 1;
     this.threadSearchVisible = false;
+    this.titleDraft = '';
+    this.titleQuery = '';
+    this.threadSearchSelectedSessionKey = null;
   }
 
   clearTitleQuery() {
@@ -204,15 +214,23 @@ class ReceiverSensitiveStore {
 
   moveThreadSearchSelection() {}
 
-  async openSelectedThreadSearchResult() {}
+  async openSelectedThreadSearchResult() {
+    if (this.threadSearchSelectedSessionKey) this.closeThreadSearch();
+  }
 }
 
 const ModalStub = defineComponent({
   name: 'AModal',
   props: { visible: Boolean },
-  setup: (props, { slots }) => () => props.visible
-    ? h('div', { class: 'arco-modal' }, slots.default?.())
-    : null,
+  setup: (props, { emit, slots }) => {
+    globalThis.__eyesOnAgentsThreadSearchHarness.modal = {
+      cancel: () => emit('cancel', new Event('cancel')),
+      open: () => emit('open'),
+    };
+    return () => props.visible
+      ? h('div', { class: 'arco-modal' }, slots.default?.())
+      : null;
+  },
 });
 
 const TooltipStub = defineComponent({
@@ -291,6 +309,109 @@ try {
         store.threadSearchResults.map((thread) => thread.sessionKey),
         ['claude:match'],
       );
+    } finally {
+      mounted.app.unmount();
+    }
+  });
+
+  await test('opening Search focuses the real input and every close path clears it', async () => {
+    const store = reactive(new ReceiverSensitiveStore());
+    const mounted = await mountComponent(ThreadSearch, store);
+    try {
+      const outsideButton = document.createElement('button');
+      outsideButton.type = 'button';
+      mounted.host.append(outsideButton);
+      outsideButton.focus();
+
+      store.openThreadSearch();
+      await nextTick();
+      await nextTick();
+      let input = mounted.host.querySelector('input.arco-input');
+      assert.ok(input, 'opening Search must mount the real Arco Input');
+      assert.equal(document.activeElement, input, 'shortcut-equivalent open focuses the input');
+
+      input.value = 'cancel me';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await nextTick();
+      globalThis.__eyesOnAgentsThreadSearchHarness.modal.cancel();
+      await nextTick();
+      assert.equal(store.threadSearchVisible, false);
+      assert.equal(store.titleDraft, '');
+      assert.equal(store.titleQuery, '');
+      assert.equal(store.threadSearchSelectedSessionKey, null);
+
+      store.openThreadSearch();
+      await nextTick();
+      await nextTick();
+      input = mounted.host.querySelector('input.arco-input');
+      input.value = 'escape me';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Escape' }));
+      await nextTick();
+      assert.equal(store.threadSearchVisible, false);
+      assert.equal(store.titleDraft, '');
+      assert.equal(store.titleQuery, '');
+      assert.equal(store.threadSearchSelectedSessionKey, null);
+
+      store.openThreadSearch();
+      await nextTick();
+      await nextTick();
+      input = mounted.host.querySelector('input.arco-input');
+      input.value = 'claude';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter' }));
+      await Promise.resolve();
+      await nextTick();
+      assert.equal(store.threadSearchVisible, false);
+      assert.equal(store.titleDraft, '');
+      assert.equal(store.titleQuery, '');
+      assert.equal(store.threadSearchSelectedSessionKey, null);
+      assert.deepEqual(mounted.errors, []);
+    } finally {
+      mounted.app.unmount();
+    }
+  });
+
+  await test('a superseded modal-open callback cannot steal focus', async () => {
+    const store = reactive(new ReceiverSensitiveStore());
+    const mounted = await mountComponent(ThreadSearch, store);
+    try {
+      const outsideButton = document.createElement('button');
+      outsideButton.type = 'button';
+      mounted.host.append(outsideButton);
+
+      store.openThreadSearch();
+      await nextTick();
+      await nextTick();
+      const input = mounted.host.querySelector('input.arco-input');
+      assert.ok(input);
+      assert.equal(document.activeElement, input);
+
+      outsideButton.focus();
+      globalThis.__eyesOnAgentsThreadSearchHarness.modal.open();
+      store.closeThreadSearch();
+      store.openThreadSearch();
+      await nextTick();
+      assert.equal(
+        document.activeElement,
+        outsideButton,
+        'the previous lifecycle cannot refocus after a close and reopen',
+      );
+
+      globalThis.__eyesOnAgentsThreadSearchHarness.modal.open();
+      await nextTick();
+      assert.equal(document.activeElement, input, 'the current modal lifecycle can focus');
+
+      outsideButton.focus();
+      globalThis.__eyesOnAgentsThreadSearchHarness.modal.open();
+      store.closeThreadSearch();
+      await nextTick();
+      assert.equal(
+        document.activeElement,
+        outsideButton,
+        'a closing lifecycle cannot pull focus back from another application surface',
+      );
+      assert.deepEqual(mounted.errors, []);
     } finally {
       mounted.app.unmount();
     }

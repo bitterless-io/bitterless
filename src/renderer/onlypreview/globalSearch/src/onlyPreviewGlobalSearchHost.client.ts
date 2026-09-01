@@ -6,10 +6,13 @@ import {
 import {
   ONLY_PREVIEW_FOCUS_SEARCH_EVENT,
   ONLY_PREVIEW_GLOBAL_SEARCH_CONTEXT_CHANGED_EVENT,
+  ONLY_PREVIEW_GLOBAL_SEARCH_LAYOUT_EVENT,
   ONLY_PREVIEW_GLOBAL_SEARCH_VISIBILITY_EVENT,
   type OnlyPreviewFocusSearchEvent,
   type OnlyPreviewGlobalSearchContextSnapshot,
   type OnlyPreviewGlobalSearchFocusOrigin,
+  type OnlyPreviewGlobalSearchLayout,
+  type OnlyPreviewGlobalSearchLayoutEvent,
   type OnlyPreviewGlobalSearchVisibilityEvent,
   type OnlyPreviewGlobalSearchWorkspaceContext
 } from '@shared/onlypreview/onlyPreview.types';
@@ -57,11 +60,43 @@ const isGlobalSearchVisibilityEvent = (
   );
 };
 
+const parseGlobalSearchLayoutEvent = (
+  value: unknown
+): OnlyPreviewGlobalSearchLayoutEvent | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const event = value as Record<string, unknown>;
+  if (
+    Reflect.ownKeys(event).length !== 3 ||
+    typeof event.hostId !== 'string' ||
+    !Number.isSafeInteger(event.revision) ||
+    (event.revision as number) < 0
+  ) {
+    return null;
+  }
+  try {
+    const snapshot = parseOnlyPreviewGlobalSearchContextSnapshot({
+      revision: event.revision,
+      active: false,
+      workspace: null,
+      layout: event.layout
+    });
+    if (!snapshot.layout) return null;
+    return {
+      hostId: event.hostId,
+      revision: snapshot.revision,
+      layout: snapshot.layout
+    };
+  } catch {
+    return null;
+  }
+};
+
 export class OnlyPreviewGlobalSearchHostClient {
   private snapshot: OnlyPreviewGlobalSearchContextSnapshot = {
     revision: 0,
     active: false,
-    workspace: null
+    workspace: null,
+    layout: null
   };
   private initialized = false;
 
@@ -72,7 +107,8 @@ export class OnlyPreviewGlobalSearchHostClient {
   async initialize(
     onContext: (context: OnlyPreviewGlobalSearchWorkspaceContext | null) => void,
     onFocus: (origin: OnlyPreviewGlobalSearchFocusOrigin) => void,
-    onVisibility: (active: boolean) => void
+    onVisibility: (active: boolean) => void,
+    onLayout: (layout: OnlyPreviewGlobalSearchLayout | null) => void
   ): Promise<void> {
     if (this.initialized) return;
     this.initialized = true;
@@ -80,7 +116,7 @@ export class OnlyPreviewGlobalSearchHostClient {
     if (!hostId) return;
     xpcRenderer.subscribe(ONLY_PREVIEW_GLOBAL_SEARCH_CONTEXT_CHANGED_EVENT, ({ params }) => {
       if (!isExactHostRevision(params) || params.hostId !== hostId) return;
-      void this.refreshContext(onContext, onVisibility);
+      void this.refreshContext(onContext, onVisibility, onLayout);
     });
     xpcRenderer.subscribe(ONLY_PREVIEW_FOCUS_SEARCH_EVENT, ({ params }) => {
       if (!isFocusSearchEvent(params) || params.hostId !== hostId) return;
@@ -90,7 +126,17 @@ export class OnlyPreviewGlobalSearchHostClient {
       if (!isGlobalSearchVisibilityEvent(params) || params.hostId !== hostId) return;
       this.acceptVisibility(params, onVisibility);
     });
-    await this.refreshContext(onContext, onVisibility);
+    xpcRenderer.subscribe(ONLY_PREVIEW_GLOBAL_SEARCH_LAYOUT_EVENT, ({ params }) => {
+      const event = parseGlobalSearchLayoutEvent(params);
+      if (!event || event.hostId !== hostId || event.revision < this.snapshot.revision) return;
+      this.snapshot = {
+        ...this.snapshot,
+        revision: event.revision,
+        layout: event.layout
+      };
+      onLayout(event.layout);
+    });
+    await this.refreshContext(onContext, onVisibility, onLayout);
   }
 
   async openResult(result: OnlyPreviewGlobalSearchResult): Promise<boolean> {
@@ -133,7 +179,8 @@ export class OnlyPreviewGlobalSearchHostClient {
 
   private async refreshContext(
     onContext: (context: OnlyPreviewGlobalSearchWorkspaceContext | null) => void,
-    onVisibility: (active: boolean) => void
+    onVisibility: (active: boolean) => void,
+    onLayout: (layout: OnlyPreviewGlobalSearchLayout | null) => void
   ): Promise<void> {
     const hostToken = onlyPreviewEnv.hostToken;
     if (!hostToken) return;
@@ -143,6 +190,7 @@ export class OnlyPreviewGlobalSearchHostClient {
     if (snapshot.revision < this.snapshot.revision) return;
     this.snapshot = snapshot;
     onContext(snapshot.workspace);
+    onLayout(snapshot.layout);
     onVisibility(snapshot.active);
   }
 

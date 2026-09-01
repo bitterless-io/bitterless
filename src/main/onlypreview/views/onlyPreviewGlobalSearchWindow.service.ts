@@ -31,8 +31,7 @@ export class OnlyPreviewGlobalSearchWindowService {
         runtime.shellView.webContents.focus();
         return true;
       },
-      focusPreview: () =>
-        onlyPreviewPreviewRegionService.focusActiveContent(runtime.host.hostToken)
+      focusPreview: () => onlyPreviewPreviewRegionService.focusActiveContent(runtime.host.hostToken)
     });
   }
 
@@ -44,10 +43,7 @@ export class OnlyPreviewGlobalSearchWindowService {
     if (origin !== 'search') {
       onlyPreviewGlobalSearchFocusService.capture(host.hostToken, origin, opener);
     }
-    onlyPreviewGlobalSearchViewService.show(
-      host.hostToken,
-      origin === 'search' ? 'shell' : origin
-    );
+    onlyPreviewGlobalSearchViewService.show(host.hostToken, origin === 'search' ? 'shell' : origin);
   }
 
   closeForFind(hostToken: string): void {
@@ -56,8 +52,8 @@ export class OnlyPreviewGlobalSearchWindowService {
     }
   }
 
-  updateBounds(hostToken: string, bounds: Rectangle): void {
-    onlyPreviewGlobalSearchViewService.updateBounds(hostToken, bounds);
+  updateBounds(hostToken: string, viewBounds: Rectangle, workspaceBounds: Rectangle): void {
+    onlyPreviewGlobalSearchViewService.updateBounds(hostToken, viewBounds, workspaceBounds);
   }
 
   raiseAfterPreviewAttach(hostToken: string): void {
@@ -69,5 +65,4 @@ export class OnlyPreviewGlobalSearchWindowService {
   }
 }
 
-export const onlyPreviewGlobalSearchWindowService =
-  new OnlyPreviewGlobalSearchWindowService();
+export const onlyPreviewGlobalSearchWindowService = new OnlyPreviewGlobalSearchWindowService();

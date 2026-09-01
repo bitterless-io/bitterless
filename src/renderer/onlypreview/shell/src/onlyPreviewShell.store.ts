@@ -62,6 +62,7 @@ import {
   resolveOnlyPreviewTreeFocusPath,
   type OnlyPreviewTreeNavigationKey
 } from './onlyPreviewTree.service';
+import { onlyPreviewProjectWidthPersistence as projectWidthPersistence } from './onlyPreviewProjectWidthPersistence.service';
 
 const errorMessage = (error: unknown): string =>
   error instanceof OnlyPreviewContractError
@@ -82,7 +83,7 @@ export class OnlyPreviewShellStore {
   previewActionError = '';
   focusedRelativePath = '';
   expandedPaths = new Set<string>();
-  projectWidth = 264;
+  projectWidth = projectWidthPersistence.restore(window.innerWidth);
   indexLoading = false;
   targetLoading = false;
   errorMessage = '';
@@ -310,8 +311,7 @@ export class OnlyPreviewShellStore {
     void this.loadDirectory(relativePath);
   }
   setProjectWidth(value: number): void {
-    const maxWidth = Math.max(180, Math.min(480, window.innerWidth - 320));
-    this.projectWidth = Math.round(Math.min(maxWidth, Math.max(180, value)));
+    this.projectWidth = projectWidthPersistence.update(value, window.innerWidth);
   }
   async reportPreviewBounds(bounds: OnlyPreviewBounds): Promise<void> {
     if (!onlyPreviewEnv.hostToken) return;

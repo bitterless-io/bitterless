@@ -157,10 +157,13 @@ English copy action whose complete instructions include both MCP connection and 
 
 # Delivery Evidence
 
-- Implemented on 2026-08-09. The canonical `skills/bitterless-preview/` package contains exactly
+- Implemented on 2026-08-09. The original canonical `skills/bitterless-preview/` package contains exactly
   `SKILL.md`, `agents/openai.yaml`, `references/mcp-setup.md`, and `references/tools.md`, with
   version `260809003838` and one production stdio dependency named `bitterless`. It teaches only
   explicit known-path, read-only human inspection and contains no machine path or credential.
+- Task 098 later bumps the current package to `260901150707` so `{ opened: true }` is described as
+  Main acceptance rather than renderer readiness, and installs that current package as overmind's
+  default local-artifact preview skill.
 - The stdio catalog exposes one `preview.open` tool. Main injects the existing
   `openOnlyPreviewAbsoluteTarget` orchestration into the bridge; strict validation rejects
   non-object, unknown, empty, multiline, NUL, relative, and over-16,384-character inputs. Success

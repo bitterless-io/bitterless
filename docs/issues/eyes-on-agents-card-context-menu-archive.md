@@ -1,6 +1,6 @@
 # EyesOnAgents Card Context Menu and Codex Archive
 
-Status: implementation in progress
+Status: implemented; owner verification pending
 
 ## Problem
 

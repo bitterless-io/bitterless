@@ -528,6 +528,9 @@ export interface EyesOnAgentsApi {
     url: string;
     snapshot: EyesOnAgentsSnapshot;
   }>;
+  archiveThread(params: {
+    sessionKey: EyesOnAgentsSessionKey;
+  }): Promise<EyesOnAgentsSnapshot>;
   previewThread(params: { sessionKey: EyesOnAgentsSessionKey }): Promise<void>;
   copySessionPath(params: { sessionKey: EyesOnAgentsSessionKey }): Promise<void>;
   markAllRead(): Promise<EyesOnAgentsSnapshot>;

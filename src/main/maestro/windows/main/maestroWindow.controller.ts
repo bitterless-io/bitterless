@@ -76,6 +76,8 @@ import { iocHelper } from '@maestro-shared/iocHelper/ioc.helper'
 import type { LlmStoredTarget } from '@maestro-main/llm/llmModels'
 import {
   DEFAULT_COACH_START_URL,
+  MAESTRO_FORCE_PINNED_HOME_QUERY,
+  MAESTRO_FORCE_PINNED_HOME_QUERY_VALUE,
   MAESTRO_LOCAL_HOME_DISPLAY_URL,
   MAESTRO_HOME_READY_TOKEN_QUERY
 } from '@maestro-shared/coach.api'
@@ -237,6 +239,11 @@ class MaestroWindowController
   private llmApplied = false
   private settings: CoachSettingsService | null = null
   private demo: BookingDemoService | null = null
+  // Auth teardown may destroy this controller before the replacement Maestro is created. Keep a
+  // versioned, one-shot intent outside all window-scoped reset paths so a failed replacement boot
+  // retries on pinned Home instead of reviving a stale startup/last-active browser tab.
+  private forcePinnedHomeIntentVersion = 0
+  private activeBootForcePinnedHomeIntentVersion = 0
 
   get tabs(): OperationTab[] {
     return this.browserView.tabs
@@ -302,10 +309,15 @@ class MaestroWindowController
     this.tabsOpenedThisTurn = []
   }
 
-  private createHomeRendererReadyFence(): Promise<void> {
+  private createHomeRendererReadyFence(forcePinnedHome: boolean): Promise<void> {
     const token = randomUUID()
     this.homeRendererReadyToken = token
-    this.rendererQuery = { [MAESTRO_HOME_READY_TOKEN_QUERY]: token }
+    this.rendererQuery = {
+      [MAESTRO_HOME_READY_TOKEN_QUERY]: token,
+      ...(forcePinnedHome
+        ? { [MAESTRO_FORCE_PINNED_HOME_QUERY]: MAESTRO_FORCE_PINNED_HOME_QUERY_VALUE }
+        : {})
+    }
     this.homeRendererReady = new Promise<void>((resolve) => {
       this.resolveHomeRendererReady = resolve
     })
@@ -334,7 +346,37 @@ class MaestroWindowController
     return { accepted: true }
   }
 
+  async prepareForAuthShutdown(): Promise<void> {
+    this.forcePinnedHomeIntentVersion += 1
+    const pinnedHome = this.tabs.find((tab) => tab.kind === 'home' && tab.pinned)
+    try {
+      if (pinnedHome && this.activeTabId !== pinnedHome.id) {
+        await this.browserView.activateTab({ id: pinnedHome.id })
+      }
+    } catch (err) {
+      this.emit({ kind: 'error', msg: 'auth home activation: ' + (err as Error).message, ts: Date.now() })
+    }
+    // Workbench overlays the operation area. Hide it only after Home is active so teardown never
+    // reveals the previous browser tab between the Account action and window destruction.
+    try {
+      this.workbenchView.setVisible({ visible: false })
+    } catch (err) {
+      this.emit({ kind: 'error', msg: 'auth workbench hide: ' + (err as Error).message, ts: Date.now() })
+    }
+  }
+
+  markBootSuccessful(): void {
+    const intentVersion = this.activeBootForcePinnedHomeIntentVersion
+    if (intentVersion > 0 && this.forcePinnedHomeIntentVersion === intentVersion) {
+      this.forcePinnedHomeIntentVersion = 0
+    }
+    this.activeBootForcePinnedHomeIntentVersion = 0
+  }
+
   create(): BrowserWindow {
+    const forcePinnedHomeIntentVersion = this.forcePinnedHomeIntentVersion
+    const forcePinnedHome = forcePinnedHomeIntentVersion > 0
+    this.activeBootForcePinnedHomeIntentVersion = forcePinnedHomeIntentVersion
     this.agentService.activate()
     this.ensureServices()
     void this.agentService.loadHostToolPolicies()
@@ -346,7 +388,7 @@ class MaestroWindowController
     this.currentUrl = MAESTRO_LOCAL_HOME_DISPLAY_URL
 
     this.resetWindowScopedViews()
-    const homeMountedReady = this.createHomeRendererReadyFence()
+    const homeMountedReady = this.createHomeRendererReadyFence(forcePinnedHome)
     const win = super.create()
 
     // First tab = bundled Bitterless Home (leftmost, non-closable, fixed title/favicon). It owns a
@@ -378,7 +420,7 @@ class MaestroWindowController
           operationView.setVisible(true)
         }
       })
-      .then(() => this.browserView.openStartupTabIfNeeded())
+      .then(() => this.browserView.openStartupTabIfNeeded({ skipForThisBoot: forcePinnedHome }))
     const operationReady = this.initialReady
     this.initialReady = Promise.all([homeReady, controlReady, workbenchReady, operationReady]).then(() => undefined)
     // Pre-warm one spare view so warming a tab (new open / switching to a cold tab) is instant.
@@ -1589,6 +1631,7 @@ class MaestroWindowController
     super.destroy()
 
     this.initialReady = Promise.resolve()
+    this.activeBootForcePinnedHomeIntentVersion = 0
     this.workspaceFile.reset()
     this.skillGenerator = null
     this.llmApplied = false

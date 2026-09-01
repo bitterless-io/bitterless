@@ -18,6 +18,7 @@ await build({
     contents: `
       export { renderOnlyPreviewDrawio } from './src/renderer/onlypreview/preview/src/onlyPreviewDrawio.service';
       export { preflightOnlyPreviewDrawio } from './src/renderer/onlypreview/preview/src/onlyPreviewDrawioPreflight.service';
+      export { DrawioPreviewStore } from './src/renderer/onlypreview/preview/src/components/DrawioPreview/DrawioPreview.store';
     `,
     loader: 'ts',
     resolveDir: projectRoot,
@@ -29,21 +30,48 @@ await build({
   format: 'esm',
   target: 'node22',
   sourcemap: 'inline',
-  tsconfig: join(projectRoot, 'tsconfig.web.json')
+  tsconfig: join(projectRoot, 'tsconfig.web.json'),
+  plugins: [
+    {
+      name: 'onlypreview-drawio-store-harness',
+      setup(buildContext) {
+        buildContext.onResolve({ filter: /onlyPreviewPreview\.store$/ }, () => ({
+          path: 'preview-store',
+          namespace: 'onlypreview-drawio-test'
+        }));
+        buildContext.onLoad({ filter: /.*/, namespace: 'onlypreview-drawio-test' }, () => ({
+          loader: 'js',
+          contents: `
+              const harness = () => globalThis.__onlyPreviewDrawioStoreHarness;
+              export const onlyPreviewPreviewStore = {
+                reportSurfaceReady: (...args) => harness().ready.push(args),
+                reportSurfaceError: (...args) => harness().errors.push(args)
+              };
+            `
+        }));
+      }
+    }
+  ]
 });
 
 const runtime = await import(pathToFileURL(bundlePath).href);
 
 after(() => rmSync(buildRoot, { recursive: true, force: true }));
 
-const createDom = () =>
-  new JSDOM(
+const createDom = () => {
+  const dom = new JSDOM(
     '<!doctype html><html><head></head><body><div id="mount" class="base"></div></body></html>',
     {
       pretendToBeVisual: true,
       url: 'https://onlypreview.invalid/'
     }
   );
+  Object.defineProperty(dom.window.document.querySelector('#mount'), 'offsetWidth', {
+    configurable: true,
+    value: 800
+  });
+  return dom;
+};
 
 const withElementGlobal = async (dom, run) => {
   const previous = globalThis.Element;
@@ -81,6 +109,21 @@ const compressedPage = (xml) =>
 const escapeXmlText = (source) =>
   source.replace(/&/gu, '&amp;').replace(/</gu, '&lt;').replace(/>/gu, '&gt;');
 
+const drawioContent = (xml = graphXml()) => ({ xml, pageCount: 1, cellCount: 3 });
+const tick = () => new Promise((resolveTick) => setImmediate(resolveTick));
+
+const makeWidthControllable = (element, initialWidth = 0) => {
+  let width = initialWidth;
+  Object.defineProperty(element, 'offsetWidth', {
+    configurable: true,
+    get: () => width
+  });
+  return (nextWidth) => {
+    width = nextWidth;
+    element.setAttribute('data-test-width', String(nextWidth));
+  };
+};
+
 test('viewer mounts read-only state and disposes graph, listeners, attributes, classes, and DOM once', async () => {
   const dom = createDom();
   await withElementGlobal(dom, async () => {
@@ -99,7 +142,9 @@ test('viewer mounts read-only state and disposes graph, listeners, attributes, c
         const anchor = dom.window.document.createElement('a');
         anchor.href = 'https://example.invalid/';
         target.append(anchor);
-        graphViewer.viewerInitialized({ graph: { destroy: () => (destroyCalls += 1) } });
+        graphViewer.viewerInitialized({
+          graph: { container: target, destroy: () => (destroyCalls += 1) }
+        });
       }
     };
     dom.window.GraphViewer = graphViewer;
@@ -123,6 +168,7 @@ test('viewer mounts read-only state and disposes graph, listeners, attributes, c
       nav: false,
       toolbar: 'pages zoom layers',
       'auto-fit': true,
+      'check-visible-state': false,
       resize: true,
       center: true
     });
@@ -150,6 +196,184 @@ test('viewer mounts read-only state and disposes graph, listeners, attributes, c
   });
 });
 
+test('viewer waits for visibility then disables official deferral before dynamic initialization', async () => {
+  const dom = createDom();
+  await withElementGlobal(dom, async () => {
+    const mount = dom.window.document.querySelector('#mount');
+    const setWidth = makeWidthControllable(mount);
+    let processCalls = 0;
+    let destroyCalls = 0;
+    const originalInitialized = () => {};
+    const graphViewer = {
+      viewerInitialized: originalInitialized,
+      processElements: (className) => {
+        processCalls += 1;
+        const target = dom.window.document.querySelector(`.${className}`);
+        const config = JSON.parse(target.getAttribute('data-mxgraph'));
+        assert.equal(config['check-visible-state'], false);
+        graphViewer.viewerInitialized({
+          graph: { container: target, destroy: () => (destroyCalls += 1) }
+        });
+      }
+    };
+    dom.window.GraphViewer = graphViewer;
+
+    const pending = runtime.renderOnlyPreviewDrawio(mount, drawioContent(), { timeoutMs: 100 });
+    await tick();
+    assert.equal(processCalls, 0);
+    assert.equal(graphViewer.viewerInitialized, originalInitialized);
+    setWidth(800);
+
+    const handle = await pending;
+    assert.equal(processCalls, 1);
+    assert.equal(graphViewer.viewerInitialized, originalInitialized);
+    assert.equal(destroyCalls, 0);
+    handle.dispose();
+    assert.equal(destroyCalls, 1);
+  });
+});
+
+test('viewer aborts a hidden mount before the vendor can create a late candidate', async () => {
+  const dom = createDom();
+  await withElementGlobal(dom, async () => {
+    const mount = dom.window.document.querySelector('#mount');
+    const setWidth = makeWidthControllable(mount);
+    const controller = new AbortController();
+    let processCalls = 0;
+    const originalInitialized = () => {};
+    const graphViewer = {
+      viewerInitialized: originalInitialized,
+      processElements: () => {
+        processCalls += 1;
+      }
+    };
+    dom.window.GraphViewer = graphViewer;
+
+    const pending = runtime.renderOnlyPreviewDrawio(mount, drawioContent(), {
+      signal: controller.signal,
+      timeoutMs: 100
+    });
+    await tick();
+    controller.abort();
+    await assert.rejects(pending, (error) => error?.code === 'DIAGRAM_RENDER_TIMEOUT');
+    assert.equal(graphViewer.viewerInitialized, originalInitialized);
+    assert.equal(processCalls, 0);
+    assert.equal(mount.hasAttribute('data-mxgraph'), false);
+    assert.deepEqual([...mount.classList], ['base']);
+    assert.equal(mount.childNodes.length, 0);
+    setWidth(800);
+    await tick();
+    assert.equal(processCalls, 0);
+  });
+});
+
+test('viewer initialization uses a finite non-renewing deadline and cleans the mount', async () => {
+  const dom = createDom();
+  await withElementGlobal(dom, async () => {
+    const mount = dom.window.document.querySelector('#mount');
+    makeWidthControllable(mount);
+    let processCalls = 0;
+    const originalInitialized = () => {};
+    const graphViewer = {
+      viewerInitialized: originalInitialized,
+      processElements: () => {
+        processCalls += 1;
+      }
+    };
+    dom.window.GraphViewer = graphViewer;
+
+    await assert.rejects(
+      () => runtime.renderOnlyPreviewDrawio(mount, drawioContent(), { timeoutMs: 5 }),
+      (error) => error?.code === 'DIAGRAM_RENDER_TIMEOUT'
+    );
+    assert.equal(graphViewer.viewerInitialized, originalInitialized);
+    assert.equal(processCalls, 0);
+    assert.equal(mount.hasAttribute('data-mxgraph'), false);
+    assert.deepEqual([...mount.classList], ['base']);
+    assert.equal(mount.childNodes.length, 0);
+  });
+});
+
+test('store aborts a superseded deferred mount and suppresses stale ready and error reports', async () => {
+  const dom = createDom();
+  await withElementGlobal(dom, async () => {
+    const mount = dom.window.document.querySelector('#mount');
+    const setWidth = makeWidthControllable(mount);
+    const renderedXml = [];
+    let destroyCalls = 0;
+    const originalInitialized = () => {};
+    const graphViewer = {
+      viewerInitialized: originalInitialized,
+      processElements: (className) => {
+        const target = dom.window.document.querySelector(`.${className}`);
+        const config = JSON.parse(target.getAttribute('data-mxgraph'));
+        renderedXml.push(config.xml);
+        assert.equal(config['check-visible-state'], false);
+        graphViewer.viewerInitialized({
+          graph: { container: target, destroy: () => (destroyCalls += 1) }
+        });
+      }
+    };
+    dom.window.GraphViewer = graphViewer;
+    globalThis.__onlyPreviewDrawioStoreHarness = { ready: [], errors: [] };
+    const store = new runtime.DrawioPreviewStore();
+
+    const firstXml = graphXml('value="first"');
+    const secondXml = graphXml('value="second"');
+    const first = store.mount(mount, drawioContent(firstXml), '41');
+    await tick();
+    assert.deepEqual(renderedXml, []);
+    const second = store.mount(mount, drawioContent(secondXml), '42');
+    await tick();
+    assert.deepEqual(renderedXml, []);
+    setWidth(800);
+
+    await Promise.all([first, second]);
+    assert.deepEqual(renderedXml, [secondXml]);
+    assert.deepEqual(globalThis.__onlyPreviewDrawioStoreHarness.ready, [['42']]);
+    assert.deepEqual(globalThis.__onlyPreviewDrawioStoreHarness.errors, []);
+    assert.equal(destroyCalls, 0);
+    store.dispose();
+    assert.deepEqual(globalThis.__onlyPreviewDrawioStoreHarness.ready, [['42']]);
+    assert.deepEqual(globalThis.__onlyPreviewDrawioStoreHarness.errors, []);
+    assert.equal(destroyCalls, 1);
+    delete globalThis.__onlyPreviewDrawioStoreHarness;
+  });
+});
+
+test('visible unrelated mounts render concurrently through dynamic callback lookup', async () => {
+  const dom = createDom();
+  await withElementGlobal(dom, async () => {
+    const firstMount = dom.window.document.querySelector('#mount');
+    const secondMount = dom.window.document.createElement('div');
+    Object.defineProperty(secondMount, 'offsetWidth', { configurable: true, value: 800 });
+    dom.window.document.body.append(secondMount);
+    const initialized = [];
+    let destroyCalls = 0;
+    const originalInitialized = (viewer) => initialized.push(viewer.graph.container);
+    const graphViewer = {
+      viewerInitialized: originalInitialized,
+      processElements: (className) => {
+        const target = dom.window.document.querySelector(`.${className}`);
+        graphViewer.viewerInitialized({
+          graph: { container: target, destroy: () => (destroyCalls += 1) }
+        });
+      }
+    };
+    dom.window.GraphViewer = graphViewer;
+
+    const [first, second] = await Promise.all([
+      runtime.renderOnlyPreviewDrawio(firstMount, drawioContent()),
+      runtime.renderOnlyPreviewDrawio(secondMount, drawioContent())
+    ]);
+    assert.deepEqual(initialized, [firstMount, secondMount]);
+    assert.equal(graphViewer.viewerInitialized, originalInitialized);
+    first.dispose();
+    second.dispose();
+    assert.equal(destroyCalls, 2);
+  });
+});
+
 test('viewer rejection restores callback and leaves no mount state or external-action listener', async () => {
   const dom = createDom();
   await withElementGlobal(dom, async () => {
@@ -160,6 +384,7 @@ test('viewer rejection restores callback and leaves no mount state or external-a
       processElements: (className) => {
         const target = dom.window.document.querySelector(`.${className}`);
         target.append(dom.window.document.createElement('a'));
+        throw new Error('rejected');
       }
     };
     dom.window.GraphViewer = graphViewer;

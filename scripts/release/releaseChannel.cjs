@@ -356,6 +356,7 @@ module.exports = {
   platformConfigs,
   readDistVersionInfo,
   releaseChannelConfigs,
+  releaseVersionCode,
   sha512Base64,
   stableDistDir,
   updateLatestMacYml,

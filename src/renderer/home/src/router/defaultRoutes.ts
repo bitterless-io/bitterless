@@ -1,7 +1,7 @@
 import type { RouteRecordRaw } from 'vue-router';
 import Chat from '@/views/chat/Chat.vue';
 import Layout from '@/views/layout/Layout.vue';
-import Login from '@/views/login/Login.vue';
+import Login from '@/views/login/LegacyLogin.vue';
 
 const isDev = import.meta.env.VITE_ENV === 'dev';
 const defaultHomePath = '/chat';

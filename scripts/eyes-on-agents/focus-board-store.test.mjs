@@ -24,6 +24,7 @@ const emitterPlugin = {
           export const eyesOnAgentsEmitter = {
             getSnapshot: () => harness().getSnapshot(),
             openThread: (params) => harness().openThread(params),
+            archiveThread: (params) => harness().archiveThread(params),
             setThreadUnread: (params) => harness().setThreadUnread(params)
           };
           export const subscribeEyesOnAgentsChanges = () => undefined;
@@ -142,15 +143,26 @@ test('Focus board store contract', async (context) => {
     let currentSnapshot = createSnapshot([]);
     let openSnapshot = currentSnapshot;
     const openedThreadIds = [];
+    const archivedSessionKeys = [];
     const readStateCalls = [];
     const defaultOpenThread = async ({ sessionKey: openedSessionKey }) => {
       openedThreadIds.push(openedSessionKey);
       return { snapshot: openSnapshot };
     };
     let openThread = defaultOpenThread;
+    const defaultArchiveThread = async ({ sessionKey: archivedSessionKey }) => {
+      archivedSessionKeys.push(archivedSessionKey);
+      const next = createSnapshot(currentSnapshot.threads.filter(
+        (thread) => thread.sessionKey !== archivedSessionKey,
+      ));
+      currentSnapshot = next;
+      return next;
+    };
+    let archiveThread = defaultArchiveThread;
     globalThis.__eyesOnAgentsFocusBoardHarness = {
       getSnapshot: async () => currentSnapshot,
       openThread: (params) => openThread(params),
+      archiveThread: (params) => archiveThread(params),
       setThreadUnread: async (params) => {
         readStateCalls.push(params);
         const next = createSnapshot(currentSnapshot.threads.map((thread) =>
@@ -173,10 +185,13 @@ test('Focus board store contract', async (context) => {
       store.threadSearchSelectedSessionKey = null;
       store.openingSessionKeys = new Set();
       store.actionError = null;
+      store.busyAction = null;
       currentSnapshot = snapshot;
       openSnapshot = snapshot;
       openThread = defaultOpenThread;
+      archiveThread = defaultArchiveThread;
       openedThreadIds.length = 0;
+      archivedSessionKeys.length = 0;
       readStateCalls.length = 0;
     };
     const threadIds = (threads) => threads.map((thread) => thread.threadId);
@@ -613,6 +628,47 @@ test('Focus board store contract', async (context) => {
       assert.deepEqual(searchIds(), ['ops']);
     });
 
+    await context.test('closing Search invalidates pending query publications', () => {
+      const oldThread = createThread({ threadId: 'old', title: 'Old task' });
+      const newThread = createThread({ threadId: 'new', title: 'New task' });
+      resetStore(createSnapshot([oldThread, newThread]));
+      const scheduledRevisions = [];
+      store.configureTitleQueryScheduler((lifecycleRevision) => {
+        scheduledRevisions.push(lifecycleRevision);
+      });
+
+      store.openThreadSearch();
+      store.setTitleDraft('old');
+      const oldLifecycleRevision = scheduledRevisions.at(-1);
+      assert.equal(typeof oldLifecycleRevision, 'number');
+
+      store.toggleThreadSearch();
+      assert.equal(store.threadSearchVisible, false);
+      assert.equal(store.titleDraft, '');
+      assert.equal(store.titleQuery, '');
+      assert.equal(store.threadSearchSelectedSessionKey, null);
+
+      store.openThreadSearch();
+      store.setTitleDraft('new');
+      const currentLifecycleRevision = scheduledRevisions.at(-1);
+      assert.notEqual(currentLifecycleRevision, oldLifecycleRevision);
+
+      store.commitTitleQuery(oldLifecycleRevision);
+      assert.equal(store.titleDraft, 'new');
+      assert.equal(store.titleQuery, '', 'an old trailing callback cannot publish into a new modal');
+      assert.equal(store.threadSearchSelectedSessionKey, null);
+
+      store.commitTitleQuery(currentLifecycleRevision);
+      assert.equal(store.titleQuery, 'new');
+      assert.equal(store.threadSearchSelectedSessionKey, newThread.sessionKey);
+
+      store.closeThreadSearch();
+      store.commitTitleQuery(currentLifecycleRevision);
+      assert.equal(store.titleDraft, '');
+      assert.equal(store.titleQuery, '', 'a callback cannot restore a closed modal query');
+      assert.equal(store.threadSearchSelectedSessionKey, null);
+    });
+
     await context.test('sorting and tokenizing are memoized instead of recomputed', async () => {
       const working = createThread({
         threadId: 'working',
@@ -874,6 +930,56 @@ test('Focus board store contract', async (context) => {
       assert.equal(store.titleDraft, 'failed');
       assert.equal(store.titleQuery, 'failed');
       assert.equal(store.threadSearchSelectedSessionKey, codex.sessionKey);
+    });
+
+    await context.test('Codex Archive applies success, retains failures, and guards duplicates', async () => {
+      const codex = createThread({
+        threadId: 'archive-codex',
+        title: 'Archive Codex task',
+      });
+      const claude = createThread({
+        threadId: 'archive-claude',
+        title: 'Archive Claude task',
+        provider: 'claude',
+        desktopSessionId: 'desktop-archive-claude',
+      });
+      resetStore(createSnapshot([codex, claude]));
+
+      await store.archiveThread(claude.sessionKey);
+      assert.deepEqual(archivedSessionKeys, [], 'Claude Archive is not a renderer action');
+
+      await store.archiveThread(codex.sessionKey);
+      assert.deepEqual(archivedSessionKeys, [codex.sessionKey]);
+      assert.deepEqual(threadIds(store.threads), ['archive-claude']);
+      assert.equal(store.actionError, null);
+
+      resetStore(createSnapshot([codex]));
+      archiveThread = async ({ sessionKey: archivedSessionKey }) => {
+        archivedSessionKeys.push(archivedSessionKey);
+        throw new Error('provider archive failed');
+      };
+      await assert.rejects(store.archiveThread(codex.sessionKey), /provider archive failed/);
+      assert.deepEqual(threadIds(store.threads), ['archive-codex']);
+      assert.equal(store.actionError, 'provider archive failed');
+
+      resetStore(createSnapshot([codex]));
+      let releaseArchive;
+      archiveThread = ({ sessionKey: archivedSessionKey }) => {
+        archivedSessionKeys.push(archivedSessionKey);
+        return new Promise((resolvePromise) => {
+          releaseArchive = () => resolvePromise(createSnapshot([]));
+        });
+      };
+      const firstArchive = store.archiveThread(codex.sessionKey);
+      const duplicateArchive = store.archiveThread(codex.sessionKey);
+      assert.equal(store.busyAction, `thread-archive:${codex.sessionKey}`);
+      assert.deepEqual(archivedSessionKeys, [codex.sessionKey]);
+      await duplicateArchive;
+      assert.deepEqual(archivedSessionKeys, [codex.sessionKey]);
+      releaseArchive();
+      await firstArchive;
+      assert.deepEqual(threadIds(store.threads), []);
+      assert.equal(store.busyAction, null);
     });
   } finally {
     delete globalThis.__eyesOnAgentsFocusBoardHarness;

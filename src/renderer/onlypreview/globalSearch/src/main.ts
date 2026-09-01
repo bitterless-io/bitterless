@@ -2,6 +2,7 @@ import { createApp } from 'vue';
 import { initializeOnlyPreviewI18n, onlyPreviewI18n } from '../../common/onlyPreviewI18n';
 import { onlyPreviewGlobalSearchStore } from '../../shell/src/onlyPreviewGlobalSearch.store';
 import { onlyPreviewGlobalSearchHostClient } from './onlyPreviewGlobalSearchHost.client';
+import { onlyPreviewGlobalSearchLayoutStore } from './onlyPreviewGlobalSearchLayout.store';
 
 const bootstrap = async (): Promise<void> => {
   await initializeOnlyPreviewI18n();
@@ -22,7 +23,8 @@ const bootstrap = async (): Promise<void> => {
       } else {
         onlyPreviewGlobalSearchStore.exit(false);
       }
-    }
+    },
+    (layout) => onlyPreviewGlobalSearchLayoutStore.setLayout(layout)
   );
   const { default: App } = await import('./App.vue');
   createApp(App).provide('onlyPreviewI18n', onlyPreviewI18n).mount('#app');

@@ -333,7 +333,11 @@ export class OnlyPreviewWindowHelper {
     const [contentWidth, contentHeight] = window.getContentSize();
     const bounds = clampPreviewBounds(value, contentWidth, contentHeight);
     onlyPreviewPreviewRegionService.updateBounds(host.hostToken, bounds);
-    onlyPreviewGlobalSearchWindowService.updateBounds(host.hostToken, bounds);
+    onlyPreviewGlobalSearchWindowService.updateBounds(
+      host.hostToken,
+      { x: 0, y: 0, width: contentWidth, height: contentHeight },
+      bounds
+    );
   }
 
   async openSettings(sourceHostToken: string): Promise<void> {
@@ -675,7 +679,11 @@ export class OnlyPreviewWindowHelper {
       if (currentBounds) {
         const bounds = clampPreviewBounds(currentBounds, width, height);
         onlyPreviewPreviewRegionService.updateBounds(host.hostToken, bounds);
-        onlyPreviewGlobalSearchWindowService.updateBounds(host.hostToken, bounds);
+        onlyPreviewGlobalSearchWindowService.updateBounds(
+          host.hostToken,
+          { x: 0, y: 0, width, height },
+          bounds
+        );
       }
     });
     window.once('closed' as any, () => {

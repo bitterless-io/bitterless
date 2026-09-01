@@ -8,6 +8,7 @@ import { onlyPreviewPreviewStore } from '../../onlyPreviewPreview.store';
 
 export class DrawioPreviewStore {
   private viewerHandle: OnlyPreviewDrawioViewerHandle | null = null;
+  private mountAbortController: AbortController | null = null;
   private generation = 0;
 
   async mount(
@@ -16,10 +17,15 @@ export class DrawioPreviewStore {
     reportingRevision: string
   ): Promise<void> {
     const generation = ++this.generation;
+    this.mountAbortController?.abort();
+    const abortController = new AbortController();
+    this.mountAbortController = abortController;
     this.viewerHandle?.dispose();
     this.viewerHandle = null;
     try {
-      const handle = await renderOnlyPreviewDrawio(element, content);
+      const handle = await renderOnlyPreviewDrawio(element, content, {
+        signal: abortController.signal
+      });
       if (generation !== this.generation) {
         handle.dispose();
         return;
@@ -32,11 +38,15 @@ export class DrawioPreviewStore {
         reportingRevision,
         error instanceof OnlyPreviewContractError ? error.code : 'DIAGRAM_PARSE_FAILED'
       );
+    } finally {
+      if (this.mountAbortController === abortController) this.mountAbortController = null;
     }
   }
 
   dispose(): void {
     this.generation += 1;
+    this.mountAbortController?.abort();
+    this.mountAbortController = null;
     this.viewerHandle?.dispose();
     this.viewerHandle = null;
   }

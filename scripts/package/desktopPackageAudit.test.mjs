@@ -547,7 +547,6 @@ test('dependency classification keeps external runtime roots and bundles selecte
     'vue-router',
     'vuedraggable',
     'xterm',
-    'youtube-dl-exec',
   ];
 
   assert.deepEqual(Object.keys(packageJson.dependencies), externalRuntimeDependencies);
@@ -597,6 +596,14 @@ test('Electron Builder registers the audit and excludes non-runtime roots', () =
   assert.match(builder, /^\s+- '!node_modules\/\*\*\/\*\.map'$/m);
   const config = parseYaml(builder);
   assert(
+    config.files?.includes('!prebuilt/**'),
+    'Electron Builder template must exclude the legacy prebuilt cache from app.asar',
+  );
+  assert(
+    config.files?.includes('!external_tools/**'),
+    'Electron Builder template must exclude the external tools cache from app.asar',
+  );
+  assert(
     config.extraResources?.some(
       (resource) =>
         resource.from === 'skills/bitterless-preview'
@@ -612,6 +619,28 @@ test('Electron Builder registers the audit and excludes non-runtime roots', () =
     ),
     'Electron Builder must copy the complete Bitterless Trench skill directory',
   );
+  assert(
+    config.extraResources?.some(
+      (resource) =>
+        resource.from === 'build/maestro-tools'
+        && resource.to === 'maestro-tools',
+    ),
+    'Electron Builder template must copy staged Maestro tools to Resources/maestro-tools',
+  );
+
+  for (const binaryPath of [
+    'Contents/Resources/maestro-tools/micromeet',
+    'Contents/Resources/maestro-tools/bun',
+    'Contents/Resources/maestro-tools/rg',
+    'Contents/Resources/maestro-tools/fd',
+    'Contents/Resources/maestro-tools/ouch',
+    'Contents/Resources/maestro-tools/anydoc/anydoc.node',
+  ]) {
+    assert(
+      config.mac?.binaries?.includes(binaryPath),
+      `Electron Builder template must register ${binaryPath} for macOS signing`,
+    );
+  }
 });
 
 test('Electron Builder excludes complete release and temporary roots for Preview output', () => {

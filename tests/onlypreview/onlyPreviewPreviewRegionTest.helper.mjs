@@ -141,12 +141,26 @@ class FakeWebContents extends EventEmitter {
     this.loadedUrls = [];
     // Electron exposes the frame tree here; the Chromium PDF viewer's document frame is the extra
     // non-main frame that a blank viewer never produces.
-    this.mainFrame = { url: '', framesInSubtree: [] };
+    this.mainFrame = this.createFrame('');
     this.mainFrame.framesInSubtree.push(this.mainFrame);
   }
 
+  createFrame(url) {
+    const frame = {
+      url,
+      processId: 101,
+      routingId: state.nextFrameRoutingId++,
+      framesInSubtree: [],
+      isDestroyed: () => false
+    };
+    state.framesById.set(`${frame.processId}:${frame.routingId}`, frame);
+    return frame;
+  }
+
   addSubframe(url) {
-    this.mainFrame.framesInSubtree.push({ url });
+    const frame = this.createFrame(url);
+    this.mainFrame.framesInSubtree.push(frame);
+    return frame;
   }
 
   isDestroyed() {
@@ -262,12 +276,16 @@ const createState = () => ({
   assetUrlsRevoked: [],
   findBinds: [],
   findUnbinds: [],
+  previewBinds: [],
   officeBinds: [],
   officePrepares: [],
   officeCancels: [],
   nextOfficePrepareDeferred: null,
   previewPrepares: [],
-  previewCancels: []
+  previewCancels: [],
+  framesById: new Map(),
+  nextFrameRoutingId: 1,
+  activeViewAttachNotifications: 0
 });
 
 const host = {
@@ -285,10 +303,11 @@ const hostRegistry = {
 };
 
 const workspaceRegistry = {
-  getProjectAuthorityItemRef: (_hostToken, fileRef) => ({
+  getPreviewAuthorityItemRef: (_hostToken, fileRef) => ({
     workspaceId: fileRef.workspaceId,
-    workspaceGeneration: 1,
-    relativePath: fileRef.relativePath
+    workspaceGeneration: fileRef.workspaceId === 'external-workspace-id' ? 1 : 17,
+    relativePath: fileRef.relativePath,
+    rootPath: fileRef.workspaceId === 'external-workspace-id' ? '/external/private' : '/workspace'
   }),
   getOfficeReadBootstrap: (_hostToken, fileRef) => ({
     workspaceId: fileRef.workspaceId,
@@ -406,7 +425,13 @@ const findSpecs = {
 const viewModule = loadTypeScriptModule(
   'src/main/onlypreview/views/onlyPreviewPreviewView.service.ts',
   {
-    electron: { BaseWindow: class {}, WebContentsView: FakeChromeView },
+    electron: {
+      BaseWindow: class {},
+      WebContentsView: FakeChromeView,
+      webFrameMain: {
+        fromId: (processId, routingId) => state.framesById.get(`${processId}:${routingId}`)
+      }
+    },
     '@shared/onlypreview/onlyPreview.contract': {
       OnlyPreviewContractError: ContractError
     },
@@ -493,6 +518,7 @@ class FakePreviewReadBrokerService {
       grantId: grant.grantId,
       descriptor: {
         ...descriptorFor(params.fileRef.relativePath, descriptorKind),
+        workspaceId: params.fileRef.workspaceId,
         extension
       }
     };
@@ -563,6 +589,7 @@ const regionModule = loadTypeScriptModule(
     },
     '@main/fileSearch/fileSearchWindow.service': {
       fileSearchWindowService: {
+        bindPreviewReadWorkspace: async (request) => state.previewBinds.push(request),
         preparePreviewRead: async (grant) => {
           state.previewPrepares.push(grant);
           await state.assertOpenedFileCurrent();
@@ -670,7 +697,8 @@ const regionModule = loadTypeScriptModule(
             assetUrl: assetRegistry.issue(hostToken, prepared, descriptor.mimeType, {
               selectionRevision,
               maxBytes: Math.min(descriptor.size, limit ?? descriptor.size),
-              lifetime: adapter.adapterId === 'audio' || adapter.adapterId === 'video' ? 'selection' : 'ttl'
+              lifetime:
+                adapter.adapterId === 'audio' || adapter.adapterId === 'video' ? 'selection' : 'ttl'
             })
           };
           assetIssued = true;
@@ -723,6 +751,9 @@ const createHarness = () => {
     },
     bindChromeShortcuts: (webContents) => {
       webContents.shortcutsBound = true;
+    },
+    onActiveViewAttached: () => {
+      state.activeViewAttachNotifications += 1;
     }
   };
   const service = new regionModule.OnlyPreviewPreviewRegionService();

@@ -17,6 +17,14 @@
           {{ i18nHelper.setting.general.tabTitle }}
         </div>
         <div
+          name="setting__nav-account"
+          class="setting__nav-item"
+          :class="{ 'setting__nav-item--active': settingNavStore.activeTab === 'account' }"
+          @click="onNavClick('account')"
+        >
+          {{ i18nHelper.setting.account.tabTitle }}
+        </div>
+        <div
           class="setting__nav-item"
           :class="{ 'setting__nav-item--active': settingNavStore.activeTab === 'llm' }"
           @click="onNavClick('llm')"
@@ -58,6 +66,7 @@
           v-if="settingNavStore.activeTab === 'general'"
           :show-chat-menu-control="showChatMenuControl"
         />
+        <AccountSetting v-if="settingNavStore.activeTab === 'account'" />
         <LLMSetting v-if="settingNavStore.activeTab === 'llm'" />
         <SystemPromptSetting v-if="settingNavStore.activeTab === 'systemPrompt'" />
         <NotificationSetting v-if="settingNavStore.activeTab === 'notification'" />
@@ -74,6 +83,7 @@ import LLMSetting from './components/LLMSetting/LLMSetting.vue';
 import SystemPromptSetting from './components/SystemPromptSetting/SystemPromptSetting.vue';
 import ProxySetting from './components/ProxySetting/ProxySetting.vue';
 import GeneralSetting from './components/GeneralSetting/GeneralSetting.vue';
+import AccountSetting from './components/AccountSetting/AccountSetting.vue';
 import About from './components/About/About.vue';
 import NotificationSetting from './components/NotificationSetting/NotificationSetting.vue';
 import LogSetting from './components/LogSetting/LogSetting.vue';

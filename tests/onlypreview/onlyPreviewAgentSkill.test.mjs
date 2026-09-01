@@ -282,7 +282,10 @@ test('Guide renderer and Main capability wiring remain narrow and one-card only'
   assert.match(handler, /getAgentSkillGuideInfo[\s\S]*requireAgentSkillGuideHost\(params\?\.hostToken\)/);
   assert.match(handler, /createOnlyPreviewAgentSkillGuideInfo\(\{[\s\S]*serverName,[\s\S]*skillVersionCode:/);
   assert.doesNotMatch(source('src/main/mcp/mcpBridge.server.ts'), /onlyPreview\.handler/);
-  assert.match(source('src/main/app.main.ts'), /mcpBridgeServer\.configurePreviewOpener\(openOnlyPreviewAbsoluteTarget\)/);
+  assert.match(
+    source('src/main/app.main.ts'),
+    /mcpBridgeServer\.configurePreviewOpener\(openOnlyPreviewAbsoluteTarget\)/
+  );
 
   assert.match(guideOpen, /requireStandaloneWindow\(sourceHostToken\)/);
   assert.match(guideOpen, /issue\('guide', 'guide'\)/);

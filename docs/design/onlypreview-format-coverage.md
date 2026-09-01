@@ -6,8 +6,8 @@
 **状态：023/024 已实施双 surface、bounded HTML/PDF/asset 与 size-first tolerant text guards；020
 XLSX/XLSM 为 `implemented; owner verification pending`（已通过独立复核，等待 Ral 手测），021 DOCX 为
 `implemented; owner verification pending`（已通过独立复核，等待 Ral 真实 DOCX 视觉/运行时验证），022
-媒体真话态为 `implemented; owner verification pending`（独立复核已通过，等待 Ral 真实图片/音视频
-视觉与运行时验证）；025 设计收口的
+媒体真话态与 101 图片旋转均为 `implemented; owner verification pending`（独立复核已通过，等待 Ral
+真实图片/音视频视觉与运行时验证）；025 设计收口的
 [completion audit](../plan/reviews/onlypreview-design-completion-025-1.md) 已 **PASS**，当前为
 `implemented; owner verification pending`；032 Draw.io 的
 [independent review 3](../plan/reviews/onlypreview-drawio-readonly-032-3.md) 已 **PASS**，等待 Ral
@@ -267,7 +267,7 @@ family 授权过宽记录 **BLOCKED**；该发现已由 exhaustive adapter discr
 
 | 类别                     | 现状                                           | 本轮决定                                                                                                |
 | ------------------------ | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| 图片                     | `<img>` 覆盖 png/jpg/gif/webp/avif/bmp/ico/svg | 保持原生解码；**新增解码失败的真话状态**（文件名、扩展名、大小 + 外部打开），不再是破图图标             |
+| 图片                     | `<img>` 覆盖 png/jpg/gif/webp/avif/bmp/ico/svg | 保持原生解码和真话失败态；补充不写文件的 90° 左/右旋转，并让 Fit/Pan 使用旋转后的有效尺寸                 |
 | HEIC / HEIF / TIFF / RAW | 未列入，落 `unsupported`                       | 保持不渲染；是否加 Main 侧转码见 PQ-C                                                                   |
 | 音频                     | `<audio>` 覆盖 mp3/wav/ogg/m4a/aac/flac        | 保持原生播放器 + `MediaError` 真话状态                                                                  |
 | 视频                     | `<video>` 覆盖 mp4/webm/ogv/mov/m4v            | 同上。`.mkv`/`.avi`/`.wmv`/`.flv` 与 ProRes 等平台不解码的容器/编码**不加进可预览集合**，落明确不支持态 |
@@ -275,7 +275,8 @@ family 授权过宽记录 **BLOCKED**；该发现已由 exhaustive adapter discr
 判据：`Ral「音视频就是播放器可播放」` —— 能播的直接播，不能播的说明白，不做转码墙。
 
 上述图片与媒体全部是 `vuePreviewView` 的 Vue 组件，不进入 `chromePreviewView`：图片组件至少提供
-适应窗口、放大、缩小、重置，放大后可拖动查看；音频/视频封装原生 `<audio controls>` /
+适应窗口、放大、缩小、90° 左/右旋转、重置，放大后可拖动查看；旋转只改变 renderer transform，绝不
+写回或重编码文件。音频/视频封装原生 `<audio controls>` /
 `<video controls>`，保持浏览器解码能力，不引入转码器。
 
 022 将支持目录冻结为：图片 `.png/.jpg/.jpeg/.gif/.webp/.avif/.bmp/.ico/.svg`，音频
@@ -296,6 +297,11 @@ exact revision 的 live `<img>` mount 成功后才报告 ready。Main 此时撤�
 `±max(0, (naturalSize * scale - viewportSize) / 2)`。Fit resize 重算 scale 并归零 offset；manual/100%
 resize 只重新 clamp。只有溢出轴可被 primary pointer 或聚焦 viewport 的方向键移动，pointer capture、
 cancel/lost-capture 与 revision teardown 都清掉 drag state。
+
+Task 101 把 rotation 纳入同一 viewport model：`0/180°` 使用 natural width/height，`90/270°` 交换
+effective width/height，再计算 Fit 与每轴 pan clamp。Fit 归零 offset；manual/100% resize 保留并
+reclamp；Reset 同时恢复 rotation `0°`、scale `100%` 与零 offset。CSS transform 不生成 canvas/bitmap
+副本，组件 teardown 与切 revision 一并清空 rotation。
 
 音视频在挂 player 前只做一次 exact asset `HEAD`：成功、`Content-Length` 等于 verified selection size，且
 经 CORS 显式暴露的 `Accept-Ranges` 为 `bytes` 后才挂 native player；正文不 blob、不预读整包，仍由 Range
@@ -509,6 +515,7 @@ Bitterless 采用更小的对应结构：`vuePreviewView` 已是独立 sandboxed
 | 按需加载 | `PreviewSurface` 对所有格式组件使用 async component；只有 `drawio-viewer` adapter 加载 `DrawioPreview` chunk，且只有 Worker 预检通过后加载本地 viewer 资产                                                                                                                                                                                                                |
 | 引擎     | 本地固定版本的官方只读 viewer，独立资产；Vue wrapper 不复制 draw.io 渲染逻辑，**不用 iframe**，只管理专用 mount element 与 graph 生命周期                                                                                                                                                                                                                                 |
 | DOM 边界 | viewer 只允许写入组件拥有的 mount element；每次 render 前后做基线检查，若产生 document 级残留 listener/style/global state，则重建整个 `vuePreviewView`，不让污染进入下一个格式                                                                                                                                                                                            |
+| Ready 生命周期 | 官方 viewer 在 mount 宽度为 0 时会等待可见性变化后异步初始化；Vue adapter 必须以一次性、可取消、有限时长的 callback handshake 等待 exact mount ready，不能在 `processElements()` 返回时同步判空。切文件、unmount、超时和 late callback 均 fail closed，并由 Main 的 30 秒 watchdog / 整体 Vue view 重建作最终隔离栅栏                                                                                   |
 | 网络     | viewer session 默认离线；阻断外部字体、链接导航、新窗口和下载。首期所有图片资源在预检阶段已拒绝，不进入 viewer。外链只允许交回 Shell 后按既有外部打开策略处理                                                                                                                                                                                                             |
 | 安全     | `.drawio` 仍是非文本 parser 格式：扩展名先路由，集中字典给它 20MiB 文件上限（默认仍为 10MiB），再以 fixed-chunk outer XML、base64、DEFLATE、percent/UTF-8 与 XML scanner 做流式预检；拒绝 DOCTYPE/ENTITY，限制 32MiB 展开量、128 页、20,000 cells，并以 `DIAGRAM_LIMIT` 拒绝 embedded/external raster/SVG/data/blob、image shape/source、`mxImage`/`image` 等全部图片内容 |
 | 性能     | Main 只签发 revision-bound bounded asset；Worker 在 10 秒内完成预检；30 秒 Main watchdog 可销毁阻塞的 Vue view。超限/超时/切文件终止 Worker，并销毁 graph/清空 mount                                                                                                                                                                                                      |

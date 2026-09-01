@@ -42,6 +42,7 @@ const getDirectoryCatalog = (): ApplicationDiagnosticDirectoryEntry[] => {
     directoryEntry('userData', userData),
     directoryEntry('sessionData', app.getPath('sessionData')),
     directoryEntry('logs', log.directory),
+    directoryEntry('onlypreviewLogs', join(log.directory, 'onlypreview')),
     directoryEntry('cache', app.getPath('cache')),
     directoryEntry('crashDumps', app.getPath('crashDumps')),
     directoryEntry('temp', app.getPath('temp')),

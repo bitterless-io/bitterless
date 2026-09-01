@@ -977,6 +977,8 @@ const verifyMaestroSchema = (
     'skill_json',
     'skills_json',
     'replay_json',
+    'tasks_json',
+    'confirm_json',
   ])
   assertColumns(db, 'inject_btns', ['domain', 'skill_title', 'skill_description', 'updated_at'])
   if (baseline.dbExistedBeforeOpen) {

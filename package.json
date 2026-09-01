@@ -1,8 +1,11 @@
 {
   "_name": "Bitterless",
-  "_version": "0.0.79",
+  "_version": "0.0.83",
   "anydoc_version": "0.2.4",
+  "bun_version": "1.3.14",
+  "fd_version": "10.5.0",
   "ouch_version": "0.8.2",
+  "rg_version": "14.1.1",
   "description": "An Electron application with Vue and TypeScript",
   "main": "./out/main/app.main.js",
   "repository": "git@github.com:FlashHand/bitterless.git",
@@ -32,6 +35,7 @@
     "check:renderer-i18n": "node scripts/renderer-i18n/check-renderer-i18n.mjs",
     "test:todo-layout": "node --test scripts/todo/todo-column-layout.test.mjs",
     "test:todo-ai-source": "node --test scripts/todo/todo-ai-source-corner.test.mjs",
+    "test:todo-session-attribution": "node --test scripts/todo/todo-session-attribution.test.mjs",
     "test:todo:agent-skill-version": "node scripts/todo/todo-agent-skill-version.test.mjs",
     "test:customer-auth": "node --test scripts/auth/customer-authentication.test.mjs",
     "test:startup": "node scripts/startup/core-gated-startup.test.mjs",
@@ -58,6 +62,7 @@
     "typecheck:eyes-on-agents:core": "tsc -p scripts/eyes-on-agents/tsconfig.strict.json",
     "typecheck:eyes-on-agents:ui": "vue-tsc --noEmit -p scripts/eyes-on-agents/tsconfig.ui.json --composite false",
     "check:maestro": "node scripts/maestro/check-maestro.mjs",
+    "test:maestro-external-tools": "node --test scripts/maestro/externalTools.test.mjs",
     "test:maestro-cli-channel": "node --test scripts/maestro/micromeetCliChannelIsolation.test.ts",
     "check:chat-composer": "node scripts/maestro/check-chat-composer.mjs",
     "mcp:todo:smoke": "node scripts/mcp/todo-smoke.mjs",
@@ -92,17 +97,20 @@
     "prepare:maestro-cli": "node scripts/prepare-maestro-cli.cjs",
     "prepare:maestro-anydoc": "node scripts/prepare-maestro-anydoc.cjs",
     "prepare:maestro-archive": "node scripts/prepare-maestro-archive.cjs",
+    "external-tools:init": "node scripts/maestro/externalTools.cjs init",
+    "external-tools:stage": "node scripts/maestro/externalTools.cjs stage",
+    "external-tools:verify": "node scripts/maestro/externalTools.cjs verify-stage",
     "prebuild:unpack": "yarn audit:sqlite-migrations",
-    "_package:unpack": "yarn _build:release && yarn prepare:maestro-cli && yarn prepare:maestro-anydoc && yarn prepare:maestro-archive && node scripts/prepare-maestro-anydoc.cjs --verify && electron-builder --dir",
+    "_package:unpack": "yarn _build:release && yarn prepare:maestro-cli && node scripts/prepare-maestro-package-tools.cjs && electron-builder --dir",
     "build:unpack": "node scripts/environment/runWithRuntimeProfile.cjs release_prod -- yarn _package:unpack",
     "prebuild:win": "yarn audit:sqlite-migrations",
-    "_package:win": "yarn _build:release && node scripts/prepare-maestro-cli.cjs win64 && node scripts/prepare-maestro-anydoc.cjs win64 && node scripts/prepare-maestro-archive.cjs win64 && node scripts/prepare-maestro-anydoc.cjs win64 --verify && node scripts/signedBuild.js --win --x64",
+    "_package:win": "yarn _build:release && node scripts/prepare-maestro-cli.cjs win64 && node scripts/maestro/externalTools.cjs stage win64 && node scripts/maestro/externalTools.cjs verify-stage win64 && node scripts/signedBuild.js --win --x64",
     "build:win": "node scripts/environment/runWithRuntimeProfile.cjs release_prod -- yarn _package:win",
     "prebuild:mac_arm": "yarn audit:sqlite-migrations",
-    "_package:mac_arm": "yarn _build:release && node scripts/prepare-maestro-cli.cjs mac_arm && node scripts/prepare-maestro-anydoc.cjs mac_arm && node scripts/prepare-maestro-archive.cjs mac_arm && node scripts/prepare-maestro-anydoc.cjs mac_arm --verify && node scripts/signedBuild.js --mac --arm64",
+    "_package:mac_arm": "yarn _build:release && node scripts/prepare-maestro-cli.cjs mac_arm && node scripts/maestro/externalTools.cjs stage mac_arm && node scripts/maestro/externalTools.cjs verify-stage mac_arm && node scripts/signedBuild.js --mac --arm64",
     "build:mac_arm": "node scripts/environment/runWithRuntimeProfile.cjs release_prod -- yarn _package:mac_arm",
     "prebuild:mac_x64": "yarn audit:sqlite-migrations",
-    "_package:mac_x64": "yarn _build:release && node scripts/prepare-maestro-cli.cjs mac_intel && node scripts/prepare-maestro-anydoc.cjs mac_intel && node scripts/prepare-maestro-archive.cjs mac_intel && node scripts/prepare-maestro-anydoc.cjs mac_intel --verify && node scripts/signedBuild.js --mac --x64",
+    "_package:mac_x64": "yarn _build:release && node scripts/prepare-maestro-cli.cjs mac_intel && node scripts/maestro/externalTools.cjs stage mac_intel && node scripts/maestro/externalTools.cjs verify-stage mac_intel && node scripts/signedBuild.js --mac --x64",
     "build:mac_x64": "node scripts/environment/runWithRuntimeProfile.cjs release_prod -- yarn _package:mac_x64",
     "prebuild:mac_intel": "yarn audit:sqlite-migrations",
     "build:mac_intel": "node scripts/environment/runWithRuntimeProfile.cjs release_prod -- yarn _package:mac_x64",
@@ -271,8 +279,7 @@
     "vue-router": "^5.0.2",
     "vue-tsc": "^3.1.6",
     "vuedraggable": "^4.1.0",
-    "xterm": "^5.3.0",
-    "youtube-dl-exec": "^3.1.5"
+    "xterm": "^5.3.0"
   },
   "resolutions": {
     "entities": "^6.0.0"
@@ -283,7 +290,7 @@
     "rigs/*",
     "rig_dev/*"
   ],
-  "name": "Bitterless_DEBUG_PROD",
-  "version": "0.0.79",
-  "version_code": "260831132610"
+  "name": "Bitterless_DEBUG_DEV",
+  "version": "0.0.83",
+  "version_code": "260901131822"
 }

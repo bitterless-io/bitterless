@@ -12,6 +12,7 @@ const {
   OSS_MULTIPART_PART_SIZE_BYTES,
   OSS_MULTIPART_THRESHOLD_BYTES,
   OSS_REQUEST_TIMEOUT_MS,
+  assertNoRemoteDowngrade,
   assertReleaseOrder,
   parseUserKeychainSearchList,
   publishRelease,
@@ -170,6 +171,36 @@ test('release ordering rejects semantic downgrade and conflicting version reuse'
     () => assertReleaseOrder({ version: '0.0.59', version_code: '260730120000' }, remote),
     /version_code downgrade/,
   )
+})
+
+test('publisher validates the exact existing Preview manifest before logging release order', async (t) => {
+  const requestedKeys = []
+  const logs = []
+  const client = {
+    async get(objectKey) {
+      requestedKeys.push(objectKey)
+      return {
+        content: Buffer.from(JSON.stringify({
+          version: '0.0.79',
+          versionCode: '260831120000',
+        })),
+      }
+    },
+  }
+  t.mock.method(console, 'log', (...args) => logs.push(args.join(' ')))
+
+  await assertNoRemoteDowngrade(
+    client,
+    'bitterless/distro/preview/mac_arm',
+    { version: '0.0.80', version_code: '260901100018' },
+  )
+
+  assert.deepEqual(requestedKeys, [
+    'bitterless/distro/preview/mac_arm/version_info.json',
+  ])
+  assert.deepEqual(logs, [
+    '[publish.js] Version order verified: local 0.0.80 (260901100018), remote 0.0.79 (260831120000)',
+  ])
 })
 
 test('publisher requires package and dist to describe the exact same release', () => {

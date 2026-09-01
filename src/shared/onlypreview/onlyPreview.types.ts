@@ -206,10 +206,16 @@ export interface OnlyPreviewGlobalSearchWorkspaceContext {
   currentDirectoryRelativePath: string;
 }
 
+export interface OnlyPreviewGlobalSearchLayout {
+  viewBounds: OnlyPreviewBounds;
+  workspaceBounds: OnlyPreviewBounds;
+}
+
 export interface OnlyPreviewGlobalSearchContextSnapshot {
   revision: number;
   active: boolean;
   workspace: OnlyPreviewGlobalSearchWorkspaceContext | null;
+  layout: OnlyPreviewGlobalSearchLayout | null;
 }
 
 export interface OnlyPreviewGlobalSearchContextReportRequest extends OnlyPreviewHostRequest {
@@ -219,6 +225,11 @@ export interface OnlyPreviewGlobalSearchContextReportRequest extends OnlyPreview
 export interface OnlyPreviewGlobalSearchVisibilityEvent extends OnlyPreviewHostEvent {
   revision: number;
   active: boolean;
+}
+
+export interface OnlyPreviewGlobalSearchLayoutEvent extends OnlyPreviewHostEvent {
+  revision: number;
+  layout: OnlyPreviewGlobalSearchLayout;
 }
 
 export interface OnlyPreviewGlobalSearchDirectoryRevealRequest extends OnlyPreviewHostRequest {
@@ -413,6 +424,7 @@ export const ONLY_PREVIEW_GLOBAL_SEARCH_CONTEXT_CHANGED_EVENT =
   'onlypreview/globalSearchContextChanged' as const;
 export const ONLY_PREVIEW_GLOBAL_SEARCH_VISIBILITY_EVENT =
   'onlypreview/globalSearchVisibility' as const;
+export const ONLY_PREVIEW_GLOBAL_SEARCH_LAYOUT_EVENT = 'onlypreview/globalSearchLayout' as const;
 export const ONLY_PREVIEW_GLOBAL_SEARCH_REVEAL_DIRECTORY_EVENT =
   'onlypreview/globalSearchRevealDirectory' as const;
 export const ONLY_PREVIEW_SETTINGS_CHANGED_EVENT = 'onlypreview/settingsChanged' as const;

@@ -255,12 +255,33 @@ export const parseOnlyPreviewGlobalSearchContextSnapshot = (
   value: unknown
 ): OnlyPreviewGlobalSearchContextSnapshot => {
   const record = expectRecord(value, 'Global Search context snapshot');
-  expectExactKeys(record, ['revision', 'active', 'workspace']);
+  expectExactKeys(record, ['revision', 'active', 'workspace', 'layout']);
   const revision = expectNonNegativeSafeInteger(record.revision, 'Global Search context revision');
   if (typeof record.active !== 'boolean') {
     throw new OnlyPreviewContractError('INVALID_INPUT', 'Global Search visibility is invalid.');
   }
-  if (record.workspace === null) return { revision, active: record.active, workspace: null };
+  let layout: OnlyPreviewGlobalSearchContextSnapshot['layout'] = null;
+  if (record.layout !== null) {
+    const layoutRecord = expectRecord(record.layout, 'Global Search layout');
+    expectExactKeys(layoutRecord, ['viewBounds', 'workspaceBounds']);
+    const viewBounds = parseOnlyPreviewBounds(layoutRecord.viewBounds);
+    const workspaceBounds = parseOnlyPreviewBounds(layoutRecord.workspaceBounds);
+    if (
+      viewBounds.x !== 0 ||
+      viewBounds.y !== 0 ||
+      workspaceBounds.x + workspaceBounds.width > viewBounds.width ||
+      workspaceBounds.y + workspaceBounds.height > viewBounds.height
+    ) {
+      throw new OnlyPreviewContractError(
+        'INVALID_INPUT',
+        'Global Search workspace bounds must stay inside its native view.'
+      );
+    }
+    layout = { viewBounds, workspaceBounds };
+  }
+  if (record.workspace === null) {
+    return { revision, active: record.active, workspace: null, layout };
+  }
   const workspace = expectRecord(record.workspace, 'Global Search workspace context');
   expectExactKeys(workspace, [
     'workspaceId',
@@ -275,6 +296,7 @@ export const parseOnlyPreviewGlobalSearchContextSnapshot = (
   return {
     revision,
     active: record.active,
+    layout,
     workspace: {
       workspaceId: expectBoundedToken(workspace.workspaceId, 'Workspace capability'),
       generation: expectNonNegativeSafeInteger(
@@ -301,7 +323,8 @@ export const parseOnlyPreviewGlobalSearchContextReportRequest = (
     workspace: parseOnlyPreviewGlobalSearchContextSnapshot({
       revision: 0,
       active: false,
-      workspace: record.workspace
+      workspace: record.workspace,
+      layout: null
     }).workspace
   };
 };

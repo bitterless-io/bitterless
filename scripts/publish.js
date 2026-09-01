@@ -21,6 +21,7 @@ const {
   platformConfigs,
   readDistVersionInfo,
   releaseChannelConfigs,
+  releaseVersionCode,
   stableDistDir,
   updateLatestMacYml,
   validateUpdaterArtifacts,
@@ -544,9 +545,7 @@ const publishRelease = async (options) => {
 const assertReleaseOrder = (localPackage, remoteInfo) => {
   const localVersion = String(localPackage.version ?? '');
   const remoteVersion = String(remoteInfo.version ?? '');
-  const localVersionCode = String(
-    localPackage.version_code ?? localPackage.versionCode ?? '',
-  );
+  const localVersionCode = releaseVersionCode(localPackage);
   const remoteVersionCode = String(remoteInfo.versionCode ?? '');
 
   if (!/^\d+$/.test(localVersionCode)) {
@@ -770,6 +769,7 @@ module.exports = {
   OSS_REQUEST_TIMEOUT_MS,
   assertBuildIdentity,
   assertLocalReleaseMatchesDist,
+  assertNoRemoteDowngrade,
   assertReleaseOrder,
   artifactNameMatchesVersion,
   createVersionInfoForUpload,

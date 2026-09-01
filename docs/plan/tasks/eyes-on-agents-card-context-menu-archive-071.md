@@ -1,7 +1,7 @@
 ---
 id: eyes-on-agents-card-context-menu-archive-071
 scope: pointer-anchored shared thread-card menu and provider-authoritative Codex archive action
-status: in-progress
+status: implemented; owner verification pending
 depends-on: [eyes-on-agents-archive-sync-005, eyes-on-agents-search-close-after-open-070]
 ---
 
@@ -72,4 +72,19 @@ and add a real Codex Archive action that hides the task only after provider succ
 
 ## Result
 
-Pending implementation and independent verification.
+Implemented. The visible `…` action and pointer-anchored right-click now render one shared menu;
+opening one entrance closes the other, a repeated right-click relocates the open menu to the new
+pointer, and the body-level popup fits rather than clipping inside the board. Archive is last and
+Codex-only.
+
+The typed archive path sends official App Server `thread/archive` before persisting the existing
+local archive state. Provider rejection, invalid identity, and connection-lifecycle cancellation
+leave the card visible and surface the existing action error. Notification and full Sync remain
+idempotent repair paths.
+
+[Independent review 1](../reviews/eyes-on-agents-card-context-menu-archive-071-1.md) passed after
+closing one P2 repeat-right-click positioning finding. App Server and core suites, focused source
+and mounted UI coverage, core/UI typechecks, and whitespace validation passed. The complete UI
+source suite remains 77/78 because an unrelated dirty-worktree notification App ID assertion still
+expects the retired `VITE_ENV` branch instead of the existing `runtimeProfile` source. Electron E2E
+was not run; Ral owns the real-app pointer, focus, and provider archive verification.

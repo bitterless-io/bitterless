@@ -49,7 +49,9 @@ import { todoEnv } from './contextBridge/todoEnv.bridge';
 import { todoWindowEmitter } from './emitter/todoWindow.emitter';
 import { uaHelper } from '@renderer/common/utils/userAgentHelper/ua.helper';
 import { todoistSyncStore } from './store/todoistSync.store';
+import { todoistSyncStatusEmitter } from './emitter/todoistSync.emitter';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
+import { resolveTodoUnavailableReason } from './store/todoSessionState.service';
 import { todoAgentSkillStore } from './store/todoAgentSkill.store';
 
 const isStandalone = ref(false);
@@ -102,7 +104,7 @@ onMounted(async () => {
     document.addEventListener('keydown', onKeydown);
   } catch (error) {
     console.error('[todo] renderer initialization failed:', error);
-    Message.error(i18nHelper.todo.runtimeUnavailable);
+    Message.error(i18nHelper.todo[await resolveTodoUnavailableReason(todoistSyncStatusEmitter)]);
   }
 });
 

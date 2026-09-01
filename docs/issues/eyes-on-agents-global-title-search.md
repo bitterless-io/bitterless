@@ -1,6 +1,6 @@
 # EyesOnAgents Global Title Search
 
-Status: restored with full-card results; successful Open closes Search; owner verification pending
+Status: restored with full-card results, deterministic focus, and close reset; owner verification pending
 
 Tasks 031–033 first delivered this modal, task 055 retired it into a permanent Focus filter, and
 [eyes-on-agents-search-modal-067](../plan/tasks/eyes-on-agents-search-modal-067.md) restores it as
@@ -80,3 +80,6 @@ regression found in that restoration is repaired by
 [eyes-on-agents-search-receiver-safety-069](../plan/tasks/eyes-on-agents-search-receiver-safety-069.md).
 The successful-Open lifecycle is refined by
 [eyes-on-agents-search-close-after-open-070](../plan/tasks/eyes-on-agents-search-close-after-open-070.md).
+Deterministic shortcut focus and close-path reset are tracked by
+[eyes-on-agents-search-shortcut-focus-reset-072](../plan/tasks/eyes-on-agents-search-shortcut-focus-reset-072.md),
+with [review 1](../plan/reviews/eyes-on-agents-search-shortcut-focus-reset-072-1.md) passed.

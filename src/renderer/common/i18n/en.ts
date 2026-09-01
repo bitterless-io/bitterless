@@ -15,7 +15,10 @@ export const en = {
     passwordMinimum: 'At least 8 characters',
     confirmPasswordPlaceholder: 'Enter the password again',
     setPasswordAndContinue: 'Set password and continue',
-    continueToWorkspace: 'Continue to workspace'
+    continueToWorkspace: 'Continue to workspace',
+    homeAuthorityLoading: 'Checking your Bitterless sign-in status…',
+    homeAuthorityUnavailable: 'Sign-in status is temporarily unavailable.',
+    homeAuthorityRetry: 'Retry'
   },
   app: {
     quit: 'Quit',
@@ -148,13 +151,19 @@ export const en = {
         showChatMenuSaveFailed:
           'Could not update the Chat menu setting. The previous setting was restored.'
       },
-      account: {
-        label: 'Account',
-        logout: 'Log out'
-      },
       save: 'Save',
       saveSuccess: 'Saved successfully',
       saveFailed: 'Save failed'
+    },
+    account: {
+      tabTitle: 'Account',
+      title: 'Account',
+      email: 'Email',
+      loading: 'Loading account information…',
+      unavailable: 'Could not load the account email.',
+      retry: 'Retry',
+      logout: 'Log out',
+      logoutFailed: 'Could not log out. Try again.'
     },
     proxy: {
       tabTitle: 'Proxy',
@@ -233,6 +242,7 @@ export const en = {
         userData: 'User data',
         sessionData: 'Session data',
         logs: 'Logs',
+        onlypreviewLogs: 'OnlyPreview logs',
         cache: 'Cache',
         crashDumps: 'Crash dumps',
         temp: 'Temporary files',
@@ -766,6 +776,7 @@ export const en = {
       markRead: 'Mark as read',
       markUnread: 'Mark as unread',
       copySessionPath: 'Copy session path',
+      archive: 'Archive',
       more: 'More actions',
       searchTitles: 'Search thread titles',
       searchTitlesMac: 'Search titles (⌘F)',
@@ -850,6 +861,8 @@ export const en = {
     todoLimitReached: 'A domain can have at most 77 incomplete tasks',
     domainLimitReached: 'You can create at most 17 domains',
     runtimeUnavailable: 'Todo is unavailable. Its local data runtime could not be opened.',
+    sessionRequired:
+      'Todo needs a signed-in Bitterless account in this application. Open the main window and sign in.',
     refresh: 'Refresh',
     archive: 'Archive',
     archivedDomains: 'Archived domains',

@@ -6,6 +6,8 @@ import type { MaestroTask } from './task.api'
 
 export const DEFAULT_COACH_START_URL = 'https://example.com'
 export const MAESTRO_HOME_READY_TOKEN_QUERY = 'maestroReadyToken'
+export const MAESTRO_FORCE_PINNED_HOME_QUERY = 'maestroForcePinnedHome'
+export const MAESTRO_FORCE_PINNED_HOME_QUERY_VALUE = '1'
 export const MAESTRO_LOCAL_HOME_DISPLAY_URL = 'bitterless://home'
 export const MAESTRO_AI_CRMS_LOGIN_DISPLAY_URL = 'bitterless://ai-crms-login'
 

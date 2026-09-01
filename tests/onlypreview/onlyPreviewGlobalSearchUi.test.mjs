@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { runtime, source } from './onlyPreviewCoreTest.helper.mjs';
@@ -158,9 +159,7 @@ test('Find to Global Search closes Find and delegates native overlay focus for e
   const windowService = source(
     'src/main/onlypreview/views/onlyPreviewGlobalSearchWindow.service.ts'
   );
-  const viewService = source(
-    'src/main/onlypreview/views/onlyPreviewGlobalSearchView.service.ts'
-  );
+  const viewService = source('src/main/onlypreview/views/onlyPreviewGlobalSearchView.service.ts');
   const focusBranch = helper.slice(
     helper.indexOf("if (command === 'focus-search')"),
     helper.indexOf("if (command === 'focus-project')")
@@ -172,11 +171,11 @@ test('Find to Global Search closes Find and delegates native overlay focus for e
   assert.doesNotMatch(focusBranch, /shellView\.webContents\.focus|\.capture\(|xpcMain\.broadcast/);
   assert.doesNotMatch(focusBranch, /focusActiveContent/);
   assert.match(helper, /bindNativeShortcuts\(webContents, host, 'chrome'\)/);
+  assert.match(helper, /mode === 'shell' \? 'shell' : mode === 'preview' \? 'vue' : 'search'/);
   assert.match(
-    helper,
-    /mode === 'shell' \? 'shell' : mode === 'preview' \? 'vue' : 'search'/
+    windowService,
+    /if \(origin !== 'search'\)[\s\S]*\.capture\(host\.hostToken, origin, opener\)/
   );
-  assert.match(windowService, /if \(origin !== 'search'\)[\s\S]*\.capture\(host\.hostToken, origin, opener\)/);
   assert.match(windowService, /origin === 'search' \? 'shell' : origin/);
   assert.match(viewService, /view\.webContents\.focus\(\)[\s\S]*ONLY_PREVIEW_FOCUS_SEARCH_EVENT/);
   const shellEvents = source(
@@ -236,11 +235,16 @@ test('native Global Search pulls context, nudges by revision, and closes to the 
 
   assert.match(
     client,
-    /ONLY_PREVIEW_GLOBAL_SEARCH_CONTEXT_CHANGED_EVENT[\s\S]*refreshContext\(onContext, onVisibility\)[\s\S]*await this\.refreshContext\(onContext, onVisibility\)/
+    /ONLY_PREVIEW_GLOBAL_SEARCH_CONTEXT_CHANGED_EVENT[\s\S]*refreshContext\(onContext, onVisibility, onLayout\)[\s\S]*await this\.refreshContext\(onContext, onVisibility, onLayout\)/
   );
+  assert.match(client, /onLayout\(snapshot\.layout\)/);
   assert.match(
     client,
     /ONLY_PREVIEW_GLOBAL_SEARCH_VISIBILITY_EVENT[\s\S]*acceptVisibility\(params, onVisibility\)/
+  );
+  assert.match(
+    client,
+    /ONLY_PREVIEW_GLOBAL_SEARCH_LAYOUT_EVENT[\s\S]*parseGlobalSearchLayoutEvent\(params\)[\s\S]*onLayout\(event\.layout\)/
   );
   assert.match(client, /if \(snapshot\.revision < this\.snapshot\.revision\) return/);
   assert.match(client, /if \(event\.revision < this\.snapshot\.revision\) return/);
@@ -263,6 +267,7 @@ test('Global Search alone renders as one inset transparent floating surface', ()
   const helper = source('src/main/windows/onlyPreviewWindow.helper.ts');
   const app = source('src/renderer/onlypreview/globalSearch/src/App.vue');
   const canvasStyle = source('src/renderer/onlypreview/globalSearch/src/App.less');
+  const viewService = source('src/main/onlypreview/views/onlyPreviewGlobalSearchView.service.ts');
   const workspaceStyle = source(
     'src/renderer/onlypreview/shell/src/components/GlobalSearch/GlobalSearchWorkspace.less'
   );
@@ -283,8 +288,13 @@ test('Global Search alone renders as one inset transparent floating surface', ()
   );
   assert.match(canvasStyle, /html,\s*\nbody,\s*\n#app\s*\{[\s\S]*?background:\s*transparent;/);
   assert.match(canvasStyle, /html,\s*\nbody\s*\{[\s\S]*?overflow:\s*hidden;/);
-  assert.match(canvasStyle, /body\s*\{[\s\S]*?margin:\s*0;[\s\S]*?padding:\s*24px;/);
-  assert.match(canvasStyle, /#app\s*\{[\s\S]*?overflow:\s*visible;/);
+  assert.match(canvasStyle, /body\s*\{[\s\S]*?margin:\s*0;/);
+  assert.doesNotMatch(canvasStyle, /body\s*\{[\s\S]*?padding:\s*24px;/);
+  assert.match(canvasStyle, /#app\s*\{[\s\S]*?overflow:\s*hidden;/);
+  assert.match(
+    canvasStyle,
+    /\.onlypreview-global-search-canvas\s*\{[\s\S]*?position:\s*relative;[\s\S]*?width:\s*100%;[\s\S]*?height:\s*100%;/
+  );
   assert.match(workspace, /overflow:\s*hidden;/);
   assert.match(workspace, /border-radius:\s*14px;/);
   assert.match(workspace, /background:\s*var\(--onlypreview-canvas\);/);
@@ -295,25 +305,30 @@ test('Global Search alone renders as one inset transparent floating surface', ()
   assert.equal((workspace.match(/rgb\(/g) ?? []).length, 2);
   assert.doesNotMatch(workspace, /(?:backdrop-)?filter\s*:/);
 
-  assert.match(app, /if \(event\.target !== document\.body\) return;/);
+  assert.match(app, /FLOATING_GUTTER_PX = 24/);
+  assert.match(app, /bounds\.x \+ FLOATING_GUTTER_PX/);
+  assert.match(app, /bounds\.y \+ FLOATING_GUTTER_PX/);
+  assert.match(app, /bounds\.width - FLOATING_GUTTER_PX \* 2/);
+  assert.match(app, /bounds\.height - FLOATING_GUTTER_PX \* 2/);
+  assert.match(app, /if \(event\.target !== event\.currentTarget\) return;/);
   assert.match(
     app,
     /event\.preventDefault\(\);[\s\S]*event\.stopImmediatePropagation\(\);[\s\S]*onlyPreviewGlobalSearchStore\.dismiss\(\)/
   );
-  assert.match(
-    app,
-    /onMounted\(\(\) => document\.body\.addEventListener\('click', dismissFromBodyGutter\)\)/
-  );
-  assert.match(
-    app,
-    /onUnmounted\(\(\) => document\.body\.removeEventListener\('click', dismissFromBodyGutter\)\)/
-  );
+  assert.match(app, /class="onlypreview-global-search-canvas"/);
+  assert.match(app, /@click="dismissFromTransparentCanvas"/);
+  assert.match(viewService, /view\.setBounds\(\{ \.\.\.bounds \}\)/);
+  assert.match(helper, /\{ x: 0, y: 0, width: contentWidth, height: contentHeight \}/);
 });
 
 test('Global Search context snapshot carries exact versioned visibility state', () => {
   const snapshot = {
     revision: 7,
     active: true,
+    layout: {
+      viewBounds: { x: 0, y: 0, width: 1200, height: 800 },
+      workspaceBounds: { x: 280, y: 75, width: 920, height: 725 }
+    },
     workspace: {
       workspaceId: 'workspace-global-search-000000',
       generation: 3,
@@ -326,6 +341,13 @@ test('Global Search context snapshot carries exact versioned visibility state', 
   for (const invalid of [
     { ...snapshot, active: 'true' },
     { revision: snapshot.revision, workspace: snapshot.workspace },
+    {
+      ...snapshot,
+      layout: {
+        ...snapshot.layout,
+        workspaceBounds: { x: 1100, y: 75, width: 920, height: 725 }
+      }
+    },
     { ...snapshot, extra: false }
   ]) {
     assert.throws(
@@ -335,25 +357,15 @@ test('Global Search context snapshot carries exact versioned visibility state', 
   }
 });
 
-test('native Global Search visibility drives one lightweight click-to-dismiss Shell scrim', () => {
+test('the full-window Search renderer retires the Shell dismissal scrim', () => {
   const shared = source('src/shared/onlypreview/onlyPreview.types.ts');
-  const viewService = source(
-    'src/main/onlypreview/views/onlyPreviewGlobalSearchView.service.ts'
-  );
+  const viewService = source('src/main/onlypreview/views/onlyPreviewGlobalSearchView.service.ts');
   const shellEvents = source(
     'src/renderer/onlypreview/shell/src/onlyPreviewShellEvents.service.ts'
   );
-  const visibilityStore = source(
-    'src/renderer/onlypreview/shell/src/onlyPreviewGlobalSearchVisibility.store.ts'
-  );
-  const shellClient = source(
-    'src/renderer/onlypreview/shell/src/onlyPreviewGlobalSearchShell.client.ts'
-  );
-  const dismissService = source(
-    'src/renderer/onlypreview/shell/src/onlyPreviewGlobalSearchDismiss.service.ts'
-  );
   const app = source('src/renderer/onlypreview/shell/src/App.vue');
   const style = source('src/renderer/onlypreview/shell/src/App.less');
+  const searchApp = source('src/renderer/onlypreview/globalSearch/src/App.vue');
 
   assert.match(shared, /ONLY_PREVIEW_GLOBAL_SEARCH_VISIBILITY_EVENT/);
   assert.match(
@@ -364,46 +376,23 @@ test('native Global Search visibility drives one lightweight click-to-dismiss Sh
     viewService,
     /reportContext[\s\S]*broadcastVisibility\(runtime\)[\s\S]*show\([\s\S]*broadcastVisibility\(runtime\)/
   );
-  assert.match(viewService, /close\([\s\S]*setActive\(false\)[\s\S]*broadcastVisibility\(runtime\)/);
   assert.match(
-    shellEvents,
-    /Reflect\.ownKeys\(event\)\.length === 3[\s\S]*typeof event\.hostId === 'string'[\s\S]*Number\.isSafeInteger\(event\.revision\)[\s\S]*typeof event\.active === 'boolean'/
+    viewService,
+    /close\([\s\S]*setActive\(false\)[\s\S]*broadcastVisibility\(runtime\)/
   );
-  assert.match(
-    shellEvents,
-    /ONLY_PREVIEW_GLOBAL_SEARCH_VISIBILITY_EVENT[\s\S]*isCurrentHost\(params\)[\s\S]*onlyPreviewGlobalSearchVisibilityStore\.setActive\(params\.active\)/
-  );
-  assert.match(shellEvents, /params\.revision < globalSearchVisibilityRevision/);
-  assert.match(visibilityStore, /active = false/);
-  assert.match(
-    shellClient,
-    /dismiss\(\)[\s\S]*closeGlobalSearch\(\{ hostToken, mode: 'opener' \}\)/
-  );
-  assert.match(app, /v-if="onlyPreviewGlobalSearchVisibilityStore\.active"/);
-  assert.match(app, /name="onlypreview__globalSearchScrim"/);
-  assert.match(app, /@click="dismissOnlyPreviewGlobalSearch"/);
-  assert.match(
-    dismissService,
-    /dismissOnlyPreviewGlobalSearch[\s\S]*await onlyPreviewGlobalSearchShellClient\.dismiss\(\)[\s\S]*OPERATION_FAILED/
-  );
-  assert.doesNotMatch(app, /closeGlobalSearch|OPERATION_FAILED/);
-
-  const scrimStart = style.indexOf('.onlypreview-shell__global-search-scrim');
-  const scrim = style.slice(scrimStart, style.indexOf('}', scrimStart) + 1);
-  assert.match(scrim, /position: absolute/);
-  assert.match(scrim, /inset: 0/);
-  assert.match(scrim, /z-index: 40/);
-  assert.match(scrim, /background:\s*transparent;/);
-  assert.match(scrim, /-webkit-app-region: no-drag/);
-  assert.doesNotMatch(
-    scrim,
-    /rgba?\s*\(|hsla?\s*\(|#[0-9a-f]{4,8}|color-mix|gradient|opacity\s*:|(?:backdrop-)?filter\s*:|animation(?:-[\w-]+)?\s*:|transition(?:-[\w-]+)?\s*:/i
-  );
+  assert.doesNotMatch(shellEvents, /ONLY_PREVIEW_GLOBAL_SEARCH_VISIBILITY_EVENT/);
+  assert.doesNotMatch(app, /globalSearchScrim|dismissOnlyPreviewGlobalSearch/);
+  assert.doesNotMatch(style, /onlypreview-shell__global-search-scrim/);
+  assert.match(searchApp, /onlyPreviewGlobalSearchStore\.dismiss\(\)/);
+  assert.match(searchApp, /event\.stopImmediatePropagation\(\)/);
 });
 
 test('removed Project Search style and catalog surface does not remain', () => {
   const style = source('src/renderer/onlypreview/shell/src/App.less');
   const i18n = source('src/renderer/onlypreview/common/onlyPreviewI18n.ts');
-  assert.doesNotMatch(style, /onlypreview-shell__(?:search|project-search-scope|scope-control|scope-label|scope-select|scope-target)/);
+  assert.doesNotMatch(
+    style,
+    /onlypreview-shell__(?:search|project-search-scope|scope-control|scope-label|scope-select|scope-target)/
+  );
   assert.doesNotMatch(i18n, /projectSearch|Filter files and folders|筛选文件和文件夹/);
 });

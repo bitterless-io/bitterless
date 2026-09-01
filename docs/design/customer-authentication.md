@@ -92,16 +92,16 @@ The recovery surface never renders authenticated workspace content before `/auth
 `Retry` reuses the same token. `Use another account` is the only recovery-state action that clears
 the saved token and starts best-effort logout cleanup.
 
-Settings exposes account identity inside the existing General page without adding another card:
+Workbench exposes account identity as an inner Settings category without adding another card or a
+new top-level pane:
 
 ```text
-┌──────────────────────── Settings → General ──────────────────────────────┐
-│ Display language                                                         │
-│ Search engine                                                            │
-│                                                                          │
-│ Account                                                                  │
-│ signed-in@example.test                                         [Logout] │
-└──────────────────────────────────────────────────────────────────────────┘
+┌──────────── Workbench → Settings ──────────────────────────────────────┐
+│ General       │ Account                                                │
+│ Account       │ Email                                                  │
+│ LLM           │ signed-in@example.test                                 │
+│ ...           │                                              [Logout]  │
+└───────────────┴────────────────────────────────────────────────────────┘
 ```
 
 ## Interaction contract
@@ -116,7 +116,7 @@ Settings exposes account identity inside the existing General page without addin
 | First-password setup | Require two matching inputs of at least eight characters; keep the modal open on mutation error; after mutation success, any route failure changes the modal to a navigation-only retry |
 | Update available while logged out | Show the same compact `update` action as the authenticated workspace; clicking it calls the existing update restart flow |
 | Window controls while logged out | Keep the shared macOS drag region or Windows minimize/maximize/close controls interactive above the login content |
-| Logout | Clear local authentication and route to Login immediately; best-effort revoke the Core token and silently tear down authenticated secondary windows |
+| Logout | Clear local authentication and route/broadcast Login before deactivating authenticated runtimes; when invoked from Workbench, close it and reveal Maestro on the pinned fixed Home Login surface rather than a restored web/startup tab |
 
 The desktop owns one installation-level `device_id`. If the persisted value is absent, it creates
 and saves one before authentication; if present, it reuses it unchanged. Password login,
@@ -169,7 +169,7 @@ remain lazy-loaded.
   surface, restrained shadow, spacing, and the main login heading. The small `Bitterless` eyebrow is
   absent. No invited-account helper sentence appears below the heading; the login mode selector is
   the next control.
-- General Account follows the page's existing flat section rhythm and adds no bordered card.
+- Settings Account follows the page's existing flat section rhythm and adds no bordered card.
 - At the `800x600` minimum window size, each modal remains fully reachable and owns its internal
   scrolling when necessary.
 - The 32px shared `MenuBar` is the only window-chrome layer. Login content fills the remaining
@@ -186,7 +186,7 @@ remain lazy-loaded.
 - `src/renderer/home/src/stores/auth/authSession.service.ts`
 - `src/renderer/home/src/networking/auth.api.ts`
 - `src/renderer/home/src/router/index.ts`
-- `src/renderer/home/src/views/setting/components/GeneralSetting/GeneralSetting.vue`
-- `src/renderer/home/src/views/setting/components/GeneralSetting/GeneralSetting.less`
+- `src/renderer/home/src/views/setting/components/AccountSetting/AccountSetting.vue`
+- `src/renderer/home/src/views/setting/components/AccountSetting/AccountSetting.less`
 - `src/main/windows/mainWindow.helper.ts`
 - `src/main/xpc/auth.handler.ts`

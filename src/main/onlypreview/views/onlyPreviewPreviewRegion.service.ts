@@ -29,7 +29,10 @@ import type { OnlyPreviewPreviewReadPreparedSelection } from '@shared/onlyprevie
 import { onlyPreviewAssetRegistry } from '@main/onlypreview/onlyPreviewAsset.registry';
 import { onlyPreviewDocumentRegistry } from '@main/onlypreview/onlyPreviewDocument.registry';
 import { onlyPreviewHostRegistry } from '@main/onlypreview/onlyPreviewHost.registry';
-import { onlyPreviewWorkspaceRegistry } from '@main/onlypreview/onlyPreviewWorkspace.registry';
+import {
+  onlyPreviewWorkspaceRegistry,
+  type OnlyPreviewPreviewAuthorityRef
+} from '@main/onlypreview/onlyPreviewWorkspace.registry';
 import { getOnlyPreviewAdapterSpec } from '@shared/onlypreview/onlyPreviewFind.registry';
 import { OnlyPreviewFindService } from './onlyPreviewFind.service';
 import {
@@ -152,15 +155,21 @@ export class OnlyPreviewPreviewRegionService {
     let prepared: OnlyPreviewPreviewReadPreparedSelection | null = null;
     let descriptor: OnlyPreviewDescriptor | null = null;
     try {
-      const officeKind = getOnlyPreviewOfficePackageKind(fileRef.relativePath);
-      if (officeKind) {
-        await this.presentOffice(runtime, fileRef, revision, officeKind);
-        return;
-      }
-      const authority = onlyPreviewWorkspaceRegistry.getProjectAuthorityItemRef(
+      const authority = onlyPreviewWorkspaceRegistry.getPreviewAuthorityItemRef(
         runtime.host.hostToken,
         fileRef
       );
+      const officeKind = getOnlyPreviewOfficePackageKind(fileRef.relativePath);
+      if (officeKind) {
+        await this.presentOffice(runtime, fileRef, revision, officeKind, authority);
+        return;
+      }
+      await fileSearchWindowService.bindPreviewReadWorkspace({
+        workspaceId: authority.workspaceId,
+        workspaceGeneration: authority.workspaceGeneration,
+        rootPath: authority.rootPath
+      });
+      if (!this.isCurrent(runtime, revision)) return;
       prepared = await fileSearchWindowService.preparePreviewRead({
         grantId: randomUUID(),
         selectionRevision: revision,
@@ -283,6 +292,26 @@ export class OnlyPreviewPreviewRegionService {
 
   clearWorkspace(hostToken: string, workspaceId: string | null = null): void {
     const runtime = this.requireRuntime(hostToken);
+    this.clearPresentation(runtime, workspaceId);
+  }
+
+  handleWorkspaceRevoked(hostToken: string, workspaceId: string): void {
+    const runtime = this.runtime;
+    if (
+      !runtime ||
+      runtime.host.hostToken !== hostToken ||
+      (this.presentation.workspaceId !== workspaceId &&
+        this.presentation.fileRef?.workspaceId !== workspaceId)
+    ) {
+      return;
+    }
+    this.clearPresentation(runtime, null);
+  }
+
+  private clearPresentation(
+    runtime: OnlyPreviewPreviewRegionRuntime,
+    workspaceId: string | null
+  ): void {
     this.beginTransition(null);
     this.activePreviewSurface = 'vue';
     this.presentation = {
@@ -538,9 +567,15 @@ export class OnlyPreviewPreviewRegionService {
     runtime: OnlyPreviewPreviewRegionRuntime,
     fileRef: OnlyPreviewFileRef,
     revision: number,
-    kind: OnlyPreviewOfficePackageKind
+    kind: OnlyPreviewOfficePackageKind,
+    authority: OnlyPreviewPreviewAuthorityRef
   ): Promise<void> {
     await this.readBroker.waitForOfficeCancellation();
+    await fileSearchWindowService.bindOfficeWorkspace({
+      workspaceId: authority.workspaceId,
+      rootPath: authority.rootPath
+    });
+    if (!this.isCurrent(runtime, revision)) return;
     this.viewService.ensureVuePreviewView();
     const runtimeId = this.viewService.getVueRuntimeToken();
     const brokerCapability = this.viewService.getOfficeBrokerCapability();
@@ -753,7 +788,6 @@ export class OnlyPreviewPreviewRegionService {
   private isCurrent(runtime: OnlyPreviewPreviewRegionRuntime, revision: number): boolean {
     return this.runtime === runtime && this.selectionRevision === revision;
   }
-
 }
 
 export const onlyPreviewPreviewRegionService = new OnlyPreviewPreviewRegionService();

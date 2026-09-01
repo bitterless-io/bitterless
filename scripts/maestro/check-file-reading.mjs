@@ -11,7 +11,8 @@ const assert = (condition, message) => {
 const pkg = JSON.parse(read('package.json'))
 const fileReader = read('src/main/maestro/files/fileReader.service.ts')
 const anydocService = read('src/main/maestro/files/anydoc.service.ts')
-const prepareAnydoc = read('scripts/prepare-maestro-anydoc.cjs')
+const externalTools = read('scripts/maestro/externalTools.cjs')
+const packageToolsDispatcher = read('scripts/prepare-maestro-package-tools.cjs')
 const builderTemplate = read('electron-builder.tmp.yml')
 const messageItem = read('src/renderer/maestro/control/src/MessageItem.vue')
 const archiveService = read('src/main/maestro/files/archive.service.ts')
@@ -21,29 +22,42 @@ const workspaceArchive = read('src/main/maestro/files/workspaceArchive.service.t
 // import Main's Electron-dependent service or require a staged native binary in an ordinary Node
 // process; packaging performs the executable/checksum verification.
 assert(pkg.anydoc_version === '0.2.4', 'anydoc CLI must stay pinned to 0.2.4')
+assert(pkg.bun_version === '1.3.14', 'Bun must stay pinned to 1.3.14')
+assert(pkg.rg_version === '14.1.1', 'ripgrep must stay pinned to 14.1.1')
+assert(pkg.fd_version === '10.5.0', 'fd must stay pinned to 10.5.0')
+assert(pkg.ouch_version === '0.8.2', 'Ouch must stay pinned to 0.8.2')
 assert(!pkg.dependencies?.['@firecrawl/anydoc'], 'anydoc must not be an application dependency')
 assert(!pkg.dependencies?.['@firecrawl/anydoc-wasm'], 'anydoc WASM must not be an application dependency')
 assert(
-  prepareAnydoc.includes("const STAGED_FILES = ['anydoc.js', 'anydoc.node', 'cli.js', 'index.js', 'package.json']"),
-  'anydoc staging should contain exactly the five-file CLI/native bundle'
+  externalTools.includes("const ANYDOC_BUNDLE_FILES = ['anydoc.js', 'cli.js', 'index.js', 'package.json']") &&
+    externalTools.includes("output: 'anydoc/anydoc.node'"),
+  'the external-tools inventory should contain exactly the five-file AnyDoc CLI/native bundle'
 )
 assert(
-  prepareAnydoc.includes('PACKAGE_TARBALL_SHA512') &&
-    prepareAnydoc.includes("createHash('sha512')") &&
-    prepareAnydoc.includes('verifyPackageTarball(tarball)'),
-  'anydoc npm tarball should be integrity-pinned and checked before extraction'
+  externalTools.includes("sha512: 'rfJxa5L+") &&
+    externalTools.includes("'sha512'") &&
+    externalTools.includes("'base64'"),
+  'AnyDoc npm tarball should be SHA-512 pinned and checked before extraction'
 )
 assert(
-  (prepareAnydoc.match(/sha256: '[a-f0-9]{64}'/g) || []).length === 5 &&
-    prepareAnydoc.includes('verifyNative(stagedNative, target)') &&
-    prepareAnydoc.includes("verifyNative(path.join(STAGE_DIR, 'anydoc.node'), TARGETS[platform])"),
-  'all supported anydoc native binaries and the staged binary should be checksum-verified'
+  externalTools.includes('const sourceDirectory = validateExternalStore(') &&
+    externalTools.includes('verifyStagedExternalTools(root, normalized.packageTarget, inventory)'),
+  'packaging should validate the initialized payload and the final offline stage'
 )
 assert(
-  pkg.scripts?.['_package:mac_arm']?.includes('prepare-maestro-anydoc.cjs mac_arm') &&
-    pkg.scripts?.['_package:mac_arm']?.includes('prepare-maestro-anydoc.cjs mac_arm --verify') &&
-    pkg.scripts?.['_package:win']?.includes('prepare-maestro-anydoc.cjs win64 --verify'),
-  'packaging should stage and verify anydoc for its target platform'
+  pkg.scripts?.['_package:mac_arm']?.includes('externalTools.cjs stage mac_arm') &&
+    pkg.scripts?.['_package:mac_arm']?.includes('externalTools.cjs verify-stage mac_arm') &&
+    pkg.scripts?.['_package:win']?.includes('externalTools.cjs verify-stage win64') &&
+    pkg.scripts?.['_package:unpack']?.includes('prepare-maestro-package-tools.cjs'),
+  'supported packaging should stage and verify initialized external tools offline'
+)
+assert(
+  packageToolsDispatcher.includes("platform === 'darwin'") &&
+    packageToolsDispatcher.includes("platform === 'win32'") &&
+    packageToolsDispatcher.includes("platform === 'linux'") &&
+    packageToolsDispatcher.includes("'scripts/prepare-maestro-anydoc.cjs', target, '--verify'") &&
+    packageToolsDispatcher.includes("'scripts/maestro/externalTools.cjs', 'verify-stage', target"),
+  'generic unpack should dispatch macOS/Windows to external tools and preserve the Linux preparation path'
 )
 assert(
   builderTemplate.includes('- from: build/maestro-tools') &&

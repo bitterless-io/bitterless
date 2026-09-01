@@ -7,7 +7,6 @@ import {
   ONLY_PREVIEW_FIND_STATE_EVENT,
   ONLY_PREVIEW_FOCUS_PROJECT_EVENT,
   ONLY_PREVIEW_GLOBAL_SEARCH_REVEAL_DIRECTORY_EVENT,
-  ONLY_PREVIEW_GLOBAL_SEARCH_VISIBILITY_EVENT,
   ONLY_PREVIEW_PREVIEW_PRESENTATION_EVENT,
   ONLY_PREVIEW_REFRESH_EVENT,
   ONLY_PREVIEW_SELECTION_CHANGED_EVENT,
@@ -15,8 +14,7 @@ import {
   ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT,
   type OnlyPreviewCharacterCountEvent,
   type OnlyPreviewCharacterCountRevisionEvent,
-  type OnlyPreviewGlobalSearchDirectoryRevealAction,
-  type OnlyPreviewGlobalSearchVisibilityEvent
+  type OnlyPreviewGlobalSearchDirectoryRevealAction
 } from '@shared/onlypreview/onlyPreview.types';
 import {
   ONLY_PREVIEW_BROWSE_LISTING_EVENT,
@@ -30,7 +28,6 @@ import { isOnlyPreviewBrowseListingEvent } from './onlyPreviewBrowseListing.serv
 import { isOnlyPreviewPresentationNudge } from '../../common/onlyPreviewPresentation.service';
 import { isOnlyPreviewSearchProgressEvent } from './onlyPreviewSearchProgress.service';
 import { isOnlyPreviewSearchSnapshotEvent } from './onlyPreviewSearchSnapshot.service';
-import { onlyPreviewGlobalSearchVisibilityStore } from './onlyPreviewGlobalSearchVisibility.store';
 
 interface OnlyPreviewShellEventHandlers {
   workspaceChanged: () => void;
@@ -79,20 +76,6 @@ const isGlobalSearchDirectoryRevealAction = (
   }
 };
 
-const isGlobalSearchVisibilityEvent = (
-  value: unknown
-): value is OnlyPreviewGlobalSearchVisibilityEvent => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const event = value as Record<string, unknown>;
-  return (
-    Reflect.ownKeys(event).length === 3 &&
-    typeof event.hostId === 'string' &&
-    Number.isSafeInteger(event.revision) &&
-    (event.revision as number) >= 0 &&
-    typeof event.active === 'boolean'
-  );
-};
-
 const isCharacterCountEvent = (value: unknown): value is OnlyPreviewCharacterCountEvent => {
   if (!value || typeof value !== 'object') return false;
   const event = value as Record<string, unknown>;
@@ -129,7 +112,6 @@ export const subscribeOnlyPreviewShellEvents = (
 ): void => {
   if (!hostId) return;
   const isCurrentHost = (value: { hostId: string }): boolean => value.hostId === hostId;
-  let globalSearchVisibilityRevision = -1;
   xpcRenderer.subscribe(ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT, ({ params }) => {
     if (isHostEvent(params) && isCurrentHost(params)) handlers.workspaceChanged();
   });
@@ -172,13 +154,6 @@ export const subscribeOnlyPreviewShellEvents = (
   xpcRenderer.subscribe(ONLY_PREVIEW_SETTINGS_CHANGED_EVENT, handlers.settingsChanged);
   xpcRenderer.subscribe(ONLY_PREVIEW_FOCUS_PROJECT_EVENT, ({ params }) => {
     if (isHostEvent(params) && isCurrentHost(params)) handlers.focusProject();
-  });
-  xpcRenderer.subscribe(ONLY_PREVIEW_GLOBAL_SEARCH_VISIBILITY_EVENT, ({ params }) => {
-    if (isGlobalSearchVisibilityEvent(params) && isCurrentHost(params)) {
-      if (params.revision < globalSearchVisibilityRevision) return;
-      globalSearchVisibilityRevision = params.revision;
-      onlyPreviewGlobalSearchVisibilityStore.setActive(params.active);
-    }
   });
   xpcRenderer.subscribe(ONLY_PREVIEW_GLOBAL_SEARCH_REVEAL_DIRECTORY_EVENT, ({ params }) => {
     if (isGlobalSearchDirectoryRevealAction(params) && isCurrentHost(params)) {

@@ -443,6 +443,17 @@ export class CodexAppServerSupervisor {
     return result.thread;
   }
 
+  async archiveThread(threadId: string): Promise<void> {
+    const connection = this.connection;
+    if (!connection || !this.isConnected()) {
+      throw new Error('Codex App Server is not connected');
+    }
+    const result = await this.request(connection, 'thread/archive', { threadId });
+    if (!isEyesOnAgentsRecord(result) || Object.keys(result).length !== 0) {
+      throw new Error('Codex thread/archive response is invalid');
+    }
+  }
+
   async listThreadTurns(threadId: string): Promise<unknown[]> {
     const connection = this.connection;
     if (!connection || !this.isConnected()) {

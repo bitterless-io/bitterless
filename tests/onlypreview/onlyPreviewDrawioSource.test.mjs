@@ -41,6 +41,9 @@ test('pins the official local viewer and license with a remote-free iframe-free 
   );
   assert.match(controller, /reportSurfaceReady\(reportingRevision\)/);
   assert.match(controller, /reportSurfaceError\([\s\S]*reportingRevision/);
+  assert.match(controller, /new AbortController\(\)/);
+  assert.match(controller, /mountAbortController\?\.abort\(\)/);
+  assert.match(controller, /signal: abortController\.signal/);
 
   const html = source('src/renderer/onlypreview/preview/index.html');
   assert.match(html, /frame-src 'none'/);

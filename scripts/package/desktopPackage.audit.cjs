@@ -58,7 +58,6 @@ const BANNED_PACKAGES = Object.freeze([
   'vue-router',
   'vuedraggable',
   'xterm',
-  'youtube-dl-exec',
 ]);
 
 const formatMiB = (bytes) => (bytes / MIB).toFixed(2);

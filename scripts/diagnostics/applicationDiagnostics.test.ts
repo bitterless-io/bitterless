@@ -18,8 +18,14 @@ import {
   APPLICATION_LOG_FILE_MAX_SIZE,
   isFirstPartyRendererUrl,
   resolveFirstPartyRendererProcess,
-  resolveApplicationLogFile
+  resolveApplicationLogFile,
+  resolveOnlyPreviewLogFile,
+  resolveTranslatorLogFile
 } from '../../src/main/logging/logPolicy.service';
+import {
+  formatOnlyPreviewFailureLine,
+  ONLY_PREVIEW_LOG_TOKEN_LIMIT
+} from '../../src/main/logging/onlyPreviewLogRecord.service';
 import { buildDiagnosticEnvironmentStatus } from '../../src/main/diagnostics/diagnosticEnvironment.service';
 import { parseApplicationDiagnosticDirectoryKey } from '../../src/shared/diagnostics/applicationDiagnostics.contract';
 import {
@@ -206,6 +212,151 @@ test('resolves debug logs under active userData and release logs under OS log ro
     }),
     '/os/logs/Bitterless/main.log'
   );
+});
+
+test('OnlyPreview owns a dedicated log file beside the Translator file', () => {
+  const debug = resolveRuntimeProfile({
+    releaseChannel: 'prod',
+    viteMode: 'debug',
+    viteEnv: 'prod'
+  });
+  const preview = resolveRuntimeProfile({
+    releaseChannel: 'preview',
+    viteMode: 'release',
+    viteEnv: 'prod'
+  });
+  assert.equal(
+    resolveOnlyPreviewLogFile(debug, {
+      userData: '/profiles/Bitterless_DEBUG_PROD',
+      libraryDefaultDir: '/os/logs/Bitterless_DEBUG_PROD'
+    }),
+    '/profiles/Bitterless_DEBUG_PROD/logs/onlypreview/onlypreview.log'
+  );
+  assert.equal(
+    resolveOnlyPreviewLogFile(preview, {
+      userData: '/profiles/Bitterless_PREVIEW',
+      libraryDefaultDir: '/os/logs/Bitterless_PREVIEW'
+    }),
+    '/os/logs/Bitterless_PREVIEW/onlypreview/onlypreview.log'
+  );
+});
+
+test('each release channel writes every log family under its own profile root', () => {
+  const profiles = [
+    resolveRuntimeProfile({ releaseChannel: 'prod', viteMode: 'release', viteEnv: 'prod' }),
+    resolveRuntimeProfile({ releaseChannel: 'preview', viteMode: 'release', viteEnv: 'prod' }),
+    resolveRuntimeProfile({ releaseChannel: 'dev', viteMode: 'release', viteEnv: 'dev' }),
+    resolveRuntimeProfile({ releaseChannel: 'prod', viteMode: 'debug', viteEnv: 'prod' }),
+    resolveRuntimeProfile({ releaseChannel: 'dev', viteMode: 'debug', viteEnv: 'dev' })
+  ];
+  assert.equal(new Set(profiles.map((profile) => profile.appName)).size, profiles.length);
+
+  // Mirrors what the runtime produces: applyRuntimeProfile() sets app.setName(appName) and
+  // app.setPath('userData', <appData>/<appName>) before logging initializes, and electron-log
+  // derives libraryDefaultDir from that same app name.
+  const files = profiles.flatMap((profile) => {
+    const paths = {
+      userData: `/appData/${profile.appName}`,
+      libraryDefaultDir: `/os/logs/${profile.appName}`
+    };
+    return [
+      resolveApplicationLogFile(profile, paths),
+      resolveTranslatorLogFile(profile, paths),
+      resolveOnlyPreviewLogFile(profile, paths)
+    ];
+  });
+  assert.equal(new Set(files).size, files.length);
+
+  const previewFiles = files.filter((file) => file.includes('Bitterless_PREVIEW'));
+  assert.equal(previewFiles.length, 3);
+  for (const previewFile of previewFiles) {
+    assert.equal(previewFile.startsWith('/os/logs/Bitterless_PREVIEW/'), true);
+    assert.equal(previewFile.includes('/os/logs/Bitterless/'), false);
+  }
+});
+
+test('an OnlyPreview action failure is recorded with a sanitized cause', () => {
+  const root = mkdtempSync(join(tmpdir(), 'bitterless-onlypreview-log-'));
+  const profile = resolveRuntimeProfile({
+    releaseChannel: 'preview',
+    viteMode: 'release',
+    viteEnv: 'prod'
+  });
+  const file = resolveOnlyPreviewLogFile(profile, {
+    userData: join(root, 'userData'),
+    libraryDefaultDir: root
+  });
+  try {
+    const logger = electronLog.create({ logId: `onlypreview-diagnostics-${Date.now()}` });
+    Object.assign(logger.variables, {
+      profile: profile.id,
+      channel: profile.releaseChannel,
+      proc: 'onlypreview',
+      world: 'main'
+    });
+    logger.hooks.push(sanitizeApplicationLogMessage);
+    logger.transports.console.level = false;
+    logger.transports.file.level = 'info';
+    logger.transports.file.format = ({ message }) => formatApplicationLogMessage(message);
+    logger.transports.file.maxSize = APPLICATION_LOG_FILE_MAX_SIZE;
+    logger.transports.file.resolvePathFn = () => file;
+
+    logger.error(
+      formatOnlyPreviewFailureLine({
+        operation: 'revealInFolder',
+        code: 'OPERATION_FAILED',
+        error: Object.assign(
+          new Error('open /Users/ral/Documents/secret plan.md?token=leaked-target-token'),
+          { code: 'ENOENT' }
+        )
+      })
+    );
+    logger.error(
+      formatOnlyPreviewFailureLine({
+        operation: 'chooseFolder\nspoofed scope]',
+        code: 'not a code',
+        error: null
+      })
+    );
+
+    const records = readFileSync(file, 'utf8')
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line));
+    assert.equal(records.length, 2);
+    assert.equal(records[0].level, 'error');
+    assert.equal(records[0].profile, 'production-preview');
+    assert.equal(records[0].channel, 'preview');
+    assert.equal(records[0].scope, 'onlypreview');
+    assert.match(records[0].msg, /^operation=revealInFolder errorCode=OPERATION_FAILED cause=/);
+    assert.match(records[0].msg, /errorCode=ENOENT/);
+    assert.equal(records[0].msg.includes('leaked-target-token'), false);
+    assert.equal(records[0].msg.includes('/Users/ral'), false);
+    assert.equal(records[1].scope, 'onlypreview');
+    assert.equal(
+      records[1].msg,
+      'operation=chooseFolder-spoofed-sc errorCode=not-a-code cause=unavailable'
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('every OnlyPreview Main operation reports itself before its payload is generalized', () => {
+  const handler = source('src/main/xpc/onlyPreview.handler.ts');
+  assert.match(handler, /onlyPreviewLogService\.writeOperationFailure\(\{\s*operation,/);
+  const callSites = handler.match(/runOperation\(/g) ?? [];
+  const namedCallSites = handler.match(/runOperation\(\s*'([A-Za-z0-9_]+)'\s*,/g) ?? [];
+  assert.equal(callSites.length, namedCallSites.length);
+  assert.equal(namedCallSites.length, 40);
+  assert.equal(new Set(namedCallSites).size, namedCallSites.length);
+
+  // Every reported name must survive the sanitizer's opaque-token rule and stay distinguishable
+  // after the shared 23-character bound.
+  const reported = namedCallSites.map((site) =>
+    (site.match(/'([A-Za-z0-9_]+)'/) as RegExpMatchArray)[1].slice(0, ONLY_PREVIEW_LOG_TOKEN_LIMIT)
+  );
+  assert.equal(new Set(reported).size, reported.length);
 });
 
 test('renderer log capture accepts only known first-party renderer entries', () => {

@@ -15,7 +15,10 @@ export const zh: typeof en = {
     passwordMinimum: '至少 8 位',
     confirmPasswordPlaceholder: '再次输入密码',
     setPasswordAndContinue: '设置密码并继续',
-    continueToWorkspace: '继续进入工作区'
+    continueToWorkspace: '继续进入工作区',
+    homeAuthorityLoading: '正在检查 Bitterless 登录状态…',
+    homeAuthorityUnavailable: '暂时无法获取登录状态。',
+    homeAuthorityRetry: '重试'
   },
   app: {
     quit: '退出',
@@ -146,13 +149,19 @@ export const zh: typeof en = {
         showChatMenuDescription: '保留从主菜单进入现有 Chat 工作区的入口。',
         showChatMenuSaveFailed: '无法更新 Chat 菜单设置，已恢复之前的设置。'
       },
-      account: {
-        label: '账号',
-        logout: '退出登录'
-      },
       save: '保存',
       saveSuccess: '保存成功',
       saveFailed: '保存失败'
+    },
+    account: {
+      tabTitle: '账号',
+      title: '账号',
+      email: '邮箱',
+      loading: '正在加载账号信息…',
+      unavailable: '无法加载账号邮箱。',
+      retry: '重试',
+      logout: '退出登录',
+      logoutFailed: '无法退出登录，请重试。'
     },
     proxy: {
       tabTitle: '代理',
@@ -228,6 +237,7 @@ export const zh: typeof en = {
         userData: '用户数据',
         sessionData: '会话数据',
         logs: '日志',
+        onlypreviewLogs: 'OnlyPreview 日志',
         cache: '缓存',
         crashDumps: '崩溃转储',
         temp: '临时文件',
@@ -753,6 +763,7 @@ export const zh: typeof en = {
       markRead: '标为已读',
       markUnread: '标为未读',
       copySessionPath: '复制会话路径',
+      archive: '归档',
       more: '更多操作',
       searchTitles: '搜索任务标题',
       searchTitlesMac: '搜索标题（⌘F）',
@@ -837,6 +848,7 @@ export const zh: typeof en = {
     todoLimitReached: '单个分组最多创建 77 个未完成任务',
     domainLimitReached: '最多可以创建 17 个分组',
     runtimeUnavailable: 'Todo 暂不可用，本地数据运行时未能打开。',
+    sessionRequired: 'Todo 需要在本应用中登录 Bitterless 账号，请打开主窗口登录。',
     refresh: '刷新',
     archive: '归档',
     archivedDomains: '已归档分组',

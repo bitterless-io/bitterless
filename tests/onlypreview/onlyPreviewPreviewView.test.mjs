@@ -262,7 +262,7 @@ test('Vue bundle load failure publishes unavailable without an automatic recreat
   assert.equal(children.has(state.vueViews[1]), true);
 });
 
-test('PDF readiness waits for the viewer document frame and reports a truthful timeout', async () => {
+test('PDF readiness requires the exact document-frame finish event and reports a truthful timeout', async () => {
   await withFakeTimeouts(async (timers) => {
     const { service } = createHarness();
     service.updateBounds(host.hostToken, bounds);
@@ -270,33 +270,47 @@ test('PDF readiness waits for the viewer document frame and reports a truthful t
     await service.present(host.hostToken, fileRef('paper.pdf'));
     const chrome = state.chromeViews.at(-1);
     const navigationUrl = chrome.webContents.loadedUrls.at(-1);
+    const attachNotifications = state.activeViewAttachNotifications;
 
-    // A blank viewer still finishes loading, so the navigation alone must not publish ready.
+    // Main-frame completion and mere matching-frame existence cannot publish PDFium readiness.
     chrome.webContents.emit('did-finish-load');
     assert.equal(service.snapshot(host.hostToken).status, 'loading');
-
-    const runPendingPoll = () => {
-      const pending = timers.filter((timer) => timer.active).at(-1);
-      assert.ok(pending, 'a document-frame poll must be scheduled');
-      pending.active = false;
-      pending.callback(...pending.args);
-    };
-
-    runPendingPoll();
+    const documentFrame = chrome.webContents.addSubframe(navigationUrl);
     assert.equal(service.snapshot(host.hostToken).status, 'loading');
 
-    chrome.webContents.addSubframe(
+    const foreignFrame = chrome.webContents.addSubframe(
       'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html'
     );
-    runPendingPoll();
+    chrome.webContents.emit(
+      'did-frame-finish-load',
+      {},
+      true,
+      documentFrame.processId,
+      documentFrame.routingId
+    );
+    chrome.webContents.emit(
+      'did-frame-finish-load',
+      {},
+      false,
+      foreignFrame.processId,
+      foreignFrame.routingId
+    );
     assert.equal(service.snapshot(host.hostToken).status, 'loading');
 
-    chrome.webContents.addSubframe(navigationUrl);
-    runPendingPoll();
+    chrome.webContents.emit(
+      'did-frame-finish-load',
+      {},
+      false,
+      documentFrame.processId,
+      documentFrame.routingId
+    );
     const ready = service.snapshot(host.hostToken);
     assert.equal(ready.status, 'ready');
     assert.equal(ready.adapterId, 'chromium-pdf');
     assert.equal(ready.error, null);
+    assert.equal(state.activeViewAttachNotifications, attachNotifications + 1);
+    assert.equal(chrome.webContents.listenerCount('did-frame-finish-load'), 0);
+    assert.equal(timers.filter((timer) => timer.active).length, 0);
   });
 
   await withFakeTimeouts(async (timers) => {
@@ -310,18 +324,18 @@ test('PDF readiness waits for the viewer document frame and reports a truthful t
       'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html'
     );
 
-    for (let attempt = 0; attempt < 80; attempt += 1) {
-      const pending = timers.filter((timer) => timer.active).at(-1);
-      if (!pending) break;
-      pending.active = false;
-      pending.callback(...pending.args);
-    }
+    const pending = timers.find((timer) => timer.active);
+    assert.ok(pending, 'a bounded document-frame deadline must be scheduled');
+    assert.equal(pending.delay, 8_000);
+    pending.active = false;
+    pending.callback(...pending.args);
 
     const snapshot = service.snapshot(host.hostToken);
     assert.equal(snapshot.status, 'unavailable');
     assert.equal(snapshot.surface, 'vue');
     assert.equal(snapshot.error.code, 'PDF_VIEWER_UNAVAILABLE');
     assert.equal(chrome.webContents.destroyed, true);
+    assert.equal(chrome.webContents.listenerCount('did-frame-finish-load'), 0);
   });
 });
 

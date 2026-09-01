@@ -1,16 +1,23 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue';
-import { isNavigationFailure, useRoute, useRouter } from 'vue-router';
+import { isNavigationFailure, NavigationFailureType, useRoute, useRouter } from 'vue-router';
 import { Message } from '@arco-design/web-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
-import { authStore, customerNeedsPasswordSetup } from '@/stores/auth/auth.store';
-import { authEmitter } from '@/emitter/auth.emitter';
+import {
+  loginSurfaceCustomerNeedsPasswordSetup,
+  type LoginSurfaceAuthController
+} from './loginSurface.type';
 
 type LoginMode = 'password' | 'otp';
 type LoginStep = 'login' | 'set-password';
 
+const props = defineProps<{
+  auth: LoginSurfaceAuthController;
+}>();
+
 const route = useRoute();
 const router = useRouter();
+const authStore = props.auth;
 
 const mode = ref<LoginMode>('password');
 const step = ref<LoginStep>('login');
@@ -36,15 +43,25 @@ let cooldownTimer: number | undefined;
 let resetCooldownTimer: number | undefined;
 let sessionRecoveryAbortController: AbortController | null = null;
 
+const reportOperationError = (error: unknown, fallback: string): void => {
+  if (authStore.handlesOperationErrors) return;
+  Message.error(error instanceof Error && error.message ? error.message : fallback);
+};
+
 const redirectAfterLogin = async (): Promise<void> => {
-  const redirect = (route.query.redirect as string) || '/chat';
+  if (!authStore.handlesPostAuthNavigation) return;
+  const redirect = (route.query.redirect as string) || authStore.defaultRedirect;
   transitioning.value = true;
   try {
     const failure = await router.replace(redirect);
-    if (isNavigationFailure(failure)) {
+    if (
+      isNavigationFailure(failure) &&
+      !isNavigationFailure(failure, NavigationFailureType.duplicated)
+    ) {
       throw failure;
     }
   } catch (err) {
+    if (isNavigationFailure(err, NavigationFailureType.duplicated)) return;
     Message.error(i18nHelper.auth.navigationFailed);
     throw err;
   } finally {
@@ -54,14 +71,14 @@ const redirectAfterLogin = async (): Promise<void> => {
 
 const continueAfterLogin = async (): Promise<void> => {
   const current = authStore.current;
-  if (customerNeedsPasswordSetup(current)) {
+  if (loginSurfaceCustomerNeedsPasswordSetup(current)) {
     email.value = current?.email || email.value;
     passwordSetupComplete.value = false;
     step.value = 'set-password';
     return;
   }
   if (current?.status !== 'active') {
-    authStore.clearLocalSession();
+    await authStore.clearLocalSession();
     Message.error('账号状态无效，请重新登录');
     return;
   }
@@ -143,6 +160,11 @@ const onCancelSessionRecovery = (): void => {
   if (!authStore.checking || transitioning.value || sessionRecoveryCancelling.value) return;
   sessionRecoveryCancelling.value = true;
   sessionRecoveryAbortController?.abort();
+  void Promise.resolve()
+    .then(() => authStore.cancelSessionRecovery())
+    .catch((error) => {
+      reportOperationError(error, '无法取消登录状态验证，请重试');
+    });
 };
 
 const onDiscardPersistedSession = async (): Promise<void> => {
@@ -150,14 +172,23 @@ const onDiscardPersistedSession = async (): Promise<void> => {
   const controller = sessionRecoveryAbortController;
   sessionRecoveryAbortController = null;
   controller?.abort();
-  await authStore.logout();
-  sessionRecoveryVisible.value = false;
-  sessionRecoveryFailed.value = false;
-  sessionRecoveryCancelled.value = false;
+  try {
+    await authStore.logout();
+    sessionRecoveryVisible.value = false;
+    sessionRecoveryFailed.value = false;
+    sessionRecoveryCancelled.value = false;
+  } catch (error) {
+    reportOperationError(error, '无法切换账号，请重试');
+  }
 };
 
 onMounted(async () => {
-  await authEmitter.showHomeWindow();
+  await authStore.prepareSurface();
+  if (authStore.current) {
+    sessionRecoveryVisible.value = false;
+    await continueAfterLogin();
+    return;
+  }
   await restorePersistedSession();
 });
 
@@ -179,8 +210,8 @@ const onSendOtp = async (): Promise<void> => {
     await authStore.sendOtp(email.value.trim(), 'login');
     Message.success('验证码已发送');
     startCooldown();
-  } catch {
-    /* error already shown by store */
+  } catch (error) {
+    reportOperationError(error, '验证码发送失败');
   }
 };
 
@@ -210,8 +241,8 @@ const onSendResetOtp = async (): Promise<void> => {
     await authStore.sendOtp(resetEmail.value.trim(), 'reset_password');
     Message.success('如果账号可以重置密码，验证码将发送到该邮箱');
     startResetCooldown();
-  } catch {
-    /* error already shown by store */
+  } catch (error) {
+    reportOperationError(error, '重置验证码发送失败');
   }
 };
 
@@ -247,13 +278,14 @@ const onResetPassword = async (): Promise<void> => {
     mode.value = 'password';
     closePasswordRecovery();
     Message.success('密码已重置，请使用新密码登录');
-  } catch {
-    /* error already shown by store */
+  } catch (error) {
+    reportOperationError(error, '密码重置失败');
   }
 };
 
 const onSubmit = async (): Promise<void> => {
-  if (authStore.loading || authStore.checking || authStore.loggingOut || transitioning.value) return;
+  if (authStore.loading || authStore.checking || authStore.loggingOut || transitioning.value)
+    return;
 
   if (!email.value.trim()) {
     Message.warning('请输入邮箱');
@@ -275,12 +307,12 @@ const onSubmit = async (): Promise<void> => {
       await authStore.loginWithOtp(email.value.trim(), code.value.trim());
     }
     await continueAfterLogin();
-  } catch {
+  } catch (error) {
     if (authStore.isAuthenticated() && !authStore.current) {
       sessionRecoveryVisible.value = true;
       sessionRecoveryFailed.value = true;
     }
-    /* error already shown by store */
+    reportOperationError(error, mode.value === 'password' ? '登录失败' : '验证码登录失败');
   }
 };
 
@@ -312,8 +344,8 @@ const onSetPassword = async (): Promise<void> => {
     passwordConfirmation.value = '';
     await redirectAfterLogin();
     Message.success(i18nHelper.auth.passwordSetupSuccess);
-  } catch {
-    /* error already shown by store */
+  } catch (error) {
+    reportOperationError(error, '密码设置失败');
   }
 };
 </script>
@@ -445,7 +477,9 @@ const onSetPassword = async (): Promise<void> => {
           type="primary"
           size="large"
           :loading="authStore.loading || transitioning"
-          :disabled="authStore.loading || authStore.checking || authStore.loggingOut || transitioning"
+          :disabled="
+            authStore.loading || authStore.checking || authStore.loggingOut || transitioning
+          "
           @click="onSubmit"
         >
           {{ mode === 'password' ? '登录' : '验证并登录' }}

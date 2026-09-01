@@ -116,8 +116,14 @@ const emptyMessage = computed(() =>
     ? i18nHelper.eyesOnAgents.search.empty
     : i18nHelper.eyesOnAgents.search.startTyping);
 
-const focusInput = async (): Promise<void> => {
+const focusInput = async (
+  lifecycleRevision = eyesOnAgentsStore.threadSearchRevision,
+): Promise<void> => {
   await nextTick();
+  if (
+    !eyesOnAgentsStore.threadSearchVisible
+    || lifecycleRevision !== eyesOnAgentsStore.threadSearchRevision
+  ) return;
   inputRef.value?.focus?.();
 };
 
@@ -138,7 +144,7 @@ const handleTitleInput = (value: string): void => {
 };
 
 const handleModalOpen = (): void => {
-  void focusInput();
+  void focusInput(eyesOnAgentsStore.threadSearchRevision);
   void scrollSelectedResultIntoView();
 };
 
@@ -182,6 +188,13 @@ watch(
   () => eyesOnAgentsStore.threadSearchSelectedSessionKey,
   () => {
     void scrollSelectedResultIntoView();
+  },
+);
+
+watch(
+  () => eyesOnAgentsStore.threadSearchVisible,
+  (visible) => {
+    if (visible) void focusInput(eyesOnAgentsStore.threadSearchRevision);
   },
 );
 </script>

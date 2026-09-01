@@ -208,6 +208,7 @@ test('auth invalidation applies only to the exact current session identity', () 
   assert.ok(cancel, 'Missing non-destructive recovery cancellation');
   assert.ok(discard, 'Missing explicit saved-session discard');
   assert.match(cancel[0], /sessionRecoveryAbortController\?\.abort\(\)/);
+  assert.match(cancel[0], /authStore\.cancelSessionRecovery\(\)/);
   assert.doesNotMatch(cancel[0], /logout|clearLocalSession/);
   assert.match(discard[0], /transitioning\.value/);
   assert.match(discard[0], /await authStore\.logout\(\)/);
@@ -276,10 +277,14 @@ test('login, authenticated layout, and initial Home view use the entry bundle', 
 
   assert.match(routes, /import Chat from '@\/views\/chat\/Chat\.vue';/);
   assert.match(routes, /import Layout from '@\/views\/layout\/Layout\.vue';/);
-  assert.match(routes, /import Login from '@\/views\/login\/Login\.vue';/);
+  assert.match(routes, /import Login from '@\/views\/login\/LegacyLogin\.vue';/);
+  assert.match(
+    read('src/renderer/home/src/views/login/LegacyLogin.vue'),
+    /import Login from '\.\/Login\.vue';/,
+  );
   assert.doesNotMatch(
     routes,
-    /import\('@\/views\/(?:chat\/Chat|layout\/Layout|login\/Login)\.vue'\)/
+    /import\('@\/views\/(?:chat\/Chat|layout\/Layout|login\/(?:Legacy)?Login)\.vue'\)/
   );
   assert.match(routes, /path: 'chat',\n    name: 'chat',\n    component: Chat,/);
   assert.match(routes, /path: '\/login',\n    name: 'login',\n    component: Login,/);
@@ -607,13 +612,16 @@ test('login navigation is awaited and restore cannot overlap submit', () => {
   );
   assert.match(login, /await continueAfterLogin\(\)/);
   assert.match(login, /authStore\.checking \|\| authStore\.loggingOut \|\| transitioning\.value/);
-  assert.match(login, /:disabled="authStore\.loading \|\| authStore\.checking \|\| authStore\.loggingOut \|\| transitioning"/);
+  assert.match(
+    login,
+    /:disabled="\s*authStore\.loading \|\| authStore\.checking \|\| authStore\.loggingOut \|\| transitioning\s*"/,
+  );
 });
 
 test('manual logout clears locally, navigates, and launches Main teardown without blocking login', () => {
   const store = read('src/renderer/home/src/stores/auth/auth.store.ts');
   const settings = read(
-    'src/renderer/home/src/views/setting/components/GeneralSetting/generalSetting.store.ts'
+    'src/renderer/home/src/views/setting/components/AccountSetting/accountSetting.store.ts'
   );
   const homeShellClient = read('src/renderer/common/homeShellBridge.client.ts');
   const homeShellHandler = read('src/renderer/home/src/xpc/homeShellBridge.handler.ts');
@@ -693,19 +701,23 @@ test('completed first-password setup retries only navigation after a route failu
   assert.match(login, /i18nHelper\.auth\.continueToWorkspace/);
 });
 
-test('General account is flat and login has no eyebrow or panel border', () => {
+test('Settings Account is flat and login has no eyebrow or panel border', () => {
+  const account = read(
+    'src/renderer/home/src/views/setting/components/AccountSetting/AccountSetting.vue'
+  );
+  const accountStyle = read(
+    'src/renderer/home/src/views/setting/components/AccountSetting/AccountSetting.less'
+  );
   const general = read(
     'src/renderer/home/src/views/setting/components/GeneralSetting/GeneralSetting.vue'
-  );
-  const generalStyle = read(
-    'src/renderer/home/src/views/setting/components/GeneralSetting/GeneralSetting.less'
   );
   const login = read('src/renderer/home/src/views/login/Login.vue');
   const loginStyle = read('src/renderer/home/src/views/login/Login.less');
 
-  assert.match(general, /general-setting__account-email/);
-  assert.match(general, /i18nHelper\.setting\.general\.account\.logout/);
-  assert.doesNotMatch(generalStyle, /general-setting__account[^}]*border:/s);
+  assert.match(account, /account-setting__email/);
+  assert.match(account, /i18nHelper\.setting\.account\.logout/);
+  assert.doesNotMatch(accountStyle, /(?:border|background|box-shadow)\s*:/);
+  assert.doesNotMatch(general, /general-setting__account|setting\.general\.account/);
   assert.doesNotMatch(login, /login-view__mark|login-view__mark-line/);
 
   const panel = loginStyle.match(/\.login-view__panel \{([\s\S]*?)\n\}/);

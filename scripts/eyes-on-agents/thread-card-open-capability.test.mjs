@@ -38,6 +38,10 @@ for (const key of [
 globalThis.getComputedStyle = browserWindow.getComputedStyle.bind(browserWindow);
 globalThis.requestAnimationFrame = browserWindow.requestAnimationFrame.bind(browserWindow);
 globalThis.cancelAnimationFrame = browserWindow.cancelAnimationFrame.bind(browserWindow);
+Object.defineProperties(browserWindow.document.documentElement, {
+  clientWidth: { configurable: true, value: 1024 },
+  clientHeight: { configurable: true, value: 768 },
+});
 class ObserverStub {
   observe() {}
   unobserve() {}
@@ -151,7 +155,7 @@ const stubsPlugin = {
 };
 
 const createStore = () => {
-  const calls = { open: [], readState: [], copyPath: [] };
+  const calls = { open: [], readState: [], copyPath: [], archive: [] };
   return {
     calls,
     busyAction: null,
@@ -159,6 +163,7 @@ const createStore = () => {
     openThread: async (sessionKey) => calls.open.push(sessionKey),
     setThreadUnread: async (sessionKey, isUnread) => calls.readState.push([sessionKey, isUnread]),
     copySessionPath: async (sessionKey) => calls.copyPath.push(sessionKey),
+    archiveThread: async (sessionKey) => calls.archive.push(sessionKey),
   };
 };
 
@@ -227,9 +232,18 @@ try {
     return more;
   };
   const activeDropdown = () => [...document.body.querySelectorAll('.arco-dropdown')]
-    .find((element) => /Copy session path|Mark as (read|unread)|Open in/.test(
-      element.textContent ?? '',
-    ));
+    .find((element) => {
+      const wrapper = element.closest('.arco-trigger-popup-wrapper');
+      return wrapper?.style.display !== 'none'
+        && /Archive|Copy session path|Mark as (read|unread)|Open in/.test(
+          element.textContent ?? '',
+        );
+    });
+  const activeContextDropdown = () => [
+    ...document.body.querySelectorAll(
+      '.arco-trigger-position-bottom .arco-dropdown, .arco-trigger-position-top .arco-dropdown',
+    ),
+  ].find((element) => element.closest('.arco-trigger-popup-wrapper')?.style.display !== 'none');
   const optionTexts = (dropdown) => [...dropdown.querySelectorAll('.arco-dropdown-option')]
     .map((element) => element.textContent?.replace(/\s+/gu, ' ').trim() ?? '');
   const clickOption = async (dropdown, pattern) => {
@@ -293,12 +307,15 @@ try {
     const cardSource = read(
       'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCard.vue',
     );
+    const menuSource = read(
+      'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCardMenu.vue',
+    );
     const cardStyles = read(
       'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCard.less',
     );
     assert.match(
-      cardSource,
-      /v-if="thread\.canCopySessionPath"[\s\S]*?handleCopySessionPath/,
+      menuSource,
+      /v-if="thread\.canCopySessionPath"[\s\S]*?emit\('copySessionPath'\)/,
       'the copy item is gated on the snapshot capability',
     );
     assert.doesNotMatch(
@@ -437,11 +454,103 @@ try {
       assert.ok(dropdown, 'a Codex card owns a menu too');
       assert.deepEqual(
         optionTexts(dropdown),
-        ['Open in Codex (double click)', 'Mark as unread'],
-        'a Codex row names Codex and exposes no session file path',
+        ['Open in Codex (double click)', 'Mark as unread', 'Archive'],
+        'a Codex row names Codex, exposes no session file path, and ends with Archive',
       );
       await clickOption(dropdown, /Open in Codex/);
       assert.deepEqual(mounted.store.calls.open, [codexThread.sessionKey]);
+    } finally {
+      mounted.app.unmount();
+      document.body.innerHTML = '';
+    }
+  });
+
+  await test('right-click opens the shared pointer menu and Archive remains Codex-only', async () => {
+    const codexThread = createThread({
+      sessionKey: 'codex:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      threadId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      provider: 'codex',
+      canCopySessionPath: false,
+    });
+    let mounted = await mount(codexThread);
+    try {
+      const more = await openMore(mounted.host);
+      assert.equal(more.getAttribute('aria-expanded'), 'true');
+      const card = mounted.host.querySelector('[name="eyesOnAgents__threadCard"]');
+      const contextEvent = new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: 900,
+        clientY: 600,
+      });
+      card.dispatchEvent(contextEvent);
+      await nextTick();
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
+      await nextTick();
+      assert.equal(contextEvent.defaultPrevented, true, 'the native context menu is suppressed');
+      assert.equal(more.getAttribute('aria-expanded'), 'false', 'right-click closes More');
+      const dropdown = activeContextDropdown();
+      assert.ok(dropdown, 'right-click opens the pointer-aligned shared menu');
+      assert.deepEqual(
+        optionTexts(dropdown),
+        ['Open in Codex (double click)', 'Mark as unread', 'Archive'],
+      );
+      const firstPopup = dropdown.closest('.arco-trigger-popup');
+      assert.ok(firstPopup, 'the pointer menu owns an Arco positioning element');
+      const firstPosition = `${firstPopup.style.left}:${firstPopup.style.top}`;
+      const secondContextEvent = new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: 120,
+        clientY: 80,
+      });
+      card.dispatchEvent(secondContextEvent);
+      await nextTick();
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
+      await nextTick();
+      assert.equal(
+        secondContextEvent.defaultPrevented,
+        true,
+        'a repeated right-click still suppresses the native context menu',
+      );
+      const repositionedDropdown = activeContextDropdown();
+      assert.ok(repositionedDropdown, 'a repeated right-click keeps the shared menu open');
+      const repositionedPopup = repositionedDropdown.closest('.arco-trigger-popup');
+      assert.ok(repositionedPopup);
+      assert.notEqual(
+        `${repositionedPopup.style.left}:${repositionedPopup.style.top}`,
+        firstPosition,
+        'a repeated right-click repositions the menu at the current pointer',
+      );
+      await clickOption(repositionedDropdown, /^Archive$/);
+      assert.deepEqual(mounted.store.calls.archive, [codexThread.sessionKey]);
+    } finally {
+      mounted.app.unmount();
+      document.body.innerHTML = '';
+    }
+
+    const claudeThread = createThread({
+      desktopSessionId: 'local_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    });
+    mounted = await mount(claudeThread);
+    try {
+      const card = mounted.host.querySelector('[name="eyesOnAgents__threadCard"]');
+      card.dispatchEvent(new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: 10,
+        clientY: 10,
+      }));
+      await nextTick();
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
+      await nextTick();
+      const dropdown = activeContextDropdown();
+      assert.ok(dropdown);
+      assert.deepEqual(
+        optionTexts(dropdown),
+        ['Open in Claude (double click)', 'Mark as unread', 'Copy session path'],
+      );
+      assert.deepEqual(mounted.store.calls.archive, []);
     } finally {
       mounted.app.unmount();
       document.body.innerHTML = '';

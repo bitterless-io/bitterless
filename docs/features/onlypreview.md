@@ -1,14 +1,14 @@
 # OnlyPreview Sub-Application
 
-Status: Accepted; tasks 032–048, 072, 073, 076, 077, and 078 implemented; owner verification
+Status: Accepted; tasks 032–048, 072, 073, 076, 077, 078, and 098 implemented; owner verification
 pending
 
 ## Purpose And Boundary
 
 OnlyPreview is Bitterless's read-only local-file workbench. Its visible picker opens one directory,
 the user navigates a complete demand-loaded project tree on the left, and the selected file is
-previewed on the right without leaving Bitterless. Main-owned operating-system file-open routes may
-still target an individual file and derive its containing workspace. The current delivery covers
+previewed on the right without leaving Bitterless. Main-owned operating-system, CLI, and agent
+routes may also preview one explicit file from inside or outside that Project. The current delivery covers
 source code, text, PDF, XLSX/XLSM workbooks, DOCX documents, PPTX presentations, Draw.io diagrams,
 image, audio, and video files used in development and ordinary desktop work.
 
@@ -198,8 +198,16 @@ random workspaceId ──> Main-owned host/workspace ref + hidden-preload root a
 
 Required properties:
 
-- A file target creates a workspace rooted at its parent and selects its basename. A directory
-  target creates a workspace rooted at that directory.
+- A directory target creates and persists a Project workspace rooted at that directory.
+- A file target inside the current Project reuses that Project workspace and selects its normalized
+  Project-relative path.
+- A file target outside the current Project creates a separate transient external-preview
+  capability rooted privately at its canonical parent. The current Project remains visible, its
+  selected item is cleared, and the external file is presented without becoming a Project tree
+  item. With no current Project, the Project surface remains empty and unselected.
+- An external-preview capability authorizes exactly its one original canonical basename. Preview,
+  Office, Project, and native-action lanes reject a forged sibling relative path even when it uses
+  the same opaque workspace ID and host.
 - `workspaceId` is an unguessable opaque value. Main may retain the canonical root string only as
   private in-memory bootstrap state; the hidden preload owns live root identity and path authority.
 - Renderer calls carry only `workspaceId` and normalized relative paths.
@@ -646,7 +654,7 @@ runtime/UI path; packaged release startup remains untested.
 | `text` / Markdown | `.md`                                                                                                                                                         | Vue: centered semantic reading surface compiled by `marked` and sanitized by DOMPurify; `.markdown` and `.mdx` remain Monaco |
 | `html`            | `.html`, `.htm`                                                                                                                                               | raw Chromium: executable entry document plus contained relative JS/CSS/image/font/media resources                            |
 | `pdf`             | `.pdf` with matching signature                                                                                                                                | raw Chromium: built-in PDF viewer over one exact revision-bound bounded asset                                                |
-| `image`           | PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, SVG                                                                                                                     | Vue: bounded Blob + off-DOM decode, then an accessible fit/zoom/reset/pan viewer                                             |
+| `image`           | PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, SVG                                                                                                                     | Vue: bounded Blob + off-DOM decode, then an accessible fit/zoom/rotate/reset/pan viewer                                      |
 | `audio`           | MP3, WAV, OGG, M4A, AAC, FLAC; actual codec support remains Chromium-owned                                                                                    | Vue: HEAD preflight, then `<audio controls preload="metadata">`, no autoplay                                                 |
 | `video`           | MP4, WebM, OGV, MOV, M4V; actual codec support remains Chromium-owned                                                                                         | Vue: HEAD preflight, then `<video controls preload="metadata">`, no autoplay                                                 |
 | `sheet`           | `.xlsx`, `.xlsm` with bounded OOXML ZIP structure                                                                                                             | Vue: one-shot preflight Worker + lazy `@silurus/ooxml/xlsx` `XlsxViewer`                                                     |
@@ -697,6 +705,9 @@ runtime/UI path; packaged release startup remains untested.
   `min(0.1, currentFitScale)`, an `8` maximum, exact 100% Reset, centered pan clamps, ResizeObserver,
   primary-pointer capture/cancel, and focusable viewport arrow-key pan. Empty, read, signature, and
   decoder failures remain distinct; every created Blob URL is revoked exactly once.
+- Image rotation is renderer-only in 90° increments and never writes/re-encodes the source. A
+  quarter-turn swaps effective dimensions before Fit/pan clamping; Reset returns rotation to zero,
+  exact 100% scale, and zero translation. Selection/error/unmount clear the same state.
 - Audio/video stay on the revision-bound Range asset instead of buffering the full file. A HEAD
   preflight requires the exact expected `Content-Length` plus CORS-visible `Accept-Ranges: bytes`;
   only then does a native `preload="metadata"` player mount. `loadedmetadata` is the first ready
@@ -712,6 +723,11 @@ runtime/UI path; packaged release startup remains untested.
   negative Region behavior coverage fixed that finding.
   [Independent review round 2](../plan/reviews/onlypreview-media-truthful-state-022-2.md) recorded
   **PASS**. Ral owns the remaining real-app image/media runtime and visual verification.
+- Task 101 is `implemented; owner verification pending`.
+  [Independent review round 1](../plan/reviews/onlypreview-image-rotation-media-regression-101-1.md)
+  recorded **PASS** for quarter-turn geometry, reset/teardown fencing, source immutability, native
+  player preservation, Range delivery, and bounded resource behavior. Ral owns the supplied
+  PNG/WAV and supported-video visual/playback verification.
 - Monaco editor and model are both disposed on file changes and component unmount.
 - Selection/copy/find remain enabled; mutation commands and ordinary keyboard input cannot modify
   the model. Electron E2E must prove a selected range can be copied and attempted input leaves the
@@ -762,6 +778,9 @@ runtime/UI path; packaged release startup remains untested.
   XML, more than 128 pages, more than 20,000 cells, any embedded/external raster/SVG/data/blob image
   resource, image shape/source, `mxImage`/`image` markup, or a non-renewing 10-second deadline. Main separately
   owns a non-renewing 30-second loading watchdog that can rebuild the exact blocked Vue view.
+  The viewer-ready handshake is asynchronous because the official runtime defers a zero-width mount
+  until it becomes visible; one shorter non-renewing renderer deadline and component-owned abort
+  authority fence that callback across view attachment, selection replacement, and unmount.
   Success supplies read-only page/layer/fit/zoom controls; teardown terminates Worker/fetch and
   destroys generated viewer state before another adapter mounts. Image-bearing graphs are rejected
   as `DIAGRAM_LIMIT` before viewer/GPU work; remote stencils, fonts, navigation, popups, downloads,
@@ -938,11 +957,20 @@ a package when any of those four required files is missing, empty, non-regular, 
 - Helper modes never inspect GUI file arguments.
 - In packaged Windows startup, parse the initial process arguments after removing executable and
   Chromium flags. During `second-instance`, inspect that event's argv/working directory.
-- Development only accepts an explicit `--onlypreview-open=<path>` test/development argument; it
-  must not mistake the repository path or Electron entrypoint for a user file.
+- Development and packaged macOS/Windows accept an explicit
+  `--onlypreview-open=<absolute-path>` argument without mistaking the repository path, Electron
+  entrypoint, or a relative switch value for a user file. Packaged Windows also retains ordinary
+  file-argument parsing.
 - Queue entries are consumed only after the GUI/XPC runtime is ready.
-- Opening another file focuses the singleton and replaces its workspace/selection. Multiple
-  simultaneous requests are serialized; the latest completed request becomes visible.
+- Opening another file focuses the singleton. A contained file updates the current Project
+  selection; an external file preserves the Project and clears its selection. After the folder
+  chooser returns, its target mutation joins OS, MCP, and internal requests on one FIFO
+  serialization boundary; the dialog itself does not occupy the queue. Each caller settles only
+  with its own Main operation, one failure does not poison the queue, and the latest completed
+  request becomes visible. MCP success is accepted/processed, not renderer-ready.
+- Revoking the presented workspace synchronously advances the Preview revision and removes
+  Preview/Office broker access before the exact hidden PreviewReader root is revoked best-effort.
+  A slow or failed replacement directory bind therefore cannot leave the old file readable.
 - The explicit-target generation is advanced before standalone creation, so newly mounted Shell
   and Preview renderers cannot restore an older directory ahead of the queued file target.
 
@@ -1074,6 +1102,11 @@ Shift+Cmd/Ctrl+F:
   contrasting fill. Main clamps reported and resized content bounds to the 32px MenuBar plus 43px
   Preview toolbar, minimum 180px project column plus the functional 5px hit target, and 25px status
   rail, so a compromised or stale Shell cannot let a native content view cover Shell controls.
+- The Project column width is one Shell-renderer visual preference shared across Projects. Shell
+  restores it from local storage with the existing `180–480px` and viewport-aware clamp. Dragging
+  updates layout and Preview bounds continuously, while leading-plus-trailing throttled persistence
+  bounds storage writes; pointer completion, cancellation, and Shell teardown flush the latest
+  width synchronously. Missing, malformed, or inaccessible storage falls back to `264px`.
 
 ## Interaction Contract
 
@@ -1317,9 +1350,15 @@ them.
   the token and Range contract but receives no path or handle; the hidden preload opens and
   re-verifies the admitted range and supplies pull-driven bounded frames. Concurrent Chromium Range
   sessions are independent and remain selection-generation fenced.
-- `chromium-pdf` becomes `ready` only once the viewer's own document frame exists at the navigation
-  URL. A finished navigation alone is not readiness — a blank viewer also finishes loading — and a
-  bounded wait that never sees the frame publishes `PDF_VIEWER_UNAVAILABLE`.
+- `chromium-pdf` becomes `ready` only once the viewer's exact current non-main document frame emits
+  `did-frame-finish-load` at the navigation URL. Mere frame existence and main-frame completion are
+  not readiness — PDFium can still have zero loaded pages and discard an early Find — while a
+  bounded wait that never reaches exact frame ready publishes `PDF_VIEWER_UNAVAILABLE`. An entered
+  pending Find query dispatches once on this ready transition through the existing request fences.
+  Task 100 is `implemented; owner verification pending`;
+  [independent review 1](../plan/reviews/onlypreview-pdf-search-overlay-find-100-1.md) recorded
+  **PASS** for exact frame readiness, pending Find replay, full-window Search z-order, transparent
+  dismissal, listener cleanup, and revision fencing.
 - Raw HTML may execute inline and contained relative code, but remote network is denied by request
   filtering, response CSP, disabled DNS prefetch, an awaited unavailable proxy, and restricted
   WebRTC IP policy. Permissions, popups, downloads, redirects, `file:`, traversal, encoded

@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import {
@@ -89,6 +89,177 @@ test('host isolation and workspace replacement fence authority and issued asset 
     );
     assert.equal((await assets.respond(new Request(assetUrl))).status, 404);
     assert.equal(workspaces.restore(hostB.hostToken)?.workspaceId, replacement.workspaceId);
+  });
+});
+
+test('external Preview workspaces preserve the Project, stay host-private, and reject Project APIs', async () => {
+  await withTempDirectory('onlypreview-external-workspace-', async (root) => {
+    const projectRoot = join(root, 'project');
+    const projectDocs = join(projectRoot, 'docs');
+    const outsideRoot = join(root, 'outside');
+    const replacementRoot = join(root, 'replacement');
+    mkdirSync(projectDocs, { recursive: true });
+    mkdirSync(outsideRoot);
+    mkdirSync(replacementRoot);
+    const canonicalProjectRoot = realpathSync(projectRoot);
+    const canonicalProjectDocs = realpathSync(projectDocs);
+    const canonicalOutsideRoot = realpathSync(outsideRoot);
+    const canonicalReplacementRoot = realpathSync(replacementRoot);
+    const { hosts, workspaces } = createRegistries();
+    const host = hosts.issue('standalone', 'content');
+    const otherHost = hosts.issue('standalone', 'content');
+    const project = registerWorkspace(workspaces, host.hostToken, projectRoot, 'README.md');
+
+    const containedRef = workspaces.resolveProjectFileRef(host.hostToken, {
+      rootRealPath: canonicalProjectDocs,
+      rootName: 'docs',
+      displayPath: canonicalProjectDocs,
+      selectedRelativePath: 'report.pdf'
+    });
+    assert.deepEqual(containedRef, {
+      workspaceId: project.workspaceId,
+      relativePath: 'docs/report.pdf'
+    });
+    assert.equal(
+      workspaces.resolveProjectFileRef(host.hostToken, {
+        rootRealPath: canonicalOutsideRoot,
+        rootName: 'outside',
+        displayPath: canonicalOutsideRoot,
+        selectedRelativePath: 'external.pdf'
+      }),
+      null
+    );
+
+    const externalRef = workspaces.registerExternalPreview(host.hostToken, {
+      rootRealPath: canonicalOutsideRoot,
+      rootName: 'outside',
+      displayPath: canonicalOutsideRoot,
+      selectedRelativePath: 'external.pdf'
+    });
+    assert.equal(workspaces.clearProjectSelection(host.hostToken), true);
+    assert.deepEqual(workspaces.restore(host.hostToken), {
+      workspaceId: project.workspaceId,
+      rootName: 'project',
+      displayPath: canonicalProjectRoot
+    });
+    assert.equal(workspaces.isExternalPreviewFileRef(host.hostToken, externalRef), true);
+    assert.equal(
+      workspaces.getExternalPreviewNativePath(host.hostToken, externalRef),
+      join(canonicalOutsideRoot, 'external.pdf')
+    );
+    assert.equal(
+      workspaces.revalidateExternalPreviewNativePath(host.hostToken, externalRef, {
+        rootRealPath: canonicalOutsideRoot,
+        rootName: 'outside',
+        displayPath: canonicalOutsideRoot,
+        selectedRelativePath: 'external.pdf'
+      }),
+      join(canonicalOutsideRoot, 'external.pdf')
+    );
+    assert.throws(
+      () =>
+        workspaces.revalidateExternalPreviewNativePath(host.hostToken, externalRef, {
+          rootRealPath: canonicalReplacementRoot,
+          rootName: 'replacement',
+          displayPath: canonicalReplacementRoot,
+          selectedRelativePath: 'external.pdf'
+        }),
+      expectOnlyPreviewError('WORKSPACE_ACCESS_DENIED')
+    );
+    assert.deepEqual(
+      {
+        ...workspaces.getPreviewAuthorityItemRef(host.hostToken, externalRef),
+        host: undefined,
+        workspace: undefined
+      },
+      {
+        host: undefined,
+        workspace: undefined,
+        workspaceId: externalRef.workspaceId,
+        workspaceGeneration: 1,
+        relativePath: 'external.pdf',
+        rootPath: canonicalOutsideRoot
+      }
+    );
+
+    for (const operation of [
+      () => workspaces.getProjectAuthorityItemRef(host.hostToken, externalRef),
+      () => workspaces.getProjectAuthorityRootRef(host.hostToken, externalRef.workspaceId),
+      () => workspaces.select(host.hostToken, externalRef)
+    ]) {
+      assert.throws(operation, expectOnlyPreviewError('WORKSPACE_ACCESS_DENIED'));
+    }
+    assert.throws(
+      () =>
+        workspaces.getExternalPreviewNativePath(host.hostToken, {
+          ...externalRef,
+          relativePath: 'other.pdf'
+        }),
+      expectOnlyPreviewError('WORKSPACE_ACCESS_DENIED')
+    );
+    for (const operation of [
+      () =>
+        workspaces.getPreviewAuthorityItemRef(host.hostToken, {
+          ...externalRef,
+          relativePath: 'other.pdf'
+        }),
+      () =>
+        workspaces.getOfficeReadBootstrap(host.hostToken, {
+          ...externalRef,
+          relativePath: 'other.docx'
+        })
+    ]) {
+      assert.throws(operation, expectOnlyPreviewError('WORKSPACE_ACCESS_DENIED'));
+    }
+    assert.throws(
+      () => workspaces.getPreviewAuthorityItemRef(otherHost.hostToken, externalRef),
+      expectOnlyPreviewError('WORKSPACE_ACCESS_DENIED')
+    );
+
+    const nextExternalRef = workspaces.registerExternalPreview(host.hostToken, {
+      rootRealPath: canonicalOutsideRoot,
+      rootName: 'outside',
+      displayPath: canonicalOutsideRoot,
+      selectedRelativePath: 'next.txt'
+    });
+    assert.throws(
+      () => workspaces.requireWorkspace(host.hostToken, externalRef.workspaceId),
+      expectOnlyPreviewError('WORKSPACE_NOT_FOUND')
+    );
+    assert.equal(workspaces.revokeExternalPreview(host.hostToken), true);
+    assert.throws(
+      () => workspaces.requireWorkspace(host.hostToken, nextExternalRef.workspaceId),
+      expectOnlyPreviewError('WORKSPACE_NOT_FOUND')
+    );
+    assert.equal(workspaces.restore(host.hostToken)?.workspaceId, project.workspaceId);
+
+    const replacement = registerWorkspace(workspaces, host.hostToken, replacementRoot);
+    assert.equal(workspaces.restore(host.hostToken)?.workspaceId, replacement.workspaceId);
+    assert.throws(
+      () => workspaces.requireWorkspace(host.hostToken, project.workspaceId),
+      expectOnlyPreviewError('WORKSPACE_NOT_FOUND')
+    );
+  });
+});
+
+test('an external Preview can exist without a Project and is revoked with its host', async () => {
+  await withTempDirectory('onlypreview-external-no-project-', async (root) => {
+    const { hosts, workspaces } = createRegistries();
+    const host = hosts.issue('standalone', 'content');
+    const externalRef = workspaces.registerExternalPreview(host.hostToken, {
+      rootRealPath: root,
+      rootName: 'external-no-project',
+      displayPath: root,
+      selectedRelativePath: 'standalone.md'
+    });
+
+    assert.equal(workspaces.restore(host.hostToken), null);
+    assert.equal(workspaces.isExternalPreviewFileRef(host.hostToken, externalRef), true);
+    hosts.revoke(host.hostToken);
+    assert.throws(
+      () => workspaces.requireWorkspace(host.hostToken, externalRef.workspaceId),
+      expectOnlyPreviewError('HOST_NOT_FOUND')
+    );
   });
 });
 

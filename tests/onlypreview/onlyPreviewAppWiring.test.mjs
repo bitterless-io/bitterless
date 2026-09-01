@@ -133,7 +133,7 @@ test('recent-directory wiring stays Main-owned, value-free, and renderer-contrac
   assert.match(service, /!workspace\.selectedRelativePath && workspace\.displayPath === candidate/);
 
   const absoluteOpen = handler.slice(
-    handler.indexOf('export const openOnlyPreviewAbsoluteTarget'),
+    handler.indexOf('const performOpenOnlyPreviewAbsoluteTarget'),
     handler.indexOf('export const destroyOnlyPreviewForAuth')
   );
   assert.ok(
@@ -531,11 +531,9 @@ test('OnlyPreview folder-first chrome, current-file locator, and native file men
     handler.indexOf('onlyPreviewHostRegistry.onRevoke')
   );
   assert.ok(
-    bindingBody.indexOf('bindProjectWorkspace') < bindingBody.indexOf('bindOfficeWorkspace')
+    bindingBody.indexOf('bindProjectWorkspace') < bindingBody.indexOf('bindProjectAuthority')
   );
-  assert.ok(
-    bindingBody.indexOf('bindOfficeWorkspace') < bindingBody.indexOf('bindProjectAuthority')
-  );
+  assert.doesNotMatch(bindingBody, /bindPreviewReadWorkspace|bindOfficeWorkspace/);
   assert.match(
     bindingBody,
     /revokeProjectWorkspace\(\{[\s\S]*workspaceId: workspace\.workspaceId,[\s\S]*workspaceGeneration: binding\.workspaceGeneration/
@@ -543,7 +541,7 @@ test('OnlyPreview folder-first chrome, current-file locator, and native file men
   assert.match(workspaceRegistry, /projectAuthorityPending: true/);
   assert.match(
     workspaceRegistry,
-    /workspace && !workspace\.projectAuthorityPending \? toSnapshot\(workspace\) : null/
+    /workspace\?\.kind === 'project' && !workspace\.projectAuthorityPending[\s\S]*\? toSnapshot\(workspace\)[\s\S]*: null/
   );
 
   assert.match(
@@ -573,7 +571,7 @@ test('OnlyPreview folder-first chrome, current-file locator, and native file men
   assert.match(windowHelper, /if \(key === 'o'\) return 'choose-folder'/);
   assert.match(
     handler,
-    /openOnlyPreviewAbsoluteTarget[\s\S]*openExplicitTarget\([\s\S]*host\.hostToken,[\s\S]*target,[\s\S]*generation/
+    /performOpenOnlyPreviewAbsoluteTarget[\s\S]*openExplicitTarget\([\s\S]*host\.hostToken,[\s\S]*target,[\s\S]*recentGeneration/
   );
 
   assert.match(shellApp, /name="onlypreview__openFolder"/);

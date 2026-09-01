@@ -34,6 +34,7 @@ export const APPLICATION_DIAGNOSTIC_DIRECTORY_KEYS = [
   'userData',
   'sessionData',
   'logs',
+  'onlypreviewLogs',
   'cache',
   'crashDumps',
   'temp',

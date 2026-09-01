@@ -262,7 +262,7 @@ export class OnlyPreviewDrawioSession {
 }
 
 interface DrawioViewerInstance {
-  graph?: { destroy?: () => void };
+  graph?: { container?: Element; destroy?: () => void };
 }
 
 interface DrawioGraphViewerGlobal {
@@ -287,6 +287,13 @@ interface DrawioWindow extends Window {
 export interface OnlyPreviewDrawioViewerHandle {
   dispose(): void;
 }
+
+export interface OnlyPreviewDrawioViewerOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
+export const ONLY_PREVIEW_DRAWIO_VIEWER_TIMEOUT_MS = 15_000;
 
 let viewerRuntimePromise: Promise<DrawioGraphViewerGlobal> | null = null;
 let nextMountId = 0;
@@ -332,15 +339,91 @@ const loadDrawioViewerRuntime = async (
   return await viewerRuntimePromise;
 };
 
+const waitForDrawioMountVisibility = async (
+  mount: HTMLElement,
+  signal: AbortSignal | undefined,
+  timeoutMs: number
+): Promise<void> => {
+  if (mount.offsetWidth > 0) return;
+  const ownerWindow = mount.ownerDocument.defaultView;
+  if (!ownerWindow) {
+    throw diagramError('DIAGRAM_PARSE_FAILED', 'The Draw.io viewer document is unavailable.');
+  }
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let resizeObserver: ResizeObserver | null = null;
+    let mutationObserver: MutationObserver | null = null;
+    const cleanup = (): void => {
+      clearTimeout(timer);
+      resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
+      ownerWindow.removeEventListener('resize', checkVisibility);
+      signal?.removeEventListener('abort', handleAbort);
+    };
+    const finish = (error?: OnlyPreviewContractError): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve();
+    };
+    const handleAbort = (): void =>
+      finish(diagramError('DIAGRAM_RENDER_TIMEOUT', 'The Draw.io preview session ended.'));
+    const checkVisibility = (): void => {
+      if (signal?.aborted) {
+        handleAbort();
+        return;
+      }
+      if (!mount.isConnected) {
+        finish(diagramError('DIAGRAM_RENDER_TIMEOUT', 'The Draw.io mount is no longer active.'));
+        return;
+      }
+      if (mount.offsetWidth > 0) finish();
+    };
+    const timer = setTimeout(
+      () =>
+        finish(diagramError('DIAGRAM_RENDER_TIMEOUT', 'Draw.io viewer initialization timed out.')),
+      timeoutMs
+    );
+    if (ownerWindow.ResizeObserver) {
+      resizeObserver = new ownerWindow.ResizeObserver(checkVisibility);
+      resizeObserver.observe(mount);
+    } else if (ownerWindow.MutationObserver) {
+      mutationObserver = new ownerWindow.MutationObserver(checkVisibility);
+      mutationObserver.observe(mount.parentElement ?? mount.ownerDocument.documentElement, {
+        attributes: true,
+        childList: true,
+        subtree: true
+      });
+    }
+    ownerWindow.addEventListener('resize', checkVisibility);
+    signal?.addEventListener('abort', handleAbort, { once: true });
+    checkVisibility();
+  });
+};
+
 export const renderOnlyPreviewDrawio = async (
   mount: HTMLElement,
-  content: OnlyPreviewDrawioContent
+  content: OnlyPreviewDrawioContent,
+  options: OnlyPreviewDrawioViewerOptions = {}
 ): Promise<OnlyPreviewDrawioViewerHandle> => {
-  if (!mount.isConnected || !content.xml || content.pageCount < 1 || content.cellCount < 1) {
+  const timeoutMs = options.timeoutMs ?? ONLY_PREVIEW_DRAWIO_VIEWER_TIMEOUT_MS;
+  if (
+    !mount.isConnected ||
+    !content.xml ||
+    content.pageCount < 1 ||
+    content.cellCount < 1 ||
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs <= 0
+  ) {
     throw diagramError('INVALID_INPUT', 'Draw.io viewer input is invalid.');
   }
+  if (options.signal?.aborted) {
+    throw diagramError('DIAGRAM_RENDER_TIMEOUT', 'The Draw.io preview session ended.');
+  }
+  await waitForDrawioMountVisibility(mount, options.signal, timeoutMs);
   const graphViewer = await loadDrawioViewerRuntime(mount.ownerDocument);
-  if (!mount.isConnected) {
+  if (!mount.isConnected || options.signal?.aborted) {
     throw diagramError('DIAGRAM_RENDER_TIMEOUT', 'The Draw.io mount is no longer active.');
   }
   const targetClass = `onlypreview-drawio-target-${++nextMountId}`;
@@ -354,6 +437,7 @@ export const renderOnlyPreviewDrawio = async (
       nav: false,
       toolbar: 'pages zoom layers',
       'auto-fit': true,
+      'check-visible-state': false,
       resize: true,
       center: true
     })
@@ -376,11 +460,15 @@ export const renderOnlyPreviewDrawio = async (
     mount.replaceChildren();
   };
 
-  let viewer: DrawioViewerInstance | null = null;
   const previousViewerInitialized = graphViewer.viewerInitialized;
+  let viewer: DrawioViewerInstance | null = null;
   graphViewer.viewerInitialized = (candidate) => {
-    previousViewerInitialized?.(candidate);
-    viewer = candidate;
+    try {
+      previousViewerInitialized?.(candidate);
+    } catch {
+      // The official viewer callback remains authoritative for this mount.
+    }
+    if (candidate.graph?.container === mount) viewer = candidate;
   };
   try {
     graphViewer.processElements(targetClass);

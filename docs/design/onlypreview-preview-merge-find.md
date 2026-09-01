@@ -368,7 +368,7 @@ dead player。`chromePreviewView`
 | host ref      | Shell 的 bounds ref / `ResizeObserver` 必须放在 toolbar **下方的 inner content host**，不能放在包含 toolbar 的 wrapper，否则 native view 会覆盖输入框                                                                                                                      |
 | 首帧          | active content 在收到 Shell 首个有效 host bounds 前不得 attach / visible；不能沿用当前从 `y=32` 开始的临时 bounds，否则启动时会短暂盖住 toolbar                                                                                                                            |
 | z-order       | Main 保存唯一 `activePreviewSurface`；旧 view 完成 stop-find / teardown / detach 后才能 attach 新 view，绝不把两个 view 同时叠在相同 bounds                                                                                                                                |
-| 快捷键 / 焦点 | Main 从 Shell、`chromePreviewView`、`vuePreviewView` 的 `before-input-event` 统一截获 `Cmd/Ctrl+F`，先 focus `ShellView.webContents` 再聚焦 toolbar input；关闭 / `Esc` 后恢复当前 active content。`Shift+Cmd/Ctrl+F` 打开独立但非顶层窗口的 Global Search `WebContentsView`；它与 Preview 同 bounds 并保持在 PDF/HTML/Vue surface 上方。旧 `Option/Alt+Cmd/Ctrl+F` 别名由任务 037 移除 |
+| 快捷键 / 焦点 | Main 从 Shell、`chromePreviewView`、`vuePreviewView` 的 `before-input-event` 统一截获 `Cmd/Ctrl+F`，先 focus `ShellView.webContents` 再聚焦 toolbar input；关闭 / `Esc` 后恢复当前 active content。`Shift+Cmd/Ctrl+F` 打开全 OnlyPreview content bounds 的透明 Global Search `WebContentsView`；其 workspace 仍定位到 Preview rectangle，并在 PDF exact document frame ready 后再次抬到最上层。旧 `Option/Alt+Cmd/Ctrl+F` 别名由任务 037 移除 |
 | renderer 崩溃 | active capability 立即变 `unavailable`，Shell toolbar 保持可用；Main 清理崩溃 view 并转到可重建的 Vue 真话错误态 / retry，不因单个 Preview renderer 崩溃关闭整个窗口；旧 ready/find 结果仍受 host + selection + surface revision 围栏                                      |
 
 ```text
@@ -437,6 +437,12 @@ Main 只接受完整等于 current 的四元组 `hostId + selectionRevision + su
 保存 `findRevision` 映射，并同时核对 `found-in-page.requestId`；不能只用可在 view 重建后复用的数字
 `requestId`。Monaco / XLSX adapter 直接回显 `findRevision`。关闭 Find Bar 或切 surface 由 Main 递增并
 作废旧 revision，再调用 `stopFindInPage('clearSelection')` / adapter `clear()`。
+
+Chromium PDF 的 document frame **存在不等于文字模型 ready**。Task 100 只在 exact current
+non-main frame 的 `did-frame-finish-load` 后把 `chromium-pdf` 从 pending 置为 ready；main frame、foreign
+URL、旧 view/revision 与 mere frame existence 均不能触发。Find Bar 可在 pending 期间保留用户查询，
+但只在 ready transition 后通过上述 revision/request fence dispatch 一次。继续使用内置 PDF
+`findInPage()` 与高亮；不注入脚本、不引入 PDF.js/OCR。
 
 这比注入更像 Chrome：浏览器 chrome 与 tab content 本来就是两个边界。Find Bar 不在被查找的
 `WebContents` 内，也避免 `findInPage()` 把输入框里的查询文字、文件名和 header 文案一起算成命中。

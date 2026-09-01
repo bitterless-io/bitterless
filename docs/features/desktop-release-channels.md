@@ -50,7 +50,8 @@ before the flat manifest so website and updater readers never observe a half-pub
 All channel outputs live below the generated-release root `dist`. Electron Builder must exclude that
 entire root plus the transient root `tmp` from application files even when the current output is a
 nested directory such as `dist/preview`; no existing DMG, ZIP, blockmap, updater metadata, unpacked
-package, or temporary file may be embedded in `app.asar`.
+package, temporary file, initialized `external_tools` inventory, or legacy `prebuilt` download cache
+may be embedded in `app.asar`.
 
 ## Operator commands
 

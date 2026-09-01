@@ -21,8 +21,9 @@ is now Maestro and Home content lives in Maestro's fixed local-Home miniapp.
   invalidation all open or focus the existing Maestro singleton.
 - The legacy Home `BrowserWindow` remains alive only as a hidden renderer/XPC authority for its
   existing token, Todo, and compatibility responsibilities. It is never shown or focused.
-- Home content remains the fixed local-Home miniapp inside Maestro; this issue does not create a
-  second native window or another visibility state machine.
+- Home content remains the fixed local-Home miniapp inside Maestro. When signed out, that fixed tab
+  renders the shared Login experience through the hidden authority's token-free bridge; it does not
+  reveal the legacy native window or create another credential owner.
 
 ## Acceptance
 

@@ -75,9 +75,16 @@ Log locations:
 | Runtime               | Log file                                                        |
 | --------------------- | --------------------------------------------------------------- |
 | packaged production   | Electron OS log root, e.g. `~/Library/Logs/Bitterless/main.log` |
+| packaged preview      | Electron OS log root under `Bitterless_PREVIEW`                 |
 | packaged test release | Electron OS log root under `Bitterless_DEV`                     |
 | production debug      | `<appData>/Bitterless_DEBUG_PROD/logs/main.log`                 |
 | test debug            | `<appData>/Bitterless_DEBUG_DEV/logs/main.log`                  |
+
+Every release channel is isolated because `applyRuntimeProfile()` calls `app.setName(appName)` and
+repoints `userData` before logging initializes, and electron-log derives both its OS log root and
+its `<userData>/logs` root from that same application name. The five profile names are distinct, so
+Preview never writes into Stable's log root and vice versa. Each log family — `main.log`,
+`translator/translator.log`, `onlypreview/onlypreview.log` — is covered by that isolation.
 
 Only first-party renderer URLs are captured. Omni remote pages and other third-party web contents
 are excluded. Existing `console.*` calls keep working. Codex login logs lifecycle stages and
@@ -100,7 +107,20 @@ only the accepted provider-diagnostic fields documented by the Translator featur
 errors, request/response payloads, headers, identifiers, and authentication material remain
 forbidden.
 
-OnlyPreview startup and search timing uses the existing `main.log`, not a dedicated file. Every
+OnlyPreview owns a separate Main-written `onlypreview/onlypreview.log` under the same profile log
+root, built on the same isolation, UTC NDJSON format, sanitizer, and 5 MB rotation as `main.log`.
+It contains only OnlyPreview action failures: one `error` record per failed Main API operation,
+formatted `[onlypreview] operation=<token> errorCode=<token> cause=<sanitized chain>`. `operation` is
+the Main API method name and `errorCode` is the resolved OnlyPreview error code; both are reduced to
+`[A-Za-z0-9._-]` and bounded at 23 characters so the application opaque-token redaction cannot erase
+them, and the field is named `errorCode` rather than `code` for the same reason. `cause` is the
+sanitized error cause chain, which is the only place an `ENOENT`/`EACCES` class or a contract message
+survives — the renderer payload generalizes every non-contract error to `OPERATION_FAILED`. Paths,
+workspace or host identity, capability tokens, document content, queries, and raw error objects are
+forbidden. One matching `error` line is mirrored into `main.log` under `scope=onlypreview` so the
+failure is visible where triage starts. Success paths write nothing.
+
+OnlyPreview startup and search timing stays in `main.log`, not the dedicated file. Every
 record begins with `[onlypreview-search]`, producing `scope=onlypreview-search`; `proc` distinguishes
 Main, the hidden `renderer:fileSearch`, and `renderer:onlypreviewShell`. Fixed events cover Preview
 window/runtime readiness, SQLite reuse/open, count/candidate/reconcile/promotion, search gates,
@@ -124,8 +144,8 @@ The snapshot includes:
 - profile name, `VITE_ENV`, `VITE_MODE`, packaging state, application version, and version code;
 - resolved log file and directory;
 - current startup diagnostic issues;
-- Electron paths (`app`, `userData`, `sessionData`, `logs`, `cache`, `crashDumps`, `temp`,
-  `home`, `documents`, and `downloads`);
+- Electron paths (`app`, `userData`, `sessionData`, `logs`, the OnlyPreview log directory,
+  `cache`, `crashDumps`, `temp`, `home`, `documents`, and `downloads`);
 - Bitterless paths (`db`, `skills`, `plugins`, `rigchat`, `cowork`, Codex auth directory,
   `coin`, `todoist-sync`, `eyes-on-agents`, `mcp`, `bin`, and generated artifacts);
 - a fixed allowlist of relevant environment keys with `configured` / `not configured` status.

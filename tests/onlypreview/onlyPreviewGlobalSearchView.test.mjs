@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -13,10 +14,7 @@ const bundlePath = join(buildRoot, 'runtime.mjs');
 
 await build({
   entryPoints: [
-    join(
-      projectRoot,
-      'src/main/onlypreview/views/onlyPreviewGlobalSearchView.service.ts'
-    )
+    join(projectRoot, 'src/main/onlypreview/views/onlyPreviewGlobalSearchView.service.ts')
   ],
   outfile: bundlePath,
   bundle: true,
@@ -37,6 +35,7 @@ const host = {
   hostToken: 'global-search-host-token-000000'
 };
 const bounds = { x: 265, y: 75, width: 800, height: 620 };
+const viewBounds = { x: 0, y: 0, width: 1280, height: 800 };
 const visibilityEvent = 'onlypreview/globalSearchVisibility';
 
 const visibilityStates = (broadcasts) =>
@@ -159,22 +158,41 @@ const workspace = (generation = 8, currentDirectoryRelativePath = 'src') => ({
   currentDirectoryRelativePath
 });
 
-test('Search uses exact Preview bounds, raises above later Preview attaches, and reuses warm view', () => {
+test('Search spans the BaseWindow, publishes exact Preview geometry, and stays topmost', () => {
   const harness = createHarness();
-  harness.service.updateBounds(host.hostToken, bounds);
+  harness.service.updateBounds(host.hostToken, viewBounds, bounds);
   const view = harness.service.show(host.hostToken, 'chrome');
   assert.equal(harness.views.length, 1);
-  assert.deepEqual(view.bounds, bounds);
+  assert.deepEqual(view.bounds, viewBounds);
+  assert.deepEqual(harness.service.getContext(host.hostToken).layout, {
+    viewBounds,
+    workspaceBounds: bounds
+  });
+  assert.deepEqual(
+    harness.broadcasts.find(({ eventName }) => eventName === 'onlypreview/globalSearchLayout')
+      ?.params,
+    {
+      hostId: host.hostId,
+      revision: 1,
+      layout: { viewBounds, workspaceBounds: bounds }
+    }
+  );
   assert.deepEqual(harness.operations.slice(0, 2), [
-    { kind: 'bounds', name: 'search-1', bounds },
-    { kind: 'add', name: 'search-1', bounds }
+    { kind: 'bounds', name: 'search-1', bounds: viewBounds },
+    { kind: 'add', name: 'search-1', bounds: viewBounds }
   ]);
 
   const preview = createView('pdf-preview', harness.operations);
   harness.window.contentView.addChildView(preview);
-  assert.deepEqual(harness.children.map(({ name }) => name), ['search-1', 'pdf-preview']);
+  assert.deepEqual(
+    harness.children.map(({ name }) => name),
+    ['search-1', 'pdf-preview']
+  );
   harness.service.raiseAfterPreviewAttach(host.hostToken);
-  assert.deepEqual(harness.children.map(({ name }) => name), ['pdf-preview', 'search-1']);
+  assert.deepEqual(
+    harness.children.map(({ name }) => name),
+    ['pdf-preview', 'search-1']
+  );
 
   harness.service.close(host.hostToken, 'discard');
   assert.equal(harness.children.includes(view), false);
@@ -184,7 +202,7 @@ test('Search uses exact Preview bounds, raises above later Preview attaches, and
   harness.service.destroy();
   assert.equal(view.webContents.destroyed, true);
   assert.deepEqual(visibilityStates(harness.broadcasts), [true, false, true, false]);
-  assert.deepEqual(visibilityRevisions(harness.broadcasts), [1, 2, 3, 4]);
+  assert.deepEqual(visibilityRevisions(harness.broadcasts), [2, 3, 4, 5]);
 });
 
 test('Main owns monotonic context revisions across a Shell reload generation reset', () => {
@@ -193,14 +211,16 @@ test('Main owns monotonic context revisions across a Shell reload generation res
   assert.deepEqual(harness.service.getContext(host.hostToken), {
     revision: 1,
     active: false,
-    workspace: workspace(9, 'areas')
+    workspace: workspace(9, 'areas'),
+    layout: null
   });
   harness.service.show(host.hostToken, 'shell');
   harness.service.reportContext(host.hostToken, workspace(1, 'src'));
   assert.deepEqual(harness.service.getContext(host.hostToken), {
     revision: 3,
     active: true,
-    workspace: workspace(1, 'src')
+    workspace: workspace(1, 'src'),
+    layout: null
   });
   assert.deepEqual(
     harness.broadcasts
@@ -215,7 +235,7 @@ test('Main owns monotonic context revisions across a Shell reload generation res
 test('directory reveal is generation-fenced and resolves only an exact action completion', async () => {
   const harness = createHarness();
   harness.service.reportContext(host.hostToken, workspace());
-  harness.service.updateBounds(host.hostToken, bounds);
+  harness.service.updateBounds(host.hostToken, viewBounds, bounds);
   harness.service.show(host.hostToken, 'shell');
   const reveal = harness.service.requestDirectoryReveal(host.hostToken, {
     hostToken: host.hostToken,
@@ -247,7 +267,7 @@ test('directory reveal is generation-fenced and resolves only an exact action co
 test('file/project close targets explicit surfaces and overlay failure stays isolated', async () => {
   const load = deferred();
   const harness = createHarness(async () => await load.promise);
-  harness.service.updateBounds(host.hostToken, bounds);
+  harness.service.updateBounds(host.hostToken, viewBounds, bounds);
   const first = harness.service.show(host.hostToken, 'vue');
   assert.equal(harness.service.close(host.hostToken, 'preview'), true);
   assert.equal(harness.counts().previewFocuses, 1);
@@ -281,7 +301,7 @@ test('file/project close targets explicit surfaces and overlay failure stays iso
 test('inactive overlay load failure never repeats focus restoration', async () => {
   const load = deferred();
   const harness = createHarness(async () => await load.promise);
-  harness.service.updateBounds(host.hostToken, bounds);
+  harness.service.updateBounds(host.hostToken, viewBounds, bounds);
   const view = harness.service.show(host.hostToken, 'vue');
   assert.equal(harness.service.close(host.hostToken, 'preview'), true);
 

@@ -29,6 +29,8 @@ files:
   - '!local/*'
   - '!downloads/*'
   - '!external_resources/*'
+  - '!external_tools/**'
+  - '!prebuilt/**'
   - '!packages/micromeet-cli/**'
   - '!node_modules/@micromeet/cli{,/**}'
   - '!node_modules/**/*.map'
@@ -153,6 +155,9 @@ mac:
   icon: build/icon.icns
   binaries:
     - Contents/Resources/maestro-tools/micromeet
+    - Contents/Resources/maestro-tools/bun
+    - Contents/Resources/maestro-tools/rg
+    - Contents/Resources/maestro-tools/fd
     - Contents/Resources/maestro-tools/anydoc/anydoc.node
     - Contents/Resources/maestro-tools/ouch
   entitlementsInherit: build/entitlements.mac.plist

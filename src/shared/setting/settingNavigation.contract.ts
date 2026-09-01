@@ -3,6 +3,7 @@ export const SETTING_OPEN_EVENT = 'setting/open' as const;
 export const SETTING_TABS = [
   'proxy',
   'general',
+  'account',
   'llm',
   'systemPrompt',
   'notification',

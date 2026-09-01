@@ -1,7 +1,7 @@
 # OnlyPreview Global Search And Result Preview
 
-Status: Accepted; tasks 035–048, 072, 073, 076, and 092 implemented through independent review;
-owner verification pending
+Status: Accepted; tasks 035–048, 072, 073, 076, 092, and 100 implemented through independent
+review; owner verification pending
 
 ## Purpose
 
@@ -39,40 +39,40 @@ without cards, badges, gradients, or decorative motion.
 
 ## Layout
 
-Global Search occupies the existing right work area through a dedicated trusted local
-`WebContentsView` child application. The Shell keeps the Project tree, toolbar, and status rail
-visible and continuously reports the real Preview content rectangle. Main gives Search that exact
-rectangle and attaches it above the active Vue/Chrome Preview; closing search detaches only Search,
-so the selected-file Preview remains loaded. The native view and its HTML canvas are transparent.
-The HTML `body` owns exactly `24px` padding on every side, leaving one opaque, rounded, shadowed
-workspace surface floating above the still-loaded Preview.
+Global Search uses a dedicated trusted local `WebContentsView` child application. Main sizes that
+native view to the complete OnlyPreview content area and separately supplies the real Preview
+rectangle as renderer-local workspace geometry. The Shell Project tree, toolbar, and status rail
+remain visible through the transparent canvas; the opaque search workspace stays at the same right
+Preview position with its existing `24px` inset, radius, shadow, and internal dimensions. Closing
+Search detaches only Search, so the selected-file Preview remains loaded.
 
 ```text
-┌──────────── PROJECT ───────────┬──────────── TRANSPARENT SEARCH VIEW ──────┐
-│ ▾ bitterless                  │ 24px transparent body gutter               │
-│   ▾ src                       │   ╭──────── floating workspace ─────────╮  │
-│     …                         │   │ Search input                         │  │
-│                               │   │ Contents scope                       │  │
-│                               │   ├──────────────────┬───────────────────┤  │
-│                               │   │ CONTENTS         │ FILES             │  │
-│                               │   │ independent      │ independent       │  │
-│                               │   ├──── draggable horizontal split ─────┤  │
-│                               │   │ PREVIEW                      Open ↗  │  │
-│                               │   ╰──── 14px radius + quiet shadow ─────╯  │
-└───────────────────────────────┴────────────────────────────────────────────┘
+┌──────────── FULL-WINDOW TRANSPARENT SEARCH VIEW ──────────────────────────┐
+│ transparent Project/menu area                                             │
+│ ┌──────── PROJECT ────────┬──── current Preview rectangle ───────────────┐ │
+│ │ visible underneath      │ 24px transparent inset                      │ │
+│ │                         │ ╭────── floating workspace ───────────────╮ │ │
+│ │                         │ │ Search / scope                          │ │ │
+│ │                         │ ├──────── CONTENTS ────┬──── FILES ──────┤ │ │
+│ │                         │ ├──────────────────────┴──────────────────┤ │ │
+│ │                         │ │ PREVIEW                         Open ↗ │ │ │
+│ │                         │ ╰── 14px radius + quiet shadow ──────────╯ │ │
+│ └─────────────────────────┴────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ```text
-Exposed Shell area:    click → fully transparent shield → close Search (click is consumed)
-24px Search gutter:    click → Search renderer close → restore opener (click is consumed)
-Preview rectangle:     transparent native Search → native Vue/Chrome Preview → shield → Shell
+Any transparent canvas: click → Search renderer close → restore opener (click is consumed)
+Workspace surface:     clicks remain inside Search
+Native z-order:        Shell < native Vue/Chrome Preview < full-window Search
 ```
 
 - Search input and scope stay fixed at the top.
 - Main sets only the Global Search `WebContentsView` background to transparent. `html`, `body`, and
-  `#app` paint no canvas; `body` owns the exact `24px` inset. The `.onlypreview-global-search`
-  workspace remains opaque, fills the inset content box, clips all internal regions to one `14px`
-  radius, and owns the shadow. Shell and Preview view backgrounds are unchanged.
+  `#app` fill the full native view and paint no canvas. The `.onlypreview-global-search` workspace is
+  absolutely placed from Main's current Preview rectangle, applies the exact `24px` inset, remains
+  opaque, clips all internal regions to one `14px` radius, and owns the shadow. Shell and Preview
+  backgrounds are unchanged.
 - The upper result region has two equal independent scroll ledgers: Contents on the left and Files
   on the right, separated by one quiet divider. DOM and linear keyboard order follow that visible
   reading order. Inside Files, all matching folders precede all matching files while each partition
@@ -80,17 +80,15 @@ Preview rectangle:     transparent native Search → native Vue/Chrome Preview �
   line only after the request settles.
 - A horizontal separator divides results from the bottom preview. Default preview height is 38% of
   the search work area, keyboard/resizable within 25–70%, and restored only for the current window.
-- While Search is active, one fully transparent Shell click shield fills the main window behind the
-  native Search child view. Native z-order keeps Search fully visible; the exposed menu, Project
-  pane, splitter, Preview toolbar, and status rail retain their normal appearance but become one
-  click target that closes Search without forwarding the click to the covered control.
-- The transparent 24px body gutter belongs to the topmost Search WebContents and therefore cannot
-  rely on the Shell shield for hit testing. Clicking that gutter explicitly performs the same
-  `mode: 'opener'` dismissal; clicks inside the rounded workspace never bubble into that action.
+- The full-window Search renderer owns outside-workspace hit testing. Clicking any transparent
+  Project/menu/splitter/Preview-gutter area explicitly performs the existing `mode: 'opener'`
+  dismissal and consumes the event; clicks inside the rounded workspace never trigger dismissal.
+  The historical Shell DOM shield from task 044 is retired rather than left as a second hit target.
 - At the 800px minimum window width, the Project pane may remain at its existing 180px minimum; the
   search workspace receives the rest. Search is a child view, never a modal or extra top-level
   window. Its native z-order invariant is `Shell < active Preview < active Global Search`; every
-  Preview attach re-raises Search while it is active. Both result columns remain visible at narrow
+  Preview attach and exact PDF document-frame-ready transition re-raises Search while it is active.
+  Both result columns remain visible at narrow
   widths through `minmax(0, 1fr)` and text ellipsis; they never stack or create page-level
   horizontal scrolling.
 - Reduced-motion mode removes chevron/selection transitions; no ambient animation is introduced.
@@ -289,12 +287,11 @@ type OnlyPreviewGlobalSearchPreview =
 | double-click or `Cmd/Ctrl+Enter` on directory   | expand its full ancestry and target, select and center-focus it in Project, then close Global Search                                            |
 | Contents scope selector                         | immediately retire the prior request/results and rerun the current non-empty query for Current directory or Project; Files remains project-wide |
 | drag/keyboard separator                         | resize result/preview split within 25–70%                                                                                                       |
-| click the protected Shell outside Search        | close Global Search, consume the click, and restore its live opener                                                                             |
-| click the transparent 24px gutter around Search | close Global Search, consume the click, and restore its live opener                                                                             |
+| click any transparent area outside the workspace | close Global Search in its own renderer, consume the click, and restore its live opener                                                         |
 | `Esc`                                           | first clear a non-empty query; second close Global Search and restore prior Preview bounds                                                      |
 
-Focus stays inside the search workspace while active. Project-tree interaction resumes after a
-scrim click closes Search; that dismissal click itself is never forwarded. Closing Search restores
+Focus stays inside the search workspace while active. Project-tree interaction resumes after an
+outside-workspace click closes Search; that dismissal click itself is never forwarded. Closing Search restores
 focus to the surface that opened it when still valid, otherwise the current Project row, otherwise
 the main Preview.
 
@@ -302,11 +299,9 @@ the main Preview.
 
 - Opening search with no workspace shows one direct Open Folder state; no request is sent.
 - Main publishes the authoritative host-scoped Search visibility state with a monotonic revision.
-  Shell renders one visually transparent DOM click shield from that event and receives a
-  current-state replay with each context report; the Search renderer also reads the state in its
-  initial context snapshot. Shell/Search reloads and late async replies therefore cannot resurrect
-  an older state. The shield adds no process, native view, visible tint, blur, animation, or
-  periodic work.
+  Shell and Search receive current-state replay with each context report, but Shell paints no DOM
+  shield. Search renderer geometry and visibility revisions fence outside-workspace dismissal;
+  Shell/Search reloads and late async replies cannot resurrect an older state.
 - A false visibility event also exits the detached warm Search renderer, cancelling its active
   request and clearing query/results before the next open. Repeated close requests republish false
   without repeating focus restoration.

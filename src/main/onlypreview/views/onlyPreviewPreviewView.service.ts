@@ -1,5 +1,11 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { WebContentsView, type BaseWindow, type Rectangle, type Session } from 'electron';
+import {
+  WebContentsView,
+  webFrameMain,
+  type BaseWindow,
+  type Rectangle,
+  type Session
+} from 'electron';
 import { OnlyPreviewContractError } from '@shared/onlypreview/onlyPreview.contract';
 import type {
   OnlyPreviewErrorCode,
@@ -75,8 +81,7 @@ interface PendingChromeMount {
  */
 const ONLY_PREVIEW_CHROME_PARTITION = 'persist:onlypreview-chrome';
 
-/** The PDF viewer's document frame must appear before a Chrome preview may be called ready. */
-const DOCUMENT_FRAME_POLL_INTERVAL_MS = 150;
+/** The exact PDF document frame must finish loading before a Chrome preview may be called ready. */
 const DOCUMENT_FRAME_DEADLINE_MS = 8_000;
 
 /** Session-level hardening outlives a single selection now that the session is shared. */
@@ -257,6 +262,12 @@ export class OnlyPreviewPreviewViewService {
   private documentFrameWatch: {
     view: WebContentsView;
     timer: ReturnType<typeof setTimeout>;
+    listener: (
+      event: Electron.Event,
+      isMainFrame: boolean,
+      frameProcessId: number,
+      frameRoutingId: number
+    ) => void;
   } | null = null;
 
   constructor(private readonly callbacks: OnlyPreviewPreviewViewCallbacks) {}
@@ -620,14 +631,14 @@ export class OnlyPreviewPreviewViewService {
       if (event.isMainFrame && event.url === navigationUrl) return;
       event.preventDefault();
     });
-    webContents.once('did-finish-load', () => {
-      if (this.chromePreviewView !== view || !this.callbacks.isCurrent(runtime, revision)) return;
-      if (!requireDocumentFrame) {
+    if (requireDocumentFrame) {
+      this.awaitDocumentFrameFinish(view, runtime, revision, navigationUrl);
+    } else {
+      webContents.once('did-finish-load', () => {
+        if (this.chromePreviewView !== view || !this.callbacks.isCurrent(runtime, revision)) return;
         this.callbacks.onChromeReady(runtime, view, revision);
-        return;
-      }
-      this.awaitDocumentFrame(view, runtime, revision, navigationUrl);
-    });
+      });
+    }
     webContents.once('render-process-gone', (_event, details) => {
       if (this.chromePreviewView !== view || !this.callbacks.isCurrent(runtime, revision)) return;
       this.callbacks.onChromeUnavailable(
@@ -640,26 +651,49 @@ export class OnlyPreviewPreviewViewService {
   }
 
   /**
-   * A blank PDF viewer still fires `did-finish-load`, so readiness for the Chromium PDF adapter
-   * waits for the viewer's own document frame instead of trusting the navigation alone.
+   * A blank PDF viewer still fires the main-frame `did-finish-load`, and a matching document frame
+   * can exist before PDFium has loaded its page model. Readiness therefore requires the exact
+   * current non-main frame's own `did-frame-finish-load` event.
    */
-  private awaitDocumentFrame(
+  private awaitDocumentFrameFinish(
     view: WebContentsView,
     runtime: OnlyPreviewPreviewRegionRuntime,
     revision: number,
-    navigationUrl: string,
-    waitedMs = 0
+    navigationUrl: string
   ): void {
-    if (this.chromePreviewView !== view || !this.callbacks.isCurrent(runtime, revision)) {
-      this.clearDocumentFrameWatch();
-      return;
-    }
-    if (this.hasDocumentFrame(view, navigationUrl)) {
+    this.clearDocumentFrameWatch();
+    const webContents = view.webContents;
+    const listener = (
+      _event: Electron.Event,
+      isMainFrame: boolean,
+      frameProcessId: number,
+      frameRoutingId: number
+    ): void => {
+      if (this.documentFrameWatch?.listener !== listener) return;
+      if (this.chromePreviewView !== view || !this.callbacks.isCurrent(runtime, revision)) {
+        this.clearDocumentFrameWatch();
+        return;
+      }
+      if (isMainFrame) return;
+      const frame = webFrameMain.fromId(frameProcessId, frameRoutingId);
+      if (
+        !frame ||
+        frame.isDestroyed() ||
+        frame === webContents.mainFrame ||
+        frame.url !== navigationUrl
+      ) {
+        return;
+      }
       this.clearDocumentFrameWatch();
       this.callbacks.onChromeReady(runtime, view, revision);
-      return;
-    }
-    if (waitedMs >= DOCUMENT_FRAME_DEADLINE_MS) {
+      this.callbacks.onActiveViewAttached();
+    };
+    const timer = setTimeout(() => {
+      if (this.documentFrameWatch?.timer !== timer) return;
+      if (this.chromePreviewView !== view || !this.callbacks.isCurrent(runtime, revision)) {
+        this.clearDocumentFrameWatch();
+        return;
+      }
       this.clearDocumentFrameWatch();
       this.callbacks.onChromeUnavailable(
         runtime,
@@ -667,40 +701,22 @@ export class OnlyPreviewPreviewViewService {
         revision,
         new OnlyPreviewContractError(
           'PDF_VIEWER_UNAVAILABLE',
-          'The built-in PDF viewer did not create a document frame for this file.'
+          'The built-in PDF viewer document frame did not finish loading for this file.'
         )
       );
-      return;
-    }
-    this.clearDocumentFrameWatch();
-    const timer = setTimeout(() => {
-      if (this.documentFrameWatch?.timer !== timer) return;
-      this.documentFrameWatch = null;
-      this.awaitDocumentFrame(
-        view,
-        runtime,
-        revision,
-        navigationUrl,
-        waitedMs + DOCUMENT_FRAME_POLL_INTERVAL_MS
-      );
-    }, DOCUMENT_FRAME_POLL_INTERVAL_MS);
-    this.documentFrameWatch = { view, timer };
-  }
-
-  private hasDocumentFrame(view: WebContentsView, navigationUrl: string): boolean {
-    const webContents = view.webContents;
-    if (webContents.isDestroyed()) return false;
-    const mainFrame = webContents.mainFrame;
-    if (!mainFrame) return false;
-    return mainFrame.framesInSubtree.some(
-      (frame) => frame !== mainFrame && frame.url === navigationUrl
-    );
+    }, DOCUMENT_FRAME_DEADLINE_MS);
+    this.documentFrameWatch = { view, timer, listener };
+    webContents.on('did-frame-finish-load', listener);
   }
 
   private clearDocumentFrameWatch(): void {
-    if (!this.documentFrameWatch) return;
-    clearTimeout(this.documentFrameWatch.timer);
+    const watch = this.documentFrameWatch;
+    if (!watch) return;
     this.documentFrameWatch = null;
+    clearTimeout(watch.timer);
+    if (!watch.view.webContents.isDestroyed()) {
+      watch.view.webContents.removeListener('did-frame-finish-load', watch.listener);
+    }
   }
 
   private detachView(view: WebContentsView): void {

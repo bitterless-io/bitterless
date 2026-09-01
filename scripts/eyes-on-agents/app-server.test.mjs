@@ -131,6 +131,13 @@ class FakeChild extends EventEmitter {
         filePath: '/tmp/codex-config.toml'
       };
       queueMicrotask(() => this.stdout.write(`${JSON.stringify({ id: message.id, result })}\n`));
+      return;
+    }
+    if (message.method === 'thread/archive') {
+      queueMicrotask(() => this.stdout.write(`${JSON.stringify({
+        id: message.id,
+        result: {}
+      })}\n`));
     }
   }
 
@@ -241,6 +248,34 @@ class UnsupportedBatchWriteChild extends FakeChild {
     queueMicrotask(() => this.stdout.write(`${JSON.stringify({
       id: message.id,
       error: { message: 'method not found' }
+    })}\n`));
+  }
+}
+
+class MalformedArchiveChild extends FakeChild {
+  handle(message) {
+    if (message.method !== 'thread/archive') {
+      super.handle(message);
+      return;
+    }
+    this.messages.push(message);
+    queueMicrotask(() => this.stdout.write(`${JSON.stringify({
+      id: message.id,
+      result: { archived: true }
+    })}\n`));
+  }
+}
+
+class RejectedArchiveChild extends FakeChild {
+  handle(message) {
+    if (message.method !== 'thread/archive') {
+      super.handle(message);
+      return;
+    }
+    this.messages.push(message);
+    queueMicrotask(() => this.stdout.write(`${JSON.stringify({
+      id: message.id,
+      error: { message: 'provider rejected archive' }
     })}\n`));
   }
 }
@@ -409,6 +444,45 @@ try {
     JSON.stringify(batchWrite).includes('trusted_hash'),
     false,
     'Bitterless must never write Codex hook trust hashes'
+  );
+  await supervisor.archiveThread('thread-to-archive');
+  const archiveRequest = child.messages.find((message) => message.method === 'thread/archive');
+  assert.deepEqual(archiveRequest, {
+    method: 'thread/archive',
+    id: archiveRequest.id,
+    params: { threadId: 'thread-to-archive' }
+  }, 'archive must use the exact provider method and parameter shape');
+
+  const malformedArchiveSupervisor = new CodexAppServerSupervisor({
+    executable: '/fixed/codex',
+    spawnAppServer: () => new MalformedArchiveChild()
+  });
+  await malformedArchiveSupervisor.connect();
+  await assert.rejects(
+    () => malformedArchiveSupervisor.archiveThread('malformed-archive'),
+    /thread\/archive response is invalid/,
+    'archive must accept only the protocol empty-object response'
+  );
+  await malformedArchiveSupervisor.disconnect();
+
+  const rejectedArchiveSupervisor = new CodexAppServerSupervisor({
+    executable: '/fixed/codex',
+    spawnAppServer: () => new RejectedArchiveChild()
+  });
+  await rejectedArchiveSupervisor.connect();
+  await assert.rejects(
+    () => rejectedArchiveSupervisor.archiveThread('rejected-archive'),
+    /provider rejected archive/
+  );
+  await rejectedArchiveSupervisor.disconnect();
+
+  const disconnectedArchiveSupervisor = new CodexAppServerSupervisor({
+    executable: '/fixed/codex',
+    spawnAppServer: () => new FakeChild()
+  });
+  await assert.rejects(
+    () => disconnectedArchiveSupervisor.archiveThread('disconnected-archive'),
+    /not connected/
   );
 
   const pagedTurnsChild = new FullTurnPagingChild((cursor) => {

@@ -119,6 +119,7 @@ class MaestroWindowHandler extends XpcMainHandler {
   async _destroyForAuth(): Promise<void> {
     this.authInvalidated = true
     persistAuthInvalidation()
+    await maestroWindowHelper.prepareForAuthShutdown()
     await this.runAuthCleanup()
   }
 
@@ -156,15 +157,9 @@ class MaestroWindowHandler extends XpcMainHandler {
       this.assertAuthReady()
 
       const window = maestroWindowHelper.create()
-      let nativeCloseCleanupStarted = false
       window.on('close', (event) => {
         event.preventDefault()
-        if (nativeCloseCleanupStarted) return
-        nativeCloseCleanupStarted = true
-        void this.destroyMaestroRuntime().catch((err) => {
-          nativeCloseCleanupStarted = false
-          console.error('[maestro] native close cleanup failed:', err)
-        })
+        window.hide()
       })
       window.once('closed', () => {
         void this.destroyMaestroRuntime()
@@ -176,6 +171,7 @@ class MaestroWindowHandler extends XpcMainHandler {
       )
       if (window.isDestroyed()) throw new Error('[maestro] window closed before startup completed')
       this.assertAuthReady()
+      maestroWindowHelper.markBootSuccessful()
     } catch (err) {
       await this.destroyMaestroRuntime()
       throw err
