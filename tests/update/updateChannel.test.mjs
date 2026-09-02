@@ -14,8 +14,6 @@ const {
   resolveUpdatePlatform
 } = require('../../scripts/release/releaseChannel.cjs');
 
-const readSource = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf-8');
-
 test('Preview update metadata is pinned to its exact channel and platform directory', () => {
   const expected = resolveUpdateDirectory('preview', 'mac_arm');
   const manifest = {
@@ -86,13 +84,19 @@ test('packaging resolves the platform tokens the running application detects', (
     );
   }
 
-  const updateService = readSource('src/main/updateHelper/update.service.ts');
+  const updateService = readFileSync(
+    new URL('../../src/main/updateHelper/update.service.ts', import.meta.url),
+    'utf-8'
+  );
   assert.match(updateService, /arch === 'arm64' \? 'mac_arm' : 'mac_intel'/);
   assert.match(updateService, /platform === 'win32'\) \{\s+return 'win64';/);
 });
 
 test('the packaged updater configuration template never ships a placeholder host', () => {
-  const builderTemplate = readSource('electron-builder.tmp.yml');
+  const builderTemplate = readFileSync(
+    new URL('../../electron-builder.tmp.yml', import.meta.url),
+    'utf-8'
+  );
   assert.match(builderTemplate, /^ {2}provider: generic$/m);
   assert.match(builderTemplate, new RegExp(`^ {2}url: ${RELEASE_BASE_URL}$`, 'm'));
   assert.doesNotMatch(builderTemplate, /example\.com/);

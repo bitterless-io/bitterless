@@ -1,6 +1,6 @@
 # Packaged app-update.yml points at a placeholder host
 
-Status: proposed
+Status: implemented; owner package verification pending
 
 ## Observed behavior
 
@@ -71,3 +71,23 @@ no access to it and duplicates nothing, so the packaged value is simply wrong.
 
 Implementation task:
 [release-packaged-update-feed-url-109](../plan/tasks/release-packaged-update-feed-url-109.md).
+
+## Delivery
+
+- `releaseChannel.cjs` now owns `RELEASE_BASE_URL`, `resolveUpdateDirectory()`, and
+  `resolveUpdatePlatform()`. `tests/update/updateChannel.test.mjs` proves all nine channel/platform
+  directories equal the runtime values and that the packaging platform tokens match the mapping in
+  `UpdateService.detectPlatform()`.
+- `afterPack` rewrites the packaged `app-update.yml` `url` line before macOS code signing, then runs
+  the audit. The channel comes from the package's own runtime-profile marker rather than the ambient
+  environment, so the written and the verified value share one source and a mismatch is impossible.
+- Only the `url` line changes: `provider`, `updaterCacheDirName`, ordering, and line endings are
+  preserved, and a file with zero or several top-level `url` lines is refused.
+- The package audit gained a fail-closed update-feed gate. `auditDesktopPackage()` stays read-only,
+  so the publish-time audit of an already-signed bundle still cannot mutate it.
+- `electron-builder.tmp.yml` now carries the release root instead of `example.com`, and a test
+  rejects any placeholder host reappearing in the template.
+- Auto-update suite passed 22/22 and the package-audit suite 28/28, including three new update-feed
+  tests across `mac_arm`, `mac_intel`, and `win64` and both resource layouts; `node --check` and
+  `git diff --check` passed.
+- No build, signing, notarization, upload, CDN refresh, Electron, or E2E ran.

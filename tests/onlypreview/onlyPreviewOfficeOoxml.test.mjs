@@ -159,10 +159,19 @@ const createHarness = (kind, options = {}) => {
   };
   let activeMatch = -1;
   const matches = [{ matchIndex: 0 }, { matchIndex: 1 }, { matchIndex: 2 }];
+  // The real viewers publish their first laid-out unit before load() resolves and keep laying the
+  // rest out afterwards. `publishOnLayout` models the opposite: nothing is published until the
+  // full-document barrier resolves.
+  const laidOutUnits = kind === 'pptx' ? 3 : 2;
+  let publishedUnits = options.empty || options.publishOnLayout ? 0 : laidOutUnits;
   const viewer = {
     sheetNames: options.empty ? [] : ['Sheet 1'],
-    pageCount: options.empty ? 0 : 2,
-    slideCount: options.empty ? 0 : 3,
+    get pageCount() {
+      return publishedUnits;
+    },
+    get slideCount() {
+      return publishedUnits;
+    },
     async load(bytes) {
       events.loads.push(bytes.byteLength);
       events.lifecycle.push('viewer-load');
@@ -176,6 +185,8 @@ const createHarness = (kind, options = {}) => {
     async waitUntilLayoutComplete() {
       events.layoutWaits += 1;
       if (options.layoutGate) await options.layoutGate.promise;
+      if (options.layoutError) throw options.layoutError;
+      if (options.publishOnLayout && !options.empty) publishedUnits = laidOutUnits;
     },
     async findText(query, findOptions) {
       events.findText.push({ query, options: findOptions });

@@ -1,6 +1,6 @@
 # Stable and Preview can publish the same release identity
 
-Status: proposed; one operator-workflow decision pending
+Status: implemented; owner release verification pending
 
 ## Observed behavior
 
@@ -60,14 +60,17 @@ Settings Log ledger, and the Ops inventory all use it to name one specific binar
 - No already-published artifact is rewritten, relabelled, re-uploaded, or deleted. The current
   Stable `0.0.78` and Preview `0.0.82` feeds are left untouched.
 
-## Operator-workflow decision (pending Ral's confirmation)
+## Operator-workflow decision
 
 Removing `--bump` from the per-platform publishers changes how a release is cut: bump once through
 an explicit `yarn release:cut`, then run each platform publisher against that one version. The
 alternative — keeping `--bump` on whichever platform happens to run first — is order-dependent and
-silently mints a new version whenever the operator repeats a platform. This issue assumes the
-explicit cut step. `fast_publish:mac_arm` keeps its own `scripts/patch.js` because it is by
-definition a single-platform cut-and-publish command.
+silently mints a new version whenever the operator repeats a platform. Ral approved the explicit cut
+step on 2026-09-02 and it is implemented. `fast_publish:mac_arm` keeps its own `scripts/patch.js`
+because it is by definition a single-platform cut-and-publish command.
+
+Forgetting the cut is not silent: republishing an identity that the same channel already holds is
+still refused by `assertReleaseOrder()` with the existing version-reuse message.
 
 ## Acceptance
 
@@ -85,3 +88,19 @@ definition a single-platform cut-and-publish command.
 
 Implementation task:
 [release-cross-channel-version-identity-108](../plan/tasks/release-cross-channel-version-identity-108.md).
+
+## Delivery
+
+- `assertNoCrossChannelIdentityReuse()` reads the other two channels' manifest for the same platform
+  before upload and refuses a reused `version_code` or a reused `version`. Absence is allowed, a
+  transport failure is refused, and both checks reuse the single `isMissingRemoteObject()`
+  classification now shared with `assertNoRemoteDowngrade()`.
+- The guard runs in both existing publication gates: the preflight, so `--preflight-only` reports it
+  before any build, and again after the build against the produced `version_info.json`.
+- Preview publishers no longer carry `--bump`. `yarn release:cut` is the single bump entrypoint;
+  `fast_publish:mac_arm` keeps its own cut and still performs exactly one build.
+- Same-channel order policy, messages, artifact discovery, upload order, CDN refresh, and
+  credentials are unchanged, and no published artifact was touched.
+- Release-hook suite passed 37/37, including four new guard fixtures and the publisher-ordering
+  guard; `node --check` accepted both modified scripts and `git diff --check` passed.
+- No build, signing, notarization, upload, CDN refresh, Electron, or E2E ran.

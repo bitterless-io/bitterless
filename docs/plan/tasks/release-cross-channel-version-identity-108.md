@@ -1,7 +1,7 @@
 ---
 id: release-cross-channel-version-identity-108
 scope: make a published release identity unique across channels and cover every platform of one release with one version
-status: pending
+status: implemented; owner release verification pending
 depends-on: [release-dev-dist-isolation-105, release-preview-version-log-008]
 verify: node --test scripts/sqlite-migrations/release-hook.test.mjs && node --check scripts/publish.js && node --check scripts/release/releaseChannel.cjs && git diff --check
 ---
@@ -69,9 +69,36 @@ existing same-channel publication gate.
 - Do not invoke package builds, signing, notarization, publication, network operations, Electron,
   Playwright, or E2E. Ral owns the next release run.
 
+## Delivery
+
+- Added `assertNoCrossChannelIdentityReuse()` to `scripts/publish.js`. It iterates the other
+  `releaseChannelConfigs` entries, reads `${prefix}/<channel>/<platform>/version_info.json`, and
+  refuses a reused `version_code` or a reused `version` with an explicit cross-channel message.
+- Extracted `isMissingRemoteObject()` so absence/transport classification is shared with
+  `assertNoRemoteDowngrade()` instead of duplicated.
+- Wired the guard into both existing gates: the preflight before `--preflight-only` returns, and the
+  post-build check against `version_info.json`. `--dry-run` still performs no OSS reads or writes.
+- Removed `--bump` from the three Preview publishers, added `release:cut`, and left
+  `fast_publish:mac_arm` as the single-platform cut-and-publish path.
+- Left `assertReleaseOrder()`, `patch.js`, channel directories, artifact discovery, upload order,
+  CDN refresh, credentials, and every published artifact untouched.
+
+## Verification result
+
+- `node --test scripts/sqlite-migrations/release-hook.test.mjs` — 37/37, including cross-channel
+  version_code reuse, cross-channel version reuse, allowed-when-absent with exact requested keys and
+  success log, refused-on-transport-failure, the two-call publisher ordering guard, and the
+  no-publisher-mints-a-version alias guard.
+- `node --test scripts/environment/runtimeProfile.test.mjs` — 10/10.
+- `node --check scripts/publish.js`, `node --check scripts/release/releaseChannel.cjs`, and
+  `git diff --check` passed.
+- ESLint on the touched files reports only the pre-existing `no-require-imports` and
+  `explicit-function-return-type` violations that `scripts/**/*.cjs` and `scripts/publish.js`
+  already carry file-wide; no new class of finding was introduced and none was suppressed.
+- No build, signing, notarization, publication, network operation, Electron, or E2E ran.
+
 ## Owner Verification
 
-- Confirm the operator-workflow decision in the issue before implementation starts.
 - Cut one release with `yarn release:cut`, publish it to two platforms of the same channel, and
   confirm both feeds advertise the identical `version` and `version_code`.
 - Attempt a Stable publication without a fresh cut while the Preview feed holds that identity, and

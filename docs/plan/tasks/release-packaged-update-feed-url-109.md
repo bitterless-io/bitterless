@@ -1,7 +1,7 @@
 ---
 id: release-packaged-update-feed-url-109
 scope: give every packaged app-update.yml the exact channel/platform updater directory from one shared mapping
-status: pending
+status: implemented; owner package verification pending
 depends-on: [release-preview-channel-007]
 verify: yarn test:desktop-auto-update && yarn test:desktop-package-audit && node --check scripts/package/desktopPackage.audit.cjs && git diff --check
 ---
@@ -66,6 +66,37 @@ runtime updater, without changing how an actual update is authorized.
   packaging script, and `git diff --check`.
 - Do not invoke package builds, signing, notarization, publication, network operations, Electron,
   Playwright, or E2E.
+
+## Delivery
+
+- `scripts/release/releaseChannel.cjs` now exports `RELEASE_BASE_URL`, `resolveUpdateDirectory()`,
+  and `resolveUpdatePlatform()`, each rejecting an unknown channel, platform, or platform/arch pair.
+- `writePackagedUpdateFeed()` runs from `afterPack` only. It reads the channel from the package's own
+  `out/.bitterless-runtime-profile.json` marker and the platform from the packed executable through
+  the existing `findApplicationTarget()` binary inspection, so it needs neither the ambient
+  environment nor Electron Builder's `Arch` enum.
+- `setUpdateFeedUrlLine()` replaces exactly one top-level `url` line, preserves `\r\n`, and refuses a
+  file with zero or several such lines. Nothing else in `app-update.yml` is rewritten.
+- `assertPackagedUpdateFeed()` is a read-only gate inside `auditDesktopPackage()`, which keeps that
+  function non-mutating for the publish-time audit of an already-signed bundle.
+- `electron-builder.tmp.yml` carries the release root with a comment recording that `afterPack`
+  narrows it to the channel/platform directory.
+- `UpdateService`, `setFeedURL()`, the manifest assertions, polling, and the install path are
+  unchanged.
+
+## Verification result
+
+- `yarn test:desktop-auto-update` — 22/22, including the nine-directory packaging/runtime equality,
+  the platform-token equality against `UpdateService.detectPlatform()`, and a template guard that
+  rejects any placeholder host.
+- `yarn test:desktop-package-audit` — 28/28, including the `mac_arm`/`mac_intel`/`win64` rewrite
+  across both resource layouts, rejection of placeholder, release-root, cross-channel, cross-platform
+  and missing feeds, and the single-`url` line-ending unit.
+- `node --check scripts/package/desktopPackage.audit.cjs` and `git diff --check` passed.
+- ESLint reports zero findings in `tests/update/updateChannel.test.mjs` and
+  `scripts/package/desktopPackageAudit.test.mjs`; the `.cjs` packaging script keeps only its
+  pre-existing file-wide `no-require-imports` and `explicit-function-return-type` violations.
+- No build, signing, notarization, publication, network operation, Electron, or E2E ran.
 
 ## Owner Verification
 

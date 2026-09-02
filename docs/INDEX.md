@@ -246,12 +246,13 @@ design document.
   `0.0.81 / 260901100557` and entered the build; [review 1](plan/reviews/release-preview-version-log-008-1.md)
   passed.
 - [Stable and Preview can publish the same release identity](issues/cross-channel-release-version-identity-collision.md) -
-  proposed; one operator-workflow decision pending: the shared `_version` / `version_code` counter is
-  bumped by every Preview publisher and by no Stable publisher, so an unbumped Stable release can
-  reuse a Preview identity, and a per-platform bump stops one release from covering all platforms.
+  implemented; owner release verification pending: publication now refuses a `version` or
+  `version_code` another channel already published, and one explicit `yarn release:cut` replaces the
+  per-platform bump so a single release covers every platform.
 - [Packaged app-update.yml points at a placeholder host](issues/packaged-update-feed-url-placeholder.md) -
-  proposed: every package ships `url: https://example.com/auto-updates`, and updates work only
-  because the runtime calls `setFeedURL()` from the verified manifest before every check.
+  implemented; owner package verification pending: `afterPack` writes the exact channel/platform
+  updater directory from the mapping shared with the runtime, and the package audit rejects a
+  placeholder, cross-channel, or cross-platform feed before signing.
 
 ## Guides
 

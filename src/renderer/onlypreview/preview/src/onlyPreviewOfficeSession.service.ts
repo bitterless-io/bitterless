@@ -64,15 +64,17 @@ interface XlsxViewerLike extends OoxmlViewer {
   readonly sheetNames: string[];
 }
 
-interface DocxViewerLike extends OoxmlViewer {
-  load(source: ArrayBuffer): Promise<void>;
+interface ProgressiveOfficeViewer {
   waitUntilLayoutComplete(): Promise<void>;
+}
+
+interface DocxViewerLike extends OoxmlViewer, ProgressiveOfficeViewer {
+  load(source: ArrayBuffer): Promise<void>;
   readonly pageCount: number;
 }
 
-interface PptxViewerLike extends OoxmlViewer {
+interface PptxViewerLike extends OoxmlViewer, ProgressiveOfficeViewer {
   load(source: ArrayBuffer): Promise<void>;
-  waitUntilLayoutComplete(): Promise<void>;
   readonly slideCount: number;
 }
 
@@ -117,6 +119,8 @@ export interface OnlyPreviewOfficeSessionApi extends OnlyPreviewContentFindAdapt
 const COMPLETE_COVERAGE = Object.freeze({ kind: 'complete' as const });
 const FIND_TIMEOUT_MS = 10_000;
 const VIEWER_WORKER_TIMEOUT_MS = 25_000;
+// A preview that takes this long is worth explaining in the log; a fast one is noise.
+const OFFICE_SLOW_PHASE_MS = 1_000;
 // @silurus/ooxml calls host 2D painting "main"; OOXML/WASM parsing still uses its parser Worker.
 const OOXML_RENDER_MODE = 'main' as const;
 const OOXML_RESOURCE_LIMITS = Object.freeze({
@@ -319,6 +323,7 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
   private failureLogged = false;
   private findGeneration = 0;
   private findQueue: Promise<void> = Promise.resolve();
+  private layoutSettled: Promise<void> = Promise.resolve();
   private lastQuery = '';
   private lastCaseSensitive = false;
   private matchCount = 0;
@@ -511,11 +516,7 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
     );
     this.viewer = viewer;
     await this.runOfficePhase('load', () => viewer.load(bytes));
-    await this.runOfficePhase('layout', () => viewer.waitUntilLayoutComplete());
-    this.requireActive();
-    if (viewer.pageCount === 0) {
-      throw new OnlyPreviewContractError(emptyErrorForKind('docx'), 'Document has no pages.');
-    }
+    await this.presentFirstUnit(viewer, 'docx', () => viewer.pageCount, 'Document has no pages.');
   }
 
   private async mountPptx(container: HTMLElement, bytes: ArrayBuffer): Promise<void> {
@@ -546,17 +547,58 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
     );
     this.viewer = viewer;
     await this.runOfficePhase('load', () => viewer.load(bytes));
-    await this.runOfficePhase('layout', () => viewer.waitUntilLayoutComplete());
+    await this.presentFirstUnit(
+      viewer,
+      'pptx',
+      () => viewer.slideCount,
+      'Presentation has no slides.'
+    );
+  }
+
+  // The viewer is constructed with `progressiveLayout`, so its first layout publication records a
+  // unit count and resolves `load()` while the remaining pages keep laying out. Presenting at that
+  // point is what keeps a 298-table combined master from hiding behind its own pagination. A viewer
+  // or document that publishes nothing early still falls back to the full-document barrier, so the
+  // empty check never fires merely because layout was still running.
+  private async presentFirstUnit(
+    viewer: ProgressiveOfficeViewer,
+    kind: Extract<OnlyPreviewOoxmlPackageKind, 'docx' | 'pptx'>,
+    readUnitCount: () => number,
+    emptyMessage: string
+  ): Promise<void> {
     this.requireActive();
-    if (viewer.slideCount === 0) {
-      throw new OnlyPreviewContractError(emptyErrorForKind('pptx'), 'Presentation has no slides.');
+    if (readUnitCount() === 0) {
+      await this.runOfficePhase('layout', () => viewer.waitUntilLayoutComplete());
+      this.requireActive();
+      if (readUnitCount() === 0) {
+        throw new OnlyPreviewContractError(emptyErrorForKind(kind), emptyMessage);
+      }
+      this.layoutSettled = Promise.resolve();
+      return;
     }
+    this.trackRemainingLayout(viewer);
+  }
+
+  private trackRemainingLayout(viewer: ProgressiveOfficeViewer): void {
+    this.layoutSettled = viewer.waitUntilLayoutComplete().then(
+      () => undefined,
+      (error: unknown) => {
+        // Disposal aborts the pending layout; only a live session has a failure to report.
+        if (this.disposed) return;
+        this.reportOfficeFailure('layout', error);
+        this.failClosed(errorCodeForOfficeFailure(this.options.kind, error));
+      }
+    );
   }
 
   private async executeQueuedFind(
     command: OnlyPreviewFindCommand,
     generation: number
   ): Promise<OnlyPreviewContentFindAdapterResult> {
+    if (!this.isFindCurrent(generation)) throw new StaleOfficeFindError();
+    // The library's own `findText` blocks on complete layout to keep coverage complete. Awaiting it
+    // here keeps that wait outside FIND_TIMEOUT_MS, so the deadline still measures the find.
+    await this.layoutSettled;
     if (!this.isFindCurrent(generation)) throw new StaleOfficeFindError();
     let timer: ReturnType<typeof setTimeout> | null = null;
     let timedOut = false;
@@ -904,12 +946,31 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
     phase: OfficeRuntimePhase,
     operation: () => Promise<T>
   ): Promise<T> {
+    const startedAt = performance.now();
     try {
-      return await operation();
+      const result = await operation();
+      this.reportSlowOfficePhase(phase, startedAt);
+      return result;
     } catch (error) {
       if (!this.disposed) this.reportOfficeFailure(phase, error);
       throw error;
     }
+  }
+
+  private reportSlowOfficePhase(phase: OfficeRuntimePhase, startedAt: number): void {
+    const elapsedMs = Math.max(0, Math.round(performance.now() - startedAt));
+    if (elapsedMs < OFFICE_SLOW_PHASE_MS || this.disposed) return;
+    console.info(
+      '[OnlyPreview][office]',
+      JSON.stringify({
+        runtimeId: this.runtimeId,
+        selectionRevision: this.options.selectionRevision,
+        elapsedMs,
+        kind: this.options.kind,
+        phase,
+        outcome: 'slow'
+      })
+    );
   }
 
   private runOfficeSyncPhase<T>(phase: OfficeRuntimePhase, operation: () => T): T {
