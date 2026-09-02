@@ -39,7 +39,8 @@ test('fixed local Home rail hides only the Settings footer action', () => {
 test('dedicated local Settings route remains registered', () => {
   assert.match(localHomeRouterSource, /path: '\/setting'/)
   assert.match(localHomeRouterSource, /name: 'setting'/)
-  assert.match(localHomeRouterSource, /component: Setting/)
+  assert.match(localHomeRouterSource, /component: \(\) => import\('@\/views\/setting\/Setting\.vue'\)/)
+  assert.doesNotMatch(localHomeRouterSource, /import Setting from/)
   assert.match(localHomeRouterSource, /props: \{ showChatMenuControl: false \}/)
 })
 

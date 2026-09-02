@@ -44,9 +44,10 @@ export class MaestroWorkbenchViewService extends CommonService<MaestroWorkbenchV
       }
     })
     view.setBackgroundColor('#f8fafc')
-    view.setVisible(false)
+    view.setVisible(this.visible)
     this.view = view
     win.contentView.addChildView(view)
+    this._state.layout()
 
     if (shouldOpenWorkbenchDevTools()) {
       view.webContents.once('did-finish-load', () => {

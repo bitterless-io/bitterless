@@ -10,7 +10,7 @@ const index = (source, fragment, fromIndex = 0) => {
   return value;
 };
 
-test('Omni cold-open gate waits for explicit trusted renderer mount handshakes', () => {
+test('Omni shows its restored native graph before trusted renderer mount handshakes settle Open', () => {
   const helper = read('src/main/windows/omniWindow.helper.ts');
   const handler = read('src/main/xpc/omniWindow.handler.ts');
   const preload = read('src/preload/omni/omni.preload.ts');
@@ -29,6 +29,14 @@ test('Omni cold-open gate waits for explicit trusted renderer mount handshakes',
   assert.match(helper, /initialRendererReadyCollector\.finish\(initialRendererReadyBatch\)/);
   assert.match(helper, /topRendererReady\.promise/);
   assert.match(helper, /\.\.\.initialBrowserRendererReady/);
+  const createWindow = helper.slice(
+    helper.indexOf('private async createWindow('),
+    helper.indexOf('private async requireViewLoad('),
+  );
+  assert.ok(
+    index(createWindow, 'this.show();') < index(createWindow, 'await Promise.all(['),
+    'native graph must become visible before local renderer readiness is awaited',
+  );
   assert.match(
     helper,
     /onInvalidate: \(generation\) => \{[\s\S]*?finishOpenDiagnostic\(generation, 'superseded', 'invalidated'\)/,
@@ -80,6 +88,7 @@ test('Omni defers initial content and Control until after local chrome presentat
   const present = helper.slice(helper.indexOf('present: (window, generation)'), helper.indexOf('cleanupIncomplete:'));
   const addCell = helper.slice(helper.indexOf('private addCell('), helper.indexOf('private configureBrowserCellContentView('));
   const toggle = helper.slice(helper.indexOf('toggleControl()'), helper.indexOf('getLayoutConfig()'));
+  assert.match(present, /if \(!state\.firstVisible\) \{[\s\S]*?this\.show\(\)[\s\S]*?markOpenFirstVisible\(state, window\)/);
   assert.ok(index(present, 'this.show()') < index(present, 'this.startDeferredInitialContent(generation, state.trace.tag)'));
   assert.match(helper, /deferredInitialContent\.set\(creationGeneration, \[\]\)/);
   assert.match(addCell, /const startContent[\s\S]*?loadMiniAppCellContent[\s\S]*?loadURL\(url\)[\s\S]*?deferred\.push\(startContent\)/);
@@ -105,11 +114,16 @@ test('Omni open diagnostics are fixed, correlated, and do not change the readine
   assert.match(helper, /params\.outcome !== 'success' && params\.outcome !== 'failure'/);
   assert.doesNotMatch(helper, /params\.outcome !== undefined[\s\S]*?params\.outcome !== 'success'/);
 
-  const waitStart = index(helper, 'await Promise.all([');
+  const createWindow = helper.slice(
+    helper.indexOf('private async createWindow('),
+    helper.indexOf('private async requireViewLoad('),
+  );
+  const firstVisibleShow = index(createWindow, 'this.show();');
+  const waitStart = index(createWindow, 'await Promise.all([', firstVisibleShow);
   const presentStart = index(helper, 'present: (window, generation)');
   const show = index(helper, 'this.show();', presentStart);
   const deferred = index(helper, 'this.startDeferredInitialContent', show);
-  assert.ok(waitStart > 0);
+  assert.ok(firstVisibleShow < waitStart);
   assert.ok(show < deferred);
 });
 

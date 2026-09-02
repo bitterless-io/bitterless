@@ -290,9 +290,11 @@ export class OmniWindowHelper {
       const state = this.openDiagnosticStates.get(generation) ??
         this.beginOpenDiagnostic(generation, 'existing');
       this.assertCreationActive(generation, window);
-      this.show();
-      this.assertCreationActive(generation, window);
-      this.markOpenFirstVisible(state, window);
+      if (!state.firstVisible) {
+        this.show();
+        this.assertCreationActive(generation, window);
+        this.markOpenFirstVisible(state, window);
+      }
       state.trace.mark({
         phase: 'interactive',
         ...this.getRestoredCounts(),
@@ -941,8 +943,9 @@ export class OmniWindowHelper {
     createdWindow.contentView.addChildView(menubarView);
     console.log('[OmniWindowHelper] menubarView added');
 
-    // BaseWindow does not emit 'ready-to-show' (that is a BrowserWindow event).
-    // The complete initial browser chrome gate below owns the first show.
+    // BaseWindow does not emit 'ready-to-show' (that is a BrowserWindow event). The restored
+    // native graph is shown below as soon as all local views are safely attached and bounded;
+    // renderer readiness remains the shared Open-flight/interaction boundary after first-visible.
     menubarView.webContents.on('did-finish-load', () => {
       if (!this.isCreationActive(creationGeneration, createdWindow)) return;
       console.log('[OmniWindowHelper] top menubar did-finish-load');
@@ -1031,6 +1034,10 @@ export class OmniWindowHelper {
       '[OmniWindowHelper] waiting for initial mounted chrome, browser cells:',
       initialBrowserMenubars.length,
     );
+    this.show();
+    this.assertCreationActive(creationGeneration, createdWindow);
+    const openState = this.openDiagnosticStates.get(creationGeneration);
+    if (openState) this.markOpenFirstVisible(openState, createdWindow);
     await Promise.all([
       this.requireViewLoad(menubarView, 'top menubar'),
       ...initialBrowserMenubars,

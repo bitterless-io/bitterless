@@ -1,13 +1,14 @@
 import type { OnlyPreviewSearchDiagnostics } from '@shared/onlypreview/onlyPreviewSearchDiagnostics.mjs';
 
-const RESTORED_INDEX_GRACE_MS = 750;
-
 export class OnlyPreviewDeferredIndexService {
-  private timer: ReturnType<typeof setTimeout> | null = null;
+  private pending = false;
   private generation = 0;
   private diagnostic: { tag: string; startedAt: number; generation: number } | null = null;
 
-  constructor(private readonly diagnostics: OnlyPreviewSearchDiagnostics) {}
+  constructor(
+    private readonly diagnostics: OnlyPreviewSearchDiagnostics,
+    private readonly scheduleMicrotask: (run: () => void) => void = queueMicrotask
+  ) {}
 
   async run(
     deferred: boolean,
@@ -31,15 +32,16 @@ export class OnlyPreviewDeferredIndexService {
       generation
     };
     this.diagnostic = diagnostic;
+    this.pending = true;
     this.diagnostics.emit('restore-index-grace', {
       tag: diagnostic.tag,
       phase: 'scheduled',
       generation,
       elapsedMs: 0
     });
-    this.timer = setTimeout(() => {
+    this.scheduleMicrotask(() => {
       if (this.generation !== generation || this.diagnostic !== diagnostic) return;
-      this.timer = null;
+      this.pending = false;
       this.diagnostic = null;
       if (!isCurrent()) {
         this.diagnostics.emit('restore-index-grace', {
@@ -57,14 +59,13 @@ export class OnlyPreviewDeferredIndexService {
         elapsedMs: this.diagnostics.elapsed(diagnostic.startedAt)
       });
       run();
-    }, RESTORED_INDEX_GRACE_MS);
+    });
   }
 
   cancel(): boolean {
     const diagnostic = this.diagnostic;
-    if (!this.timer || !diagnostic) return false;
-    clearTimeout(this.timer);
-    this.timer = null;
+    if (!this.pending || !diagnostic) return false;
+    this.pending = false;
     this.diagnostic = null;
     this.generation += 1;
     this.diagnostics.emit('restore-index-grace', {

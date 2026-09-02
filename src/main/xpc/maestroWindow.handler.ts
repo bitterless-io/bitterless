@@ -96,6 +96,7 @@ class MaestroWindowHandler extends XpcMainHandler {
   private authInvalidated = false
   private releaseProxy: (() => void) | null = null
   private activeBootDiagnostics: MaestroOpenBootTrace | null = null
+  private readonly backgroundBootObservers = new Set<string>()
 
   async openMaestroWindow(): Promise<void> {
     const requestDiagnostics = maestroOpenDiagnostics.startRequest()
@@ -134,7 +135,7 @@ class MaestroWindowHandler extends XpcMainHandler {
         maestroWindowHelper.show()
         if (requestBootDiagnostics && showStartedAt !== undefined) {
           requestBootDiagnostics.completeStage('show', showStartedAt)
-          requestBootDiagnostics.terminal('success', 'ready')
+          this.observeBackgroundBoot(requestBootDiagnostics)
         }
         requestDiagnostics.terminal('success', 'ready')
         return
@@ -164,7 +165,7 @@ class MaestroWindowHandler extends XpcMainHandler {
       const showStartedAt = requestBootDiagnostics.mark()
       maestroWindowHelper.show()
       requestBootDiagnostics.completeStage('show', showStartedAt)
-      requestBootDiagnostics.terminal('success', 'ready')
+      this.observeBackgroundBoot(requestBootDiagnostics)
       requestDiagnostics.terminal('success', 'ready')
     } catch (error) {
       const reason = classifyMaestroOpenFailure(error)
@@ -250,6 +251,25 @@ class MaestroWindowHandler extends XpcMainHandler {
       await this.destroyMaestroRuntime()
       throw err
     }
+  }
+
+  private observeBackgroundBoot(diagnostics: MaestroOpenBootTrace): void {
+    if (this.backgroundBootObservers.has(diagnostics.id)) return
+    this.backgroundBootObservers.add(diagnostics.id)
+    void withTimeout(
+      maestroWindowHelper.whenBackgroundReady(),
+      MAESTRO_READY_TIMEOUT_MS,
+      '[maestro] background window startup timed out after 30 seconds'
+    )
+      .then(() => {
+        diagnostics.terminal('success', 'ready')
+      })
+      .catch((error: unknown) => {
+        diagnostics.terminal('failure', classifyMaestroOpenFailure(error))
+      })
+      .finally(() => {
+        this.backgroundBootObservers.delete(diagnostics.id)
+      })
   }
 
   private ensureMaestroSqliteReady(diagnostics?: MaestroOpenBootTrace): Promise<void> {

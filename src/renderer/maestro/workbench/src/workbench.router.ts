@@ -8,7 +8,6 @@ import WorkbenchModelsView from './views/WorkbenchModelsView.vue'
 import WorkbenchSub2ApiView from './views/WorkbenchSub2ApiView.vue'
 import WorkbenchAppsView from './views/WorkbenchAppsView.vue'
 import WorkbenchConnectorsView from './views/WorkbenchConnectorsView.vue'
-import WorkbenchSettingsView from './views/WorkbenchSettingsView.vue'
 import WorkbenchAboutView from './views/WorkbenchAboutView.vue'
 import WorkbenchLogView from './views/WorkbenchLogView.vue'
 import { preferredWorkbenchPane } from './workbench.store'
@@ -24,7 +23,11 @@ const routes: RouteRecordRaw[] = [
   { path: '/sub2api', name: 'sub2api', component: WorkbenchSub2ApiView },
   { path: '/apps', name: 'apps', component: WorkbenchAppsView },
   { path: '/connectors', name: 'connectors', component: WorkbenchConnectorsView },
-  { path: '/settings', name: 'settings', component: WorkbenchSettingsView },
+  {
+    path: '/settings',
+    name: 'settings',
+    component: () => import('./views/WorkbenchSettingsView.vue')
+  },
   { path: '/about', name: 'about', component: WorkbenchAboutView },
   { path: '/log', name: 'log', component: WorkbenchLogView },
   { path: '/:pathMatch(.*)*', redirect: '/capture' }

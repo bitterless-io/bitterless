@@ -174,7 +174,8 @@ test('Main lifecycle wires every fixed route and cold-boot stage without private
     assert.match(controller, new RegExp(`'${stage}'`))
   }
   assert.match(handler, /diagnostics\.terminal\('failure', classifyMaestroOpenFailure\(err\)\)/)
-  assert.match(handler, /requestBootDiagnostics\.terminal\('success', 'ready'\)/)
+  assert.match(handler, /observeBackgroundBoot\(requestBootDiagnostics\)/)
+  assert.match(handler, /diagnostics\.terminal\('success', 'ready'\)/)
   assert.match(handler, /requestDiagnostics\.terminal\('success', 'ready'\)/)
 
   const diagnosticCalls = [handler, controller]
