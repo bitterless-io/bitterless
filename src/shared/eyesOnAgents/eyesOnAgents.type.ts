@@ -81,6 +81,7 @@ export interface EyesOnAgentsLastUserPrompt {
 export interface EyesOnAgentsThread extends EyesOnAgentsThreadIdentity {
   archiveState: EyesOnAgentsArchiveState;
   desktopSessionId: EyesOnAgentsDesktopSessionId | null;
+  iterm2SessionId: string | null;
   canCopySessionPath: boolean;
   domainId: number;
   title: string | null;
@@ -156,10 +157,22 @@ export interface EyesOnAgentsClaudeBridgeStatus {
 
 export type EyesOnAgentsClaudeDirectoryMode = 'automatic' | 'custom';
 
-export interface EyesOnAgentsClaudeDirectoryConfig {
-  schemaVersion: 1;
+// A single configured Claude environment (one CLAUDE_CONFIG_DIR target). Only environments[0]
+// may ever have mode: 'automatic' — see EyesOnAgentsClaudeDirectoryConfig.
+export interface EyesOnAgentsClaudeEnvironment {
+  id: string;
+  label: string;
   mode: EyesOnAgentsClaudeDirectoryMode;
   configDirectory: string | null;
+  enabled: boolean;
+}
+
+// schemaVersion 2: an array of independently-managed named Claude environments, replacing the
+// former single-scalar schemaVersion 1 shape ({ mode, configDirectory }). Always at least one
+// entry; environments[0] is the sole environment ever eligible for mode: 'automatic'.
+export interface EyesOnAgentsClaudeDirectoryConfig {
+  schemaVersion: 2;
+  environments: EyesOnAgentsClaudeEnvironment[];
 }
 
 export type EyesOnAgentsClaudeDirectoryState =
@@ -171,7 +184,14 @@ export type EyesOnAgentsClaudeDirectoryState =
   | 'error'
   | 'stopped';
 
-export interface EyesOnAgentsClaudeDirectoryStatus {
+// One configured Claude environment's watcher status (task 085: the singular
+// EyesOnAgentsClaudeDirectoryStatus shape moved to a per-environment array — see
+// EyesOnAgentsClaudeDirectoryStatus below). id/label/enabled mirror the environment this status
+// belongs to; every other field is the pre-existing per-directory watcher status shape unchanged.
+export interface EyesOnAgentsClaudeEnvironmentStatus {
+  id: string;
+  label: string;
+  enabled: boolean;
   mode: EyesOnAgentsClaudeDirectoryMode;
   configuredDirectory: string | null;
   effectiveDirectory: string | null;
@@ -184,6 +204,11 @@ export interface EyesOnAgentsClaudeDirectoryStatus {
   nextRetryAt: string | null;
   error: string | null;
 }
+
+// One entry per configured Claude environment (task 085). When the persisted directory
+// configuration itself failed to hydrate, this is a single synthetic entry (id/label empty)
+// carrying the same recovery-until-explicit-action contract the pre-085 singular status had.
+export type EyesOnAgentsClaudeDirectoryStatus = EyesOnAgentsClaudeEnvironmentStatus[];
 
 export interface EyesOnAgentsClaudeProviderStatus {
   enabled: boolean;
@@ -340,6 +365,9 @@ export interface EyesOnAgentsClaudeInventoryThread {
   threadId: string;
   desktopSessionId: EyesOnAgentsDesktopSessionId | null;
   desktopMetadataMtime?: number | null;
+  // Optional: an omitted or null value never clears an already-stored iTerm2 identity, matching
+  // (but independent from) the desktopSessionId COALESCE-preserve rule above.
+  iterm2SessionId?: string | null;
   transcriptPath: string | null;
   clearDesktopSessionId?: boolean;
   clearTranscriptPath?: boolean;
@@ -380,6 +408,7 @@ export interface EyesOnAgentsClaudeAgentState {
 export interface EyesOnAgentsClaudeOpenTarget {
   sessionKey: EyesOnAgentsSessionKey;
   desktopSessionId: EyesOnAgentsDesktopSessionId | null;
+  iterm2SessionId: string | null;
   transcriptPath: string | null;
   runtimeState: EyesOnAgentsRuntimeState;
 }
@@ -525,6 +554,10 @@ export interface EyesOnAgentsApi {
   refreshClaudeInventory(): Promise<EyesOnAgentsSnapshot>;
   refreshThreadPages(): Promise<EyesOnAgentsThreadPagesRefreshResult>;
   openThread(params: { sessionKey: EyesOnAgentsSessionKey }): Promise<{
+    url: string;
+    snapshot: EyesOnAgentsSnapshot;
+  }>;
+  openThreadInIterm2(params: { sessionKey: EyesOnAgentsSessionKey }): Promise<{
     url: string;
     snapshot: EyesOnAgentsSnapshot;
   }>;

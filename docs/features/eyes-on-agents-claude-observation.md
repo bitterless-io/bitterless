@@ -154,10 +154,20 @@ mutate the Claude preference.
 
 ## Claude directory lifecycle and configuration
 
+**Superseded by [EyesOnAgents Claude Multi-Environment](eyes-on-agents-claude-multi-environment.md):**
+Bitterless now supervises N independently-configured Claude **environments** (each a distinct
+`CLAUDE_CONFIG_DIR`), not one directory. The single-`configDirectory` model described in the
+remainder of this section is retained here only as the per-environment mechanism — every rule below
+(resolution, watcher handshake, bounded retry ladder, malformed-value fail-closed behavior) applies
+independently to each configured environment; read the linked doc first for the array-based
+`EyesOnAgentsClaudeEnvironment[]` data model, per-environment watcher isolation, and per-environment
+plugin installation that wrap this mechanism.
+
 Claude inventory configuration is Main-owned and independent from Claude Hook installation. The
-user configures the Claude **config directory** (normally `~/.claude`), not an individual project or
-JSONL file. Main derives the transcript inventory root as `<config-directory>/projects`; Claude
-Desktop metadata directories remain platform-owned automatic sources.
+user configures a Claude **config directory** per environment (the default environment is normally
+`~/.claude`), not an individual project or JSONL file. Main derives that environment's transcript
+inventory root as `<config-directory>/projects`; Claude Desktop metadata directories remain
+platform-owned automatic sources.
 
 ```text
 Core SQLite ready

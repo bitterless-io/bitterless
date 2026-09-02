@@ -7,6 +7,7 @@ import type {
   EyesOnAgentsApi,
   EyesOnAgentsBridgeStatus,
   EyesOnAgentsClaudeBridgeStatus,
+  EyesOnAgentsClaudeEnvironment,
   EyesOnAgentsRepositoryApi,
   EyesOnAgentsSessionKey,
   EyesOnAgentsSnapshot,
@@ -17,11 +18,16 @@ import {
   getCodexHookOutboxPath
 } from '@shared/eyesOnAgents/codexHookBridge.contract';
 import {
+  parseEyesOnAgentsAddClaudeEnvironmentParams,
+  parseEyesOnAgentsClaudeBridgeEnvironmentParams,
+  parseEyesOnAgentsClaudeEnvironmentIdParams,
   parseEyesOnAgentsCreateDomainParams,
   parseEyesOnAgentsDomainParams,
   parseEyesOnAgentsMoveThreadParams,
+  parseEyesOnAgentsRenameClaudeEnvironmentParams,
   parseEyesOnAgentsRenameDomainParams,
   parseEyesOnAgentsReorderDomainsParams,
+  parseEyesOnAgentsSetClaudeEnvironmentEnabledParams,
   parseEyesOnAgentsSetClaudeProviderEnabledParams,
   parseEyesOnAgentsSetLastUserPromptCaptureEnabledParams,
   parseEyesOnAgentsSessionKeyParams,
@@ -40,6 +46,8 @@ import {
   resolveClaudeDirectory
 } from '../eyesOnAgents/claudePath.resolver';
 import { ClaudeDirectoryConfigService } from '../eyesOnAgents/claudeDirectoryConfig.service';
+import { resolveClaudeBridgeEnvironment } from '../eyesOnAgents/claudeBridgeEnvironment.resolver';
+import { logClaudeBridgeAction } from '../eyesOnAgents/claudeBridgeLog.helper';
 import { resolveClaudeExecutables } from '../eyesOnAgents/claudeExecutable.resolver';
 import { ClaudeAgentsAdapter } from '../eyesOnAgents/claudeAgents.adapter';
 import { ClaudeWatcherSupervisor } from '../eyesOnAgents/claudeWatcher.supervisor';
@@ -186,28 +194,40 @@ const appServer = new CodexAppServerSupervisor({
   }
 });
 
+const pickClaudeConfigDirectory = async (): Promise<string | null> => {
+  const result = await dialog.showOpenDialog({
+    title: 'Select Claude config directory',
+    properties: ['openDirectory']
+  });
+  return result.canceled ? null : result.filePaths[0] ?? null;
+};
+
 const claudeDirectoryConfig = new ClaudeDirectoryConfigService({
   settings,
-  pickDirectory: async () => {
-    const result = await dialog.showOpenDialog({
-      title: 'Select Claude config directory',
-      properties: ['openDirectory']
-    });
-    return result.canceled ? null : result.filePaths[0] ?? null;
-  }
+  pickDirectory: pickClaudeConfigDirectory
 });
-const claudeWatcher = new ClaudeWatcherSupervisor({
-  userDataPath: app.getPath('userData'),
-  execPath: process.execPath,
-  helperEntryPath: join(app.getAppPath(), 'out', 'main', 'claudeDirectoryWatcher.js'),
-  roots: { desktopRoots: [], projectsRoot: null },
-  onInvalidation: () => {
-    void claudeObservation.invalidate().catch(() => undefined);
-  },
-  onTerminated: (error) => {
-    void claudeObservation.handleWatcherFailure(error).catch(() => undefined);
-  }
-});
+
+// One ClaudeWatcherSupervisor per configured Claude environment (task 085) — each gets its own
+// child process, its own inventory-bridge socket/pipe (scoped by environment id so simultaneously
+// running environments never collide on the same endpoint path), and callbacks that report back
+// to claudeObservation scoped to that one environment's id, so one environment's watcher failure
+// never touches another's generation/retry/status.
+const createClaudeWatcher = (environment: EyesOnAgentsClaudeEnvironment): ClaudeWatcherSupervisor => (
+  new ClaudeWatcherSupervisor({
+    userDataPath: app.getPath('userData'),
+    execPath: process.execPath,
+    helperEntryPath: join(app.getAppPath(), 'out', 'main', 'claudeDirectoryWatcher.js'),
+    roots: { desktopRoots: [], projectsRoot: null },
+    environmentId: environment.id,
+    environmentLabel: environment.label,
+    onInvalidation: () => {
+      void claudeObservation.invalidate(environment.id).catch(() => undefined);
+    },
+    onTerminated: (error) => {
+      void claudeObservation.handleWatcherFailure(environment.id, error).catch(() => undefined);
+    }
+  })
+);
 claudeObservation = new ClaudeObservationService({
   repository,
   directoryConfig: claudeDirectoryConfig,
@@ -225,7 +245,7 @@ claudeObservation = new ClaudeObservationService({
     homePath: app.getPath('home'),
     pathValue: process.env.PATH
   })),
-  watcher: claudeWatcher,
+  createWatcher: createClaudeWatcher,
   broadcastChanged: () => xpcMain.broadcast('eyes-on-agents/changed', {})
 });
 
@@ -315,6 +335,13 @@ export class EyesOnAgentsHandler extends XpcMainHandler implements EyesOnAgentsA
     return await eyesOnAgentsService.openThread(parseEyesOnAgentsSessionKeyParams(params));
   }
 
+  async openThreadInIterm2(params: { sessionKey: EyesOnAgentsSessionKey }): Promise<{
+    url: string;
+    snapshot: EyesOnAgentsSnapshot;
+  }> {
+    return await eyesOnAgentsService.openThreadInIterm2(parseEyesOnAgentsSessionKeyParams(params));
+  }
+
   async archiveThread(params: {
     sessionKey: EyesOnAgentsSessionKey;
   }): Promise<EyesOnAgentsSnapshot> {
@@ -362,20 +389,81 @@ export class EyesOnAgentsHandler extends XpcMainHandler implements EyesOnAgentsA
     return await eyesOnAgentsService.getCodexBridgeStatus();
   }
 
-  async installClaudeBridge(): Promise<EyesOnAgentsSnapshot> {
-    return await eyesOnAgentsService.installClaudeBridge();
+  // Each method below resolves { environmentId } (task 086) against task 084's configured
+  // environment list, then passes that one environment's configDirectory (undefined for the
+  // automatic environment) down to the existing, byte-for-byte unmodified install/refresh/remove/
+  // status sequence — the shared installationId/socket/outbox continuity state machine itself is
+  // untouched; only which CLAUDE_CONFIG_DIR the underlying claude CLI targets changes.
+  async installClaudeBridge(
+    params?: { environmentId?: string }
+  ): Promise<EyesOnAgentsSnapshot> {
+    const environment = resolveClaudeBridgeEnvironment(
+      claudeDirectoryConfig.listEnvironments(),
+      parseEyesOnAgentsClaudeBridgeEnvironmentParams(params)
+    );
+    try {
+      const snapshot = await eyesOnAgentsService.installClaudeBridge(
+        environment.configDirectory ?? undefined
+      );
+      logClaudeBridgeAction('install', environment);
+      return snapshot;
+    } catch (error) {
+      logClaudeBridgeAction('install', environment, error);
+      throw error;
+    }
   }
 
-  async refreshClaudeBridgeStatus(): Promise<EyesOnAgentsSnapshot> {
-    return await eyesOnAgentsService.refreshClaudeBridgeStatus();
+  async refreshClaudeBridgeStatus(
+    params?: { environmentId?: string }
+  ): Promise<EyesOnAgentsSnapshot> {
+    const environment = resolveClaudeBridgeEnvironment(
+      claudeDirectoryConfig.listEnvironments(),
+      parseEyesOnAgentsClaudeBridgeEnvironmentParams(params)
+    );
+    try {
+      const snapshot = await eyesOnAgentsService.refreshClaudeBridgeStatus(
+        environment.configDirectory ?? undefined
+      );
+      logClaudeBridgeAction('refresh', environment);
+      return snapshot;
+    } catch (error) {
+      logClaudeBridgeAction('refresh', environment, error);
+      throw error;
+    }
   }
 
-  async removeClaudeBridge(): Promise<EyesOnAgentsSnapshot> {
-    return await eyesOnAgentsService.removeClaudeBridge();
+  async removeClaudeBridge(
+    params?: { environmentId?: string }
+  ): Promise<EyesOnAgentsSnapshot> {
+    const environment = resolveClaudeBridgeEnvironment(
+      claudeDirectoryConfig.listEnvironments(),
+      parseEyesOnAgentsClaudeBridgeEnvironmentParams(params)
+    );
+    try {
+      const snapshot = await eyesOnAgentsService.removeClaudeBridge(
+        environment.configDirectory ?? undefined
+      );
+      logClaudeBridgeAction('remove', environment);
+      return snapshot;
+    } catch (error) {
+      logClaudeBridgeAction('remove', environment, error);
+      throw error;
+    }
   }
 
-  async getClaudeBridgeStatus(): Promise<EyesOnAgentsClaudeBridgeStatus> {
-    return await eyesOnAgentsService.getClaudeBridgeStatus();
+  async getClaudeBridgeStatus(
+    params?: { environmentId?: string }
+  ): Promise<EyesOnAgentsClaudeBridgeStatus> {
+    const environment = resolveClaudeBridgeEnvironment(
+      claudeDirectoryConfig.listEnvironments(),
+      parseEyesOnAgentsClaudeBridgeEnvironmentParams(params)
+    );
+    try {
+      return await eyesOnAgentsService.getClaudeBridgeStatus();
+    } catch (error) {
+      logClaudeBridgeAction('status', environment, error);
+      throw error;
+    }
   }
 
   async openNewClaudeSession(): Promise<void> {
@@ -396,6 +484,64 @@ export class EyesOnAgentsHandler extends XpcMainHandler implements EyesOnAgentsA
 
   async retryClaudeDirectory(): Promise<EyesOnAgentsSnapshot> {
     return await eyesOnAgentsService.retryClaudeDirectory();
+  }
+
+  // Environment-scoped CRUD (task 084). Each mutation persists the environment list, then applies
+  // it against claudeObservation's environment map (task 085) so enabling/adding starts that one
+  // environment's own supervisor and disabling/removing stops and joins only that one — every
+  // other environment's watcher/generation/retry/status is untouched.
+  async listClaudeEnvironments(): Promise<EyesOnAgentsClaudeEnvironment[]> {
+    return claudeDirectoryConfig.listEnvironments();
+  }
+
+  async addClaudeEnvironment(params: { label: string }): Promise<EyesOnAgentsClaudeEnvironment[]> {
+    const { label } = parseEyesOnAgentsAddClaudeEnvironmentParams(params);
+    const configDirectory = await pickClaudeConfigDirectory();
+    if (configDirectory !== null) await claudeDirectoryConfig.addEnvironment({ label, configDirectory });
+    await claudeObservation.applyEnvironments();
+    return claudeDirectoryConfig.listEnvironments();
+  }
+
+  async renameClaudeEnvironment(params: {
+    id: string;
+    label: string;
+  }): Promise<EyesOnAgentsClaudeEnvironment[]> {
+    await claudeDirectoryConfig.renameEnvironment(parseEyesOnAgentsRenameClaudeEnvironmentParams(params));
+    await claudeObservation.applyEnvironments();
+    return claudeDirectoryConfig.listEnvironments();
+  }
+
+  async removeClaudeEnvironment(params: { id: string }): Promise<EyesOnAgentsClaudeEnvironment[]> {
+    await claudeDirectoryConfig.removeEnvironment(parseEyesOnAgentsClaudeEnvironmentIdParams(params));
+    await claudeObservation.applyEnvironments();
+    return claudeDirectoryConfig.listEnvironments();
+  }
+
+  async setClaudeEnvironmentEnabled(params: {
+    id: string;
+    enabled: boolean;
+  }): Promise<EyesOnAgentsClaudeEnvironment[]> {
+    await claudeDirectoryConfig.setEnvironmentEnabled(
+      parseEyesOnAgentsSetClaudeEnvironmentEnabledParams(params)
+    );
+    await claudeObservation.applyEnvironments();
+    return claudeDirectoryConfig.listEnvironments();
+  }
+
+  async chooseClaudeEnvironmentDirectory(params: {
+    id: string;
+  }): Promise<EyesOnAgentsClaudeEnvironment[]> {
+    await claudeDirectoryConfig.chooseCustomDirectory(parseEyesOnAgentsClaudeEnvironmentIdParams(params));
+    await claudeObservation.applyEnvironments();
+    return claudeDirectoryConfig.listEnvironments();
+  }
+
+  async useAutomaticClaudeEnvironment(params: {
+    id: string;
+  }): Promise<EyesOnAgentsClaudeEnvironment[]> {
+    await claudeDirectoryConfig.useAutomatic(parseEyesOnAgentsClaudeEnvironmentIdParams(params));
+    await claudeObservation.applyEnvironments();
+    return claudeDirectoryConfig.listEnvironments();
   }
 
   async setClaudeProviderEnabled(

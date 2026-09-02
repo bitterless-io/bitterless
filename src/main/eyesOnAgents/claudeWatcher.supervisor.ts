@@ -31,6 +31,12 @@ export class ClaudeWatcherSupervisor {
     execPath: string;
     helperEntryPath: string;
     roots: ClaudeObservationRoots;
+    // Task 085: identifies which configured Claude environment this instance watches, both to
+    // scope its inventory-bridge socket/pipe away from every other environment's supervisor and
+    // to tag its own "ready" lifecycle log line. Omitted by existing single-instance callers/tests.
+    environmentId?: string;
+    environmentLabel?: string;
+    logger?: Pick<Console, 'info'>;
     onInvalidation: () => void | Promise<void>;
     onTerminated?: (error: Error) => void | Promise<void>;
   }) { this.roots = dependencies.roots; }
@@ -101,7 +107,11 @@ export class ClaudeWatcherSupervisor {
     if (!existsSync(this.dependencies.helperEntryPath)) {
       throw new Error('Claude directory watcher helper is unavailable');
     }
-    const endpoint = getClaudeInventoryBridgeEndpoint(this.dependencies.userDataPath);
+    const endpoint = getClaudeInventoryBridgeEndpoint(
+      this.dependencies.userDataPath,
+      process.platform,
+      this.dependencies.environmentId
+    );
     const nonce = randomBytes(16).toString('hex');
     await this.server.start({
       endpoint,
@@ -187,6 +197,7 @@ export class ClaudeWatcherSupervisor {
         if (this.child !== child) return;
         try {
           parseClaudeInventoryWatcherReady(value);
+          this.logLifecycle('ready');
           finish();
         } catch {
           // Only the exact content-free ready frame can admit the watcher.
@@ -234,5 +245,16 @@ export class ClaudeWatcherSupervisor {
   private async awaitTerminationCleanup(): Promise<void> {
     const cleanup = this.terminationCleanup;
     if (cleanup) await cleanup;
+  }
+
+  // Never logs configDirectory or any other path — id/label only, matching the
+  // [claude-environment] logging convention this subsystem already uses (claudeDirectoryConfig.service.ts).
+  private logLifecycle(action: 'ready'): void {
+    if (this.dependencies.environmentId === undefined) return;
+    const logger = this.dependencies.logger ?? console;
+    logger.info(
+      `[claude-watcher] action=${action} id=${this.dependencies.environmentId} ` +
+      `label="${this.dependencies.environmentLabel ?? ''}"`
+    );
   }
 }

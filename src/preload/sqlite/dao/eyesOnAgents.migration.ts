@@ -527,3 +527,8 @@ export const ensureEyesOnAgentsClaudeDeletionSchema = (db: MigrationDatabase): v
       ON eyes_on_agents_claude_deletion_tombstone (is_active, identity_id, deleted_at DESC);
   `);
 };
+
+export const ensureEyesOnAgentsIterm2SessionSchema = (db: MigrationDatabase): void => {
+  if (!tableExists(db, 'eyes_on_agents_thread')) return;
+  addColumnIfMissing(db, 'eyes_on_agents_thread', 'iterm2_session_id', 'TEXT');
+};

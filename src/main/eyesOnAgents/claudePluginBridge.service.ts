@@ -413,14 +413,14 @@ export class ClaudePluginBridgeService {
     };
   }
 
-  async refresh(): Promise<EyesOnAgentsClaudeBridgeStatus> {
+  async refresh(configDirectory?: string): Promise<EyesOnAgentsClaudeBridgeStatus> {
     try {
-      await this.inspectCurrent();
+      await this.inspectCurrent(configDirectory);
       const upgrade = this.trustedAutomaticUpgradePlan();
       if (upgrade) {
         this.trustedUpgradeInstallationId = upgrade.state.installationId;
         try {
-          await this.performTrustedAutomaticUpgrade(upgrade);
+          await this.performTrustedAutomaticUpgrade(upgrade, configDirectory);
         } finally {
           this.trustedUpgradeInstallationId = null;
         }
@@ -431,16 +431,18 @@ export class ClaudePluginBridgeService {
     return this.getStatus();
   }
 
-  private async refreshWithoutAutomaticUpgrade(): Promise<EyesOnAgentsClaudeBridgeStatus> {
+  private async refreshWithoutAutomaticUpgrade(
+    configDirectory?: string
+  ): Promise<EyesOnAgentsClaudeBridgeStatus> {
     try {
-      await this.inspectCurrent();
+      await this.inspectCurrent(configDirectory);
     } catch (error) {
       this.retainRefreshError(error);
     }
     return this.getStatus();
   }
 
-  private async inspectCurrent(): Promise<void> {
+  private async inspectCurrent(configDirectory?: string): Promise<void> {
     const stateInspection = this.inspectState();
     const installationId = stateInspection.kind === 'valid'
       ? stateInspection.value.installationId
@@ -449,8 +451,8 @@ export class ClaudePluginBridgeService {
     const digest = this.digestArtifacts(artifacts);
     const executable = await this.resolveExecutable();
     const [pluginsResult, marketplacesResult] = await Promise.all([
-      this.command(executable, ['plugin', 'list', '--json']),
-      this.command(executable, ['plugin', 'marketplace', 'list', '--json'])
+      this.command(executable, ['plugin', 'list', '--json'], configDirectory),
+      this.command(executable, ['plugin', 'marketplace', 'list', '--json'], configDirectory)
     ]);
     const plugins = parseJsonArray(pluginsResult.stdout, 'Claude plugin list');
     const marketplaces = parseJsonArray(marketplacesResult.stdout, 'Claude marketplace list');
@@ -556,19 +558,20 @@ export class ClaudePluginBridgeService {
   }
 
   private async performTrustedAutomaticUpgrade(
-    plan: TrustedAutomaticUpgradePlan
+    plan: TrustedAutomaticUpgradePlan,
+    configDirectory?: string
   ): Promise<void> {
     const executable = await this.resolveExecutable();
     if (!plan.artifactsStaged) this.writeArtifacts(plan.artifacts);
     await this.command(executable, [
       'plugin', 'marketplace', 'update', this.dependencies.identity.marketplaceName
-    ]);
+    ], configDirectory);
     if (this.inspection?.pluginVersionExact !== true) {
       await this.command(executable, [
         'plugin', 'update', this.dependencies.identity.pluginId, '--scope', 'user'
-      ]);
+      ], configDirectory);
     }
-    await this.inspectCurrent();
+    await this.inspectCurrent(configDirectory);
     if (!this.isExactEnabledPluginInspection()) {
       throw new Error('Claude plugin automatic upgrade failed at final inspection');
     }
@@ -579,7 +582,7 @@ export class ClaudePluginBridgeService {
       throw new Error('Claude plugin automatic upgrade state changed before commit');
     }
     this.writeState({ ...currentState, artifactDigest: plan.digest });
-    await this.inspectCurrent();
+    await this.inspectCurrent(configDirectory);
     if (!this.isExactEnabledPluginInspection() || this.inspection?.drifted) {
       throw new Error('Claude plugin automatic upgrade failed at committed inspection');
     }
@@ -594,9 +597,9 @@ export class ClaudePluginBridgeService {
       this.isOwnedArtifactRoot();
   }
 
-  async install(): Promise<EyesOnAgentsClaudeBridgeStatus> {
+  async install(configDirectory?: string): Promise<EyesOnAgentsClaudeBridgeStatus> {
     try {
-      return await this.performInstall();
+      return await this.performInstall(configDirectory);
     } catch (error) {
       const message = this.safeInstallError(error);
       this.retainInstallError(message);
@@ -604,13 +607,13 @@ export class ClaudePluginBridgeService {
     }
   }
 
-  private async performInstall(): Promise<EyesOnAgentsClaudeBridgeStatus> {
+  private async performInstall(configDirectory?: string): Promise<EyesOnAgentsClaudeBridgeStatus> {
     const previous = this.readState();
     const executable = await this.resolveExecutable();
-    await this.refreshWithoutAutomaticUpgrade();
+    await this.refreshWithoutAutomaticUpgrade(configDirectory);
     if (this.inspection?.error) throw new Error(this.inspection.error);
-    if (await this.recoverLegacyProductionDebugMarketplace(executable)) {
-      await this.refreshWithoutAutomaticUpgrade();
+    if (await this.recoverLegacyProductionDebugMarketplace(executable, configDirectory)) {
+      await this.refreshWithoutAutomaticUpgrade(configDirectory);
       if (this.inspection?.error) throw new Error(this.inspection.error);
     }
     this.assertSafeInstallOwnership(previous);
@@ -653,35 +656,35 @@ export class ClaudePluginBridgeService {
     }
     const artifacts = this.expectedArtifacts(installationId);
     this.writeArtifacts(artifacts);
-    await this.refreshWithoutAutomaticUpgrade();
+    await this.refreshWithoutAutomaticUpgrade(configDirectory);
     if (this.inspection?.error) throw new Error(this.inspection.error);
     this.assertSafeInstallOwnership(previous);
     const pluginPresent = this.inspection?.pluginPresent === true;
     if (this.inspection?.marketplace === 'exact') {
       await this.command(executable, [
         'plugin', 'marketplace', 'update', this.dependencies.identity.marketplaceName
-      ]);
+      ], configDirectory);
     } else {
       await this.command(executable, [
         'plugin', 'marketplace', 'add', this.marketplaceRoot, '--scope', 'user'
-      ]);
+      ], configDirectory);
     }
     if (!pluginPresent) {
       await this.command(executable, [
         'plugin', 'install', this.dependencies.identity.pluginId, '--scope', 'user'
-      ]);
+      ], configDirectory);
     } else {
       // Claude may keep a same-version plugin cache even when the local marketplace files changed.
       // Force an exact user-scoped reinstall before re-admitting the proven generation instead of
       // trusting a same-version update no-op.
       await this.command(executable, [
         'plugin', 'uninstall', this.dependencies.identity.pluginId, '--scope', 'user', '-y'
-      ]);
+      ], configDirectory);
       await this.command(executable, [
         'plugin', 'install', this.dependencies.identity.pluginId, '--scope', 'user'
-      ]);
+      ], configDirectory);
     }
-    await this.refreshWithoutAutomaticUpgrade();
+    await this.refreshWithoutAutomaticUpgrade(configDirectory);
     if (!this.isExactPluginInspection()) {
       throw new Error('Claude plugin setup failed at final inspection: version or installation is not exact');
     }
@@ -690,13 +693,13 @@ export class ClaudePluginBridgeService {
       try {
         await this.command(executable, [
           'plugin', 'enable', this.dependencies.identity.pluginId, '--scope', 'user'
-        ]);
+        ], configDirectory);
       } catch (error) {
         enableError = error;
         // Claude may have committed enablement even when the command returned non-zero. The exact,
         // read-only inspection below is the sole idempotent success condition.
       }
-      await this.refreshWithoutAutomaticUpgrade();
+      await this.refreshWithoutAutomaticUpgrade(configDirectory);
       if (!this.isExactEnabledPluginInspection()) {
         throw new Error(enableError === null
           ? 'Claude plugin enablement failed at final inspection'
@@ -724,7 +727,7 @@ export class ClaudePluginBridgeService {
       restartRequired: true,
       recoveryReason: previous?.recoveryReason ?? null
     });
-    await this.refreshWithoutAutomaticUpgrade();
+    await this.refreshWithoutAutomaticUpgrade(configDirectory);
     if (this.inspection?.error || this.inspection?.marketplace !== 'exact' ||
       !this.inspection.pluginPresent || !this.inspection.enabled || this.inspection.drifted ||
       !this.inspection.marketplaceNamespaceExclusive || !this.inspection.catalogExact) {
@@ -738,10 +741,10 @@ export class ClaudePluginBridgeService {
     return this.getStatus();
   }
 
-  async remove(): Promise<EyesOnAgentsClaudeBridgeStatus> {
+  async remove(configDirectory?: string): Promise<EyesOnAgentsClaudeBridgeStatus> {
     const previous = this.readState();
     const executable = await this.resolveExecutable();
-    await this.refreshWithoutAutomaticUpgrade();
+    await this.refreshWithoutAutomaticUpgrade(configDirectory);
     if (this.inspection?.error) throw new Error(this.inspection.error);
     if (this.inspection?.marketplace === 'collision' ||
       this.inspection?.pluginPresent && this.inspection.marketplace !== 'exact') {
@@ -754,10 +757,10 @@ export class ClaudePluginBridgeService {
     if (this.inspection?.pluginPresent && this.inspection.marketplace === 'exact') {
       await this.command(executable, [
         'plugin', 'uninstall', this.dependencies.identity.pluginId, '--scope', 'user', '-y'
-      ]);
+      ], configDirectory);
     }
     if (this.inspection?.marketplace === 'exact') {
-      await this.refreshWithoutAutomaticUpgrade();
+      await this.refreshWithoutAutomaticUpgrade(configDirectory);
       if (this.inspection?.error || this.inspection?.marketplace !== 'exact' ||
         this.inspection.pluginPresent || !this.inspection.marketplaceNamespaceExclusive ||
         !this.inspection.catalogExact) {
@@ -767,7 +770,7 @@ export class ClaudePluginBridgeService {
       await this.command(executable, [
         'plugin', 'marketplace', 'remove', this.dependencies.identity.marketplaceName,
         '--scope', 'user'
-      ]);
+      ], configDirectory);
     }
     if (this.isOwnedArtifactRoot()) {
       rmSync(this.marketplaceRoot, { recursive: true, force: true });
@@ -1270,13 +1273,16 @@ export class ClaudePluginBridgeService {
     return hash.digest('hex');
   }
 
-  private async recoverLegacyProductionDebugMarketplace(executable: string): Promise<boolean> {
+  private async recoverLegacyProductionDebugMarketplace(
+    executable: string,
+    configDirectory?: string
+  ): Promise<boolean> {
     const legacyRoot = this.dependencies.legacyProductionDebugMarketplaceRoot;
     if (!legacyRoot || !this.isProductionIdentity() || !isAbsolute(legacyRoot) ||
       resolve(legacyRoot) === this.marketplaceRoot ||
       basename(dirname(dirname(legacyRoot))) !== 'Bitterless_DEBUG_PROD') return false;
 
-    const initial = await this.inspectClaudeNamespace(executable);
+    const initial = await this.inspectClaudeNamespace(executable, configDirectory);
     const marketplaceEntries = initial.marketplaces.filter(
       (entry) => entry.name === PRODUCTION_MARKETPLACE_NAME
     );
@@ -1303,10 +1309,10 @@ export class ClaudePluginBridgeService {
     if (expectedPluginPresent) {
       await this.command(executable, [
         'plugin', 'uninstall', PRODUCTION_PLUGIN_ID, '--scope', 'user', '-y'
-      ]);
+      ], configDirectory);
     }
 
-    const afterUninstall = await this.inspectClaudeNamespace(executable);
+    const afterUninstall = await this.inspectClaudeNamespace(executable, configDirectory);
     const remainingPlugins = this.marketplaceNamespacePlugins(
       afterUninstall.plugins,
       PRODUCTION_MARKETPLACE_NAME
@@ -1325,9 +1331,9 @@ export class ClaudePluginBridgeService {
 
     await this.command(executable, [
       'plugin', 'marketplace', 'remove', PRODUCTION_MARKETPLACE_NAME, '--scope', 'user'
-    ]);
+    ], configDirectory);
 
-    const afterRemoval = await this.inspectClaudeNamespace(executable);
+    const afterRemoval = await this.inspectClaudeNamespace(executable, configDirectory);
     if (this.marketplaceNamespacePlugins(afterRemoval.plugins, PRODUCTION_MARKETPLACE_NAME).length !== 0 ||
       afterRemoval.marketplaces.some((entry) => entry.name === PRODUCTION_MARKETPLACE_NAME)) {
       throw new Error(
@@ -1345,10 +1351,13 @@ export class ClaudePluginBridgeService {
       identity.artifactRootRelativePath === 'eyes-on-agents/claude-marketplace';
   }
 
-  private async inspectClaudeNamespace(executable: string): Promise<ClaudeNamespaceInspection> {
+  private async inspectClaudeNamespace(
+    executable: string,
+    configDirectory?: string
+  ): Promise<ClaudeNamespaceInspection> {
     const [pluginsResult, marketplacesResult] = await Promise.all([
-      this.command(executable, ['plugin', 'list', '--json']),
-      this.command(executable, ['plugin', 'marketplace', 'list', '--json'])
+      this.command(executable, ['plugin', 'list', '--json'], configDirectory),
+      this.command(executable, ['plugin', 'marketplace', 'list', '--json'], configDirectory)
     ]);
     return {
       plugins: parseJsonArray(pluginsResult.stdout, 'Claude plugin list'),
@@ -1480,12 +1489,17 @@ export class ClaudePluginBridgeService {
     );
   }
 
-  private async command(executable: string, args: string[]): Promise<ClaudeCommandResult> {
+  private async command(
+    executable: string,
+    args: string[],
+    configDirectory?: string
+  ): Promise<ClaudeCommandResult> {
     let result: ClaudeCommandResult;
     try {
       result = await this.runCommand(executable, args, {
         timeoutMs: 30_000,
-        maxOutputBytes: 1024 * 1024
+        maxOutputBytes: 1024 * 1024,
+        configDirectory
       });
     } catch {
       if (this.executable === executable) this.executable = null;

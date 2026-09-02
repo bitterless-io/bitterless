@@ -24,6 +24,30 @@ const {
   transcriptB
 } = fixture;
 
+// Task 085: getDirectoryStatus() returns one entry per configured environment instead of a single
+// status object. Every scenario in this file configures exactly one environment (id 'env-default'
+// unless noted), so this helper recovers the pre-085 "the one status object" access pattern; when
+// the map hasn't been populated yet (e.g. mid-hydration) it falls back to the same all-null
+// "starting" shape the pre-085 singleton always exposed before its first successful hydration.
+const status = (runtime, id = 'env-default') => runtime.getDirectoryStatus().find(
+  (entry) => entry.id === id
+) ?? {
+  id,
+  label: '',
+  enabled: true,
+  mode: 'automatic',
+  configuredDirectory: null,
+  effectiveDirectory: null,
+  projectsDirectory: null,
+  desktopDirectoryCount: 0,
+  state: 'starting',
+  watching: false,
+  lastScanAt: null,
+  lastSuccessfulScanAt: null,
+  nextRetryAt: null,
+  error: null
+};
+
 try {
 
   assert.deepEqual(observationModule.CLAUDE_DIRECTORY_RETRY_DELAYS_MS,
@@ -46,13 +70,22 @@ try {
       async hydrate() {
         return {
           state: 'valid',
-          config: { schemaVersion: 1, mode: 'custom', configDirectory: configA }
+          config: {
+            schemaVersion: 2,
+            environments: [{
+              id: 'env-default', label: 'Default', mode: 'custom', configDirectory: configA, enabled: true
+            }]
+          }
         };
       },
-      getCurrent() { return null; },
-      async chooseCustom() { return null; },
+      listEnvironments() {
+        return [{
+          id: 'env-default', label: 'Default', mode: 'custom', configDirectory: configA, enabled: true
+        }];
+      },
+      async chooseCustomDirectory() { return null; },
       async useAutomatic() {
-        return { schemaVersion: 1, mode: 'automatic', configDirectory: null };
+        return { id: 'env-default', label: 'Default', mode: 'automatic', configDirectory: null, enabled: true };
       }
     },
     resolveDirectory: () => ({
@@ -63,7 +96,7 @@ try {
       projectsDirectoryAvailable: true
     }),
     agents: { poll: async () => null },
-    watcher: createWatcher()
+    createWatcher: () => createWatcher()
   });
   await startupCapabilityRuntime.start();
   assert.deepEqual(
@@ -93,13 +126,22 @@ try {
       async hydrate() {
         return {
           state: 'valid',
-          config: { schemaVersion: 1, mode: 'custom', configDirectory: configA }
+          config: {
+            schemaVersion: 2,
+            environments: [{
+              id: 'env-default', label: 'Default', mode: 'custom', configDirectory: configA, enabled: true
+            }]
+          }
         };
       },
-      getCurrent() { return null; },
-      async chooseCustom() { return null; },
+      listEnvironments() {
+        return [{
+          id: 'env-default', label: 'Default', mode: 'custom', configDirectory: configA, enabled: true
+        }];
+      },
+      async chooseCustomDirectory() { return null; },
       async useAutomatic() {
-        return { schemaVersion: 1, mode: 'automatic', configDirectory: null };
+        return { id: 'env-default', label: 'Default', mode: 'automatic', configDirectory: null, enabled: true };
       }
     },
     resolveDirectory: () => ({
@@ -110,7 +152,7 @@ try {
       projectsDirectoryAvailable: true
     }),
     agents: { poll: async () => null },
-    watcher: clearFirstWatcher
+    createWatcher: () => clearFirstWatcher
   });
   const clearFirstStart = clearFirstRuntime.start();
   await drain(() => releaseStartupCapabilityClear !== null,
@@ -130,9 +172,11 @@ try {
   let deferResumeHydrate = false;
   let releaseResumeHydrate = null;
   let resumeHydrateConfig = {
-    schemaVersion: 1,
+    id: 'env-default',
+    label: 'Default',
     mode: 'custom',
-    configDirectory: configA
+    configDirectory: configA,
+    enabled: true
   };
   let resumeHydrateUpserts = 0;
   const resumeHydrateWatcher = createWatcher();
@@ -146,13 +190,14 @@ try {
     directoryConfig: {
       async hydrate() {
         const config = { ...resumeHydrateConfig };
-        if (!deferResumeHydrate) return { state: 'valid', config };
+        const hydration = { state: 'valid', config: { schemaVersion: 2, environments: [config] } };
+        if (!deferResumeHydrate) return hydration;
         return await new Promise((resolveHydrate) => {
-          releaseResumeHydrate = () => resolveHydrate({ state: 'valid', config });
+          releaseResumeHydrate = () => resolveHydrate(hydration);
         });
       },
-      getCurrent() { return resumeHydrateConfig; },
-      async chooseCustom() { return resumeHydrateConfig; },
+      listEnvironments() { return [resumeHydrateConfig]; },
+      async chooseCustomDirectory() { return resumeHydrateConfig; },
       async useAutomatic() { return resumeHydrateConfig; }
     },
     resolveDirectory: (config) => {
@@ -166,7 +211,7 @@ try {
       };
     },
     agents: { poll: async () => null },
-    watcher: resumeHydrateWatcher
+    createWatcher: () => resumeHydrateWatcher
   });
   await resumeHydrateRuntime.start();
   assert.equal(resumeHydrateWatcher.roots.projectsRoot, projectsA);
@@ -174,16 +219,18 @@ try {
   const upsertsBeforeResume = resumeHydrateUpserts;
   const startsBeforeResume = resumeHydrateWatcher.processStarts;
   resumeHydrateConfig = {
-    schemaVersion: 1,
+    id: 'env-default',
+    label: 'Default',
     mode: 'custom',
-    configDirectory: configB
+    configDirectory: configB,
+    enabled: true
   };
   deferResumeHydrate = true;
   const deferredResume = resumeHydrateRuntime.start();
   await drain(() => releaseResumeHydrate !== null,
     'auth resume must wait for the persisted directory hydrate');
   assert.deepEqual(await resumeHydrateRuntime.refresh('poll'), { changed: false });
-  assert.equal(resumeHydrateRuntime.getDirectoryStatus().effectiveDirectory, null);
+  assert.equal(status(resumeHydrateRuntime).effectiveDirectory, null);
   assert.equal(resumeHydrateWatcher.running, false);
   assert.equal(resumeHydrateWatcher.processStarts, startsBeforeResume,
     'a resume tail refresh cannot restart the previously applied root');
@@ -192,7 +239,7 @@ try {
   deferResumeHydrate = false;
   releaseResumeHydrate();
   await deferredResume;
-  assert.equal(resumeHydrateRuntime.getDirectoryStatus().effectiveDirectory, configB);
+  assert.equal(status(resumeHydrateRuntime).effectiveDirectory, configB);
   assert.equal(resumeHydrateWatcher.roots.projectsRoot, projectsB);
   assert.equal(resumeHydrateWatcher.processStarts, startsBeforeResume + 1);
   assert.equal(resumeHydrateUpserts, upsertsBeforeResume + 1);
@@ -227,10 +274,10 @@ try {
       projectsDirectoryAvailable: true
     }),
     agents: { poll: async () => null },
-    watcher: recoverableWatcher
+    createWatcher: () => recoverableWatcher
   });
   await recoverableRuntime.start();
-  assert.equal(recoverableRuntime.getDirectoryStatus().state, 'watching');
+  assert.equal(recoverableRuntime.getDirectoryStatus()[0].state, 'watching');
   await recoverableRuntime.stop();
   recoverableStoredConfig = storedValue({
     schemaVersion: 2,
@@ -238,7 +285,9 @@ try {
     configDirectory: null
   });
   await recoverableRuntime.start();
-  const invalidResumeStatus = recoverableRuntime.getDirectoryStatus();
+  // An invalid hydrate has no known environment identity yet, so getDirectoryStatus() is a single
+  // synthetic sentinel entry rather than the usual per-environment array.
+  const invalidResumeStatus = recoverableRuntime.getDirectoryStatus()[0];
   assert.deepEqual({
     mode: invalidResumeStatus.mode,
     configuredDirectory: invalidResumeStatus.configuredDirectory,
@@ -263,13 +312,21 @@ try {
     nextRetryAt: null
   }, 'an invalid auth-resume hydrate must not expose status from the previous custom root');
   await recoverableRuntime.useAutomaticDirectory();
-  assert.equal(recoverableRuntime.getDirectoryStatus().state, 'watching',
+  assert.equal(recoverableRuntime.getDirectoryStatus()[0].state, 'watching',
     'Use automatic must recover a runtime whose saved setting is malformed');
-  assert.deepEqual(recoverableWrites.at(-1), {
-    schemaVersion: 1,
-    mode: 'automatic',
-    configDirectory: null
-  });
+  const recoveredWrite = recoverableWrites.at(-1);
+  assert.equal(recoveredWrite.schemaVersion, 2);
+  assert.equal(recoveredWrite.environments.length, 1);
+  assert.deepEqual(
+    {
+      label: recoveredWrite.environments[0].label,
+      mode: recoveredWrite.environments[0].mode,
+      configDirectory: recoveredWrite.environments[0].configDirectory,
+      enabled: recoveredWrite.environments[0].enabled
+    },
+    { label: 'Default', mode: 'automatic', configDirectory: null, enabled: true },
+    'recovering from a malformed saved value must reset to one fresh default automatic environment'
+  );
   await recoverableRuntime.stop();
 
   const order = [];
@@ -278,10 +335,15 @@ try {
   const watcher = createWatcher(order);
   const repository = createRepository();
   const runtimeConfig = {
-    config: { schemaVersion: 1, mode: 'custom', configDirectory: configA },
-    async hydrate() { order.push('config:hydrate'); return { state: 'valid', config: this.config }; },
-    getCurrent() { return this.config; },
-    async chooseCustom() { return this.config; },
+    config: {
+      id: 'env-default', label: 'Default', mode: 'custom', configDirectory: configA, enabled: true
+    },
+    async hydrate() {
+      order.push('config:hydrate');
+      return { state: 'valid', config: { schemaVersion: 2, environments: [this.config] } };
+    },
+    listEnvironments() { return [this.config]; },
+    async chooseCustomDirectory() { return this.config; },
     async useAutomatic() { return this.config; }
   };
   const resolveDynamic = () => ({
@@ -296,14 +358,14 @@ try {
     directoryConfig: runtimeConfig,
     resolveDirectory: resolveDynamic,
     agents: { poll: async () => null },
-    watcher,
+    createWatcher: () => watcher,
     now: () => 100_000,
     setTimer: timers.setTimer,
     clearTimer: timers.clearTimer
   });
   await runtime.start();
   assert.equal(order[0], 'config:hydrate', 'directory intent must hydrate before watcher startup');
-  assert.equal(runtime.getDirectoryStatus().state, 'waiting');
+  assert.equal(status(runtime).state, 'waiting');
   assert.equal(timers.active().length, 1, 'one unhealthy runtime must own exactly one retry timer');
   assert.equal(timers.active()[0].delay, 1_000);
   assert.equal(timers.active()[0].unrefCalled, true);
@@ -313,16 +375,16 @@ try {
   const recoveryTimer = timers.active()[0];
   recoveryTimer.cleared = true;
   recoveryTimer.callback();
-  await drain(() => runtime.getDirectoryStatus().state === 'watching',
+  await drain(() => status(runtime).state === 'watching',
     'Main retry must recover a directory created while no renderer exists');
   assert.equal(watcher.processStarts, 1);
   assert.equal(timers.active().length, 0, 'healthy watching must have no second steady-state timer');
   await runtime.refresh('poll');
   assert.equal(watcher.processStarts, 1, 'reconciliation must reuse one watcher process');
   await runtime.stop();
-  assert.equal(runtime.getDirectoryStatus().state, 'stopped');
+  assert.equal(status(runtime).state, 'stopped');
   await runtime.start();
-  assert.equal(runtime.getDirectoryStatus().state, 'watching', 'authenticated resume must rehydrate and restart');
+  assert.equal(status(runtime).state, 'watching', 'authenticated resume must rehydrate and restart');
   await runtime.stop();
 
   const stoppedTimers = createTimerHarness();
@@ -333,7 +395,7 @@ try {
     directoryConfig: runtimeConfig,
     resolveDirectory: resolveDynamic,
     agents: { poll: async () => null },
-    watcher: stoppedWatcher,
+    createWatcher: () => stoppedWatcher,
     setTimer: stoppedTimers.setTimer,
     clearTimer: stoppedTimers.clearTimer
   });
@@ -377,7 +439,7 @@ try {
       projectsDirectoryAvailable: true
     }),
     agents: { poll: async () => null },
-    watcher: stopRaceWatcher,
+    createWatcher: () => stopRaceWatcher,
     setTimer: stopRaceTimers.setTimer,
     clearTimer: stopRaceTimers.clearTimer
   });
@@ -393,7 +455,7 @@ try {
   releaseDeferredStart();
   assert.deepEqual(await refreshWhileStopping, { changed: false });
   await Promise.all([refreshAcrossStop, stopAcrossRefresh]);
-  assert.equal(stopRaceRuntime.getDirectoryStatus().state, 'stopped');
+  assert.equal(status(stopRaceRuntime).state, 'stopped');
   assert.equal(stopRaceWatcher.running, false,
     'stop must perform its final watcher shutdown after joining an in-flight refresh');
   assert.equal(stopRaceTimers.active().length, 0);
@@ -401,7 +463,7 @@ try {
   assert.equal(stopRaceWatcher.running, false, 'a stale watcher start must not respawn after stop');
   const startsAfterStop = stopRaceWatcher.processStarts;
   assert.deepEqual(await stopRaceRuntime.refresh('full'), { changed: false });
-  assert.equal(stopRaceRuntime.getDirectoryStatus().state, 'stopped',
+  assert.equal(status(stopRaceRuntime).state, 'stopped',
     'a renderer tail refresh must not reverse the stopped lifecycle intent');
   assert.equal(stopRaceWatcher.processStarts, startsAfterStop,
     'a refresh after stop must not start a new watcher');
@@ -417,15 +479,15 @@ try {
     }
   });
   const stoppedActionConfig = {
-    config: { schemaVersion: 1, mode: 'custom', configDirectory: configA },
-    async hydrate() { return { state: 'valid', config: this.config }; },
-    getCurrent() { return this.config; },
-    async chooseCustom() {
-      this.config = {
-        schemaVersion: 1,
-        mode: 'custom',
-        configDirectory: stoppedActionSelection
-      };
+    config: {
+      id: 'env-default', label: 'Default', mode: 'custom', configDirectory: configA, enabled: true
+    },
+    async hydrate() {
+      return { state: 'valid', config: { schemaVersion: 2, environments: [this.config] } };
+    },
+    listEnvironments() { return [this.config]; },
+    async chooseCustomDirectory() {
+      this.config = { ...this.config, mode: 'custom', configDirectory: stoppedActionSelection };
       return this.config;
     },
     async useAutomatic() { return this.config; }
@@ -444,7 +506,7 @@ try {
       };
     },
     agents: { poll: async () => null },
-    watcher: stoppedActionWatcher,
+    createWatcher: () => stoppedActionWatcher,
     setTimer: stoppedActionTimers.setTimer,
     clearTimer: stoppedActionTimers.clearTimer
   });
@@ -455,7 +517,7 @@ try {
   const clearsBeforeStoppedAction = stoppedActionRepository.clearCalls;
   stoppedActionSelection = configB;
   await stoppedActionRuntime.changeDirectory();
-  const stoppedActionStatus = stoppedActionRuntime.getDirectoryStatus();
+  const stoppedActionStatus = status(stoppedActionRuntime);
   assert.equal(stoppedActionStatus.state, 'stopped');
   assert.equal(stoppedActionStatus.watching, false);
   assert.equal(stoppedActionStatus.effectiveDirectory, configB);
@@ -472,15 +534,15 @@ try {
   let retryResetSelection = configA;
   const retryResetTimers = createTimerHarness();
   const retryResetConfig = {
-    config: { schemaVersion: 1, mode: 'custom', configDirectory: configA },
-    async hydrate() { return { state: 'valid', config: this.config }; },
-    getCurrent() { return this.config; },
-    async chooseCustom() {
-      this.config = {
-        schemaVersion: 1,
-        mode: 'custom',
-        configDirectory: retryResetSelection
-      };
+    config: {
+      id: 'env-default', label: 'Default', mode: 'custom', configDirectory: configA, enabled: true
+    },
+    async hydrate() {
+      return { state: 'valid', config: { schemaVersion: 2, environments: [this.config] } };
+    },
+    listEnvironments() { return [this.config]; },
+    async chooseCustomDirectory() {
+      this.config = { ...this.config, mode: 'custom', configDirectory: retryResetSelection };
       return this.config;
     },
     async useAutomatic() { return this.config; }
@@ -496,7 +558,7 @@ try {
       projectsDirectoryAvailable: false
     }),
     agents: { poll: async () => null },
-    watcher: createWatcher(),
+    createWatcher: () => createWatcher(),
     setTimer: retryResetTimers.setTimer,
     clearTimer: retryResetTimers.clearTimer
   });
@@ -530,13 +592,18 @@ try {
         if (hydrationAttempts === 1) throw new Error('setting unavailable');
         return {
           state: 'valid',
-          config: { schemaVersion: 1, mode: 'custom', configDirectory: configA }
+          config: {
+            schemaVersion: 2,
+            environments: [{
+              id: 'env-default', label: 'Default', mode: 'custom', configDirectory: configA, enabled: true
+            }]
+          }
         };
       },
-      getCurrent() { return null; },
-      async chooseCustom() { return null; },
+      listEnvironments() { return []; },
+      async chooseCustomDirectory() { return null; },
       async useAutomatic() {
-        return { schemaVersion: 1, mode: 'automatic', configDirectory: null };
+        return { id: 'env-default', label: 'Default', mode: 'automatic', configDirectory: null, enabled: true };
       }
     },
     resolveDirectory: () => ({
@@ -547,16 +614,18 @@ try {
       projectsDirectoryAvailable: true
     }),
     agents: { poll: async () => null },
-    watcher: hydrationWatcher,
+    createWatcher: () => hydrationWatcher,
     setTimer: hydrationTimers.setTimer,
     clearTimer: hydrationTimers.clearTimer
   });
   await hydrationRuntime.start();
-  assert.equal(hydrationRuntime.getDirectoryStatus().state, 'retrying');
+  // A thrown hydrate has no known environment identity yet, so getDirectoryStatus() is the single
+  // synthetic sentinel entry rather than the usual per-environment array.
+  assert.equal(hydrationRuntime.getDirectoryStatus()[0].state, 'retrying');
   const hydrationRetry = hydrationTimers.active()[0];
   hydrationRetry.cleared = true;
   hydrationRetry.callback();
-  await drain(() => hydrationRuntime.getDirectoryStatus().state === 'watching',
+  await drain(() => status(hydrationRuntime).state === 'watching',
     'a thrown getStored/hydrate must remain recoverable instead of poisoning started state');
   await hydrationRuntime.stop();
 

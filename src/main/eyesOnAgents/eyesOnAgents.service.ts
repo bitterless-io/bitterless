@@ -23,6 +23,7 @@ import type {
 import {
   buildEyesOnAgentsDeepLink,
   buildEyesOnAgentsClaudeDesktopDeepLink,
+  buildEyesOnAgentsIterm2DeepLink,
   effectiveEyesOnAgentsRuntimeState,
   isEyesOnAgentsFocused,
   isEyesOnAgentsRecord,
@@ -108,9 +109,13 @@ interface EyesOnAgentsServiceDependencies {
     hasInstallationIntent(): boolean;
     acceptsInstallation(installationId: string): boolean;
     revokeObservationProof(reason?: 'coverage_gap'): void;
-    install(): Promise<EyesOnAgentsClaudeBridgeStatus>;
-    refresh(): Promise<EyesOnAgentsClaudeBridgeStatus>;
-    remove(): Promise<EyesOnAgentsClaudeBridgeStatus>;
+    // configDirectory (task 086) scopes only which CLAUDE_CONFIG_DIR the underlying claude CLI
+    // invocations run against; omitting it reproduces today's exact ambient-environment behavior.
+    // It never introduces a second installationId/socket/outbox — the shared installation-identity
+    // state machine below this dependency is unchanged.
+    install(configDirectory?: string): Promise<EyesOnAgentsClaudeBridgeStatus>;
+    refresh(configDirectory?: string): Promise<EyesOnAgentsClaudeBridgeStatus>;
+    remove(configDirectory?: string): Promise<EyesOnAgentsClaudeBridgeStatus>;
   };
   claudeHookListener?: {
     start(): Promise<void>;
@@ -175,19 +180,10 @@ const STOPPED_CLAUDE_BRIDGE_STATUS: EyesOnAgentsClaudeBridgeStatus = {
   error: null
 };
 
-const STOPPED_CLAUDE_DIRECTORY_STATUS: EyesOnAgentsSnapshot['claudeDirectory'] = {
-  mode: 'automatic',
-  configuredDirectory: null,
-  effectiveDirectory: null,
-  projectsDirectory: null,
-  desktopDirectoryCount: 0,
-  state: 'stopped',
-  watching: false,
-  lastScanAt: null,
-  lastSuccessfulScanAt: null,
-  nextRetryAt: null,
-  error: null
-};
+// Task 085: claudeDirectory moved from one status object to one entry per configured Claude
+// environment — an unavailable/hidden claudeObservation has no known environments, so the fallback
+// is an empty list rather than a single synthetic "stopped" object.
+const STOPPED_CLAUDE_DIRECTORY_STATUS: EyesOnAgentsSnapshot['claudeDirectory'] = [];
 
 const boundedClaudeProviderError = (error: unknown): string => {
   const message = error instanceof Error
@@ -827,7 +823,8 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
         : Date.parse(bridge.listeningSince);
       const visibleThreads = persisted.threads.filter((thread) =>
         thread.provider !== 'claude' || (
-          claudeProviderProjectionEnabled && thread.desktopSessionId !== null
+          claudeProviderProjectionEnabled &&
+          (thread.desktopSessionId !== null || thread.iterm2SessionId !== null)
         ));
       const threads = visibleThreads.map((thread) => {
         const observedAt = thread.statusObservedAt === null
@@ -878,10 +875,8 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
         bridge,
         claudeBridge,
         claudeDirectory: claudeProviderManagementVisible
-          ? this.dependencies.claudeObservation?.getDirectoryStatus?.() ?? {
-              ...STOPPED_CLAUDE_DIRECTORY_STATUS
-            }
-          : { ...STOPPED_CLAUDE_DIRECTORY_STATUS },
+          ? this.dependencies.claudeObservation?.getDirectoryStatus?.() ?? [...STOPPED_CLAUDE_DIRECTORY_STATUS]
+          : [...STOPPED_CLAUDE_DIRECTORY_STATUS],
         claudeProvider: {
           enabled: claudeProviderEnabled,
           error: claudeProviderError,
@@ -2261,6 +2256,29 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     return { url, snapshot: await this.getSnapshot() };
   }
 
+  async openThreadInIterm2(params: { sessionKey: EyesOnAgentsSessionKey }): Promise<{
+    url: string;
+    snapshot: EyesOnAgentsSnapshot;
+  }> {
+    const sessionKey = parseEyesOnAgentsSessionKey(params?.sessionKey);
+    return await this.runClaudeBridgeLifecycle(async () => {
+      this.requireClaudeProviderEnabled();
+      const stored = (await this.dependencies.repository.getSnapshot()).threads.find(
+        (thread) => thread.sessionKey === sessionKey
+      );
+      if (!stored || stored.provider !== 'claude') throw new Error('Thread was not found');
+      const target = await this.dependencies.repository.getClaudeOpenTarget({ sessionKey });
+      if (!target?.iterm2SessionId) {
+        throw new Error('This Claude session is not matched to an iTerm2 session');
+      }
+      const url = buildEyesOnAgentsIterm2DeepLink(target.iterm2SessionId);
+      await this.dependencies.openExternal(url);
+      await this.dependencies.repository.markOpened({ sessionKey, openedAt: this.now() });
+      this.notify();
+      return { url, snapshot: await this.getSnapshot() };
+    });
+  }
+
   async archiveThread(params: {
     sessionKey: EyesOnAgentsSessionKey;
   }): Promise<EyesOnAgentsSnapshot> {
@@ -2821,7 +2839,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     return await this.getSnapshot();
   }
 
-  async installClaudeBridge(): Promise<EyesOnAgentsSnapshot> {
+  async installClaudeBridge(configDirectory?: string): Promise<EyesOnAgentsSnapshot> {
     this.requireClaudeProviderManagementEnabled();
     if (!this.dependencies.claudeBridge || !this.dependencies.claudeHookListener) {
       throw new Error('Claude observation plugin is unavailable');
@@ -2836,7 +2854,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       if (!this.isClaudeProviderManagementCurrent(runtimeVersion)) {
         throw new Error('Claude support changed while the listener was stopping');
       }
-      const status = await this.dependencies.claudeBridge?.install();
+      const status = await this.dependencies.claudeBridge?.install(configDirectory);
       if (!this.isClaudeProviderManagementCurrent(runtimeVersion)) {
         throw new Error('Claude support changed while the plugin was being installed');
       }
@@ -2867,13 +2885,13 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     return await this.changedSnapshot();
   }
 
-  async refreshClaudeBridgeStatus(): Promise<EyesOnAgentsSnapshot> {
+  async refreshClaudeBridgeStatus(configDirectory?: string): Promise<EyesOnAgentsSnapshot> {
     this.requireClaudeProviderManagementEnabled();
     if (!this.dependencies.claudeBridge) throw new Error('Claude observation plugin is unavailable');
     await this.runClaudeBridgeLifecycle(async () => {
       this.requireClaudeProviderManagementEnabled();
       const runtimeVersion = this.claudeProviderRuntimeVersion;
-      const status = await this.dependencies.claudeBridge?.refresh();
+      const status = await this.dependencies.claudeBridge?.refresh(configDirectory);
       if (!this.isClaudeProviderManagementCurrent(runtimeVersion)) return;
       if (!this.claudeProviderProjectionEnabled) {
         await this.activateClaudeProvider(runtimeVersion, false);
@@ -2921,7 +2939,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     return await this.changedSnapshot();
   }
 
-  async removeClaudeBridge(): Promise<EyesOnAgentsSnapshot> {
+  async removeClaudeBridge(configDirectory?: string): Promise<EyesOnAgentsSnapshot> {
     this.requireClaudeProviderManagementEnabled();
     if (!this.dependencies.claudeBridge) throw new Error('Claude observation plugin is unavailable');
     await this.runClaudeBridgeLifecycle(async () => {
@@ -2933,7 +2951,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       await this.invalidateClaudeHookActiveStates();
       if (!this.isClaudeProviderVersionCurrent(runtimeVersion) ||
         !this.claudeProviderPreferenceEnabled) return;
-      await this.dependencies.claudeBridge?.remove();
+      await this.dependencies.claudeBridge?.remove(configDirectory);
     });
     return await this.changedSnapshot();
   }
@@ -3066,10 +3084,15 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
           payload.transcriptPath,
           payload.sessionId
         );
+        const iterm2SessionId = delivery.event.schemaVersion === 3 &&
+          delivery.event.payload.terminalApp === 'iterm2'
+          ? delivery.event.payload.terminalSessionId
+          : null;
         await this.dependencies.repository.upsertClaudeInventory({
           threads: [{
             threadId: payload.sessionId,
             desktopSessionId: null,
+            iterm2SessionId,
             transcriptPath,
             title: null,
             cwd: payload.cwd,

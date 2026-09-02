@@ -408,6 +408,25 @@ class EyesOnAgentsState {
     }
   }
 
+  async openThreadInIterm2(sessionKey: EyesOnAgentsSessionKey): Promise<void> {
+    const thread = this.threads.find((item) => item.sessionKey === sessionKey);
+    if (!thread || thread.iterm2SessionId === null) return;
+    if (this.openingSessionKeys.has(sessionKey)) return;
+    this.openingSessionKeys = new Set(this.openingSessionKeys).add(sessionKey);
+    this.actionError = null;
+    try {
+      const result = await eyesOnAgentsEmitter.openThreadInIterm2({ sessionKey });
+      this.applySnapshot(result.snapshot);
+    } catch (error) {
+      this.actionError = this.errorMessage(error);
+      throw error;
+    } finally {
+      const next = new Set(this.openingSessionKeys);
+      next.delete(sessionKey);
+      this.openingSessionKeys = next;
+    }
+  }
+
   async copySessionPath(sessionKey: EyesOnAgentsSessionKey): Promise<void> {
     const thread = this.threads.find((item) => item.sessionKey === sessionKey);
     if (!thread?.canCopySessionPath) return;

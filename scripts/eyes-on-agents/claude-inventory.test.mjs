@@ -218,11 +218,11 @@ try {
     },
     resolveRoots: () => ({ desktopRoots: [deletionRoot], projectsRoot: null }),
     agents: { poll: async () => null },
-    watcher: {
+    createWatcher: () => ({
       updateRoots: async () => undefined,
       start: async () => undefined,
       stop: async () => undefined
-    }
+    })
   });
   await unsafeDeletionObservation.start();
   assert.deepEqual(unsafeDeletionBatch.deletion.tombstones, [],
@@ -436,11 +436,11 @@ try {
     },
     resolveRoots: () => ({ desktopRoots: [desktopRoot], projectsRoot: null }),
     agents: { poll: async () => null },
-    watcher: {
+    createWatcher: () => ({
       updateRoots: async () => { throw new Error('socket unavailable'); },
       start: async () => { throw new Error('helper unavailable'); },
       stop: async () => undefined
-    }
+    })
   });
   await fallbackObservation.start();
   assert(fallbackUpserts > 0, 'watcher failure must not block canonical fallback inventory');
@@ -463,11 +463,11 @@ try {
         releaseAgentPoll = () => resolvePoll(null);
       })
     },
-    watcher: {
+    createWatcher: () => ({
       updateRoots: async () => undefined,
       start: async () => undefined,
       stop: async () => undefined
-    }
+    })
   });
   await coalescedObservation.start();
   coalescedBatches.length = 0;
@@ -509,11 +509,11 @@ try {
         releaseStoppedPoll = () => resolvePoll(null);
       })
     },
-    watcher: {
+    createWatcher: () => ({
       updateRoots: async () => undefined,
       start: async () => undefined,
       stop: async () => undefined
-    }
+    })
   });
   await stoppedObservation.start();
   stopCommitCount = 0;

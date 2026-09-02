@@ -382,13 +382,17 @@ A card displays only observation metadata:
   reactive clock that advances every 10 seconds so visible cards update without receiving a new
   thread snapshot;
 - working-directory folder and the overflow control grouped at the right of the same action row; the
-  folder exposes the full path through tooltip/accessibility text. Claude rows without a trusted
-  Desktop Open route do not render. There is no icon-only `Open` button;
+  folder exposes the full path through tooltip/accessibility text. A Claude row with neither a
+  trusted Desktop Open route nor an `iterm2SessionId` does not render. There is no icon-only `Open`
+  button;
 - the overflow (`…`) control is always present. Its items, in order: the provider-named open item
   (**Open in Codex** / **Open in Claude**) with a quiet `(double click)` hint, omitted when the row
-  has no trusted route; the read-state item (**Mark as read** / **Mark as unread**) labelled from the
-  stored unread flag; and **Copy session path**, which puts the session JSONL's absolute path on the
-  clipboard for a Claude row with a known transcript (Codex rows have no discovered session file);
+  has no trusted route; **Open in iTerm2**, an independent action present whenever a Claude row
+  carries an `iterm2SessionId`, regardless of whether the provider-named open item is also present —
+  neither open item hides or replaces the other; the read-state item (**Mark as read** / **Mark as
+  unread**) labelled from the stored unread flag; and **Copy session path**, which puts the session
+  JSONL's absolute path on the clipboard for a Claude row with a known transcript (Codex rows have no
+  discovered session file);
 - one status slot right of the title carries either the working spinner or the unread red dot — the
   dot for any non-active unread row, which means terminal (`idle`, `ended`, `failed`) **and**
   `unknown`. Working and waiting cards show only the spinner, so the two states cannot collide in that
@@ -415,8 +419,10 @@ Every openable card participates in card-level keyboard focus; the menu's open i
 `Enter` launches the provider desktop UI and marks a confirmed terminal
 observation read after the fixed deep link is accepted. Codex uses `codex://threads/<uuid>`. A
 Claude row with a unique `desktopSessionId` uses
-`claude://claude.ai/epitaxy/<desktopSessionId>`. Claude rows without that trusted Desktop route are
-Main-private inventory and do not render in Focus or modal search results. A
+`claude://claude.ai/epitaxy/<desktopSessionId>`; a Claude row with a captured `iterm2SessionId`
+additionally (or exclusively) offers **Open in iTerm2** via `iterm2:///reveal?sessionid=<id>`, an
+independent overflow action that never replaces the provider-named open item. A Claude row with
+neither identity is Main-private inventory and does not render in Focus or modal search results. A
 visible Claude card's More menu exposes **Copy session path** when a canonical JSONL exists.
 Selecting or copying a path never marks read.
 
@@ -502,7 +508,7 @@ resolves. An unread `unknown` row shows its dot and belongs to the visible unrea
 | unknown runtime | accessible runtime label remains `Unknown`; no active loader is shown |
 | Claude Desktop archived | explicit metadata transition hides the row; unarchive restores its Domain/read state |
 | Claude Desktop deleted | explicit `deleted_<uuid>` tombstone removes the row from every board/search surface; residual JSONL and late Hooks do not restore it |
-| Claude CLI-only inventory | retained internally for reconciliation but absent from board/search until a trusted Desktop mapping exists |
+| Claude CLI-only inventory | retained internally for reconciliation; absent from board/search until a trusted Desktop mapping OR a captured `iterm2SessionId` exists |
 | Claude provider off | Claude rows and controls are absent from the board/search; Codex remains fully interactive |
 | Claude setup interrupted after exact install | one **Finish setup** action rebuilds the owned plugin generation; no dead-end Needs review guide |
 | Claude plugin installed, receipt pending | **Open new Claude session** is primary, Copy `/reload-plugins` is secondary, and status updates automatically |

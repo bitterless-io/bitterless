@@ -434,6 +434,7 @@ All view nor Focus is stored as a separate table row.
 | `provider` | `codex` or `claude` |
 | `thread_id` | validated provider-owned UUID; unique together with `provider` |
 | `desktop_session_id` | nullable validated Claude Desktop `local_<uuid>` identity used only for UI routing |
+| `iterm2_session_id` | nullable validated `ITERM_SESSION_ID` (`w<n>t<n>p<n>:<uuid>`) captured on `SessionStart` inside iTerm2, used only for UI routing to **Open in iTerm2** |
 | `domain_id` | non-null reference to an active EyesOnAgents Domain |
 | `title` | Codex name/preview fallback, display only |
 | `cwd` | working directory when Codex exposes it |
@@ -765,6 +766,7 @@ EyesOnAgentsHandler (main)
   syncThreads()
   refreshThreadPages() -> { changed }
   openThread({ sessionKey })
+  openThreadInIterm2({ sessionKey })
   previewClaudeTranscript({ sessionKey })
   markAllRead()
   installCodexBridge()

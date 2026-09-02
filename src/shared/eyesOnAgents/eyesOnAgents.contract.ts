@@ -11,6 +11,9 @@ import type {
   EyesOnAgentsRuntimeState,
   EyesOnAgentsStatusSource
 } from './eyesOnAgents.type';
+// Reuse task 081's ITERM_SESSION_ID shape validator instead of redefining the pattern a
+// third time (see the matching comment in claudeHookBridge.contract.ts).
+import { CLAUDE_HOOK_ITERM2_SESSION_ID_PATTERN } from './claudeHookBridge.contract';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CLAUDE_DESKTOP_SESSION_ID_PATTERN = /^local_([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
@@ -104,6 +107,17 @@ export const parseEyesOnAgentsDesktopSessionId = (
   const match = CLAUDE_DESKTOP_SESSION_ID_PATTERN.exec(value);
   if (!match) throw new Error('desktopSessionId must be a local Claude Desktop session ID');
   return `local_${parseEyesOnAgentsUuid(match[1], 'desktopSessionId')}`;
+};
+
+export const parseEyesOnAgentsIterm2SessionId = (
+  value: unknown
+): string | null => {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') throw new Error('iterm2SessionId must be a string');
+  if (!CLAUDE_HOOK_ITERM2_SESSION_ID_PATTERN.test(value)) {
+    throw new Error('iterm2SessionId must be a valid ITERM_SESSION_ID value');
+  }
+  return value;
 };
 
 export const buildEyesOnAgentsSessionKey = (
@@ -388,6 +402,14 @@ export const buildEyesOnAgentsClaudeDesktopDeepLink = (
   return `claude://claude.ai/epitaxy/${parsed}`;
 };
 
+export const buildEyesOnAgentsIterm2DeepLink = (
+  iterm2SessionId: unknown
+): string => {
+  const parsed = parseEyesOnAgentsIterm2SessionId(iterm2SessionId);
+  if (parsed === null) throw new Error('iTerm2 session ID is required');
+  return `iterm2:///reveal?sessionid=${encodeURIComponent(parsed)}`;
+};
+
 export const parseEyesOnAgentsSessionKeyParams = (
   value: unknown
 ): { sessionKey: EyesOnAgentsSessionKey } => {
@@ -477,6 +499,68 @@ export const parseEyesOnAgentsSetClaudeProviderEnabledParams = (
   assertOnlyKeys(value, ['enabled'], 'Claude provider params');
   if (typeof value.enabled !== 'boolean') throw new Error('enabled must be a boolean');
   return { enabled: value.enabled };
+};
+
+export const parseEyesOnAgentsClaudeEnvironmentId = (value: unknown): string => {
+  if (typeof value !== 'string' || !UUID_PATTERN.test(value)) {
+    throw new Error('Claude environment id must be a UUID');
+  }
+  return value.toLowerCase();
+};
+
+export const parseEyesOnAgentsClaudeEnvironmentLabel = (value: unknown): string => {
+  return parseEyesOnAgentsText(value, 'Claude environment label', 80, false) as string;
+};
+
+export const parseEyesOnAgentsAddClaudeEnvironmentParams = (
+  value: unknown
+): { label: string } => {
+  if (!isEyesOnAgentsRecord(value)) throw new Error('Claude environment params must be an object');
+  assertOnlyKeys(value, ['label'], 'Claude environment params');
+  return { label: parseEyesOnAgentsClaudeEnvironmentLabel(value.label) };
+};
+
+export const parseEyesOnAgentsClaudeEnvironmentIdParams = (
+  value: unknown
+): { id: string } => {
+  if (!isEyesOnAgentsRecord(value)) throw new Error('Claude environment params must be an object');
+  assertOnlyKeys(value, ['id'], 'Claude environment params');
+  return { id: parseEyesOnAgentsClaudeEnvironmentId(value.id) };
+};
+
+// The Claude plugin bridge XPC methods (install/refresh/remove/status) accept an optional
+// environmentId so a call with no params still targets the one automatic environment exactly as
+// before task 086 (preserving every pre-existing zero-arg renderer call site unchanged); an
+// explicitly supplied id is validated as a real Claude environment UUID and resolved/rejected by
+// the handler, never silently substituted.
+export const parseEyesOnAgentsClaudeBridgeEnvironmentParams = (
+  value: unknown
+): { environmentId?: string } => {
+  if (value === undefined) return {};
+  if (!isEyesOnAgentsRecord(value)) throw new Error('Claude bridge params must be an object');
+  assertOnlyKeys(value, ['environmentId'], 'Claude bridge params');
+  if (value.environmentId === undefined) return {};
+  return { environmentId: parseEyesOnAgentsClaudeEnvironmentId(value.environmentId) };
+};
+
+export const parseEyesOnAgentsRenameClaudeEnvironmentParams = (
+  value: unknown
+): { id: string; label: string } => {
+  if (!isEyesOnAgentsRecord(value)) throw new Error('Claude environment params must be an object');
+  assertOnlyKeys(value, ['id', 'label'], 'Claude environment params');
+  return {
+    id: parseEyesOnAgentsClaudeEnvironmentId(value.id),
+    label: parseEyesOnAgentsClaudeEnvironmentLabel(value.label)
+  };
+};
+
+export const parseEyesOnAgentsSetClaudeEnvironmentEnabledParams = (
+  value: unknown
+): { id: string; enabled: boolean } => {
+  if (!isEyesOnAgentsRecord(value)) throw new Error('Claude environment params must be an object');
+  assertOnlyKeys(value, ['id', 'enabled'], 'Claude environment params');
+  if (typeof value.enabled !== 'boolean') throw new Error('enabled must be a boolean');
+  return { id: parseEyesOnAgentsClaudeEnvironmentId(value.id), enabled: value.enabled };
 };
 
 export const parseEyesOnAgentsThreadRefreshPatch = (

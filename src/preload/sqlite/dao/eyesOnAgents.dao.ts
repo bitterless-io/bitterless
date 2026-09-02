@@ -38,6 +38,7 @@ import {
   normalizeEyesOnAgentsProviderThreadTitle,
   parseEyesOnAgentsActiveFlags,
   parseEyesOnAgentsDesktopSessionId,
+  parseEyesOnAgentsIterm2SessionId,
   parseEyesOnAgentsHookLastUserPromptCandidate,
   parseEyesOnAgentsLastUserPromptPreview,
   parseEyesOnAgentsPath,
@@ -66,6 +67,7 @@ interface ThreadRow {
   provider: string;
   thread_id: string;
   desktop_session_id: string | null;
+  iterm2_session_id: string | null;
   transcript_path: string | null;
   domain_id: number;
   title: string | null;
@@ -159,6 +161,7 @@ const normalizeClaudeInventoryThread = (
   return {
     threadId: parseEyesOnAgentsUuid(value.threadId),
     desktopSessionId: parseEyesOnAgentsDesktopSessionId(value.desktopSessionId),
+    iterm2SessionId: parseEyesOnAgentsIterm2SessionId(value.iterm2SessionId),
     desktopMetadataMtime: parseEyesOnAgentsTimestamp(
       value.desktopMetadataMtime,
       'desktopMetadataMtime'
@@ -397,6 +400,7 @@ const toThread = (row: ThreadRow): EyesOnAgentsThread => {
     threadId,
     archiveState: row.archive_state as 'active' | 'archived' | 'unknown',
     desktopSessionId: parseEyesOnAgentsDesktopSessionId(row.desktop_session_id),
+    iterm2SessionId: parseEyesOnAgentsIterm2SessionId(row.iterm2_session_id),
     canCopySessionPath: provider === 'claude' && row.transcript_path !== null,
     domainId: parsePositiveId(row.domain_id, 'domain id'),
     title: parseEyesOnAgentsText(row.title, 'thread title', 300),
@@ -1079,7 +1083,8 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       []
     );
     const rows = await sqliteHelper.safeAll<ThreadRow>(
-      `SELECT session_key, provider, thread_id, desktop_session_id, transcript_path,
+      `SELECT session_key, provider, thread_id, desktop_session_id, iterm2_session_id,
+        transcript_path,
         domain_id, title, cwd,
         project_key, project_root, project_name, archive_state,
         runtime_state, active_flags_json,
@@ -2056,7 +2061,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
         ? false
         : reconcileClaudeDeletionTombstonesInTransaction(deletion);
       const select = sqliteManager.db.prepare(
-        `SELECT desktop_session_id, desktop_identity_ambiguous, transcript_path,
+        `SELECT desktop_session_id, desktop_identity_ambiguous, iterm2_session_id, transcript_path,
           transcript_identity_ambiguous, title, cwd,
           project_key, project_root, project_name, archive_state, last_activity_at,
           transcript_activity_at, runtime_state, status_source, status_fresh_until,
@@ -2066,6 +2071,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       for (const thread of threads) {
         const row = select.get(thread.threadId) as {
           desktop_session_id: string | null; desktop_identity_ambiguous: number;
+          iterm2_session_id: string | null;
           transcript_path: string | null; transcript_identity_ambiguous: number;
           title: string | null; cwd: string | null; project_key: string | null;
           project_root: string | null; project_name: string | null;
@@ -2157,17 +2163,19 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           sqliteManager.db.prepare(
             `INSERT INTO eyes_on_agents_thread (
               session_key, provider, thread_id, desktop_session_id,
-              desktop_identity_ambiguous, transcript_path, transcript_identity_ambiguous,
+              desktop_identity_ambiguous, iterm2_session_id, transcript_path,
+              transcript_identity_ambiguous,
               domain_id, title, cwd, project_key, project_root, project_name,
               is_archived, archive_state, runtime_state, active_flags_json,
               is_unread, status_source, status_observed_at, last_activity_at,
               transcript_activity_at, created_at, updated_at
-            ) VALUES (?, 'claude', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', '[]',
+            ) VALUES (?, 'claude', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', '[]',
               0, 'discovery', ?, ?, ?, ?, ?)`
           ).run(
             buildEyesOnAgentsSessionKey('claude', thread.threadId), thread.threadId,
             collision || thread.clearDesktopSessionId ? null : thread.desktopSessionId,
             collision || thread.clearDesktopSessionId ? 1 : 0,
+            thread.iterm2SessionId ?? null,
             thread.clearTranscriptPath ? null : thread.transcriptPath,
             thread.clearTranscriptPath ? 1 : 0,
             domainId, thread.title,
@@ -2194,6 +2202,9 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
             ? null
             : thread.desktopSessionId ?? row.desktop_session_id,
           desktopIdentityAmbiguous: desktopAmbiguous ? 1 : 0,
+          // Independent COALESCE-preserve rule: no ambiguity/collision check to port, unlike
+          // desktop_session_id above (see docs/features/eyes-on-agents-iterm2-open.md).
+          iterm2SessionId: thread.iterm2SessionId ?? row.iterm2_session_id,
           transcriptPath: transcriptAmbiguous
             ? null
             : thread.transcriptPath ?? row.transcript_path,
@@ -2216,6 +2227,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
         };
         if (next.desktopSessionId === row.desktop_session_id &&
           next.desktopIdentityAmbiguous === row.desktop_identity_ambiguous &&
+          next.iterm2SessionId === row.iterm2_session_id &&
           next.transcriptPath === row.transcript_path &&
           next.transcriptIdentityAmbiguous === row.transcript_identity_ambiguous &&
           next.title === row.title &&
@@ -2227,6 +2239,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           next.isDeleted === row.is_deleted && next.deletedAt === row.deleted_at) continue;
         sqliteManager.db.prepare(
           `UPDATE eyes_on_agents_thread SET desktop_session_id = ?, desktop_identity_ambiguous = ?,
+            iterm2_session_id = ?,
             transcript_path = ?, transcript_identity_ambiguous = ?,
             title = ?, cwd = ?, project_key = ?, project_root = ?, project_name = ?,
             is_archived = ?, archive_state = ?, last_activity_at = ?,
@@ -2236,7 +2249,8 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
             updated_at = ?
            WHERE provider = 'claude' AND thread_id = ?`
         ).run(
-          next.desktopSessionId, next.desktopIdentityAmbiguous, next.transcriptPath,
+          next.desktopSessionId, next.desktopIdentityAmbiguous, next.iterm2SessionId,
+          next.transcriptPath,
           next.transcriptIdentityAmbiguous, next.title, next.cwd,
           next.projectKey, next.projectRoot, next.projectName,
           next.archiveState === 'archived' ? 1 : 0, next.archiveState,
@@ -2434,9 +2448,10 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
     const sessionKey = parseEyesOnAgentsSessionKey(params?.sessionKey);
     if (!sessionKey.startsWith('claude:')) throw new Error('Claude session key is required');
     const row = await sqliteHelper.safeGet<{
-      desktop_session_id: string | null; transcript_path: string | null; runtime_state: string;
+      desktop_session_id: string | null; iterm2_session_id: string | null;
+      transcript_path: string | null; runtime_state: string;
     }>(
-      `SELECT desktop_session_id, transcript_path, runtime_state
+      `SELECT desktop_session_id, iterm2_session_id, transcript_path, runtime_state
        FROM eyes_on_agents_thread
        WHERE session_key = ? AND provider = 'claude' AND is_deleted = 0`,
       [sessionKey]
@@ -2445,6 +2460,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
     return {
       sessionKey,
       desktopSessionId: parseEyesOnAgentsDesktopSessionId(row.desktop_session_id),
+      iterm2SessionId: parseEyesOnAgentsIterm2SessionId(row.iterm2_session_id),
       transcriptPath: normalizeClaudeTranscriptPath(row.transcript_path),
       runtimeState: parseEyesOnAgentsRuntimeState(row.runtime_state)
     };
