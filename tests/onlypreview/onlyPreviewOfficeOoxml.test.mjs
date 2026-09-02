@@ -902,13 +902,16 @@ for (const [kind, expectedCode] of [
   ['docx', 'DOCUMENT_RENDER_TIMEOUT'],
   ['pptx', 'PRESENTATION_RENDER_TIMEOUT']
 ]) {
-  test(`disposing while ${kind} layout is pending cannot publish a late ready or runtime error`, async () => {
+  test(`disposing while ${kind} pre-publication layout is pending cannot publish a late ready or runtime error`, async () => {
     const originalWarn = console.warn;
     const diagnostics = [];
     console.warn = (...args) => diagnostics.push(args);
     try {
       const layoutGate = deferred();
-      const { container, events, runtimeErrors, session } = createHarness(kind, { layoutGate });
+      const { container, events, runtimeErrors, session } = createHarness(kind, {
+        layoutGate,
+        publishOnLayout: true
+      });
       const mounting = session.mount(container);
       await waitFor(() => events.layoutWaits === 1, `${kind} layout did not start`);
 
@@ -926,6 +929,101 @@ for (const [kind, expectedCode] of [
     } finally {
       console.warn = originalWarn;
     }
+  });
+
+  test(`${kind} presents its first laid-out unit without waiting for the remaining layout`, async () => {
+    const layoutGate = deferred();
+    const { container, events, runtimeErrors, session } = createHarness(kind, { layoutGate });
+
+    await session.mount(container);
+
+    // Mount resolved while the full-document layout is still gated.
+    assert.equal(events.layoutWaits, 1);
+    assert.equal(events.loads.length, 1);
+    assert.deepEqual(runtimeErrors, []);
+
+    layoutGate.resolve();
+    await tick();
+    assert.deepEqual(runtimeErrors, []);
+    session.dispose();
+  });
+
+  test(`${kind} falls back to the full-document barrier when nothing is published early`, async () => {
+    const { container, events, runtimeErrors, session } = createHarness(kind, {
+      publishOnLayout: true
+    });
+
+    await session.mount(container);
+
+    assert.equal(events.layoutWaits, 1);
+    assert.deepEqual(runtimeErrors, []);
+    session.dispose();
+  });
+
+  test(`${kind} reports empty only after the fallback barrier finds no unit`, async () => {
+    const expectedEmpty = kind === 'docx' ? 'DOCUMENT_EMPTY' : 'PRESENTATION_EMPTY';
+    const { container, events, session } = createHarness(kind, {
+      empty: true,
+      publishOnLayout: true
+    });
+
+    await assert.rejects(session.mount(container), (error) => error?.code === expectedEmpty);
+    assert.equal(events.layoutWaits, 1);
+    session.dispose();
+  });
+
+  test(`${kind} layout failing after presentation fails the session closed`, async () => {
+    const originalWarn = console.warn;
+    const diagnostics = [];
+    console.warn = (...args) => diagnostics.push(args);
+    try {
+      const layoutGate = deferred();
+      const { container, events, runtimeErrors, session } = createHarness(kind, {
+        layoutGate,
+        layoutError: new Error('layout collapsed')
+      });
+
+      await session.mount(container);
+      assert.deepEqual(runtimeErrors, []);
+
+      layoutGate.resolve();
+      await waitFor(() => runtimeErrors.length === 1, `${kind} layout failure was not reported`);
+
+      assert.deepEqual(runtimeErrors, [
+        kind === 'docx' ? 'DOCUMENT_RENDER_FAILED' : 'PRESENTATION_RENDER_FAILED'
+      ]);
+      assert.equal(diagnostics.length, 1);
+      assert.equal(diagnostics[0][0], '[OnlyPreview][office]');
+      assert.equal(JSON.parse(diagnostics[0][1]).phase, 'layout');
+      assert.equal(events.destroy, 1);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  test(`${kind} Find waits for the remaining layout outside its own deadline`, async () => {
+    const layoutGate = deferred();
+    const { container, events, session } = createHarness(kind, { layoutGate });
+    await session.mount(container);
+
+    await withFakeTimers(async (timers) => {
+      const finding = session.execute(command());
+      await tick();
+
+      // The find deadline has not started, so no find has been issued yet.
+      assert.deepEqual(events.findText, []);
+      assert.equal(timers.length, 0);
+
+      layoutGate.resolve();
+      assert.deepEqual(await finding, {
+        activeMatchOrdinal: 1,
+        matches: 3,
+        finalUpdate: true,
+        coverage: { kind: 'complete' }
+      });
+      assert.equal(timers.length, 1);
+    });
+    session.dispose();
   });
 }
 

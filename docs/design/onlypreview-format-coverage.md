@@ -144,6 +144,17 @@ OOXML preflight 与旧二进制 unsupported 边界，但取代其引擎和查找
 高亮，`findNext()` / `findPrev()` 负责活动命中和跨 sheet/page/slide 导航，`clearFind()` 绑定查询、文件与
 viewer 生命周期。#2/#3 以下保留为 020/021 历史决策与交付证据，不再描述当前 renderer。
 
+Task [110](../plan/tasks/onlypreview-progressive-document-mount-110.md) 改掉 DOCX/PPTX 的呈现时机：
+`mount()` 在 viewer 报出第一个已排版单元后即返回，剩余分页在已呈现的预览后面继续跑，`Preparing preview…`
+不再覆盖整篇分页。若 `load()` 结束时仍无任何单元，会退回原来的 `waitUntilLayoutComplete()` 全量闸门再判空，
+所以 `DOCUMENT_EMPTY` / `PRESENTATION_EMPTY` 的含义不变，也不会因为排版未完成而误报空。呈现之后才失败的排版
+经既有 runtime-error 通道 fail closed。Find 保持完整覆盖：库内 `findText()` 自己会等排版完成，session 把这段
+等待放在 `FIND_TIMEOUT_MS` 之外，让该 deadline 只度量查找本身。XLSX 从来不等这道闸门，行为不变。
+
+根因来自一份真实文档：300KB 的 `.docx` 解压后 `word/document.xml` 有 4.33MB，9,491 段落、298 表格、
+6,754 单元格，81.2% 的 XML 在 `<w:tbl>` 内，27 个 `<w:sectPr>`（24 份受控文档合订）。实测该文件的
+OOXML preflight 只要 37–51ms，读取在 512KiB 单块内完成——代价全部在整篇分页上。
+
 Task 092 将同一套按格式 lazy 的 OOXML session 扩展到独立 Global Search renderer 的底部预览，
 但不复用主 Preview 的 broker、read authority、Viewer 实例或 current-file Find adapter。Search 由隐藏
 fileSearch preload 的独立单活 lane 读取、Main 串行中继最多 512KiB 的 frame、Search renderer 组装最多

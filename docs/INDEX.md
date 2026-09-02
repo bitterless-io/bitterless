@@ -127,6 +127,10 @@ design document.
   fixed; owner verification pending: name every Main API operation and record its sanitized cause in
   a dedicated per-profile `onlypreview/onlypreview.log`, so a generic
   `OnlyPreview could not complete this action.` is triageable instead of evidence-free.
+- [OnlyPreview holds a rendered document behind full pagination](issues/onlypreview-docx-waits-for-full-pagination.md) -
+  fixed; owner verification pending: present DOCX/PPTX at the first laid-out unit and keep the
+  remaining pagination behind the visible preview, with the full-document barrier retained as the
+  fallback that still guards the empty check.
 - [OnlyPreview Preview-channel skill mounting is not obvious](issues/onlypreview-preview-channel-skill-mount-guide.md) -
   implemented; owner verification pending: the existing Guide identifies the `bitterless-preview`
   MCP alias and bundled complete skill in one localized sentence, then makes a later Production

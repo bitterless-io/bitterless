@@ -26,9 +26,10 @@ document must show its first page while the rest lays out behind it.
 4. `executeQueuedFind` awaits that tracked promise **before** it starts `FIND_TIMEOUT_MS`, so the
    find deadline measures the find. `findText()` continues to enforce complete coverage inside the
    library, so `coverage` stays `complete`.
-5. `runOfficePhase` records one `phase=<name> elapsedMs=<n>` line per phase slower than
-   `OFFICE_SLOW_PHASE_MS` (1,000 ms) through the existing `[OnlyPreview][office]` diagnostics
-   channel. Faster phases stay silent, and the record carries no path, content, or identity.
+5. `runOfficePhase` emits one `[OnlyPreview][office]` record with `phase`, `elapsedMs`, and
+   `outcome: 'slow'` for each phase slower than `OFFICE_SLOW_PHASE_MS` (1,000 ms), reusing the same
+   sanitized renderer diagnostics channel as the existing failure record. Faster phases stay silent,
+   and the record carries no path, content, or identity.
 6. XLSX mounting, read, preflight, compatibility normalization, capability/revision fencing, Find
    semantics, and every rendered result are unchanged.
 

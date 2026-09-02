@@ -75,8 +75,9 @@ is still running, so match coverage stays complete regardless of when a find is 
 - Find waits for complete layout outside its own deadline, so `FIND_TIMEOUT_MS` continues to measure
   the find and a first find during layout cannot be reported as a render timeout. Find coverage
   stays `complete`.
-- A phase slower than one second is recorded once in the OnlyPreview diagnostics log with its
-  elapsed time, so the next slow preview is answerable from the log instead of by hand.
+- A mount phase slower than one second records its elapsed time through the existing
+  `[OnlyPreview][office]` renderer diagnostics channel, so the next slow preview is answerable from
+  `main.log` instead of by hand. Faster phases stay silent.
 - Read, preflight, XLSX compatibility, capability/revision fencing, disposal, and every rendered
   result are unchanged.
 
