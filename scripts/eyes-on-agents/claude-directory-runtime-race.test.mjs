@@ -40,6 +40,12 @@ const runtimeConfig = {
   useAutomatic: async () => runtimeConfig.config
 };
 
+// Task 085: getDirectoryStatus() returns one entry per configured environment instead of a single
+// status object. Every scenario in this file configures exactly one environment, id 'env-default'.
+const status = (runtime, id = 'env-default') => runtime.getDirectoryStatus().find(
+  (entry) => entry.id === id
+) ?? {};
+
 try {
   let selectedConfig = configA;
   let rejectReplacementClear = null;
@@ -97,13 +103,13 @@ try {
       };
     },
     agents: { poll: async () => null },
-    watcher: replacementWatcher,
+    createWatcher: () => replacementWatcher,
     setTimer: replacementTimers.setTimer,
     clearTimer: replacementTimers.clearTimer
   });
   await replacementRuntime.start();
-  assert.equal(replacementRuntime.getDirectoryStatus().state, 'watching');
-  assert.notEqual(replacementRuntime.getDirectoryStatus().lastSuccessfulScanAt, null);
+  assert.equal(status(replacementRuntime).state, 'watching');
+  assert.notEqual(status(replacementRuntime).lastSuccessfulScanAt, null);
   deferReplacementWatcherStart = true;
   const oldRootRefresh = replacementRuntime.refresh('poll');
   await drain(() => releaseReplacementWatcherStart !== null,
@@ -117,7 +123,7 @@ try {
   releaseReplacementWatcherStart();
   await drain(() => rejectReplacementClear !== null,
     'root replacement must reach the fenced capability-clear phase');
-  const pendingReplacementStatus = replacementRuntime.getDirectoryStatus();
+  const pendingReplacementStatus = status(replacementRuntime);
   assert.deepEqual({
     effectiveDirectory: pendingReplacementStatus.effectiveDirectory,
     projectsDirectory: pendingReplacementStatus.projectsDirectory,
@@ -141,9 +147,9 @@ try {
     'replacement must stop a stale watcher start again before capability cleanup');
   rejectReplacementClear();
   await Promise.all([oldRootRefresh, replacementOperation]);
-  assert.equal(replacementRuntime.getDirectoryStatus().effectiveDirectory, configB,
+  assert.equal(status(replacementRuntime).effectiveDirectory, configB,
     'a persisted replacement must take ownership even when capability cleanup fails');
-  assert.equal(replacementRuntime.getDirectoryStatus().state, 'retrying');
+  assert.equal(status(replacementRuntime).state, 'retrying');
   assert.throws(
     () => replacementRuntime.requireCanonicalTranscript(transcriptA, uuid),
     /escaped its projects root/,
@@ -152,7 +158,7 @@ try {
   const clearRetry = replacementTimers.active()[0];
   clearRetry.cleared = true;
   clearRetry.callback();
-  await drain(() => replacementRuntime.getDirectoryStatus().state === 'watching',
+  await drain(() => status(replacementRuntime).state === 'watching',
     'cleanup failure must retry under the new persisted intent');
   assert.equal(replacementRepository.clearCalls, 3);
   assert.equal(replacementRuntime.requireCanonicalTranscript(transcriptB, uuid), transcriptB);
@@ -183,20 +189,20 @@ try {
       projectsDirectoryAvailable: true
     }),
     agents: { poll: async () => null },
-    watcher: startupFailureWatcher,
+    createWatcher: () => startupFailureWatcher,
     setTimer: startupFailureTimers.setTimer,
     clearTimer: startupFailureTimers.clearTimer
   });
   await startupFailureRuntime.start();
-  assert.equal(startupFailureRuntime.getDirectoryStatus().desktopDirectoryCount, 1);
-  assert.equal(startupFailureRuntime.getDirectoryStatus().state, 'retrying',
+  assert.equal(status(startupFailureRuntime).desktopDirectoryCount, 1);
+  assert.equal(status(startupFailureRuntime).state, 'retrying',
     'a pre-watcher capability-clear failure cannot be degraded merely because a source exists');
-  assert.equal(startupFailureRuntime.getDirectoryStatus().watching, false);
+  assert.equal(status(startupFailureRuntime).watching, false);
   assert.equal(startupFailureWatcher.processStarts, 0);
   const startupFailureRetry = startupFailureTimers.active()[0];
   startupFailureRetry.cleared = true;
   startupFailureRetry.callback();
-  await drain(() => startupFailureRuntime.getDirectoryStatus().state === 'watching',
+  await drain(() => status(startupFailureRuntime).state === 'watching',
     'capability-clear recovery must start the watcher after cleanup succeeds');
   await startupFailureRuntime.stop();
 
@@ -213,15 +219,15 @@ try {
       projectsDirectoryAvailable: true
     }),
     agents: { poll: async () => null },
-    watcher: terminatedWatcher,
+    createWatcher: () => terminatedWatcher,
     setTimer: terminatedTimers.setTimer,
     clearTimer: terminatedTimers.clearTimer
   });
   await terminatedRuntime.start();
   terminatedWatcher.running = false;
-  await terminatedRuntime.handleWatcherFailure(new Error('watcher child exited'));
-  assert.equal(terminatedRuntime.getDirectoryStatus().state, 'retrying');
-  assert.equal(terminatedRuntime.getDirectoryStatus().watching, false);
+  await terminatedRuntime.handleWatcherFailure('env-default', new Error('watcher child exited'));
+  assert.equal(status(terminatedRuntime).state, 'retrying');
+  assert.equal(status(terminatedRuntime).watching, false);
   assert.equal(terminatedTimers.active().length, 1);
   await terminatedRuntime.stop();
 
@@ -266,18 +272,18 @@ try {
           projectsDirectoryAvailable: false
         },
     agents: { poll: async () => null },
-    watcher: staleFailureWatcher,
+    createWatcher: () => staleFailureWatcher,
     setTimer: staleFailureTimers.setTimer,
     clearTimer: staleFailureTimers.clearTimer
   });
   await staleFailureRuntime.start();
   staleFailureSelection = configB;
   const staleReplacement = staleFailureRuntime.changeDirectory();
-  const oldGenerationFailure = staleFailureRuntime.handleWatcherFailure(new Error('old A exited'));
+  const oldGenerationFailure = staleFailureRuntime.handleWatcherFailure('env-default', new Error('old A exited'));
   await Promise.all([staleReplacement, oldGenerationFailure]);
-  assert.equal(staleFailureRuntime.getDirectoryStatus().state, 'waiting',
+  assert.equal(status(staleFailureRuntime).state, 'waiting',
     'an old-generation failure queued behind replacement cannot pollute the new root');
-  assert.equal(staleFailureRuntime.getDirectoryStatus().error, null);
+  assert.equal(status(staleFailureRuntime).error, null);
   assert.equal(staleFailureTimers.active().length, 1);
   await staleFailureRuntime.stop();
 
@@ -294,7 +300,7 @@ try {
       projectsDirectoryAvailable: true
     }),
     agents: { poll: async () => null },
-    watcher: recoveredFailureWatcher,
+    createWatcher: () => recoveredFailureWatcher,
     setTimer: recoveredFailureTimers.setTimer,
     clearTimer: recoveredFailureTimers.clearTimer
   });
@@ -302,10 +308,11 @@ try {
   recoveredFailureWatcher.running = false;
   const sameGenerationRecovery = recoveredFailureRuntime.retryDirectory();
   const lateSameGenerationFailure = recoveredFailureRuntime.handleWatcherFailure(
+    'env-default',
     new Error('old helper cleanup finished')
   );
   await Promise.all([sameGenerationRecovery, lateSameGenerationFailure]);
-  assert.equal(recoveredFailureRuntime.getDirectoryStatus().state, 'watching',
+  assert.equal(status(recoveredFailureRuntime).state, 'watching',
     'a late same-generation failure cannot undo an already recovered watcher');
   assert.equal(recoveredFailureTimers.active().length, 0);
   await recoveredFailureRuntime.stop();

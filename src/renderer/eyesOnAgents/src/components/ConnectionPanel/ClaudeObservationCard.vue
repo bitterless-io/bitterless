@@ -269,7 +269,7 @@ import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { eyesOnAgentsStore } from '../../store/eyesOnAgents.store';
 
 const bridge = computed(() => eyesOnAgentsStore.snapshot?.claudeBridge ?? null);
-const directory = computed(() => eyesOnAgentsStore.snapshot?.claudeDirectory ?? null);
+const directory = computed(() => eyesOnAgentsStore.snapshot?.claudeDirectory?.[0] ?? null);
 const provider = computed(() => eyesOnAgentsStore.snapshot?.claudeProvider ?? null);
 const providerEnabled = computed(() => provider.value?.enabled === true);
 const lastUserPromptCaptureEnabled = computed(

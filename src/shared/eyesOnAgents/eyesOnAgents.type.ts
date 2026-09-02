@@ -184,7 +184,14 @@ export type EyesOnAgentsClaudeDirectoryState =
   | 'error'
   | 'stopped';
 
-export interface EyesOnAgentsClaudeDirectoryStatus {
+// One configured Claude environment's watcher status (task 085: the singular
+// EyesOnAgentsClaudeDirectoryStatus shape moved to a per-environment array — see
+// EyesOnAgentsClaudeDirectoryStatus below). id/label/enabled mirror the environment this status
+// belongs to; every other field is the pre-existing per-directory watcher status shape unchanged.
+export interface EyesOnAgentsClaudeEnvironmentStatus {
+  id: string;
+  label: string;
+  enabled: boolean;
   mode: EyesOnAgentsClaudeDirectoryMode;
   configuredDirectory: string | null;
   effectiveDirectory: string | null;
@@ -197,6 +204,11 @@ export interface EyesOnAgentsClaudeDirectoryStatus {
   nextRetryAt: string | null;
   error: string | null;
 }
+
+// One entry per configured Claude environment (task 085). When the persisted directory
+// configuration itself failed to hydrate, this is a single synthetic entry (id/label empty)
+// carrying the same recovery-until-explicit-action contract the pre-085 singular status had.
+export type EyesOnAgentsClaudeDirectoryStatus = EyesOnAgentsClaudeEnvironmentStatus[];
 
 export interface EyesOnAgentsClaudeProviderStatus {
   enabled: boolean;

@@ -176,19 +176,10 @@ const STOPPED_CLAUDE_BRIDGE_STATUS: EyesOnAgentsClaudeBridgeStatus = {
   error: null
 };
 
-const STOPPED_CLAUDE_DIRECTORY_STATUS: EyesOnAgentsSnapshot['claudeDirectory'] = {
-  mode: 'automatic',
-  configuredDirectory: null,
-  effectiveDirectory: null,
-  projectsDirectory: null,
-  desktopDirectoryCount: 0,
-  state: 'stopped',
-  watching: false,
-  lastScanAt: null,
-  lastSuccessfulScanAt: null,
-  nextRetryAt: null,
-  error: null
-};
+// Task 085: claudeDirectory moved from one status object to one entry per configured Claude
+// environment — an unavailable/hidden claudeObservation has no known environments, so the fallback
+// is an empty list rather than a single synthetic "stopped" object.
+const STOPPED_CLAUDE_DIRECTORY_STATUS: EyesOnAgentsSnapshot['claudeDirectory'] = [];
 
 const boundedClaudeProviderError = (error: unknown): string => {
   const message = error instanceof Error
@@ -880,10 +871,8 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
         bridge,
         claudeBridge,
         claudeDirectory: claudeProviderManagementVisible
-          ? this.dependencies.claudeObservation?.getDirectoryStatus?.() ?? {
-              ...STOPPED_CLAUDE_DIRECTORY_STATUS
-            }
-          : { ...STOPPED_CLAUDE_DIRECTORY_STATUS },
+          ? this.dependencies.claudeObservation?.getDirectoryStatus?.() ?? [...STOPPED_CLAUDE_DIRECTORY_STATUS]
+          : [...STOPPED_CLAUDE_DIRECTORY_STATUS],
         claudeProvider: {
           enabled: claudeProviderEnabled,
           error: claudeProviderError,

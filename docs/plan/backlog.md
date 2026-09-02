@@ -47,6 +47,10 @@ Non-blocking review findings are recorded here after task verification.
   "promotion" path) is thin, and persist-failure behavior is only directly tested on 2 of the 7 CRUD
   methods even though all 7 share the same `persist()` chokepoint. Worth a small follow-up test pass
   if this service gets touched again.
+- Task 085 review: no test constructs two real Claude environment ids and asserts
+  `getClaudeInventoryBridgeEndpoint` produces two distinct socket/named-pipe paths for them — the
+  fix is verified correct by diff/grep inspection, but only exercised indirectly through mocked
+  watchers. Add a direct two-id endpoint-distinctness test if this function is touched again.
 - Pre-existing, unrelated to the iTerm2 Open feature: `yarn check:renderer-i18n` crashes on
   `assert(trayCreateIndex > homeCreateIndex, 'Tray must follow Home creation')`
   (`scripts/renderer-i18n/check-renderer-i18n.mjs:172`) because commit `c67ac21` changed

@@ -29,16 +29,22 @@ const safeString = (value: unknown, label: string): string => {
   return value;
 };
 
+// environmentId scopes the endpoint to one configured Claude environment (task 085): each
+// environment now runs its own ClaudeWatcherSupervisor/child process, so without a distinct
+// socket/pipe per environment, two simultaneously-running environments would collide on the same
+// endpoint path. Omitting it (existing callers, existing tests) reproduces the exact pre-085 path.
 export const getClaudeInventoryBridgeEndpoint = (
   userDataPath: string,
-  platform: NodeJS.Platform = process.platform
+  platform: NodeJS.Platform = process.platform,
+  environmentId?: string
 ): ClaudeInventoryBridgeEndpoint => {
   const safe = safeString(userDataPath, 'userData path');
+  const scope = environmentId === undefined ? '' : `-${safeString(environmentId, 'Claude environment id')}`;
   if (platform === 'win32') {
-    const suffix = createHash('sha1').update(safe).digest('hex').slice(0, 12);
+    const suffix = createHash('sha1').update(`${safe}${scope}`).digest('hex').slice(0, 12);
     return { transport: 'win32-named-pipe', path: `\\\\.\\pipe\\bitterless-claude-inventory-${suffix}` };
   }
-  return { transport: 'unix', path: join(safe, 'eyes-on-agents', 'claude-inventory.sock') };
+  return { transport: 'unix', path: join(safe, 'eyes-on-agents', `claude-inventory${scope}.sock`) };
 };
 
 export const parseClaudeInventoryInvalidation = (

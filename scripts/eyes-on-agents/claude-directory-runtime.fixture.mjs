@@ -116,6 +116,41 @@ export const createTimerHarness = () => {
   };
 };
 
+// Task 085: unlike createWatcher() above (one bare watcher mock, used by tests that configure a
+// single environment), this returns a FACTORY suitable for ClaudeObservationService's
+// createWatcher dependency, producing one independent tagged watcher mock per environment id so a
+// multi-environment test can assert on each environment's own watcher in isolation.
+export const createWatcherFactory = (order = []) => {
+  const watchers = new Map();
+  const factory = (environment) => {
+    const watcher = {
+      environmentId: environment.id,
+      running: false,
+      roots: null,
+      processStarts: 0,
+      stops: 0,
+      updateRoots: async (roots) => {
+        order.push(`watcher:update:${environment.id}`);
+        watcher.roots = roots;
+      },
+      start: async () => {
+        order.push(`watcher:start:${environment.id}`);
+        if (!watcher.running) watcher.processStarts += 1;
+        watcher.running = true;
+      },
+      stop: async () => {
+        order.push(`watcher:stop:${environment.id}`);
+        watcher.stops += 1;
+        watcher.running = false;
+      },
+      isRunning: () => watcher.running
+    };
+    watchers.set(environment.id, watcher);
+    return watcher;
+  };
+  return { factory, watchers };
+};
+
 export const createWatcher = (order = []) => {
   const watcher = {
     running: false,

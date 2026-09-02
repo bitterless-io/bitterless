@@ -152,10 +152,57 @@ configured environment, each carrying the existing fields (`mode`, `configuredDi
 `effectiveDirectory`, `projectsDirectory`, `desktopDirectoryCount`, `state`, `watching`,
 `lastScanAt`, `lastSuccessfulScanAt`, `nextRetryAt`, `error`) plus `id`, `label`, and `enabled`.
 
-**Logging.** The existing watcher lifecycle log lines (start, ready handshake, retry, fatal
-watcher-error generation teardown) gain an environment `id`/`label` field so a packaged-app log can
-show which environment a given retry/error belongs to; no new log file, same `main.log` and scope
-convention as today.
+> **Implementation note (task 085):** when the persisted directory configuration itself fails to
+> hydrate (malformed value, or a thrown read error), no environment identity is known yet, so
+> `EyesOnAgentsClaudeDirectoryStatus` is a single synthetic entry (`id`/`label` empty) carrying
+> `state: "error"` (malformed value — recoverable only via **Change directory**/**Use automatic**,
+> matching the pre-084 recovery contract) or `state: "retrying"` (a thrown read error — bounded
+> auto-retry) — exactly generalizing the pre-085 singleton's one fixed error/retrying status object.
+> Once hydration succeeds, the array switches to one entry per real environment.
+
+> **Implementation note (task 085):** each environment's `ClaudeWatcherSupervisor` needs its own
+> inventory-bridge Unix socket/named pipe, not just its own child process — `getClaudeInventoryBridgeEndpoint`
+> (`claudeInventoryBridge.contract.ts`) gained an optional third `environmentId` parameter that
+> scopes the socket/pipe path per environment; omitting it (every pre-085 caller, including tests)
+> reproduces the exact previous single path. Without this, two simultaneously-running environments
+> would collide on the same endpoint.
+
+> **Implementation note (task 085):** the reconciliation path from a CRUD mutation
+> (`ClaudeDirectoryConfigService.addEnvironment`/`removeEnvironment`/`setEnvironmentEnabled`/
+> `renameEnvironment`/`chooseCustomDirectory`/`useAutomatic`) to this watcher map is
+> `ClaudeObservationService.applyEnvironments()` — a new public method (no arguments; it re-reads
+> `directoryConfig.listEnvironments()` itself) that diffs the map against the authoritative list and
+> starts/stops/restarts only the environments that actually changed. `eyes-on-agents.handler.ts`'s
+> six environment-CRUD XPC methods each call it once after persisting their mutation, which is what
+> makes "enabling/adding starts a supervisor; disabling/removing stops one" true end-to-end today,
+> not only as an internal capability of the service.
+
+> **Implementation note (task 085):** `clearClaudeTranscriptCapabilities()` and the Claude Agent
+> View poll/reconcile pair (`ClaudeAgentsAdapter.poll` / `reconcileClaudeAgentStates`) remain
+> **global, all-Claude-provider** repository operations — the schema has no per-root or
+> per-environment scoping column for either (Hook attribution's `claude_config_dir`, task 087, is a
+> raw path on thread rows, not a scope for these calls). Each environment still triggers its own
+> capability-clear/agent-poll independently on its own (re)start, exactly mirroring the pre-085
+> single-instance mechanism; this task does not add per-environment scoping to either repository
+> call. Practical effect: (re)starting or reconfiguring one environment while sibling environments
+> are already `watching` can transiently clear their already-scanned transcript capabilities until
+> their own next scan repopulates them, and each environment's own refresh cycle polls Claude Agent
+> View independently rather than once per service tick. This mirrors this feature's own "Scope
+> decisions" section (the plugin bridge's shared, non-isolated installation identity) — full
+> per-environment isolation of these two repository calls is a real possible future increment, not
+> this one.
+
+**Logging.** The watcher lifecycle log lines (start, ready handshake, retry, fatal watcher-error
+generation teardown) carry an environment `id`/`label` field so a packaged-app log can show which
+environment a given retry/error belongs to; no new log file, same `main.log` and scope convention
+as today (`[claude-watcher]`, alongside the existing `[claude-environment]` config-mutation scope).
+
+> **Implementation note (task 085):** inspection of the pre-085
+> `claudeObservation.service.ts`/`claudeWatcher.supervisor.ts` found no existing watcher lifecycle
+> log lines at all (no `console.*`/`electron-log` calls of any kind in either file) — the sentence
+> above originally assumed lines to "extend." This task adds them fresh: `start`/`retry`/`fatal` are
+> logged from `claudeObservation.service.ts`, `ready` from `claudeWatcher.supervisor.ts` (the only
+> place that observes the raw IPC handshake). `configDirectory` is never included in any of them.
 
 ## Plugin / Hook installation per environment
 
