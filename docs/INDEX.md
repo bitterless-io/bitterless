@@ -77,9 +77,10 @@ design document.
 - [EyesOnAgents last user prompt](features/eyes-on-agents-last-user-prompt.md) - narrow capture of one
   bounded latest user question per thread with content-free offline delivery and tiered All-thread
   App Server recovery.
-- [EyesOnAgents iTerm2 Open](features/eyes-on-agents-iterm2-open.md) - draft: Hook-captured iTerm2
-  terminal identity makes CLI-only Claude sessions visible and adds an independent
-  `iterm2:///reveal` Open action beside the existing Claude Desktop route.
+- [EyesOnAgents iTerm2 Open](features/eyes-on-agents-iterm2-open.md) - implemented; owner runtime
+  verification pending: Hook-captured iTerm2 terminal identity makes CLI-only Claude sessions
+  visible and adds an independent `iterm2:///reveal` Open action beside the existing Claude Desktop
+  route.
 - [Omni browser and mini-app cells](features/omni-miniapp-cells.md) - persistent per-cell browser
   or local Todo/EyesOnAgents/Translator/Motto/Trench/Submodules operation views with development and
   packaged runtime mapping.

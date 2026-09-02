@@ -1,6 +1,6 @@
 # EyesOnAgents iTerm2 Open
 
-Status: Draft
+Status: Implemented; owner runtime verification pending (real-iTerm2 reveal check, see Acceptance)
 
 Date: 2026-09-02
 

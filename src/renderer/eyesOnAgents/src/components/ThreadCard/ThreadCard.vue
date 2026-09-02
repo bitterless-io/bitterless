@@ -81,6 +81,17 @@
                 </span>
               </a-doption>
               <a-doption
+                v-if="canOpenInIterm2"
+                class="thread-card__option"
+                :disabled="eyesOnAgentsStore.openingSessionKeys.has(thread.sessionKey)"
+                @click="handleOpenInIterm2"
+              >
+                <IconTerminal2 :size="13" />
+                <span class="thread-card__option-label">
+                  {{ i18nHelper.eyesOnAgents.actions.openInIterm2 }}
+                </span>
+              </a-doption>
+              <a-doption
                 class="thread-card__option"
                 :disabled="eyesOnAgentsStore.busyAction !== null"
                 @click="handleToggleReadState"
@@ -117,6 +128,7 @@ import {
   IconDots,
   IconExternalLink,
   IconFolder,
+  IconTerminal2,
 } from '@tabler/icons-vue';
 import type { EyesOnAgentsThread } from '@shared/eyesOnAgents/eyesOnAgents.type';
 import { isEyesOnAgentsTerminal } from '@shared/eyesOnAgents/eyesOnAgents.contract';
@@ -173,6 +185,7 @@ const isActiveRuntime = computed(() =>
   ['working', 'waiting_approval', 'waiting_input'].includes(props.thread.runtimeState));
 const canOpenThread = computed(() => props.thread.provider === 'codex'
   || props.thread.desktopSessionId !== null);
+const canOpenInIterm2 = computed(() => props.thread.iterm2SessionId !== null);
 // Any non-active unread row shows the dot, including 'unknown'. Without this an
 // authority-lost row is promoted to the unread tier with nothing to explain the
 // position — see docs/issues/eyes-on-agents-restart-unknown-pinned.md.
@@ -213,6 +226,10 @@ const activityLabel = computed(() => {
 const handleOpen = async (): Promise<void> => {
   if (!canOpenThread.value) return;
   await eyesOnAgentsStore.openThread(props.thread.sessionKey).catch(() => undefined);
+};
+
+const handleOpenInIterm2 = async (): Promise<void> => {
+  await eyesOnAgentsStore.openThreadInIterm2(props.thread.sessionKey).catch(() => undefined);
 };
 
 const handleCopySessionPath = async (): Promise<void> => {

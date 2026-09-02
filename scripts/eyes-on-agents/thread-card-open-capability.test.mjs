@@ -151,12 +151,13 @@ const stubsPlugin = {
 };
 
 const createStore = () => {
-  const calls = { open: [], readState: [], copyPath: [] };
+  const calls = { open: [], openIterm2: [], readState: [], copyPath: [] };
   return {
     calls,
     busyAction: null,
     openingSessionKeys: new Set(),
     openThread: async (sessionKey) => calls.open.push(sessionKey),
+    openThreadInIterm2: async (sessionKey) => calls.openIterm2.push(sessionKey),
     setThreadUnread: async (sessionKey, isUnread) => calls.readState.push([sessionKey, isUnread]),
     copySessionPath: async (sessionKey) => calls.copyPath.push(sessionKey),
   };
@@ -171,6 +172,7 @@ const createThread = (overrides = {}) => ({
   lastUserPrompt: { state: 'unavailable', preview: null, truncated: false },
   cwd: null,
   desktopSessionId: null,
+  iterm2SessionId: null,
   isUnread: false,
   lastActivityAt: '2026-08-18T01:59:00.000Z',
   lastCompletedAt: null,
@@ -445,6 +447,107 @@ try {
     } finally {
       mounted.app.unmount();
       document.body.innerHTML = '';
+    }
+  });
+
+  await test('a CLI-only Claude row exposes Open in iTerm2 without enabling the primary Open route', async () => {
+    const cliOnlyThread = createThread({
+      iterm2SessionId: 'w0t0p0:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    });
+    const mounted = await mount(cliOnlyThread);
+    try {
+      const card = mounted.host.querySelector('[name="eyesOnAgents__threadCard"]');
+      assert.ok(card);
+      assert.equal(
+        card.hasAttribute('tabindex'),
+        false,
+        'canOpenThread stays false for a CLI-only row even with an iTerm2 identity',
+      );
+
+      card.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Enter',
+        bubbles: true,
+        cancelable: true,
+      }));
+      await nextTick();
+      card.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      await nextTick();
+      assert.deepEqual(mounted.store.calls.open, [], 'the primary Open gestures stay no-ops');
+
+      await openMore(mounted.host);
+      const dropdown = activeDropdown();
+      assert.ok(dropdown);
+      assert.deepEqual(
+        optionTexts(dropdown),
+        ['Open in iTerm2', 'Mark as unread', 'Copy session path'],
+        'the dropdown offers the new action even though there is no primary Open item',
+      );
+      await clickOption(dropdown, /Open in iTerm2/);
+      assert.deepEqual(mounted.store.calls.openIterm2, [cliOnlyThread.sessionKey]);
+      assert.deepEqual(mounted.store.calls.open, [], 'Open in iTerm2 never calls the primary open route');
+    } finally {
+      mounted.app.unmount();
+      document.body.innerHTML = '';
+    }
+  });
+
+  await test('a row with both desktopSessionId and iterm2SessionId offers both open routes at once', async () => {
+    const bothThread = createThread({
+      desktopSessionId: 'local_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      iterm2SessionId: 'w0t0p0:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    });
+    const mounted = await mount(bothThread);
+    try {
+      const card = mounted.host.querySelector('[name="eyesOnAgents__threadCard"]');
+      assert.ok(card);
+      assert.equal(
+        card.getAttribute('tabindex'),
+        '0',
+        'canOpenThread stays true when a Desktop identity is present',
+      );
+
+      await openMore(mounted.host);
+      const dropdown = activeDropdown();
+      assert.ok(dropdown);
+      assert.deepEqual(
+        optionTexts(dropdown),
+        ['Open in Claude (double click)', 'Open in iTerm2', 'Mark as unread', 'Copy session path'],
+        'neither open route hides the other when both identities are present',
+      );
+      await clickOption(dropdown, /Open in iTerm2/);
+      assert.deepEqual(mounted.store.calls.openIterm2, [bothThread.sessionKey]);
+      assert.deepEqual(mounted.store.calls.open, [], 'Open in iTerm2 never calls the Desktop open route');
+    } finally {
+      mounted.app.unmount();
+      document.body.innerHTML = '';
+    }
+  });
+
+  await test('canOpenThread ignores iterm2SessionId across every provider/desktopSessionId combination', async () => {
+    for (const provider of ['codex', 'claude']) {
+      for (const desktopSessionId of [null, 'local_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']) {
+        for (const iterm2SessionId of [null, 'w0t0p0:cccccccc-cccc-4ccc-8ccc-cccccccccccc']) {
+          const thread = createThread({
+            sessionKey: provider === 'codex'
+              ? 'codex:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+              : 'claude:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            threadId: provider === 'codex'
+              ? 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+              : 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            provider,
+            desktopSessionId,
+            iterm2SessionId,
+          });
+          const document = await render(thread);
+          const card = document.querySelector('[name="eyesOnAgents__threadCard"]');
+          const expectOpenable = provider === 'codex' || desktopSessionId !== null;
+          assert.equal(
+            card.getAttribute('tabindex') === '0',
+            expectOpenable,
+            `provider=${provider} desktopSessionId=${desktopSessionId} iterm2SessionId=${iterm2SessionId}`,
+          );
+        }
+      }
     }
   });
 

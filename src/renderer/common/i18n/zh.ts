@@ -628,6 +628,7 @@ export const zh: typeof en = {
       close: '关闭 EyesOnAgents',
       openInCodex: '在 Codex 中打开',
       openInClaude: '在 Claude 中打开',
+      openInIterm2: '在 iTerm2 中打开',
       doubleClickHint: '（双击）',
       markRead: '标为已读',
       markUnread: '标为未读',

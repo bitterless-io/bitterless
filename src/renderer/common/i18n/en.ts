@@ -641,6 +641,7 @@ export const en = {
       close: 'Close EyesOnAgents',
       openInCodex: 'Open in Codex',
       openInClaude: 'Open in Claude',
+      openInIterm2: 'Open in iTerm2',
       doubleClickHint: '(double click)',
       markRead: 'Mark as read',
       markUnread: 'Mark as unread',

@@ -40,3 +40,10 @@ Non-blocking review findings are recorded here after task verification.
   `typecheck:eyes-on-agents:core`'s include list; it is covered by the separate
   `typecheck:sqlite-migrations` project, which passed, but the two scoped typecheck projects'
   coverage boundary is worth aligning if this keeps happening across tasks.
+- Pre-existing, unrelated to the iTerm2 Open feature: `yarn check:renderer-i18n` crashes on
+  `assert(trayCreateIndex > homeCreateIndex, 'Tray must follow Home creation')`
+  (`scripts/renderer-i18n/check-renderer-i18n.mjs:172`) because commit `c67ac21` changed
+  `trayHelper.init(mainWindowHelper)` to `trayHelper.init({ ... })` in `src/main/app.main.ts` without
+  updating the check script's literal-substring probe. The script never reaches any i18n-content
+  assertion while this is broken. Fix the probe (or the assertion it feeds) so the i18n check is
+  load-bearing again.
