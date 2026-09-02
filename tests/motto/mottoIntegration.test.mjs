@@ -1,7 +1,9 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import test from 'node:test';
+import ts from 'typescript';
 import {
   OMNI_MINI_APP_DISPLAY_URLS,
   OMNI_MINI_APP_IDS,
@@ -10,6 +12,52 @@ import {
 } from '../../src/shared/omni/omni.types.ts';
 
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
+const nodeRequire = createRequire(import.meta.url);
+
+const loadTypeScriptModule = (path, dependencies = {}) => {
+  const transpiled = ts.transpileModule(read(path), {
+    compilerOptions: {
+      esModuleInterop: true,
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022
+    },
+    fileName: path,
+    reportDiagnostics: true
+  });
+  const errors = (transpiled.diagnostics ?? []).filter(
+    (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error
+  );
+  assert.deepEqual(
+    errors.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')),
+    []
+  );
+
+  const loaded = { exports: {} };
+  const localRequire = (specifier) => {
+    if (Object.hasOwn(dependencies, specifier)) return dependencies[specifier];
+    if (specifier.startsWith('.')) throw new Error(`Missing test dependency ${specifier}`);
+    return nodeRequire(specifier);
+  };
+  const execute = new Function(
+    'require',
+    'module',
+    'exports',
+    'console',
+    `${transpiled.outputText}\n//# sourceURL=${path}`
+  );
+  execute(localRequire, loaded, loaded.exports, { error: () => undefined });
+  return loaded.exports;
+};
+
+const loadMottoState = () => {
+  const storageModule = loadTypeScriptModule(
+    'src/renderer/motto/src/store/mottoStorage.service.ts'
+  );
+  return loadTypeScriptModule('src/renderer/motto/src/store/motto.store.ts', {
+    vue: { reactive: (value) => value },
+    './mottoStorage.service': storageModule
+  }).MottoState;
+};
 
 test('Motto remains the fourth allowlisted Omni mini app before Trench', () => {
   assert.deepEqual(OMNI_MINI_APP_IDS, [
@@ -69,30 +117,172 @@ test('Motto has dedicated preload, renderer, dev, packaged, and Control mappings
   assert.match(control, /motto\.svg/);
 });
 
-test('Motto mutations persist the complete next array before reactive state commits', () => {
+test('Motto inline mutations keep drafts outside the persisted collection and commit after writes', () => {
   const store = read('src/renderer/motto/src/store/motto.store.ts');
   const persistIndex = store.indexOf('persistMottoItems(this.storage, nextItems)');
   const commitIndex = store.indexOf('this.items = persistedItems', persistIndex);
+  const beginAdd = store.slice(store.indexOf('  beginAdd'), store.indexOf('  beginEdit'));
+  const addCommit = store.slice(
+    store.indexOf('    if (this.pendingDraft?.id === editingId)'),
+    store.indexOf('    const item = this.items.find', store.indexOf('commitInlineEdit'))
+  );
+  const reorder = store.slice(store.indexOf('  reorderItems'), store.indexOf('  private discard'));
 
   assert.ok(persistIndex >= 0, 'the store must persist every next collection');
   assert.ok(commitIndex > persistIndex, 'reactive state must commit only after persistence');
-  assert.match(store, /submitEditor\(\)[\s\S]*?this\.persistNextItems\(nextItems\)/);
+  assert.match(store, /pendingDraft: MottoItem \| null = null/);
+  assert.match(beginAdd, /this\.pendingDraft = pendingDraft/);
+  assert.match(beginAdd, /this\.editingField = 'title'/);
+  assert.doesNotMatch(beginAdd, /persistNextItems/);
+  assert.match(
+    addCommit,
+    /const nextItems = \[\.\.\.this\.items, \{ \.\.\.this\.pendingDraft, title: value \}\]/
+  );
+  assert.match(addCommit, /if \(!this\.persistNextItems\(nextItems\)\) return false/);
+  assert.match(addCommit, /this\.pendingDraft = null/);
+  assert.match(store, /commitInlineEdit\(\): boolean[\s\S]*?this\.persistNextItems\(nextItems\)/);
   assert.match(store, /deleteItem\(id: string\)[\s\S]*?this\.persistNextItems\(/);
+  assert.match(reorder, /if \(this\.inlineEditorActive/);
+  assert.match(reorder, /currentItem\.title !== item\.title/);
+  assert.match(reorder, /currentItem\.subtitle !== item\.subtitle/);
+  assert.match(reorder, /return this\.persistNextItems\(\[\.\.\.nextItems\]\)/);
   assert.match(store, /catch \(error\) \{[\s\S]*?this\.storageError = 'write-failed'/);
   assert.match(
     store,
-    /get canSubmitEditor\(\): boolean \{\s*return Boolean\(this\.draftTitle\.trim\(\)\);\s*\}/
+    /if \(editingField === 'title' && !value\) \{\s*this\.clearInlineEditor\(\);\s*return false;/
   );
   assert.match(
     store,
-    /const subtitle = this\.draftSubtitle\.trim\(\);\s*if \(!title \|\| !this\.editorMode\)/
+    /candidate\.id === editingId \? \{ \.\.\.candidate, \[editingField\]: value \} : candidate/
   );
-  assert.doesNotMatch(store, /if \(!title \|\| !subtitle/);
-  assert.match(store, /\{ id: this\.createUniqueId\(\), title, subtitle \}/);
-  assert.match(store, /item\.id === editingId \? \{ \.\.\.item, title, subtitle \} : item/);
+  assert.match(store, /cancelInlineEdit\(\): void[\s\S]*?this\.pendingDraft = null/);
 });
 
-test('Motto UI owns the required compact card and optional-subtitle editor interactions', () => {
+test('Motto add, inline edit, and reorder preserve the last persisted collection on failure', () => {
+  const MottoState = loadMottoState();
+  let state;
+  let serialized = JSON.stringify([
+    { id: 'first', title: 'First', subtitle: 'One' },
+    { id: 'second', title: 'Second', subtitle: 'Two' }
+  ]);
+  let failWrite = false;
+  const writes = [];
+  const storage = {
+    getItem: () => serialized,
+    setItem: (_key, value) => {
+      const nextItems = JSON.parse(value);
+      writes.push({
+        currentIds: state.items.map((item) => item.id),
+        nextIds: nextItems.map((item) => item.id)
+      });
+      if (failWrite) throw new Error('quota');
+      serialized = value;
+    }
+  };
+  state = new MottoState();
+  state.initialize(storage);
+
+  assert.equal(state.beginAdd(), true);
+  const pendingId = state.pendingDraft.id;
+  assert.deepEqual(
+    state.items.map((item) => item.id),
+    ['first', 'second']
+  );
+  assert.equal(writes.length, 0);
+  state.draftValue = '  Third  ';
+  assert.equal(state.commitInlineEdit(), true);
+  assert.deepEqual(writes.at(-1), {
+    currentIds: ['first', 'second'],
+    nextIds: ['first', 'second', pendingId]
+  });
+  assert.deepEqual(state.items.at(-1), { id: pendingId, title: 'Third', subtitle: '' });
+
+  assert.equal(state.beginEdit('first', 'title'), true);
+  state.draftValue = '   ';
+  assert.equal(state.commitInlineEdit(), false);
+  assert.equal(state.items[0].title, 'First');
+
+  assert.equal(state.beginEdit('first', 'subtitle'), true);
+  state.draftValue = '   ';
+  assert.equal(state.commitInlineEdit(), true);
+  assert.equal(state.items[0].subtitle, '');
+
+  assert.equal(state.beginEdit('second', 'title'), true);
+  state.draftValue = 'Changed but cancelled';
+  state.cancelInlineEdit();
+  assert.equal(state.items[1].title, 'Second');
+
+  const reordered = [state.items[2], state.items[0], state.items[1]];
+  assert.equal(state.reorderItems(reordered), true);
+  assert.deepEqual(writes.at(-1), {
+    currentIds: ['first', 'second', pendingId],
+    nextIds: [pendingId, 'first', 'second']
+  });
+
+  const orderBeforeFailure = state.items.map((item) => item.id);
+  failWrite = true;
+  assert.equal(state.reorderItems([...state.items].reverse()), false);
+  assert.deepEqual(
+    state.items.map((item) => item.id),
+    orderBeforeFailure
+  );
+  assert.equal(state.storageError, 'write-failed');
+
+  assert.equal(state.beginEdit('first', 'title'), true);
+  state.draftValue = 'Retry me';
+  assert.equal(state.commitInlineEdit(), false);
+  assert.equal(state.items.find((item) => item.id === 'first').title, 'First');
+  assert.equal(state.isEditing('first', 'title'), true);
+  assert.equal(state.draftValue, 'Retry me');
+  failWrite = false;
+  assert.equal(state.commitInlineEdit(), true);
+  assert.equal(state.items.find((item) => item.id === 'first').title, 'Retry me');
+});
+
+test('a failed new Motto write keeps its UI-only Title draft available for retry', () => {
+  const MottoState = loadMottoState();
+  let failWrite = true;
+  let writes = 0;
+  const storage = {
+    getItem: () => null,
+    setItem: () => {
+      writes += 1;
+      if (failWrite) throw new Error('quota');
+    }
+  };
+  const state = new MottoState();
+  state.initialize(storage);
+
+  state.beginAdd();
+  state.draftValue = '   ';
+  assert.equal(state.commitInlineEdit(), false);
+  assert.equal(state.pendingDraft, null);
+  assert.equal(writes, 0);
+
+  state.beginAdd();
+  state.cancelInlineEdit();
+  assert.equal(state.pendingDraft, null);
+  assert.equal(writes, 0);
+
+  state.beginAdd();
+  const pendingId = state.pendingDraft.id;
+  state.draftValue = 'Retry this title';
+
+  assert.equal(state.commitInlineEdit(), false);
+  assert.deepEqual(state.items, []);
+  assert.equal(state.pendingDraft.id, pendingId);
+  assert.equal(state.isEditing(pendingId, 'title'), true);
+  assert.equal(state.draftValue, 'Retry this title');
+  assert.equal(state.beginAdd(), true);
+  assert.equal(state.pendingDraft.id, pendingId);
+
+  failWrite = false;
+  assert.equal(state.commitInlineEdit(), true);
+  assert.equal(writes, 2);
+  assert.deepEqual(state.items, [{ id: pendingId, title: 'Retry this title', subtitle: '' }]);
+});
+
+test('Motto UI owns direct editing, compact cards, and handle-only persistent reordering', () => {
   const app = read('src/renderer/motto/src/App.vue');
   const style = read('src/renderer/motto/src/App.less');
   const main = read('src/renderer/motto/src/main.ts');
@@ -109,22 +299,32 @@ test('Motto UI owns the required compact card and optional-subtitle editor inter
   assert.doesNotMatch(header, /\{\{\s*i18nHelper\.motto\.add\s*\}\}/);
   assert.match(
     emptyState,
-    /<a-button[\s\S]*?\{\{\s*i18nHelper\.motto\.add\s*\}\}[\s\S]*?<\/a-button>/
+    /<a-button[\s\S]*?@click="beginAdd"[\s\S]*?\{\{\s*i18nHelper\.motto\.add\s*\}\}[\s\S]*?<\/a-button>/
   );
-  assert.match(app, /class="motto__list"/);
+  assert.match(app, /import draggable from 'vuedraggable'/);
+  assert.match(app, /<draggable[\s\S]*?class="motto__list"/);
+  assert.match(app, /:model-value="mottoStore\.items"/);
+  assert.match(app, /item-key="id"/);
+  assert.match(app, /handle="\.motto__drag-handle"/);
+  assert.match(app, /:disabled="mottoStore\.inlineEditorActive"/);
+  assert.match(app, /@update:model-value="reorderItems"/);
   assert.match(app, /class="motto__card"/);
   assert.match(app, /<a-dropdown trigger="click"/);
   assert.match(app, /<IconBtn[\s\S]*?IconDots/);
-  assert.match(app, /mottoStore\.openEditEditor\(item\)/);
+  assert.match(app, /<IconGripVertical :size="17"/);
+  assert.match(app, /@click\.stop="beginEdit\(item\.id, 'title'\)"/);
+  assert.match(app, /@click\.stop="beginEdit\(item\.id, 'subtitle'\)"/);
+  assert.match(app, /v-model="mottoStore\.draftValue"/);
+  assert.match(app, /@press-enter="commitInlineEdit"/);
+  assert.match(app, /@blur="commitInlineEdit"/);
+  assert.match(app, /@keydown\.esc\.prevent\.stop="cancelInlineEdit"/);
+  assert.match(app, /const focusInlineInput[\s\S]*?nextTick/);
   assert.match(app, /mottoStore\.deleteItem\(item\.id\)/);
-  assert.match(app, /<a-modal/);
-  assert.match(app, /<a-form/);
-  assert.match(app, /field="draftTitle"[\s\S]*?required/);
-  assert.doesNotMatch(app, /<a-form-item field="draftSubtitle"[^>]*\brequired\b/);
-  assert.match(app, /<p v-if="item\.subtitle" class="motto__card-subtitle">/);
-  assert.match(app, /:disabled="!mottoStore\.canSubmitEditor"/);
-  assert.match(app, /@cancel="mottoStore\.cancelEditor\(\)"/);
-  assert.match(app, /@open="focusTitleInput"/);
+  assert.doesNotMatch(app, /IconPencil|openEditEditor|i18nHelper\.motto\.edit/);
+  assert.doesNotMatch(app, /<a-modal|<a-form/);
+  assert.match(app, /item\.subtitle \|\| i18nHelper\.motto\.form\.subtitle/);
+  assert.match(app, /mottoStore\.pendingDraft/);
+  assert.match(app, /const beginAdd[\s\S]*?mottoStore\.beginAdd\(\)[\s\S]*?focusInlineInput/);
   assert.match(app, /i18nHelper\.motto/);
   assert.doesNotMatch(app, /(?:class|:class)="[^"]*(?:\bflex\b|\bp-\d|\bgap-\d)/);
 
@@ -137,14 +337,19 @@ test('Motto UI owns the required compact card and optional-subtitle editor inter
   assert.match(style, /\.motto__list[\s\S]*?overflow-y:\s*auto/);
   assert.match(style, /--motto-reminder-strong:\s*#b42318;/);
   assert.match(style, /--motto-reminder-muted:\s*#a65f59;/);
-  assert.match(
-    style,
-    /\.motto__card::before\s*\{[^}]*background:\s*var\(--motto-reminder-strong\);/
-  );
+  assert.match(style, /\.motto__card\s*\{[^}]*padding:\s*8px;/);
+  assert.doesNotMatch(style, /\.motto__card::before|border-left/);
   assert.match(style, /\.motto__card-title\s*\{[^}]*color:\s*var\(--motto-reminder-strong\);/);
   assert.match(style, /\.motto__card-subtitle\s*\{[^}]*color:\s*var\(--motto-reminder-muted\);/);
-  assert.equal(style.match(/var\(--motto-reminder-strong\)/g)?.length, 2);
-  assert.equal(style.match(/var\(--motto-reminder-muted\)/g)?.length, 1);
+  assert.match(
+    style,
+    /\.motto__card-title,[\s\S]*?\.motto__card-subtitle\s*\{[^}]*-webkit-line-clamp:\s*2;/
+  );
+  assert.match(
+    style,
+    /\.motto__card-title,[\s\S]*?\.motto__card-subtitle\s*\{[^}]*text-overflow:\s*ellipsis;/
+  );
+  assert.match(style, /\.motto__drag-handle\s*\{[^}]*cursor:\s*grab;/);
   assert.match(style, /\.motto\s*\{[^}]*background:\s*var\(--motto-royal-soft\);/);
   assert.match(
     style,

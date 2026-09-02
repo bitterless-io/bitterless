@@ -5,6 +5,7 @@ export interface OnlyPreviewEnvApi {
   readonly hostToken: string | null;
   readonly hostId: string | null;
   readonly previewRuntimeToken: string | null;
+  readonly openTag: string | null;
   readonly mode: OnlyPreviewEntryMode;
   readonly platform: OnlyPreviewHostPlatform;
 }

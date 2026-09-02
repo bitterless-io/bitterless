@@ -8,24 +8,20 @@ import {
   type MottoStorageErrorCode
 } from './mottoStorage.service';
 
-type MottoEditorMode = 'add' | 'edit';
+export type MottoEditableField = 'title' | 'subtitle';
 
-class MottoState {
+export class MottoState {
   items: MottoItem[] = [];
+  pendingDraft: MottoItem | null = null;
   storageError: MottoStorageErrorCode | null = null;
-  editorMode: MottoEditorMode | null = null;
   editingId: string | null = null;
-  draftTitle = '';
-  draftSubtitle = '';
+  editingField: MottoEditableField | null = null;
+  draftValue = '';
   private storage: MottoStorage | null = null;
   private initialized = false;
 
-  get editorVisible(): boolean {
-    return this.editorMode !== null;
-  }
-
-  get canSubmitEditor(): boolean {
-    return Boolean(this.draftTitle.trim());
+  get inlineEditorActive(): boolean {
+    return this.editingId !== null && this.editingField !== null;
   }
 
   initialize(storage?: MottoStorage): void {
@@ -43,51 +39,129 @@ class MottoState {
     }
   }
 
-  openAddEditor(): void {
-    this.editorMode = 'add';
-    this.editingId = null;
-    this.draftTitle = '';
-    this.draftSubtitle = '';
-  }
-
-  openEditEditor(item: MottoItem): void {
-    this.editorMode = 'edit';
-    this.editingId = item.id;
-    this.draftTitle = item.title;
-    this.draftSubtitle = item.subtitle;
-  }
-
-  cancelEditor(): void {
-    this.editorMode = null;
-    this.editingId = null;
-    this.draftTitle = '';
-    this.draftSubtitle = '';
-  }
-
-  submitEditor(): boolean {
-    const title = this.draftTitle.trim();
-    const subtitle = this.draftSubtitle.trim();
-    if (!title || !this.editorMode) return false;
-
-    let nextItems: MottoItem[];
-    if (this.editorMode === 'add') {
-      nextItems = [...this.items, { id: this.createUniqueId(), title, subtitle }];
-    } else {
-      const editingId = this.editingId;
-      if (!editingId || !this.items.some((item) => item.id === editingId)) return false;
-      nextItems = this.items.map((item) =>
-        item.id === editingId ? { ...item, title, subtitle } : item
-      );
+  beginAdd(): boolean {
+    if (this.inlineEditorActive) {
+      return this.pendingDraft?.id === this.editingId && this.editingField === 'title';
     }
 
-    if (!this.persistNextItems(nextItems)) return false;
-    this.cancelEditor();
+    const pendingDraft = {
+      id: this.createUniqueId(),
+      title: '',
+      subtitle: ''
+    };
+    this.pendingDraft = pendingDraft;
+    this.editingId = pendingDraft.id;
+    this.editingField = 'title';
+    this.draftValue = '';
     return true;
+  }
+
+  beginEdit(id: string, field: MottoEditableField): boolean {
+    if (this.inlineEditorActive) {
+      return this.editingId === id && this.editingField === field;
+    }
+
+    const item =
+      this.items.find((candidate) => candidate.id === id) ??
+      (this.pendingDraft?.id === id ? this.pendingDraft : null);
+    if (!item) return false;
+
+    this.editingId = id;
+    this.editingField = field;
+    this.draftValue = item[field];
+    return true;
+  }
+
+  isEditing(id: string, field: MottoEditableField): boolean {
+    return this.editingId === id && this.editingField === field;
+  }
+
+  commitInlineEdit(): boolean {
+    const editingId = this.editingId;
+    const editingField = this.editingField;
+    if (!editingId || !editingField) return false;
+
+    const value = this.draftValue.trim();
+    if (this.pendingDraft?.id === editingId) {
+      if (editingField !== 'title' || !value) {
+        this.discardPendingDraft();
+        return false;
+      }
+
+      const nextItems = [...this.items, { ...this.pendingDraft, title: value }];
+      if (!this.persistNextItems(nextItems)) return false;
+      this.pendingDraft = null;
+      this.clearInlineEditor();
+      return true;
+    }
+
+    const item = this.items.find((candidate) => candidate.id === editingId);
+    if (!item) {
+      this.clearInlineEditor();
+      return false;
+    }
+    if (editingField === 'title' && !value) {
+      this.clearInlineEditor();
+      return false;
+    }
+    if (item[editingField] === value) {
+      this.clearInlineEditor();
+      return true;
+    }
+
+    const nextItems = this.items.map((candidate) =>
+      candidate.id === editingId ? { ...candidate, [editingField]: value } : candidate
+    );
+    if (!this.persistNextItems(nextItems)) return false;
+    this.clearInlineEditor();
+    return true;
+  }
+
+  cancelInlineEdit(): void {
+    if (this.pendingDraft?.id === this.editingId) {
+      this.pendingDraft = null;
+    }
+    this.clearInlineEditor();
   }
 
   deleteItem(id: string): boolean {
     if (!this.items.some((item) => item.id === id)) return false;
-    return this.persistNextItems(this.items.filter((item) => item.id !== id));
+    if (!this.persistNextItems(this.items.filter((item) => item.id !== id))) return false;
+    if (this.editingId === id) this.clearInlineEditor();
+    return true;
+  }
+
+  reorderItems(nextItems: readonly MottoItem[]): boolean {
+    if (this.inlineEditorActive || nextItems.length !== this.items.length) return false;
+
+    const currentItems = new Map(this.items.map((item) => [item.id, item]));
+    const seenIds = new Set<string>();
+    for (const item of nextItems) {
+      const currentItem = currentItems.get(item.id);
+      if (
+        !currentItem ||
+        seenIds.has(item.id) ||
+        currentItem.title !== item.title ||
+        currentItem.subtitle !== item.subtitle
+      ) {
+        return false;
+      }
+      seenIds.add(item.id);
+    }
+
+    if (nextItems.every((item, index) => item.id === this.items[index]?.id)) return true;
+    return this.persistNextItems([...nextItems]);
+  }
+
+  private discardPendingDraft(): void {
+    this.pendingDraft = null;
+    this.clearInlineEditor();
+  }
+
+  private clearInlineEditor(): void {
+    this.editingId = null;
+    this.editingField = null;
+    this.draftValue = '';
   }
 
   private persistNextItems(nextItems: MottoItem[]): boolean {
@@ -112,7 +186,7 @@ class MottoState {
     let id = '';
     do {
       id = globalThis.crypto.randomUUID();
-    } while (this.items.some((item) => item.id === id));
+    } while (this.items.some((item) => item.id === id) || this.pendingDraft?.id === id);
     return id;
   }
 }

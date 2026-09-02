@@ -77,8 +77,9 @@ design document.
   implemented; owner verification pending: Maestro is the sole visible primary across startup,
   HMR, activation, logout, and invalidation; legacy Home is a hidden-only compatibility runtime.
 - [Maestro window reopen performs a full cold boot](issues/maestro-window-reopen-cold-boot.md) -
-  implemented; owner verification pending: normal native close now hides and preserves the live
-  Maestro runtime, while auth teardown and host quit retain complete destruction.
+  implemented; owner packaged verification pending: normal native close hides the live runtime,
+  while correlated Main stages distinguish reuse, joined boot, cold boot, renderer readiness, and
+  final show; [review 1](plan/reviews/maestro-open-diagnostics-113-1.md) passed.
 - [OnlyPreview sub-application](features/onlypreview.md) - capability-scoped local indexing,
   standalone-only multi-view preview, EyesOnAgents-style MenuBar, settings, and OS file-open routing.
 - [OnlyPreview Main filesystem I/O](issues/onlypreview-main-filesystem-io.md) - implemented; owner
@@ -127,10 +128,18 @@ design document.
   fixed; owner verification pending: name every Main API operation and record its sanitized cause in
   a dedicated per-profile `onlypreview/onlypreview.log`, so a generic
   `OnlyPreview could not complete this action.` is triageable instead of evidence-free.
+- [OnlyPreview open latency is not fully traceable](issues/onlypreview-open-latency-is-not-traceable.md) -
+  implemented; Preview rebuild and owner runtime verification pending: repaired correlated
+  privacy-safe lifecycle/target traces, kept the Shell runnable through hidden startup, and moved
+  restored-Project indexing behind a cancellable 750ms grace so first-visible/interactive no longer
+  waits for reconciliation; [review 4](plan/reviews/onlypreview-open-diagnostics-114-4.md) passed.
 - [OnlyPreview holds a rendered document behind full pagination](issues/onlypreview-docx-waits-for-full-pagination.md) -
   fixed; owner verification pending: present DOCX/PPTX at the first laid-out unit and keep the
   remaining pagination behind the visible preview, with the full-document barrier retained as the
   fallback that still guards the empty check.
+- [Markdown preview shows front matter instead of starting at the body](issues/onlypreview-markdown-front-matter-renders-as-heading.md) -
+  fixed in source; owner verification pending: strip valid leading YAML front matter before
+  Markdown compilation and render only the body, with no metadata card or replacement UI.
 - [OnlyPreview Preview-channel skill mounting is not obvious](issues/onlypreview-preview-channel-skill-mount-guide.md) -
   implemented; owner verification pending: the existing Guide identifies the `bitterless-preview`
   MCP alias and bundled complete skill in one localized sentence, then makes a later Production
@@ -185,6 +194,11 @@ design document.
 - [Omni browser and mini-app cells](features/omni-miniapp-cells.md) - persistent per-cell browser
   or local Todo/EyesOnAgents/Translator/Motto/Trench/Submodules operation views with development and
   packaged runtime mapping.
+- [Omni Open returns before the browser is ready](issues/omni-open-readiness-and-double-navigation.md) -
+  in progress after Preview 0.0.86 evidence: join concurrent Open calls through
+  post-mount initial-view readiness, keep card loading until feedback, and dispatch one Enter
+  navigation; add lifecycle and pending-stage logs for the observed 30-second timeout and 89.5-second
+  Control renderer delay.
 - [Shared model providers](features/model-provider.md) - SQLite-backed Codex configuration,
   cross-renderer XPC status, login synchronization, and persisted credential invalidation.
 - [Claude subscription accounts](features/claude-subscription-accounts.md) - Main-owned local
@@ -209,8 +223,8 @@ design document.
 - [Submodules window DevTools and 480px minimum](issues/submodules-window-devtools-and-min-width.md) -
   fixed; owner verification pending: debug DevTools opens after show/focus instead of behind the
   window, and the window narrows to 480px with the restore path honoring it.
-- [Motto mini app](features/motto.md) - local title/subtitle reminder cards inside Omni with
-  whole-array Web Storage persistence.
+- [Motto mini app](features/motto.md) - directly editable, persistently ordered title/subtitle
+  reminder cards inside Omni with whole-array Web Storage persistence.
 - [Chat entry visibility](features/chat-entry-visibility.md) - production-default hidden Chat menu
   with a persisted General override and Mini Apps production landing.
 - [SQLite migration release gate](features/sqlite-migration-release-gate.md) - strict multi-version
@@ -251,8 +265,12 @@ design document.
   passed.
 - [Stable and Preview can publish the same release identity](issues/cross-channel-release-version-identity-collision.md) -
   implemented; owner release verification pending: publication now refuses a `version` or
-  `version_code` another channel already published, and one explicit `yarn release:cut` replaces the
-  per-platform bump so a single release covers every platform.
+  `version_code` another channel already published, and one canonical cut is reused across every
+  platform; macOS ARM Preview auto-cuts while `yarn release:cut` remains the explicit alternative.
+- [Preview macOS ARM publish does not cut a new version](issues/preview-mac-arm-publish-does-not-cut-version.md) -
+  fixed in source; owner publication verification pending: the ordinary macOS ARM Preview command
+  is the single one-step cut/build/publish entry while Intel and Windows reuse its identity;
+  [review 1](plan/reviews/release-preview-mac-arm-auto-cut-115-1.md) passed.
 - [Packaged app-update.yml points at a placeholder host](issues/packaged-update-feed-url-placeholder.md) -
   implemented; owner package verification pending: `afterPack` writes the exact channel/platform
   updater directory from the mapping shared with the runtime, and the package audit rejects a

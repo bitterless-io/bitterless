@@ -308,6 +308,7 @@ export const zh: typeof en = {
   },
   miniApp: {
     open: '打开',
+    opened: '已打开{name}',
     openFailed: '无法打开{name}',
     todo: {
       name: '待办',
@@ -588,6 +589,7 @@ export const zh: typeof en = {
     add: '新增',
     edit: '编辑',
     delete: '删除',
+    dragHandle: '拖动排序',
     cardActions: 'Motto 操作',
     listLabel: '重要事项提醒',
     emptyTitle: '把重要的事放在眼前',

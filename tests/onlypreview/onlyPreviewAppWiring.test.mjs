@@ -116,6 +116,7 @@ test('full-app E2E launchers require shared mock-Keychain isolation before Main 
 test('recent-directory wiring stays Main-owned, value-free, and renderer-contract neutral', () => {
   const service = source('src/main/onlypreview/onlyPreviewRecentDirectory.service.ts');
   const handler = source('src/main/xpc/onlyPreview.handler.ts');
+  const explicitService = source('src/main/onlypreview/onlyPreviewExplicitOpen.service.ts');
   const appMain = source('src/main/app.main.ts');
   const types = source('src/shared/onlypreview/onlyPreview.types.ts');
 
@@ -132,12 +133,9 @@ test('recent-directory wiring stays Main-owned, value-free, and renderer-contrac
   assert.match(service, /expectedSerializedValue: stored\.serializedValue[\s\S]*value: null/);
   assert.match(service, /!workspace\.selectedRelativePath && workspace\.displayPath === candidate/);
 
-  const absoluteOpen = handler.slice(
-    handler.indexOf('const performOpenOnlyPreviewAbsoluteTarget'),
-    handler.indexOf('export const destroyOnlyPreviewForAuth')
-  );
+  const absoluteOpen = explicitService;
   assert.ok(
-    absoluteOpen.indexOf('beginExplicitTarget()') < absoluteOpen.indexOf('ensureStandalone()'),
+    absoluteOpen.indexOf('beginExplicitTarget()') < absoluteOpen.indexOf("ensureStandalone('explicit')"),
     'OS targets must suppress restore before mounting standalone renderers'
   );
   assert.match(handler, /restoreWorkspace\(host\.hostToken\)/);
@@ -156,6 +154,7 @@ test('recent-directory wiring stays Main-owned, value-free, and renderer-contrac
 test('OnlyPreview XPC prototype exposes the exact renderer allowlist and capability-gates Office chunks', () => {
   assert.deepEqual(classMethodNames('src/main/xpc/onlyPreview.handler.ts', 'OnlyPreviewHandler'), [
     'openOnlyPreviewWindow',
+    'reportShellMounted',
     'chooseFolder',
     'restoreWorkspace',
     'selectStandaloneFile',
@@ -197,6 +196,7 @@ test('OnlyPreview XPC prototype exposes the exact renderer allowlist and capabil
     'getAgentSkillGuideInfo'
   ]);
   const handler = source('src/main/xpc/onlyPreview.handler.ts');
+  const explicitOpen = source('src/main/onlypreview/onlyPreviewExplicitOpen.service.ts');
   const classBody = handler.slice(
     handler.indexOf('class OnlyPreviewHandler'),
     handler.indexOf('export const onlyPreviewHandler')
@@ -509,6 +509,7 @@ test('Project browse exclusion markers stay listing-only and survive the Rendere
 test('OnlyPreview folder-first chrome, current-file locator, and native file menu stay capability scoped', () => {
   const types = source('src/shared/onlypreview/onlyPreview.types.ts');
   const handler = source('src/main/xpc/onlyPreview.handler.ts');
+  const explicitOpen = source('src/main/onlypreview/onlyPreviewExplicitOpen.service.ts');
   const nativeActions = source('src/main/onlypreview/onlyPreviewProjectNativeAction.service.ts');
   const windowHelper = source('src/main/windows/onlyPreviewWindow.helper.ts');
   const shellApp = source('src/renderer/onlypreview/shell/src/App.vue');
@@ -570,7 +571,7 @@ test('OnlyPreview folder-first chrome, current-file locator, and native file men
   assert.match(handler, /properties:\s*\['openDirectory'\]/);
   assert.match(windowHelper, /if \(key === 'o'\) return 'choose-folder'/);
   assert.match(
-    handler,
+    explicitOpen,
     /performOpenOnlyPreviewAbsoluteTarget[\s\S]*openExplicitTarget\([\s\S]*host\.hostToken,[\s\S]*target,[\s\S]*recentGeneration/
   );
 

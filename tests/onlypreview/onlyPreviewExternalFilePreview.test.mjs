@@ -104,6 +104,7 @@ test('workspace revocation fences a pending text preparation before it can publi
 
 test('external Preview wiring keeps Project state separate and revokes exact reader authority', () => {
   const handler = source('src/main/xpc/onlyPreview.handler.ts');
+  const explicitOpen = source('src/main/onlypreview/onlyPreviewExplicitOpen.service.ts');
   const previewRegion = source('src/main/onlypreview/views/onlyPreviewPreviewRegion.service.ts');
   const workspaceRegistry = source('src/main/onlypreview/onlyPreviewWorkspace.registry.ts');
 
@@ -128,9 +129,9 @@ test('external Preview wiring keeps Project state separate and revokes exact rea
     /workspace\.kind === 'external-preview'[\s\S]*externalPreviewWorkspaceByHost\.get[\s\S]*workspace\.selectedRelativePath !== fileRef\.relativePath[\s\S]*WORKSPACE_ACCESS_DENIED/
   );
 
-  const explicitOpenBody = handler.slice(
-    handler.indexOf('const performOpenOnlyPreviewAbsoluteTarget'),
-    handler.indexOf('export const destroyOnlyPreviewForAuth')
+  const explicitOpenBody = explicitOpen.slice(
+    explicitOpen.indexOf('const performOpenOnlyPreviewAbsoluteTarget'),
+    explicitOpen.indexOf('const serializedOpenOnlyPreviewAbsoluteTarget')
   );
   assert.match(explicitOpenBody, /fileSearchWindowService\.inspectTarget\(target\)/);
   assert.match(
@@ -139,7 +140,27 @@ test('external Preview wiring keeps Project state separate and revokes exact rea
   );
   assert.match(
     explicitOpenBody,
-    /registerExternalPreview[\s\S]*clearProjectSelection[\s\S]*onlyPreviewPreviewRegionService\.present[\s\S]*ONLY_PREVIEW_SELECTION_CHANGED_EVENT/
+    /registerExternalPreview[\s\S]*clearProjectSelection[\s\S]*onlyPreviewPreviewRegionService\.present\(host\.hostToken, fileRef, trace\.tag\)[\s\S]*ONLY_PREVIEW_SELECTION_CHANGED_EVENT/
+  );
+  assert.ok(
+    explicitOpenBody.indexOf('inspectTarget(target)') <
+      explicitOpenBody.indexOf('resolveProjectFileRef'),
+    'target inspection must precede Project/external authority selection'
+  );
+  assert.ok(
+    explicitOpenBody.indexOf('resolveProjectFileRef') <
+      explicitOpenBody.indexOf('registerExternalPreview'),
+    'Project authority must be attempted before issuing an external single-file authority'
+  );
+  assert.ok(
+    explicitOpenBody.indexOf('present(host.hostToken, fileRef, trace.tag)') <
+      explicitOpenBody.indexOf("trace.mark({ phase: 'presentation-issued' })"),
+    'presentation publication must complete before Main records it as issued'
+  );
+  assert.ok(
+    explicitOpenBody.indexOf('ONLY_PREVIEW_SELECTION_CHANGED_EVENT') <
+      explicitOpenBody.indexOf("trace.mark({ phase: 'accepted' })"),
+    'selection notification must retain its existing position before accepted terminal feedback'
   );
   const restoreBody = handler.slice(
     handler.indexOf('async restoreWorkspace('),

@@ -79,5 +79,12 @@ Issue:
   (`home/chat`, `maestro`, `omni`, `shared/pathHelper`) are unchanged.
 - `yarn eslint` on every changed TypeScript/Vue file — clean. The two `search/core/*.mjs` files keep
   the directory's pre-existing `explicit-function-return-type` findings, which an untouched sibling
-  (`watch-controller.mjs`) already reports.
+  (`watch-controller.mjs`) already reports. A tree-wide `eslint src/main/onlypreview
+  src/renderer/onlypreview` aborts the Node process (SIGABRT) before reporting and gives no verdict
+  either way.
+- esbuild bundle-resolution of the three changed module graphs (Preview Region under
+  `tsconfig.node.json`, Shell store under `tsconfig.web.json`, `search-engine.mjs`) — every new
+  import and alias resolves.
+- `yarn build` not run: `scripts/before.js` carries another session's uncommitted work and the build
+  writes the shared `out/` directory, so running it here could collide with that session.
 - Electron E2E not run (owner policy: never launch Electron E2E unprompted).

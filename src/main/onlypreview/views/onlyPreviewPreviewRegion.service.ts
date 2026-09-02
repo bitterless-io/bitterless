@@ -55,6 +55,8 @@ import {
 import { OnlyPreviewPreviewReadBrokerService } from './onlyPreviewPreviewReadBroker.service';
 import { onlyPreviewSelectedFileChanged } from './onlyPreviewSelectedFileIdentity.service';
 import { issueOnlyPreviewSelectionDelivery } from './onlyPreviewSelectionDelivery.service';
+import type { OnlyPreviewOpenTrace } from '@shared/onlypreview/onlyPreviewOpenDiagnostics.mjs';
+import { onlyPreviewOpenDiagnostics } from '@main/onlypreview/onlyPreviewOpenDiagnostics.runtime';
 
 export class OnlyPreviewPreviewRegionService {
   private readonly findService = new OnlyPreviewFindService();
@@ -118,6 +120,10 @@ export class OnlyPreviewPreviewRegionService {
   private activePreviewSurface: OnlyPreviewPreviewSurface | null = 'vue';
   private vueResetAcknowledgedRevision: number | null = null;
   private presentation: OnlyPreviewPreviewPresentation = createEmptyOnlyPreviewPresentation('', 0);
+  private readonly openTraces = new Map<
+    number,
+    { trace: OnlyPreviewOpenTrace; surface: 'vue' | 'chrome' | 'office' | 'unknown' }
+  >();
 
   start(runtime: OnlyPreviewPreviewRegionRuntime): void {
     this.destroy();
@@ -149,10 +155,10 @@ export class OnlyPreviewPreviewRegionService {
     this.viewService.updateBounds(bounds);
   }
 
-  async present(hostToken: string, value: unknown): Promise<void> {
+  async present(hostToken: string, value: unknown, parentOpenTag?: string): Promise<void> {
     const runtime = this.requireRuntime(hostToken);
     const fileRef = parseOnlyPreviewFileRef(value);
-    const revision = this.beginTransition(fileRef);
+    const revision = this.beginTransition(fileRef, parentOpenTag);
     let prepared: OnlyPreviewPreviewReadPreparedSelection | null = null;
     let descriptor: OnlyPreviewDescriptor | null = null;
     try {
@@ -160,6 +166,7 @@ export class OnlyPreviewPreviewRegionService {
         runtime.host.hostToken,
         fileRef
       );
+      this.markOpenTrace(revision, { phase: 'workspace' });
       const officeKind = getOnlyPreviewOfficePackageKind(fileRef.relativePath);
       if (officeKind) {
         await this.presentOffice(runtime, fileRef, revision, officeKind, authority);
@@ -170,7 +177,10 @@ export class OnlyPreviewPreviewRegionService {
         workspaceGeneration: authority.workspaceGeneration,
         rootPath: authority.rootPath
       });
-      if (!this.isCurrent(runtime, revision)) return;
+      if (!this.isCurrent(runtime, revision)) {
+        this.finishOpenTrace(revision, 'superseded');
+        return;
+      }
       prepared = await fileSearchWindowService.preparePreviewRead({
         grantId: randomUUID(),
         selectionRevision: revision,
@@ -180,10 +190,12 @@ export class OnlyPreviewPreviewRegionService {
       });
       if (!this.isCurrent(runtime, revision)) {
         await this.cancelPreparedPreview(prepared);
+        this.finishOpenTrace(revision, 'superseded');
         return;
       }
       descriptor = prepared.descriptor;
       const adapter = getOnlyPreviewDescriptorAdapter(descriptor);
+      this.markOpenTrace(revision, { phase: 'descriptor', surface: adapter.surface });
       let brokerCapability: string | null = null;
       if (adapter.surface === 'vue') {
         this.viewService.ensureVuePreviewView();
@@ -211,6 +223,7 @@ export class OnlyPreviewPreviewRegionService {
           onlyPreviewAssetRegistry.revokeSelection(runtime.host.hostToken, revision);
         }
         await this.cancelPreparedPreview(prepared);
+        this.finishOpenTrace(revision, 'superseded');
         return;
       }
       this.readBroker.setPreviewAuthority(brokerCapability, prepared);
@@ -231,6 +244,7 @@ export class OnlyPreviewPreviewRegionService {
         selectedTextAvailable: onlyPreviewAdapterProvidesSelectedText(adapter.adapterId)
       };
       this.publishPresentation();
+      this.markOpenTrace(revision, { phase: 'published' });
       this.viewService.armDocumentWatchdogIfEligible();
 
       if (adapter.surface === 'chrome' && delivery.navigationUrl) {
@@ -245,7 +259,10 @@ export class OnlyPreviewPreviewRegionService {
       }
     } catch (error) {
       if (prepared) await this.cancelPreparedPreview(prepared);
-      if (!this.isCurrent(runtime, revision)) return;
+      if (!this.isCurrent(runtime, revision)) {
+        this.finishOpenTrace(revision, 'superseded');
+        return;
+      }
       this.revokeCurrentAuthority();
       this.viewService.detachActiveView();
       this.viewService.destroyChromePreviewView();
@@ -264,6 +281,7 @@ export class OnlyPreviewPreviewRegionService {
       };
       this.publishPresentation();
       this.viewService.attachActiveView();
+      this.finishOpenTrace(revision, 'error');
     }
   }
 
@@ -368,6 +386,7 @@ export class OnlyPreviewPreviewRegionService {
   reportVueReset(hostToken: string, selectionRevision: number, previewRuntimeToken: string): void {
     this.requireCurrentVueRevision(hostToken, selectionRevision, previewRuntimeToken, false);
     this.vueResetAcknowledgedRevision = selectionRevision;
+    this.markOpenTrace(selectionRevision, { phase: 'renderer-reset' });
     this.viewService.attachActiveView();
   }
 
@@ -425,6 +444,7 @@ export class OnlyPreviewPreviewRegionService {
     }
     this.presentation = { ...this.presentation, descriptor, status: 'ready', error: null };
     this.publishPresentation();
+    this.finishOpenTrace(selectionRevision, 'ready');
   }
 
   reportVueError(
@@ -441,6 +461,7 @@ export class OnlyPreviewPreviewRegionService {
       );
     }
     if (this.presentation.status !== 'loading' && this.presentation.status !== 'ready') return;
+    this.finishOpenTrace(selectionRevision, 'error');
     const runtime = this.runtime;
     const view = this.viewService.getVuePreviewView();
     if (
@@ -503,6 +524,7 @@ export class OnlyPreviewPreviewRegionService {
     this.vueResetAcknowledgedRevision = null;
     this.runtime = null;
     this.activePreviewSurface = null;
+    for (const [revision] of this.openTraces) this.finishOpenTrace(revision, 'superseded');
     if (runtime) {
       this.presentation = createEmptyOnlyPreviewPresentation(
         runtime.host.hostId,
@@ -511,7 +533,7 @@ export class OnlyPreviewPreviewRegionService {
     }
   }
 
-  private beginTransition(fileRef: OnlyPreviewFileRef | null): number {
+  private beginTransition(fileRef: OnlyPreviewFileRef | null, parentOpenTag?: string): number {
     const runtime = this.runtime;
     if (!runtime) throw new Error('OnlyPreview Preview Region is not running.');
     const pendingDocumentView =
@@ -525,6 +547,17 @@ export class OnlyPreviewPreviewRegionService {
         : null;
     this.findService.beginTransition();
     this.selectionRevision += 1;
+    for (const [revision] of this.openTraces) this.finishOpenTrace(revision, 'superseded');
+    if (fileRef) {
+      this.openTraces.set(this.selectionRevision, {
+        trace: onlyPreviewOpenDiagnostics.trace(
+          'preview',
+          { parentTag: parentOpenTag, revision: this.selectionRevision, surface: 'unknown' },
+          'p'
+        ),
+        surface: 'unknown'
+      });
+    }
     this.readyFindCoverage = null;
     this.viewService.clearDocumentWatchdog();
     this.revokeCurrentAuthority();
@@ -578,7 +611,11 @@ export class OnlyPreviewPreviewRegionService {
       workspaceId: authority.workspaceId,
       rootPath: authority.rootPath
     });
-    if (!this.isCurrent(runtime, revision)) return;
+    this.markOpenTrace(revision, { phase: 'workspace' });
+    if (!this.isCurrent(runtime, revision)) {
+      this.finishOpenTrace(revision, 'superseded');
+      return;
+    }
     this.viewService.ensureVuePreviewView();
     const runtimeId = this.viewService.getVueRuntimeToken();
     const brokerCapability = this.viewService.getOfficeBrokerCapability();
@@ -595,8 +632,10 @@ export class OnlyPreviewPreviewRegionService {
       runtimeId,
       kind
     });
+    this.markOpenTrace(revision, { phase: 'descriptor', surface: 'office' });
     if (!this.isCurrent(runtime, revision)) {
       await this.readBroker.cancelPreparedOffice(prepared.grantId, runtimeId, revision);
+      this.finishOpenTrace(revision, 'superseded');
       return;
     }
     this.readBroker.setOfficeAuthority({
@@ -620,6 +659,7 @@ export class OnlyPreviewPreviewRegionService {
       selectedTextAvailable: onlyPreviewAdapterProvidesSelectedText(prepared.adapterId)
     };
     this.publishPresentation();
+    this.markOpenTrace(revision, { phase: 'published' });
     this.viewService.armDocumentWatchdogIfEligible();
     this.viewService.attachActiveView();
   }
@@ -633,6 +673,7 @@ export class OnlyPreviewPreviewRegionService {
     this.viewService.clearDocumentWatchdog();
     this.vueResetAcknowledgedRevision = null;
     if (this.activePreviewSurface !== 'vue') return;
+    this.finishOpenTrace(this.selectionRevision, 'error');
     this.findService.beginTransition();
     this.selectionRevision += 1;
     this.readyFindCoverage = null;
@@ -673,6 +714,7 @@ export class OnlyPreviewPreviewRegionService {
     this.readyFindCoverage = { kind: 'complete' };
     this.presentation = { ...this.presentation, status: 'ready', error: null };
     this.publishPresentation();
+    this.finishOpenTrace(revision, 'ready');
   }
 
   private markChromeUnavailable(
@@ -687,6 +729,7 @@ export class OnlyPreviewPreviewRegionService {
     ) {
       return;
     }
+    this.finishOpenTrace(revision, 'error');
     this.findService.beginTransition();
     this.selectionRevision += 1;
     this.readyFindCoverage = null;
@@ -715,6 +758,29 @@ export class OnlyPreviewPreviewRegionService {
     xpcMain.broadcast(ONLY_PREVIEW_PREVIEW_PRESENTATION_EVENT, {
       hostId: this.runtime.host.hostId
     });
+  }
+
+  private markOpenTrace(revision: number, fields: Record<string, unknown>): void {
+    const active = this.openTraces.get(revision);
+    if (!active) return;
+    if (
+      fields.surface === 'vue' ||
+      fields.surface === 'chrome' ||
+      fields.surface === 'office'
+    ) {
+      active.surface = fields.surface;
+    }
+    active.trace.mark({ revision, ...fields });
+  }
+
+  private finishOpenTrace(
+    revision: number,
+    outcome: 'ready' | 'error' | 'superseded'
+  ): void {
+    const active = this.openTraces.get(revision);
+    if (!active) return;
+    this.openTraces.delete(revision);
+    active.trace.end({ revision, surface: active.surface, outcome });
   }
 
   private snapshotInternal(includeVueAsset = false): OnlyPreviewPreviewPresentation {

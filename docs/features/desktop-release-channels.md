@@ -74,6 +74,11 @@ production build before inspecting `dist/`; Preview aliases select a Preview bui
 `dist/preview/`. They do not pull or restore Git state. Platform aliases must not silently publish a
 previously built artifact from any channel.
 
+`publish_preview:mac_arm` is also the canonical Preview release cut: it increments the shared patch
+and `version_code` once before building. `publish_preview:mac_intel` and `publish_preview:win` reuse
+that identity and never bump again. Use `yarn release:cut` explicitly when a release must start from
+a non-ARM platform.
+
 ## Verification boundary
 
 Automated checks cover runtime profiles, package identity, local-data path selection, updater feed

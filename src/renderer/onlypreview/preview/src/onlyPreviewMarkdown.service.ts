@@ -36,6 +36,17 @@ const ONLY_PREVIEW_MARKDOWN_TAGS = [
   'span'
 ] as const;
 
+export const stripOnlyPreviewFrontMatter = (source: string): string => {
+  const text = source.startsWith('\uFEFF') ? source.slice(1) : source;
+  const lines = text.split(/\r?\n/);
+  if (lines[0] !== '---') return source;
+  for (let index = 1; index < lines.length; index += 1) {
+    if (lines[index] !== '---' && lines[index] !== '...') continue;
+    return lines.slice(index + 1).join('\n');
+  }
+  return source;
+};
+
 const escapeHtml = (value: string): string =>
   value
     .replaceAll('&', '&amp;')
@@ -76,7 +87,7 @@ export const renderOnlyPreviewMarkdown = (
   try {
     const purifier = createDOMPurify(windowLike);
     if (!purifier.isSupported) return { ok: false, reason: 'render-failed' };
-    const parsed = markdownParser.parse(source, {
+    const parsed = markdownParser.parse(stripOnlyPreviewFrontMatter(source), {
       async: false,
       breaks: false,
       gfm: true,

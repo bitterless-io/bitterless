@@ -442,6 +442,11 @@ export interface OnlyPreviewFocusSearchEvent extends OnlyPreviewHostEvent {
 
 export interface OnlyPreviewApi {
   openOnlyPreviewWindow(): Promise<OnlyPreviewResult<void>>;
+  reportShellMounted(params: OnlyPreviewHostRequest & {
+    openTag: string;
+    phase: 'renderer-script' | 'renderer-language' | 'renderer-import' | 'renderer-mount' | 'renderer-receipt';
+    outcome?: 'success' | 'failure';
+  }): Promise<OnlyPreviewResult<void>>;
   chooseFolder(
     params: OnlyPreviewHostRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewWorkspace | null>>;

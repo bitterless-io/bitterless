@@ -45,12 +45,6 @@ const navigate = () => {
   xpcRenderer.send('OmniWindowHandler/navigateCell', { cellId, url });
 };
 
-const onKeydown = (e: KeyboardEvent) => {
-  if (e.key === 'Enter') {
-    navigate();
-  }
-};
-
 const onInputFocus = (e: FocusEvent) => {
   if (isMiniApp) return;
   const target = e.target as HTMLInputElement;
@@ -76,7 +70,6 @@ const onInputFocus = (e: FocusEvent) => {
         size="small"
         placeholder="输入 URL..."
         :readonly="isMiniApp"
-        @keydown="onKeydown"
         @press-enter="navigate"
         @focus="onInputFocus"
       />

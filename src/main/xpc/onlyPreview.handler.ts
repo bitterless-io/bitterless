@@ -50,11 +50,6 @@ import { onlyPreviewPreviewRegionService } from '@main/onlypreview/views/onlyPre
 import { onlyPreviewGlobalSearchXpcService } from '@main/onlypreview/views/onlyPreviewGlobalSearchXpc.service';
 import { onlyPreviewWindowHelper } from '@main/windows/onlyPreviewWindow.helper';
 import { fileSearchWindowService } from '@main/fileSearch/fileSearchWindow.service';
-import { registerOnlyPreviewExplicitTarget } from '@main/onlypreview/onlyPreviewExplicitTarget.registry';
-import {
-  OnlyPreviewTargetMutationQueue,
-  serializeOnlyPreviewOpenTarget
-} from '@main/onlypreview/onlyPreviewOpenRouter.service';
 import {
   onlyPreviewRecentDirectoryService,
   type OnlyPreviewRecentDirectoryStorage
@@ -66,6 +61,9 @@ import {
 } from '@main/onlypreview/onlyPreviewAgentSkill.service';
 import { onlyPreviewProjectNativeActionService } from '@main/onlypreview/onlyPreviewProjectNativeAction.service';
 import { mcpHandler } from './mcp.handler';
+import { onlyPreviewTargetMutations } from '@main/onlypreview/onlyPreviewExplicitOpen.service';
+
+export { openOnlyPreviewAbsoluteTarget } from '@main/onlypreview/onlyPreviewExplicitOpen.service';
 
 type ApiParams<T extends keyof OnlyPreviewApi> = Parameters<OnlyPreviewApi[T]>[0];
 
@@ -141,8 +139,6 @@ onlyPreviewWorkspaceRegistry.onRevoke((workspace) => {
     .catch(() => undefined);
 });
 
-const onlyPreviewTargetMutations = new OnlyPreviewTargetMutationQueue();
-
 class OnlyPreviewHandler
   extends XpcMainHandler
   implements OnlyPreviewApi, OnlyPreviewOfficeReadBrokerApi, OnlyPreviewPreviewTextBrokerApi
@@ -150,6 +146,38 @@ class OnlyPreviewHandler
   async openOnlyPreviewWindow(): ReturnType<OnlyPreviewApi['openOnlyPreviewWindow']> {
     return await runOperation('openOnlyPreviewWindow', async () => {
       await onlyPreviewWindowHelper.ensureStandalone();
+    });
+  }
+
+  async reportShellMounted(
+    params: ApiParams<'reportShellMounted'>
+  ): ReturnType<OnlyPreviewApi['reportShellMounted']> {
+    return await runOperation('reportShellMounted', async () => {
+      if (
+        !params ||
+        typeof params.hostToken !== 'string' ||
+        typeof params.openTag !== 'string' ||
+        !/^[a-z][a-z0-9]{0,11}$/.test(params.openTag) ||
+        ![
+          'renderer-script',
+          'renderer-language',
+          'renderer-import',
+          'renderer-mount',
+          'renderer-receipt'
+        ].includes(params.phase) ||
+        (params.outcome !== undefined &&
+          params.outcome !== 'success' &&
+          params.outcome !== 'failure') ||
+        (params.phase === 'renderer-receipt') !== (params.outcome !== undefined)
+      ) {
+        throw new OnlyPreviewContractError('INVALID_INPUT', 'Shell mount report is invalid.');
+      }
+      onlyPreviewWindowHelper.reportShellMounted(
+        params.hostToken,
+        params.openTag,
+        params.phase,
+        params.outcome
+      );
     });
   }
 
@@ -710,75 +738,6 @@ onlyPreviewWindowHelper.setCommandHandler(({ hostToken, command }) => {
   }
   void onlyPreviewHandler.chooseFolder({ hostToken });
 });
-
-const performOpenOnlyPreviewAbsoluteTarget = async (target: string): Promise<void> => {
-  const recentGeneration = onlyPreviewRecentDirectoryService.beginExplicitTarget();
-  try {
-    const host = await onlyPreviewWindowHelper.ensureStandalone();
-    onlyPreviewRecentDirectoryService.bindExplicitTarget(host.hostToken, recentGeneration);
-    const inspected = await fileSearchWindowService.inspectTarget(target);
-
-    if (!inspected.selectedRelativePath) {
-      const workspace = await onlyPreviewRecentDirectoryService.openExplicitTarget(
-        host.hostToken,
-        target,
-        recentGeneration
-      );
-      if (workspace) {
-        onlyPreviewSelectionCoordinator.advance(host.hostToken);
-        onlyPreviewPreviewRegionService.clearWorkspace(host.hostToken, workspace.workspaceId);
-        broadcastWorkspace(host.hostId);
-        onlyPreviewWindowHelper.show();
-      }
-      return;
-    }
-
-    const selectionGeneration = onlyPreviewSelectionCoordinator.advance(host.hostToken);
-    let fileRef = onlyPreviewWorkspaceRegistry.resolveProjectFileRef(host.hostToken, inspected);
-    if (fileRef) {
-      const authority = onlyPreviewWorkspaceRegistry.getProjectAuthorityItemRef(
-        host.hostToken,
-        fileRef
-      );
-      const file = await fileSearchWindowService.authorizeProjectItem({
-        workspaceId: authority.workspaceId,
-        workspaceGeneration: authority.workspaceGeneration,
-        relativePath: authority.relativePath
-      });
-      if (!onlyPreviewSelectionCoordinator.isCurrent(host.hostToken, selectionGeneration)) {
-        return;
-      }
-      if (file.nodeKind !== 'file') {
-        throw new OnlyPreviewContractError(
-          'PATH_NOT_REGULAR_FILE',
-          'Only regular files can be selected for Preview.'
-        );
-      }
-      onlyPreviewWorkspaceRegistry.revokeExternalPreview(host.hostToken);
-      fileRef = { workspaceId: file.workspaceId, relativePath: file.relativePath };
-      onlyPreviewWorkspaceRegistry.select(host.hostToken, fileRef);
-    } else {
-      fileRef = onlyPreviewWorkspaceRegistry.registerExternalPreview(host.hostToken, inspected);
-      onlyPreviewWorkspaceRegistry.clearProjectSelection(host.hostToken);
-    }
-
-    await onlyPreviewPreviewRegionService.present(host.hostToken, fileRef);
-    if (!onlyPreviewSelectionCoordinator.isCurrent(host.hostToken, selectionGeneration)) {
-      return;
-    }
-    xpcMain.broadcast(ONLY_PREVIEW_SELECTION_CHANGED_EVENT, { hostId: host.hostId });
-    onlyPreviewWindowHelper.show();
-  } finally {
-    onlyPreviewRecentDirectoryService.finishExplicitTarget(recentGeneration);
-  }
-};
-
-export const openOnlyPreviewAbsoluteTarget = serializeOnlyPreviewOpenTarget(
-  performOpenOnlyPreviewAbsoluteTarget,
-  onlyPreviewTargetMutations
-);
-
-registerOnlyPreviewExplicitTarget(openOnlyPreviewAbsoluteTarget);
 
 export const destroyOnlyPreviewForAuth = (): void => {
   onlyPreviewWindowHelper.destroy();

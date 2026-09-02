@@ -104,24 +104,51 @@
   position: relative;
   flex: 0 0 auto;
   min-width: 0;
-  overflow: hidden;
+  box-sizing: border-box;
+  padding: 8px;
   border: 1px solid #e2e4eb;
   border-radius: 9px;
   background: #fff;
   box-shadow: 0 3px 12px rgb(30 34 55 / 7%);
 }
 
-.motto__card::before {
-  content: '';
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 4px;
-  background: var(--motto-reminder-strong);
+.motto__card.sortable-chosen {
+  box-shadow: 0 8px 22px rgb(30 34 55 / 16%);
+}
+
+.motto__card.sortable-ghost {
+  opacity: 0.46;
 }
 
 .motto__card-content {
   min-width: 0;
-  padding: 15px 48px 15px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-right: 54px;
+}
+
+.motto__card--draft .motto__card-content {
+  padding-right: 0;
+}
+
+.motto__card-title,
+.motto__card-subtitle {
+  width: 100%;
+  min-width: 0;
+  display: -webkit-box;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  cursor: text;
 }
 
 .motto__card-title {
@@ -130,23 +157,68 @@
   font-size: 15px;
   font-weight: 650;
   line-height: 1.4;
-  overflow-wrap: anywhere;
 }
 
 .motto__card-subtitle {
-  margin: 5px 0 0;
+  margin: 0;
   color: var(--motto-reminder-muted);
   font-size: 12px;
   line-height: 1.55;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
 }
 
-.motto__card-menu {
+.motto__card-title:focus-visible,
+.motto__card-subtitle:focus-visible {
+  border-radius: 4px;
+  box-shadow: 0 0 0 2px rgb(78 88 130 / 24%);
+}
+
+.motto__card-title--placeholder,
+.motto__card-subtitle--placeholder {
+  opacity: 0.62;
+}
+
+.motto__inline-input {
+  width: 100%;
+}
+
+.motto__inline-input--title .arco-input {
+  color: var(--motto-reminder-strong);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.motto__inline-input--subtitle .arco-input {
+  color: var(--motto-reminder-muted);
+  font-size: 12px;
+}
+
+.motto__card-actions {
   position: absolute;
-  top: 7px;
-  right: 7px;
+  top: 5px;
+  right: 5px;
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.motto__card-actions .icon-btn.arco-btn {
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  flex-basis: 26px;
+}
+
+.motto__drag-handle,
+.motto__card-menu {
   color: #808ab1;
+}
+
+.motto__drag-handle {
+  cursor: grab;
+}
+
+.motto__drag-handle:active {
+  cursor: grabbing;
 }
 
 .motto__delete-option {
@@ -191,17 +263,6 @@
   margin: 7px 0 14px;
   font-size: 12px;
   line-height: 1.55;
-}
-
-.motto-editor__form {
-  padding-top: 4px;
-}
-
-.motto-editor__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding-top: 4px;
 }
 
 @media (max-width: 420px) {

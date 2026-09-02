@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import {
@@ -114,6 +115,93 @@ test('Markdown makes hostile HTML, links, and images inert without loading resou
   assert.match(text, /\[Image: remote image\]/);
   assert.match(text, /\[Image: data image\]/);
   assert.doesNotMatch(text, /tracking/);
+});
+
+const SKILL_FRONT_MATTER = `---
+name: aliyun-ops
+description: >-
+  Multi-account Aliyun operations from the overmind keychain.
+  Deployment planning starts from the overmind \`ops/\` inventory.
+user-invocable: true
+---
+
+# aliyun-ops
+
+Body paragraph.
+
+## Section
+`;
+
+test('YAML front matter leaves the Markdown parser instead of becoming a setext heading', () => {
+  const { result } = render(SKILL_FRONT_MATTER);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+
+  // The closing `---` used to underline the accumulated front-matter paragraph into one huge <h2>.
+  assert.doesNotMatch(result.html, /<hr>/);
+  assert.equal((result.html.match(/<h2[ >]/g) ?? []).length, 1);
+  assert.match(result.html.trimStart(), /^<h1>aliyun-ops<\/h1>/);
+  assert.doesNotMatch(result.html, /name: aliyun-ops/);
+  assert.doesNotMatch(result.html, /Multi-account Aliyun operations/);
+  assert.doesNotMatch(result.html, /user-invocable/);
+});
+
+test('BOM, CRLF, and the YAML document-end delimiter still produce body-only Markdown', () => {
+  const { result } = render('\uFEFF---\r\nname: hidden\r\n...\r\n\r\n# Visible body\r\n');
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.match(result.html, /<h1>Visible body<\/h1>/);
+  assert.doesNotMatch(result.html, /name: hidden|<hr>/);
+});
+
+test('a leading rule without a closing delimiter stays a thematic break', () => {
+  const { result } = render('---\n\nJust a document.\n');
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.match(result.html, /<hr>/);
+});
+
+test('a setext underline inside the body is not mistaken for front matter', () => {
+  const { result } = render('Intro paragraph.\n\nUnderlined title\n---\n\nBody.\n');
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.match(result.html, /<h2>Underlined title<\/h2>/);
+});
+
+test('the Markdown component and renderer expose no front-matter presentation model', () => {
+  const projectRoot = resolve(import.meta.dirname, '../..');
+  const component = readFileSync(
+    join(
+      projectRoot,
+      'src/renderer/onlypreview/preview/src/components/MarkdownPreview/MarkdownPreview.vue'
+    ),
+    'utf8'
+  );
+  const service = readFileSync(
+    join(projectRoot, 'src/renderer/onlypreview/preview/src/onlyPreviewMarkdown.service.ts'),
+    'utf8'
+  );
+
+  const styles = readFileSync(
+    join(
+      projectRoot,
+      'src/renderer/onlypreview/preview/src/components/MarkdownPreview/MarkdownPreview.less'
+    ),
+    'utf8'
+  );
+  const i18n = readFileSync(
+    join(projectRoot, 'src/renderer/onlypreview/common/onlyPreviewI18n.ts'),
+    'utf8'
+  );
+
+  assert.doesNotMatch(component, /frontMatter|frontmatter|FRONT MATTER/i);
+  assert.doesNotMatch(styles, /frontMatter|frontmatter/i);
+  assert.doesNotMatch(i18n, /frontMatterTitle|frontMatterTruncated/);
+  assert.doesNotMatch(service, /parseYaml|stringifyYaml|OnlyPreviewMarkdownFrontMatter/);
+  assert.match(service, /stripOnlyPreviewFrontMatter/);
+  assert.match(service, /\| \{ ok: true; html: string \}/);
+  assert.match(service, /ALLOWED_ATTR: \[\]/);
+  assert.doesNotMatch(service, /ALLOWED_ATTR: \['/);
 });
 
 test('Markdown admits by the original file-byte size without re-encoding tolerant text', () => {

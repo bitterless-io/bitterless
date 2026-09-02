@@ -16,6 +16,67 @@ import {
   withFakeTimeouts
 } from './onlyPreviewPreviewRegionTest.helper.mjs';
 
+test('Preview open diagnostics terminate each revision once and stale revisions cannot finish the new trace', async () => {
+  const { service } = createHarness();
+  service.updateBounds(host.hostToken, bounds);
+
+  await service.present(host.hostToken, fileRef('notes/first.md'));
+  const firstView = acknowledgeCurrentVue(service);
+  let snapshot = service.snapshot(host.hostToken);
+  service.reportVueReady(host.hostToken, snapshot.selectionRevision, firstView.previewRuntimeToken);
+  assert.deepEqual(state.openTraceRecords[0].terminals, [
+    { revision: snapshot.selectionRevision, surface: 'vue', outcome: 'ready' }
+  ]);
+
+  await service.present(host.hostToken, fileRef('notes/second.md'));
+  const secondRevision = service.snapshot(host.hostToken).selectionRevision;
+  await service.present(host.hostToken, fileRef('notes/third.md'));
+  snapshot = service.snapshot(host.hostToken);
+  assert.deepEqual(state.openTraceRecords[1].terminals, [
+    { revision: secondRevision, surface: 'vue', outcome: 'superseded' }
+  ]);
+  assert.equal(state.openTraceRecords[2].terminals.length, 0);
+
+  assert.throws(() =>
+    service.reportVueReady(host.hostToken, secondRevision, firstView.previewRuntimeToken)
+  );
+  assert.equal(state.openTraceRecords[2].terminals.length, 0);
+  assert.equal(snapshot.selectionRevision > secondRevision, true);
+});
+
+test('Preview open diagnostics cover Chrome ready/error and clear/destroy terminals', async () => {
+  let harness = createHarness();
+  harness.service.updateBounds(host.hostToken, bounds);
+  state.describe = async () => descriptorFor('page.html', 'text');
+  await harness.service.present(host.hostToken, fileRef('page.html'));
+  state.chromeViews[0].webContents.emit('did-finish-load');
+  assert.deepEqual(state.openTraceRecords[0].terminals, [
+    { revision: 1, surface: 'chrome', outcome: 'ready' }
+  ]);
+
+  harness = createHarness();
+  harness.service.updateBounds(host.hostToken, bounds);
+  state.describe = async () => descriptorFor('page.html', 'text');
+  state.nextChromeLoadError = new Error('fixture load failed');
+  await harness.service.present(host.hostToken, fileRef('page.html'));
+  assert.deepEqual(state.openTraceRecords[0].terminals, [
+    { revision: 1, surface: 'chrome', outcome: 'error' }
+  ]);
+
+  harness = createHarness();
+  harness.service.updateBounds(host.hostToken, bounds);
+  await harness.service.present(host.hostToken, fileRef('clear.md'));
+  harness.service.clearWorkspace(host.hostToken, 'workspace-id');
+  assert.deepEqual(state.openTraceRecords[0].terminals, [
+    { revision: 1, surface: 'vue', outcome: 'superseded' }
+  ]);
+  await harness.service.present(host.hostToken, fileRef('destroy.md'));
+  harness.service.destroy();
+  assert.deepEqual(state.openTraceRecords[1].terminals, [
+    { revision: 3, surface: 'vue', outcome: 'superseded' }
+  ]);
+});
+
 test('first valid bounds creates Vue detached and exact reset acknowledgement attaches it', () => {
   const { service, children, additions } = createHarness();
   assert.equal(state.vueViews.length, 0);
@@ -442,6 +503,9 @@ test('XLSX stays on Vue, grants one bounded preload read, and rebuilds Vue on re
     vue.previewRuntimeToken,
     'SHEET_PARSE_FAILED'
   );
+  assert.deepEqual(state.openTraceRecords[0].terminals, [
+    { revision: 1, surface: 'office', outcome: 'error' }
+  ]);
   snapshot = service.snapshot(host.hostToken);
   assert.equal(snapshot.status, 'unavailable');
   assert.equal(snapshot.error.code, 'SHEET_PARSE_FAILED');
@@ -558,6 +622,9 @@ test('DOCX stays on Vue, grants one bounded preload read, and publishes ready on
     );
     snapshot = service.snapshotForVue(host.hostToken, vue.previewRuntimeToken);
     assert.equal(snapshot.status, 'ready');
+    assert.deepEqual(state.openTraceRecords[0].terminals, [
+      { revision: 1, surface: 'office', outcome: 'ready' }
+    ]);
     assert.equal(snapshot.descriptor.assetUrl, undefined);
     assert.equal(timers[0].active, false);
     service.destroy();
@@ -588,6 +655,9 @@ test('DOCX Main watchdog rebuilds an unresponsive Vue renderer without waiting f
     assert.equal(originalVue.webContents.destroyed, true);
     assert.equal(state.vueViews.length, 2);
     assert.notEqual(state.vueViews[1].previewRuntimeToken, originalVue.previewRuntimeToken);
+    assert.deepEqual(state.openTraceRecords[0].terminals, [
+      { revision: 1, surface: 'office', outcome: 'error' }
+    ]);
     service.destroy();
   });
 });

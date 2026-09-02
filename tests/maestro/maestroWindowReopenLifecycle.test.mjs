@@ -42,12 +42,17 @@ test('repeat Open shows the preserved singleton before any cold boot is created'
 
   assert.ok(
     open.indexOf('const current = maestroWindowHelper.browserWindow') <
-      open.indexOf('this.bootPromise = this.boot()'),
+      open.indexOf('const boot = this.boot()'),
   );
-  assert.match(
+  const reuseBranch = requireMatch(
     open,
-    /if \(current && !current\.isDestroyed\(\)\) \{\s+maestroWindowHelper\.show\(\)\s+return/,
+    /if \(current && !current\.isDestroyed\(\)\) \{[\s\S]*?\n      \}/,
+    'Missing preserved Maestro singleton branch',
   );
+  assert.match(reuseBranch, /requestDiagnostics\.route\('reuse'\)/);
+  assert.match(reuseBranch, /maestroWindowHelper\.show\(\)/);
+  assert.match(reuseBranch, /requestDiagnostics\.terminal\('success', 'ready'\)/);
+  assert.match(reuseBranch, /return/);
 });
 
 test('authentication and host quit retain complete Maestro runtime cleanup', () => {

@@ -1,6 +1,6 @@
 {
   "_name": "Bitterless",
-  "_version": "0.0.84",
+  "_version": "0.0.86",
   "anydoc_version": "0.2.4",
   "bun_version": "1.3.14",
   "fd_version": "10.5.0",
@@ -150,7 +150,7 @@
     "publish:mac_intel": "node scripts/publish.js --env prod --platform mac_intel --build",
     "publish:win": "node scripts/publish.js --env prod --platform win64 --build",
     "publish_preview": "yarn publish_preview:mac_arm",
-    "publish_preview:mac_arm": "yarn install --frozen-lockfile && node scripts/publish.js --env preview --platform mac_arm --build",
+    "publish_preview:mac_arm": "yarn install --frozen-lockfile && node scripts/publish.js --env preview --platform mac_arm --bump --build",
     "publish_preview:mac_intel": "yarn install --frozen-lockfile && node scripts/publish.js --env preview --platform mac_intel --build",
     "publish_preview:win": "yarn install --frozen-lockfile && node scripts/publish.js --env preview --platform win64 --build",
     "release:cut": "node scripts/patch.js",
@@ -292,6 +292,6 @@
     "rig_dev/*"
   ],
   "name": "Bitterless_DEBUG_DEV",
-  "version": "0.0.84",
-  "version_code": "260901164356"
+  "version": "0.0.86",
+  "version_code": "260902155937"
 }

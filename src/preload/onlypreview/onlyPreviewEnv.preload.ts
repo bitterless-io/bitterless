@@ -34,6 +34,7 @@ export const exposeOnlyPreviewEnv = (): OnlyPreviewEnvApi => {
     hostToken: getOnlyPreviewArgument('onlypreview-host-token'),
     hostId: getOnlyPreviewArgument('onlypreview-host-id'),
     previewRuntimeToken: getOnlyPreviewArgument('onlypreview-runtime-token'),
+    openTag: getOnlyPreviewArgument('onlypreview-open-tag'),
     mode: resolveEntryMode(),
     platform: resolvePlatform()
   });

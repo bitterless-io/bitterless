@@ -85,6 +85,34 @@ test('folder selection mutations and explicit file opens share the same FIFO', a
   assert.deepEqual(calls, ['start:folder', 'end:folder', 'file:/tmp/external.md']);
 });
 
+test('explicit diagnostics start before FIFO wait and mark dequeue in serialized order', async () => {
+  const firstGate = deferred();
+  const events = [];
+  const serialized = runtime.serializeOnlyPreviewOpenTarget(async (target, trace) => {
+    trace.mark('fifo');
+    events.push(`dequeue:${target}`);
+    if (target.endsWith('first.md')) await firstGate.promise;
+  });
+  const open = (target) => {
+    const trace = { mark: (phase) => events.push(`${phase}:${target}`) };
+    events.push(`request:${target}`);
+    return serialized(target, trace);
+  };
+
+  const first = open('/tmp/first.md');
+  const second = open('/tmp/second.md');
+  await tick();
+  assert.deepEqual(events, [
+    'request:/tmp/first.md',
+    'request:/tmp/second.md',
+    'fifo:/tmp/first.md',
+    'dequeue:/tmp/first.md'
+  ]);
+  firstGate.resolve();
+  await Promise.all([first, second]);
+  assert.deepEqual(events.slice(-2), ['fifo:/tmp/second.md', 'dequeue:/tmp/second.md']);
+});
+
 test('all explicit target sources use the serialized boundary and packaged switches stay explicit', () => {
   const targetA = resolve('/tmp', 'one.txt');
   const targetB = resolve('/tmp', 'two.txt');
@@ -116,16 +144,18 @@ test('all explicit target sources use the serialized boundary and packaged switc
   );
 
   const handler = source('src/main/xpc/onlyPreview.handler.ts');
+  const explicitService = source('src/main/onlypreview/onlyPreviewExplicitOpen.service.ts');
   const appMain = source('src/main/app.main.ts');
-  const explicitOpenBody = handler.slice(
-    handler.indexOf('const performOpenOnlyPreviewAbsoluteTarget'),
-    handler.indexOf('export const destroyOnlyPreviewForAuth')
-  );
-  assert.match(explicitOpenBody, /beginExplicitTarget\(\)[\s\S]*ensureStandalone\(\)/);
+  const explicitOpenBody = explicitService;
+  assert.match(explicitOpenBody, /beginExplicitTarget\(\)[\s\S]*ensureStandalone\('explicit'\)/);
   assert.doesNotMatch(explicitOpenBody, /absoluteTargetGeneration|requestGeneration/);
   assert.match(
+    handler,
+    /export \{ openOnlyPreviewAbsoluteTarget \} from '@main\/onlypreview\/onlyPreviewExplicitOpen\.service';/
+  );
+  assert.match(
     explicitOpenBody,
-    /openOnlyPreviewAbsoluteTarget = serializeOnlyPreviewOpenTarget\([\s\S]*performOpenOnlyPreviewAbsoluteTarget,[\s\S]*onlyPreviewTargetMutations[\s\S]*registerOnlyPreviewExplicitTarget\(openOnlyPreviewAbsoluteTarget\)/
+    /serializedOpenOnlyPreviewAbsoluteTarget = serializeOnlyPreviewOpenTarget\([\s\S]*performOpenOnlyPreviewAbsoluteTarget,[\s\S]*onlyPreviewTargetMutations[\s\S]*openOnlyPreviewAbsoluteTarget[\s\S]*onlyPreviewOpenDiagnostics\.trace[\s\S]*serializedOpenOnlyPreviewAbsoluteTarget\(target, trace\)[\s\S]*registerOnlyPreviewExplicitTarget\(openOnlyPreviewAbsoluteTarget\)/
   );
   const chooseFolderBody = handler.slice(
     handler.indexOf('async chooseFolder('),

@@ -44,6 +44,11 @@ import {
   createOnlyPreviewSearchDiagnostics,
   type OnlyPreviewSearchDiagnostics
 } from '@shared/onlypreview/onlyPreviewSearchDiagnostics.mjs';
+import {
+  createOnlyPreviewWindowOpenCoordinator,
+  type OnlyPreviewOpenTrace
+} from '@shared/onlypreview/onlyPreviewOpenDiagnostics.mjs';
+import { onlyPreviewOpenDiagnostics } from '@main/onlypreview/onlyPreviewOpenDiagnostics.runtime';
 
 const DEFAULT_WIDTH = 1180;
 const DEFAULT_HEIGHT = 760;
@@ -192,6 +197,14 @@ export class OnlyPreviewWindowHelper {
   private agentSkillGuideWindowState: WindowStateController | null = null;
   private commandHandler: ((payload: OnlyPreviewNativeCommandPayload) => void) | null = null;
   private readonly diagnostics: OnlyPreviewSearchDiagnostics;
+  private readonly windowOpenTraces = createOnlyPreviewWindowOpenCoordinator({
+    diagnostics: onlyPreviewOpenDiagnostics
+  });
+  private shellStartupLease: {
+    hostToken: string;
+    window: BaseWindow;
+    view: WebContentsView;
+  } | null = null;
 
   constructor(diagnostics = createOnlyPreviewSearchDiagnostics()) {
     this.diagnostics = diagnostics;
@@ -260,14 +273,18 @@ export class OnlyPreviewWindowHelper {
     return this.requireStandaloneWindow(hostToken);
   }
 
-  async ensureStandalone(): Promise<OnlyPreviewHostCapability> {
+  async ensureStandalone(route: 'api' | 'explicit' = 'api'): Promise<OnlyPreviewHostCapability> {
     const currentWindow = this.baseWindow;
     const currentHost = this.getStandaloneHost();
+    const mode = currentWindow && !currentWindow.isDestroyed() && currentHost ? 'existing' : 'cold';
+    if (mode === 'cold') this.destroyStandalone();
+    const openTrace = this.windowOpenTraces.begin(route, mode);
     if (currentWindow && !currentWindow.isDestroyed() && currentHost) {
       this.show();
+      openTrace.mark({ phase: 'show' });
+      this.windowOpenTraces.finish(openTrace.tag, 'success');
       return currentHost;
     }
-    this.destroyStandalone();
     const host = onlyPreviewHostRegistry.issue('standalone', 'content');
     this.standaloneHost = host;
     const diagnostic = { tag: this.diagnostics.nextTag('v'), startedAt: this.diagnostics.now() };
@@ -277,7 +294,7 @@ export class OnlyPreviewWindowHelper {
       elapsedMs: 0
     });
     try {
-      await this.createStandaloneWindow(host, diagnostic);
+      await this.createStandaloneWindow(host, diagnostic, openTrace);
       this.diagnostics.emit('visible-window-terminal', {
         tag: diagnostic.tag,
         outcome: 'success',
@@ -290,6 +307,7 @@ export class OnlyPreviewWindowHelper {
         outcome: 'failure',
         elapsedMs: this.diagnostics.elapsed(diagnostic.startedAt)
       });
+      this.finishShellOpenTrace(openTrace.tag, 'failure', 'fail');
       this.destroyStandalone();
       throw error;
     }
@@ -305,6 +323,64 @@ export class OnlyPreviewWindowHelper {
       window.show();
     }
     window.focus();
+  }
+
+  reportShellMounted(
+    hostToken: string,
+    openTag: string,
+    phase: 'renderer-script' | 'renderer-language' | 'renderer-import' | 'renderer-mount' | 'renderer-receipt',
+    outcome?: 'success' | 'failure'
+  ): void {
+    this.requireStandaloneHost(hostToken);
+    const window = this.baseWindow;
+    const shellView = this.shellView;
+    if (
+      !window ||
+      window.isDestroyed() ||
+      !shellView ||
+      shellView.webContents.isDestroyed() ||
+      !this.isCurrentShell(hostToken, window, shellView)
+    ) return;
+    if (phase === 'renderer-receipt' && outcome) {
+      const wasVisible = window.isVisible();
+      if (outcome === 'success') this.show();
+      if (outcome === 'success' && !wasVisible && this.windowOpenTraces.isActive(openTag)) {
+        this.windowOpenTraces.mark(openTag, {
+          phase: 'first-visible',
+          role: 'base',
+          lifecycle: 'shown',
+          visible: window.isVisible(),
+          focused: window.isFocused(),
+          backgroundThrottling: shellView.webContents.getBackgroundThrottling()
+        });
+      }
+      this.settleShellStartupLease(hostToken, window, shellView);
+    }
+    if (this.windowOpenTraces.isActive(openTag)) this.windowOpenTraces.mark(openTag, {
+      phase,
+      role: 'shell',
+      lifecycle: 'bootstrap',
+      visible: window.isVisible(),
+      focused: window.isFocused(),
+      backgroundThrottling: shellView.webContents.getBackgroundThrottling()
+    });
+    if (phase === 'renderer-receipt' && outcome) {
+      if (outcome === 'success' && this.windowOpenTraces.isActive(openTag)) {
+        this.windowOpenTraces.mark(openTag, {
+          phase: 'interactive',
+          role: 'shell',
+          lifecycle: 'interactive',
+          visible: window.isVisible(),
+          focused: window.isFocused(),
+          backgroundThrottling: shellView.webContents.getBackgroundThrottling()
+        });
+      }
+      this.finishShellOpenTrace(
+        openTag,
+        outcome,
+        outcome === 'failure' ? 'bootstrap-fail' : 'none'
+      );
+    }
   }
 
   minimizeWindow(hostToken: string): void {
@@ -502,6 +578,10 @@ export class OnlyPreviewWindowHelper {
     this.destroyAgentSkillGuide();
     const window = this.baseWindow;
     const shellView = this.shellView;
+    this.windowOpenTraces.supersede();
+    if (window && shellView && this.standaloneHost) {
+      this.settleShellStartupLease(this.standaloneHost.hostToken, window, shellView);
+    }
     onlyPreviewGlobalSearchWindowService.destroy();
     onlyPreviewPreviewRegionService.destroy();
     this.baseWindow = null;
@@ -574,7 +654,8 @@ export class OnlyPreviewWindowHelper {
 
   private async createStandaloneWindow(
     host: OnlyPreviewHostCapability,
-    diagnostic: { tag: string; startedAt: number }
+    diagnostic: { tag: string; startedAt: number },
+    openTrace: OnlyPreviewOpenTrace
   ): Promise<void> {
     const restored = windowStateService.resolve('onlypreview');
     const window = new BaseWindow({
@@ -591,6 +672,14 @@ export class OnlyPreviewWindowHelper {
       ...(restored ? { x: restored.bounds.x, y: restored.bounds.y } : {})
     });
     this.baseWindow = window;
+    openTrace.mark({
+      phase: 'native',
+      role: 'base',
+      lifecycle: 'created',
+      visible: window.isVisible(),
+      focused: window.isFocused(),
+      backgroundThrottling: true
+    });
     this.baseWindowState = windowStateService.register('onlypreview', window);
     const searchBootstrap = onlyPreviewSearchBootstrapRegistry.issue(host.hostToken);
     this.searchBootstrapToken = searchBootstrap.searchToken;
@@ -611,8 +700,17 @@ export class OnlyPreviewWindowHelper {
       onUnexpectedExit: (reason) => {
         console.warn(`[OnlyPreview] ${reason} Closing the standalone window.`);
         this.destroyStandalone();
-      }
+      },
+      onOpenStage: (phase) => openTrace.mark({
+        phase,
+        role: 'hidden-search',
+        lifecycle: 'ready',
+        visible: false,
+        focused: false,
+        backgroundThrottling: false
+      })
     });
+    openTrace.mark({ phase: 'runtime' });
     this.diagnostics.emit('visible-window', {
       tag: diagnostic.tag,
       phase: 'runtime-ready',
@@ -621,8 +719,17 @@ export class OnlyPreviewWindowHelper {
     if (this.baseWindow !== window || this.standaloneHost?.hostToken !== host.hostToken) {
       throw new Error('OnlyPreview file-search runtime startup was superseded.');
     }
-    const shellView = this.createView(host, 'shell');
+    const shellView = this.createView(host, 'shell', undefined, undefined, undefined, openTrace.tag);
+    openTrace.mark({
+      phase: 'shell-create',
+      role: 'shell',
+      lifecycle: 'created',
+      visible: window.isVisible(),
+      focused: window.isFocused(),
+      backgroundThrottling: shellView.webContents.getBackgroundThrottling()
+    });
     this.shellView = shellView;
+    this.shellStartupLease = { hostToken: host.hostToken, window, view: shellView };
     window.contentView.addChildView(shellView);
     this.applyInitialBounds();
     onlyPreviewGlobalSearchWindowService.start({
@@ -660,6 +767,9 @@ export class OnlyPreviewWindowHelper {
     // A dead view closes the whole standalone window, which otherwise looks like the window simply
     // vanished. Name the view and the exit reason so the cause is recoverable from the log.
     const closeOnRendererFailure = (details: Electron.RenderProcessGoneDetails): void => {
+      if (!this.isCurrentShell(host.hostToken, window, shellView)) return;
+      this.settleShellStartupLease(host.hostToken, window, shellView);
+      this.finishShellOpenTrace(openTrace.tag, 'failure', 'render-gone');
       console.warn(
         `[OnlyPreview] The shell renderer exited (${details.reason}, exitCode ${details.exitCode}); closing the standalone window.`
       );
@@ -668,8 +778,33 @@ export class OnlyPreviewWindowHelper {
     shellView.webContents.once('render-process-gone', (_event, details) =>
       closeOnRendererFailure(details)
     );
+    shellView.webContents.once('dom-ready', () => {
+      if (this.shellView !== shellView) return;
+      openTrace.mark({ phase: 'shell-dom-ready', role: 'shell', lifecycle: 'dom-ready' });
+    });
     shellView.webContents.once('did-finish-load', () => {
-      if (this.baseWindow === window) this.baseWindowState?.show();
+      if (this.baseWindow !== window || this.shellView !== shellView) return;
+      openTrace.mark({ phase: 'shell-did-finish', role: 'shell', lifecycle: 'did-finish' });
+      this.baseWindowState?.show();
+      window.focus();
+      openTrace.mark({
+        phase: 'first-visible',
+        role: 'base',
+        lifecycle: 'shown',
+        visible: window.isVisible(),
+        focused: window.isFocused(),
+        backgroundThrottling: shellView.webContents.getBackgroundThrottling()
+      });
+    });
+    shellView.webContents.once('did-fail-load', () => {
+      if (!this.isCurrentShell(host.hostToken, window, shellView)) return;
+      this.settleShellStartupLease(host.hostToken, window, shellView);
+      this.finishShellOpenTrace(openTrace.tag, 'failure', 'load-fail');
+    });
+    shellView.webContents.once('unresponsive', () => {
+      if (!this.isCurrentShell(host.hostToken, window, shellView)) return;
+      this.settleShellStartupLease(host.hostToken, window, shellView);
+      this.finishShellOpenTrace(openTrace.tag, 'failure', 'unresponsive');
     });
     window.on('resize' as any, () => {
       if (this.baseWindow !== window) return;
@@ -687,7 +822,12 @@ export class OnlyPreviewWindowHelper {
       }
     });
     window.once('closed' as any, () => {
-      if (this.baseWindow !== window) return;
+      if (
+        this.baseWindow !== window ||
+        this.standaloneHost?.hostToken !== host.hostToken
+      ) return;
+      this.settleShellStartupLease(host.hostToken, window, shellView);
+      this.finishShellOpenTrace(openTrace.tag, 'failure', 'closed');
       this.destroySettings();
       this.destroyAgentSkillGuide();
       this.baseWindow = null;
@@ -704,11 +844,21 @@ export class OnlyPreviewWindowHelper {
       if (this.standaloneHost?.hostToken === host.hostToken) this.standaloneHost = null;
       onlyPreviewHostRegistry.revoke(host.hostToken);
     });
+    openTrace.mark({ phase: 'shell-load-start', role: 'shell', lifecycle: 'loading' });
     await this.loadView(shellView, 'shell');
+    openTrace.mark({ phase: 'shell-load-resolved', role: 'shell', lifecycle: 'load-resolved' });
     this.diagnostics.emit('visible-window', {
       tag: diagnostic.tag,
       phase: 'renderer-loaded',
       elapsedMs: this.diagnostics.elapsed(diagnostic.startedAt)
+    });
+    openTrace.mark({
+      phase: 'show',
+      role: 'base',
+      lifecycle: 'shown',
+      visible: window.isVisible(),
+      focused: window.isFocused(),
+      backgroundThrottling: shellView.webContents.getBackgroundThrottling()
     });
     const previewView = onlyPreviewPreviewRegionService.getVuePreviewView();
     if (
@@ -730,7 +880,8 @@ export class OnlyPreviewWindowHelper {
     mode: 'shell' | 'preview' | 'globalSearch',
     previewRuntimeToken?: string,
     officeBrokerCapability?: string,
-    previewReadBrokerCapability?: string
+    previewReadBrokerCapability?: string,
+    openTag?: string
   ): WebContentsView {
     const target = getOnlyPreviewRendererTarget(mode, __dirname);
     const view = new WebContentsView({
@@ -743,12 +894,14 @@ export class OnlyPreviewWindowHelper {
         contextIsolation: true,
         nodeIntegration: false,
         webSecurity: true,
+        backgroundThrottling: mode !== 'shell',
         additionalArguments: getOnlyPreviewRendererArguments(
           host,
           mode,
           previewRuntimeToken,
           officeBrokerCapability,
-          previewReadBrokerCapability
+          previewReadBrokerCapability,
+          openTag
         )
       }
     });
@@ -777,6 +930,36 @@ export class OnlyPreviewWindowHelper {
     if (!this.baseWindow || !this.shellView) return;
     const [width, height] = this.baseWindow.getContentSize();
     this.shellView.setBounds({ x: 0, y: 0, width, height });
+  }
+
+  private finishShellOpenTrace(
+    tag: string,
+    outcome: 'success' | 'failure' | 'superseded',
+    reason: 'none' | 'fail' | 'closed' | 'load-fail' | 'render-gone' | 'unresponsive' | 'bootstrap-fail' = 'none'
+  ): void {
+    this.windowOpenTraces.finish(tag, outcome, reason);
+  }
+
+  private isCurrentShell(
+    hostToken: string,
+    window: BaseWindow,
+    view: WebContentsView
+  ): boolean {
+    return this.baseWindow === window && this.shellView === view &&
+      this.standaloneHost?.hostToken === hostToken;
+  }
+
+  private settleShellStartupLease(
+    hostToken: string,
+    window: BaseWindow,
+    view: WebContentsView
+  ): boolean {
+    if (!this.isCurrentShell(hostToken, window, view)) return false;
+    const lease = this.shellStartupLease;
+    if (lease?.hostToken !== hostToken || lease.window !== window || lease.view !== view) return false;
+    this.shellStartupLease = null;
+    if (!view.webContents.isDestroyed()) view.webContents.setBackgroundThrottling(true);
+    return true;
   }
 
   private resolveNativeCommand(

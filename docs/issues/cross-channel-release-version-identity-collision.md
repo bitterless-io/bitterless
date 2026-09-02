@@ -62,12 +62,11 @@ Settings Log ledger, and the Ops inventory all use it to name one specific binar
 
 ## Operator-workflow decision
 
-Removing `--bump` from the per-platform publishers changes how a release is cut: bump once through
-an explicit `yarn release:cut`, then run each platform publisher against that one version. The
-alternative — keeping `--bump` on whichever platform happens to run first — is order-dependent and
-silently mints a new version whenever the operator repeats a platform. Ral approved the explicit cut
-step on 2026-09-02 and it is implemented. `fast_publish:mac_arm` keeps its own `scripts/patch.js`
-because it is by definition a single-platform cut-and-publish command.
+The original delivery removed `--bump` from every platform publisher and required an explicit
+`yarn release:cut`. Ral subsequently restored the expected one-step Preview workflow on 2026-09-02:
+macOS ARM is the canonical Preview cut-and-publish command and increments exactly once; Preview
+Intel/Windows reuse that already-cut identity. `release:cut` remains available when a release must
+start from another platform. `fast_publish:mac_arm` retains its existing Stable cut behavior.
 
 Forgetting the cut is not silent: republishing an identity that the same channel already holds is
 still refused by `assertReleaseOrder()` with the existing version-reuse message.
@@ -79,9 +78,9 @@ still refused by `assertReleaseOrder()` with the existing version-reuse message.
 - A fixture proves publication refuses a `version` that another channel already published under a
   different `version_code`.
 - A fixture proves `NoSuchKey` from another channel is allowed and a transport error is refused.
-- Package-script tests prove no `publish:*`, `publish_dev:*`, or `publish_preview:*` alias carries
-  `--bump`, that `release:cut` exists, and that `fast_publish:mac_arm` still performs exactly one
-  build.
+- Package-script tests prove only the canonical `publish_preview:mac_arm` carries `--bump`, Preview
+  Intel/Windows and Stable/development publishers do not, `release:cut` exists, and
+  `fast_publish:mac_arm` still performs exactly one build.
 - Same-channel downgrade, version-reuse, and version_code-reuse rejections keep their current
   messages and remain covered.
 - No build, signing, notarization, upload, CDN refresh, Electron, or E2E runs during verification.
@@ -97,8 +96,9 @@ Implementation task:
   classification now shared with `assertNoRemoteDowngrade()`.
 - The guard runs in both existing publication gates: the preflight, so `--preflight-only` reports it
   before any build, and again after the build against the produced `version_info.json`.
-- Preview publishers no longer carry `--bump`. `yarn release:cut` is the single bump entrypoint;
-  `fast_publish:mac_arm` keeps its own cut and still performs exactly one build.
+- The initial delivery removed every Preview `--bump`; follow-up task 115 restores it only on the
+  canonical macOS ARM Preview publisher. Intel/Windows reuse that identity, while `yarn release:cut`
+  remains the explicit alternative and `fast_publish:mac_arm` keeps its Stable cut.
 - Same-channel order policy, messages, artifact discovery, upload order, CDN refresh, and
   credentials are unchanged, and no published artifact was touched.
 - Release-hook suite passed 37/37, including four new guard fixtures and the publisher-ordering

@@ -314,6 +314,7 @@ export const en = {
   },
   miniApp: {
     open: 'Open',
+    opened: '{name} opened',
     openFailed: 'Could not open {name}',
     todo: {
       name: 'Todo',
@@ -594,6 +595,7 @@ export const en = {
     add: 'Add',
     edit: 'Edit',
     delete: 'Delete',
+    dragHandle: 'Drag to reorder',
     cardActions: 'Motto actions',
     listLabel: 'Important reminders',
     emptyTitle: 'Keep what matters in sight',

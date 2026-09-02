@@ -81,7 +81,7 @@ The four renderer entries are `maestroHome`, `maestroControl`, `maestroWorkbench
 | Development hot reload or Main restart | Recreate/focus Maestro; never reveal the legacy Home `BrowserWindow`. |
 | Session activation | Boot authenticated runtimes, keep legacy Home hidden, broadcast the token-free snapshot, and switch fixed Home from Login to Mini Apps. |
 | Mini Apps renders | Render the localized Maestro card in Workbench Apps; Open focuses the current singleton. |
-| Repeated Open | Restore/focus the existing Maestro window; never create a second graph. |
+| Repeated Open | Restore/focus the existing Maestro window; never create a second graph. Record whether the request reused the singleton, joined a boot, or started a cold boot. |
 | Window close | Hide and preserve the live Maestro window graph; Dock/tray/second-instance/Mini Apps Open restores and focuses the same singleton without a cold boot. |
 | Bitterless auth invalidation/logout | Destroy authenticated secondary runtimes, recreate/focus Maestro when needed, and switch fixed Home to Login; legacy Home remains hidden. |
 | Bitterless quit/update install | Stop Maestro schedulers/capture/agents and destroy Maestro windows before process exit. |
@@ -91,6 +91,12 @@ The four renderer entries are `maestroHome`, `maestroControl`, `maestroWorkbench
 Maestro keeps its large working size (`1360x900`) and never permits a window below `800x600`.
 Window geometry follows the shared [top-level window state contract](window-state-persistence.md);
 the legacy Cowork `cowork-main` entry is imported once when the unified Maestro key is absent.
+
+Main emits a fixed `[maestro-open]` timing timeline into the existing profile `main.log`. One short
+request ID and, for cold boots, one shared boot ID correlate cleanup, route selection, SQLite load
+and preload readiness, Session, Shell, fixed Home, Control, Workbench, all-ready, and final show.
+Only fixed enums and monotonic durations are recorded; URLs, paths, tabs, sessions, accounts,
+tokens, renderer values, and raw errors are forbidden.
 
 ## Feature parity surface
 

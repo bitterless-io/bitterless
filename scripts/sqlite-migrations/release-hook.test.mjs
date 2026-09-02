@@ -82,27 +82,32 @@ test('direct package scripts have migration pre-hooks', () => {
 test('Preview publish aliases build and publish current local source without Git operations', () => {
   const pkg = JSON.parse(read('package.json'))
   const expected = {
-    'publish_preview:mac_arm': 'mac_arm',
-    'publish_preview:mac_intel': 'mac_intel',
-    'publish_preview:win': 'win64',
+    'publish_preview:mac_arm': 'yarn install --frozen-lockfile && node scripts/publish.js --env preview --platform mac_arm --bump --build',
+    'publish_preview:mac_intel': 'yarn install --frozen-lockfile && node scripts/publish.js --env preview --platform mac_intel --build',
+    'publish_preview:win': 'yarn install --frozen-lockfile && node scripts/publish.js --env preview --platform win64 --build',
   }
   assert.equal(pkg.scripts.publish_preview, 'yarn publish_preview:mac_arm')
-  for (const [script, platform] of Object.entries(expected)) {
-    assert.equal(
-      pkg.scripts[script],
-      `yarn install --frozen-lockfile && node scripts/publish.js --env preview --platform ${platform} --build`,
-    )
+  for (const [script, command] of Object.entries(expected)) {
+    assert.equal(pkg.scripts[script], command)
     assert.doesNotMatch(pkg.scripts[script], /git|pull|reset|restore/)
   }
 })
 
-test('one explicit release cut owns the shared version counter for every platform publisher', () => {
+test('only canonical Preview mac ARM auto-cuts the shared release identity', () => {
   const pkg = JSON.parse(read('package.json'))
   assert.equal(pkg.scripts['release:cut'], 'node scripts/patch.js')
   const publishers = Object.keys(pkg.scripts).filter((name) => /^publish(_dev|_preview)?(:|$)/.test(name))
   assert(publishers.length >= 10)
+  const autoCutPublishers = publishers.filter((name) => pkg.scripts[name].includes('--bump'))
+  assert.deepEqual(autoCutPublishers, ['publish_preview:mac_arm'])
   for (const name of publishers) {
-    assert.doesNotMatch(pkg.scripts[name], /--bump|patch\.js/, `${name} must not mint a version`)
+    assert.doesNotMatch(pkg.scripts[name], /patch\.js/, `${name} must not invoke the patch script`)
+    if (name === 'publish_preview:mac_arm') {
+      assert.equal(pkg.scripts[name].match(/--bump/g)?.length, 1)
+      assert.ok(pkg.scripts[name].indexOf('--bump') < pkg.scripts[name].indexOf('--build'))
+    } else {
+      assert.doesNotMatch(pkg.scripts[name], /--bump/, `${name} must reuse the cut identity`)
+    }
   }
 })
 

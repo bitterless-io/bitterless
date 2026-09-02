@@ -100,6 +100,7 @@ export class FileSearchWindowService {
     bootstrapToken: string;
     broadcast(eventName: string, value: unknown): void;
     onUnexpectedExit(reason: string): void;
+    onOpenStage?(phase: 'runtime-search' | 'runtime-office' | 'runtime-authority' | 'runtime-preview-read'): void;
   }): Promise<void> {
     this.stop();
     const diagnostic = { tag: this.diagnostics.nextTag('w'), startedAt: this.diagnostics.now() };
@@ -201,7 +202,9 @@ export class FileSearchWindowService {
         instanceId,
         stopped
       });
+      params.onOpenStage?.('runtime-search');
       await this.officeReader.waitUntilReady(stopped);
+      params.onOpenStage?.('runtime-office');
       let projectReadyTimeout: ReturnType<typeof setTimeout> | undefined;
       const projectReady = await Promise.race([
         projectAuthorityClient.ready({
@@ -221,7 +224,9 @@ export class FileSearchWindowService {
         if (projectReadyTimeout) clearTimeout(projectReadyTimeout);
       });
       if (!projectReady.ok) throw new Error('Project authority runtime failed to initialize.');
+      params.onOpenStage?.('runtime-authority');
       await this.previewReader.waitUntilReady(stopped);
+      params.onOpenStage?.('runtime-preview-read');
       this.diagnostics.emit('runtime-window', {
         tag: diagnostic.tag,
         phase: 'preload-ready',

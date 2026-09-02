@@ -43,10 +43,9 @@ existing same-channel publication gate.
 - Run the guard in the same place as the existing preflight so `--preflight-only` and `--dry-run`
   keep their current meaning: `--preflight-only` reports the verdict and exits before any build,
   `--dry-run` performs no OSS writes.
-- Remove `--bump` from `publish_preview:mac_arm`, `publish_preview:mac_intel`, and
-  `publish_preview:win`. Add `release:cut` as `node scripts/patch.js`, the single documented bump
-  entrypoint. Keep `fast_publish:mac_arm` as an explicit single-platform cut-and-publish that still
-  performs exactly one build.
+- The original delivery removed `--bump` from all Preview publishers and added `release:cut`.
+  Follow-up task 115 intentionally restores one-step cut behavior only for the canonical macOS ARM
+  Preview publisher; Intel/Windows remain non-bumping so one identity still spans platforms.
 - Do not change `assertReleaseOrder()` policy or its messages, `patch.js` bump arithmetic, channel
   directories, artifact discovery, upload order, CDN refresh, or credentials.
 - Do not rewrite, relabel, re-upload, or delete any published artifact. Stable `0.0.78` and Preview
@@ -63,8 +62,9 @@ existing same-channel publication gate.
 - Fixture: another channel's read fails with a transport error → refused.
 - Regression: the existing same-channel downgrade, version-reuse, and version_code-reuse rejections
   keep their current messages.
-- Package-script guard: no `publish*:*` alias carries `--bump`; `release:cut` exists;
-  `fast_publish:mac_arm` performs one build.
+- Package-script guard after task 115: only canonical Preview macOS ARM carries `--bump`;
+  `release:cut` exists; other platform publishers do not bump; `fast_publish:mac_arm` performs one
+  build.
 - `node --check` on both modified scripts and `git diff --check`.
 - Do not invoke package builds, signing, notarization, publication, network operations, Electron,
   Playwright, or E2E. Ral owns the next release run.
@@ -99,7 +99,8 @@ existing same-channel publication gate.
 
 ## Owner Verification
 
-- Cut one release with `yarn release:cut`, publish it to two platforms of the same channel, and
-  confirm both feeds advertise the identical `version` and `version_code`.
+- Run `yarn publish_preview:mac_arm`, then publish Preview to a second platform without another cut,
+  and confirm both feeds advertise the identical `version` and `version_code`. If a release starts
+  from a non-ARM platform, use `yarn release:cut` first instead.
 - Attempt a Stable publication without a fresh cut while the Preview feed holds that identity, and
   confirm it is refused rather than silently accepted.

@@ -26,7 +26,8 @@ export const getOnlyPreviewRendererArguments = (
   mode: OnlyPreviewRendererMode,
   previewRuntimeToken?: string,
   officeBrokerCapability?: string,
-  previewReadBrokerCapability?: string
+  previewReadBrokerCapability?: string,
+  openTag?: string
 ): string[] => [
   `--onlypreview-host-token=${host.hostToken}`,
   `--onlypreview-host-id=${host.hostId}`,
@@ -37,7 +38,8 @@ export const getOnlyPreviewRendererArguments = (
     : []),
   ...(previewReadBrokerCapability
     ? [`--onlypreview-read-broker-capability=${previewReadBrokerCapability}`]
-    : [])
+    : []),
+  ...(openTag ? [`--onlypreview-open-tag=${openTag}`] : [])
 ];
 
 export const configureOnlyPreviewNavigationFence = (

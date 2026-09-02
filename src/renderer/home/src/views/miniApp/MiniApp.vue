@@ -56,7 +56,11 @@ const openTodo = async () => {
 };
 
 const openOmniBrowser = async () => {
-  await omniWindowEmitter.openOmniWindow();
+  const result = await omniWindowEmitter.openOmniWindow();
+  if (!result?.opened) throw new Error('Omni Browser did not become ready');
+  Message.success(
+    i18nHelper.miniApp.opened.replace('{name}', i18nHelper.miniApp.omniBrowser.name),
+  );
 };
 
 const openMaestro = async () => {

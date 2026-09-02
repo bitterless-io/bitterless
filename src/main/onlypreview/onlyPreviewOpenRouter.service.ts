@@ -73,12 +73,12 @@ export class OnlyPreviewTargetMutationQueue {
   }
 }
 
-export const serializeOnlyPreviewOpenTarget = (
-  openTarget: (target: string) => Promise<void>,
+export const serializeOnlyPreviewOpenTarget = <TContext = undefined>(
+  openTarget: (target: string, context: TContext) => Promise<void>,
   mutations = new OnlyPreviewTargetMutationQueue()
-): ((target: string) => Promise<void>) => {
-  return (target) => {
-    return mutations.run(async () => await openTarget(target));
+): ((target: string, context?: TContext) => Promise<void>) => {
+  return (target, context) => {
+    return mutations.run(async () => await openTarget(target, context as TContext));
   };
 };
 

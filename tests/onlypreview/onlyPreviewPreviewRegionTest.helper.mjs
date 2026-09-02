@@ -292,7 +292,8 @@ const createState = () => ({
   previewCancels: [],
   framesById: new Map(),
   nextFrameRoutingId: 1,
-  activeViewAttachNotifications: 0
+  activeViewAttachNotifications: 0,
+  openTraceRecords: []
 });
 
 const host = {
@@ -557,6 +558,19 @@ const selectedFileIdentityModule = loadTypeScriptModule(
 const regionModule = loadTypeScriptModule(
   'src/main/onlypreview/views/onlyPreviewPreviewRegion.service.ts',
   {
+    '@main/onlypreview/onlyPreviewOpenDiagnostics.runtime': {
+      onlyPreviewOpenDiagnostics: {
+        trace: (_flow, fields) => {
+          const record = { fields, marks: [], terminals: [] };
+          state.openTraceRecords.push(record);
+          return {
+            tag: `p${state.openTraceRecords.length}`,
+            mark: (value) => (record.marks.push(value), true),
+            end: (value) => (record.terminals.push(value), true)
+          };
+        }
+      }
+    },
     electron: { BaseWindow: class {}, WebContentsView: FakeChromeView },
     'electron-xpc/main': {
       xpcMain: {

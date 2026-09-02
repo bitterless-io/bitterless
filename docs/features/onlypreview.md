@@ -530,6 +530,13 @@ uses its own monotonic clock; no cross-process timestamp subtraction is presente
 Diagnostics reuse existing aggregate counters and add no filesystem/SQLite/body work or protocol
 fields. They never run inside entry, file, chunk, result, batch, or progress loops.
 
+A separate fixed open timeline correlates native window construction, hidden runtime readiness,
+Shell load/mount, show/focus, explicit target inspection/binding, presentation publication, and a
+current Preview-ready acknowledgement where one already exists. It reuses the profile logging
+policy and never makes Main wait for renderer readiness only for diagnostics. Like search timing,
+it records short local tags, fixed enums, and monotonic durations only—never a path, filename,
+workspace identity, query/content, URL, capability, renderer payload, or raw error.
+
 Index progress and Global Search availability are independent. When a complete SQLite index
 already exists, it remains the active read-only query authority while a separate candidate index is
 counted and built. Each query phase acquires a reader lease that captures one internally consistent
@@ -711,7 +718,9 @@ runtime/UI path; packaged release startup remains untested.
   as visible text before sanitization. Sanitized output allows only semantic text/list/table/code
   tags and no attributes; scripts, styles, forms, frames, SVG/MathML, event handlers, `href`, `src`,
   and remote/data/local resource loads cannot survive. Links remain readable but inert, and images
-  become alt-text placeholders rather than loading a resource.
+  become alt-text placeholders rather than loading a resource. A valid leading YAML front-matter
+  block is stripped before compilation and never rendered; the preview begins with the document
+  body. An unclosed leading `---` remains ordinary Markdown.
 - Image admission checks extension, the 100 MiB limit, and a bounded signature probe. Common SVG
   XML declaration/comment/DOCTYPE prologs, AAC `ADIF`, and plausible MOV/QuickTime
   `ftyp/moov/mdat/wide/free/skip` first atoms are accepted by their respective gates. An admitted

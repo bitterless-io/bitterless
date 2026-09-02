@@ -156,6 +156,10 @@ import type { SavedTab } from '@maestro-shared/tabs.api'
 import type { CaptureMode, TraceEvent } from '@maestro-shared/trace.types'
 import type { SkillRecipe } from '@maestro-main/skills/skillRecipe.types'
 import { maestroDataRoot } from '@maestro-main/data/maestroDataRoot'
+import type {
+  MaestroOpenBootTrace,
+  MaestroOpenStage
+} from '@maestro-main/diagnostics/maestroOpenDiagnostics.service'
 import {
   fileThumbnail,
   type ThumbnailResult
@@ -244,6 +248,7 @@ class MaestroWindowController
   // retries on pinned Home instead of reviving a stale startup/last-active browser tab.
   private forcePinnedHomeIntentVersion = 0
   private activeBootForcePinnedHomeIntentVersion = 0
+  private openBootDiagnostics: MaestroOpenBootTrace | null = null
 
   get tabs(): OperationTab[] {
     return this.browserView.tabs
@@ -373,7 +378,28 @@ class MaestroWindowController
     this.activeBootForcePinnedHomeIntentVersion = 0
   }
 
+  setOpenBootDiagnostics(diagnostics: MaestroOpenBootTrace): void {
+    this.openBootDiagnostics = diagnostics
+  }
+
+  clearOpenBootDiagnostics(diagnostics: MaestroOpenBootTrace): void {
+    if (this.openBootDiagnostics === diagnostics) this.openBootDiagnostics = null
+  }
+
+  private traceOpenStage(
+    promise: Promise<void>,
+    diagnostics: MaestroOpenBootTrace | null,
+    stage: MaestroOpenStage,
+    startedAt: number | undefined
+  ): Promise<void> {
+    if (!diagnostics || startedAt === undefined) return promise
+    return promise.then(() => {
+      diagnostics.completeStage(stage, startedAt)
+    })
+  }
+
   create(): BrowserWindow {
+    const diagnostics = this.openBootDiagnostics
     const forcePinnedHomeIntentVersion = this.forcePinnedHomeIntentVersion
     const forcePinnedHome = forcePinnedHomeIntentVersion > 0
     this.activeBootForcePinnedHomeIntentVersion = forcePinnedHomeIntentVersion
@@ -388,29 +414,60 @@ class MaestroWindowController
     this.currentUrl = MAESTRO_LOCAL_HOME_DISPLAY_URL
 
     this.resetWindowScopedViews()
+    const homeMountedStartedAt = diagnostics?.mark()
     const homeMountedReady = this.createHomeRendererReadyFence(forcePinnedHome)
+    const shellStartedAt = diagnostics?.mark()
     const win = super.create()
+    const shellReady = this.traceOpenStage(
+      this.rendererReady,
+      diagnostics,
+      'shell',
+      shellStartedAt
+    )
+    const mountedReady = this.traceOpenStage(
+      homeMountedReady,
+      diagnostics,
+      'home-mount',
+      homeMountedStartedAt
+    )
 
     // First tab = bundled Bitterless Home (leftmost, non-closable, fixed title/favicon). It owns a
     // dedicated XPC-only preload and never participates in debugger/capture/replay.
     const operationView = this.browserView.createPinnedHomeTab()
-    const homeReady = Promise.all([this.rendererReady, homeMountedReady])
+    const homeReady = Promise.all([shellReady, mountedReady])
       .then(() => undefined)
       .catch((err) => {
         this.emit({ kind: 'error', msg: 'home load: ' + (err as Error).message, ts: Date.now() })
         throw err
       })
-    const workbenchReady = this.workbenchView.create()
+    const workbenchStartedAt = diagnostics?.mark()
+    const workbenchReady = this.traceOpenStage(
+      this.workbenchView.create(),
+      diagnostics,
+      'workbench',
+      workbenchStartedAt
+    )
     // Stay hidden until the local entry has painted. The white Layout placeholder covers the
     // operation area during this short load and prevents a pre-paint flash.
 
-    const controlReady = this.controlView.create()
+    const controlStartedAt = diagnostics?.mark()
+    const controlReady = this.traceOpenStage(
+      this.controlView.create(),
+      diagnostics,
+      'control',
+      controlStartedAt
+    )
 
     this.layout()
     win.on('resize', () => this.layout())
 
-    this.initialReady = this.browserView
-      .loadPinnedHomeTab()
+    const pinnedHomeStartedAt = diagnostics?.mark()
+    this.initialReady = this.traceOpenStage(
+      this.browserView.loadPinnedHomeTab(),
+      diagnostics,
+      'home-tab',
+      pinnedHomeStartedAt
+    )
       .catch((err) => {
         this.emit({ kind: 'error', msg: 'bundled Home load: ' + (err as Error).message, ts: Date.now() })
         throw err
@@ -420,9 +477,23 @@ class MaestroWindowController
           operationView.setVisible(true)
         }
       })
-      .then(() => this.browserView.openStartupTabIfNeeded({ skipForThisBoot: forcePinnedHome }))
+      .then(() => {
+        const startupTabStartedAt = diagnostics?.mark()
+        return this.traceOpenStage(
+          this.browserView.openStartupTabIfNeeded({ skipForThisBoot: forcePinnedHome }),
+          diagnostics,
+          'startup-tab',
+          startupTabStartedAt
+        )
+      })
     const operationReady = this.initialReady
-    this.initialReady = Promise.all([homeReady, controlReady, workbenchReady, operationReady]).then(() => undefined)
+    const allReadyStartedAt = diagnostics?.mark()
+    this.initialReady = this.traceOpenStage(
+      Promise.all([homeReady, controlReady, workbenchReady, operationReady]).then(() => undefined),
+      diagnostics,
+      'all-ready',
+      allReadyStartedAt
+    )
     // Pre-warm one spare view so warming a tab (new open / switching to a cold tab) is instant.
     void this.browserView.prewarmSpare()
     return win

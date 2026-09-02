@@ -14,6 +14,16 @@ OnlyPreview is intentionally excluded: its product surface owns a standalone nat
 with separate Shell and Preview views plus an app-specific Setting window, so it is not a valid
 single-cell runtime.
 
+## Open readiness
+
+The Home and Maestro Workbench Mini Apps cards treat Omni Open as an asynchronous readiness action.
+Their existing Arco button stays loading and disabled until Main confirms that the single-flight
+Omni graph has loaded the top MenuBar and initial browser-cell chrome and has shown/focused the
+window. Concurrent calls join that same readiness promise; a half-created native window is never a
+successful focus target. Success is localized before loading clears, while a bounded failure uses
+the existing localized error state. A browser address Enter has one event source and dispatches one
+navigation.
+
 ## Overall Structure
 
 ```text

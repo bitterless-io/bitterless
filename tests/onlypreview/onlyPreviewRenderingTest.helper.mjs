@@ -253,7 +253,10 @@ await build({
   outdir: buildRoot,
   outExtension: { '.js': '.mjs' },
   bundle: true,
-  platform: 'node',
+  // These are renderer modules, so resolve their dependencies the way the shipped renderer bundle
+  // does. Under the `node` condition `yaml` exports CommonJS, which cannot load from this ESM
+  // test bundle.
+  platform: 'browser',
   format: 'esm',
   target: 'node22',
   sourcemap: 'inline',

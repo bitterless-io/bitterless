@@ -44,6 +44,26 @@ export class OnlyPreviewLogService {
     }
   }
 
+  writeDiagnosticLine(line: string): void {
+    try {
+      if (!line.startsWith('[onlypreview-open] ')) return;
+      const profile = this.dependencies.getProfile();
+      this.getLogger().processMessage({
+        data: [line],
+        date: new Date(),
+        level: 'info',
+        variables: {
+          profile: profile.id,
+          channel: profile.releaseChannel,
+          proc: 'onlypreview',
+          world: 'main'
+        }
+      });
+    } catch {
+      // Open diagnostics are best effort and never participate in the operation result.
+    }
+  }
+
   // The dedicated file carries the detail; one mirrored line keeps the failure visible in main.log,
   // where triage starts.
   private mirror(line: string): void {

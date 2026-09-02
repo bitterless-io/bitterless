@@ -26,6 +26,7 @@ const schemas = Object.freeze({
   'runtime-accepted': { tag: 'tag', method: ['initialize', 'search'], generation: 'count' },
   'runtime-terminal': { tag: 'tag', method: ['initialize', 'search'], outcome: ['success', 'failure'], elapsedMs: 'elapsed' },
   'shell-dispatch': { tag: 'tag', generation: 'count' },
+  'restore-index-grace': { tag: 'tag', phase: ['scheduled', 'start', 'cancel'], generation: 'count', elapsedMs: 'elapsed' },
   'shell-initialized': { tag: 'tag', outcome: ['success', 'failure'], elapsedMs: 'elapsed' },
   'shell-first-batch': { tag: 'tag', section: ['files', 'contents'], count: 'count', elapsedMs: 'elapsed' },
   'shell-terminal': { tag: 'tag', outcome: ['success', 'failure', 'cancelled'], filesCount: 'count', contentsCount: 'count', elapsedMs: 'elapsed' }

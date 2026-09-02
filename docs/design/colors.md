@@ -67,12 +67,12 @@ replacing the Royal Blue product theme.
 
 | Token | Hex | Usage |
 |---|---|---|
-| `motto-reminder-strong` | `#B42318` | card title and left rule |
+| `motto-reminder-strong` | `#B42318` | card title |
 | `motto-reminder-muted` | `#A65F59` | optional card subtitle on white |
 
 The muted value keeps a softer hierarchy while retaining approximately 4.77:1 contrast on the
-white card surface. These colors do not apply to buttons, focus states, navigation, modal controls,
-or other product surfaces.
+white card surface. These colors do not apply to buttons, focus states, navigation, inline editor
+controls, or other product surfaces.
 
 ## Menu icon states
 

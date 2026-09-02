@@ -10,6 +10,13 @@ import { activateShortcuts } from '@maestro-main/common/shortcutsHelper/shortcut
 import { ensureMicromeetCliIntegration, writeMicromeetCliCredential } from '@maestro-main/cli/micromeetCli.service'
 import { authBridge } from '@maestro-main/auth/authBridge'
 import { maestroDataRoot } from '@maestro-main/data/maestroDataRoot'
+import {
+  MaestroOpenTimeoutError,
+  classifyMaestroOpenFailure,
+  maestroOpenDiagnostics,
+  type MaestroOpenBootTrace,
+  type MaestroOpenCleanupState
+} from '@maestro-main/diagnostics/maestroOpenDiagnostics.service'
 import { deviceHelper } from '@maestro-shared/deviceHelper/device.helper'
 import type { SqliteBootApi } from '@maestro-shared/sqliteKey.api'
 import type { SessionApi } from '@maestro-shared/session.api'
@@ -23,7 +30,7 @@ const MAESTRO_READY_TIMEOUT_MS = 30_000
 const withTimeout = async <T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> => {
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<never>((_resolve, reject) => {
-    timeoutHandle = setTimeout(() => reject(new Error(message)), timeoutMs)
+    timeoutHandle = setTimeout(() => reject(new MaestroOpenTimeoutError(message)), timeoutMs)
   })
   try {
     return await Promise.race([operation, timeout])
@@ -76,7 +83,7 @@ const waitForWindowLoad = (window: BrowserWindow, timeoutMs: number): Promise<vo
     webContents.once('did-fail-load', onFailed)
     webContents.once('destroyed', onDestroyed)
     timeoutHandle = setTimeout(() => {
-      settle(new Error('[maestro sqlite] hidden window load timed out after 10 seconds'))
+      settle(new MaestroOpenTimeoutError('[maestro sqlite] hidden window load timed out after 10 seconds'))
     }, timeoutMs)
   })
 
@@ -88,32 +95,83 @@ class MaestroWindowHandler extends XpcMainHandler {
   private authCleanupPromise: Promise<void> | null = null
   private authInvalidated = false
   private releaseProxy: (() => void) | null = null
+  private activeBootDiagnostics: MaestroOpenBootTrace | null = null
 
   async openMaestroWindow(): Promise<void> {
-    if (this.authCleanupPromise) throw new Error('[maestro auth] session cleanup is still running')
-    await this.cleanupPromise
-    if (this.isAuthInvalidated()) await this.runAuthCleanup()
-    this.assertAuthReady()
-    if (this.bootPromise) {
-      await this.bootPromise
-      this.assertAuthReady()
-      maestroWindowHelper.show()
-      return
-    }
-    const current = maestroWindowHelper.browserWindow
-    if (current && !current.isDestroyed()) {
-      maestroWindowHelper.show()
-      return
-    }
+    const requestDiagnostics = maestroOpenDiagnostics.startRequest()
+    let requestBootDiagnostics: MaestroOpenBootTrace | null = null
+    try {
+      if (this.authCleanupPromise) {
+        const cleanupStartedAt = requestDiagnostics.mark()
+        requestDiagnostics.cleanupWait('blocked', cleanupStartedAt)
+        requestDiagnostics.terminal('failure', 'auth-blocked')
+        throw new Error('[maestro auth] session cleanup is still running')
+      }
 
-    if (!this.bootPromise) {
-      this.bootPromise = this.boot().finally(() => {
-        this.bootPromise = null
+      const cleanupStartedAt = requestDiagnostics.mark()
+      const joinedRuntimeCleanup = this.cleanupPromise !== null
+      let cleanupState: MaestroOpenCleanupState = joinedRuntimeCleanup ? 'joined' : 'none'
+      try {
+        await this.cleanupPromise
+        if (this.isAuthInvalidated()) {
+          if (!joinedRuntimeCleanup) cleanupState = 'auth-cleanup'
+          await this.runAuthCleanup()
+        }
+      } catch (error) {
+        requestDiagnostics.cleanupWait(cleanupState, cleanupStartedAt)
+        requestDiagnostics.terminal('failure', 'cleanup-failed')
+        throw error
+      }
+      requestDiagnostics.cleanupWait(cleanupState, cleanupStartedAt)
+      this.assertAuthReady()
+
+      if (this.bootPromise) {
+        requestBootDiagnostics = this.activeBootDiagnostics
+        requestDiagnostics.route('join-boot', requestBootDiagnostics)
+        await this.bootPromise
+        this.assertAuthReady()
+        const showStartedAt = requestBootDiagnostics?.mark()
+        maestroWindowHelper.show()
+        if (requestBootDiagnostics && showStartedAt !== undefined) {
+          requestBootDiagnostics.completeStage('show', showStartedAt)
+          requestBootDiagnostics.terminal('success', 'ready')
+        }
+        requestDiagnostics.terminal('success', 'ready')
+        return
+      }
+
+      const current = maestroWindowHelper.browserWindow
+      if (current && !current.isDestroyed()) {
+        requestDiagnostics.route('reuse')
+        maestroWindowHelper.show()
+        requestDiagnostics.terminal('success', 'ready')
+        return
+      }
+
+      requestBootDiagnostics = maestroOpenDiagnostics.startBoot()
+      this.activeBootDiagnostics = requestBootDiagnostics
+      requestDiagnostics.route('cold-boot', requestBootDiagnostics)
+      const boot = this.boot()
+      const tracked = boot.finally(() => {
+        if (this.bootPromise === tracked) this.bootPromise = null
+        if (this.activeBootDiagnostics === requestBootDiagnostics) {
+          this.activeBootDiagnostics = null
+        }
       })
+      this.bootPromise = tracked
+      await tracked
+      this.assertAuthReady()
+      const showStartedAt = requestBootDiagnostics.mark()
+      maestroWindowHelper.show()
+      requestBootDiagnostics.completeStage('show', showStartedAt)
+      requestBootDiagnostics.terminal('success', 'ready')
+      requestDiagnostics.terminal('success', 'ready')
+    } catch (error) {
+      const reason = classifyMaestroOpenFailure(error)
+      requestBootDiagnostics?.terminal('failure', reason)
+      requestDiagnostics.terminal('failure', reason)
+      throw error
     }
-    await this.bootPromise
-    this.assertAuthReady()
-    maestroWindowHelper.show()
   }
 
   async _destroyForAuth(): Promise<void> {
@@ -145,18 +203,33 @@ class MaestroWindowHandler extends XpcMainHandler {
   }
 
   private async boot(): Promise<void> {
+    const diagnostics = this.activeBootDiagnostics ?? maestroOpenDiagnostics.startBoot()
     this.assertAuthReady()
+    const runtimeStartedAt = diagnostics.mark()
     this.initializeRuntime()
+    diagnostics.completeStage('runtime', runtimeStartedAt)
+    const proxyStartedAt = diagnostics.mark()
     this.releaseProxy ??= acquireMaestroProxyDispatcher()
+    diagnostics.completeStage('proxy', proxyStartedAt)
     try {
-      await this.ensureMaestroSqliteReady()
+      await this.ensureMaestroSqliteReady(diagnostics)
       this.assertAuthReady()
 
+      const sessionStartedAt = diagnostics.mark()
       const session = await maestroSession.getSession().catch(() => null)
       writeMicromeetCliCredential(session)
+      diagnostics.completeStage('session', sessionStartedAt)
       this.assertAuthReady()
 
-      const window = maestroWindowHelper.create()
+      const controllerStartedAt = diagnostics.mark()
+      maestroWindowHelper.setOpenBootDiagnostics(diagnostics)
+      let window: BrowserWindow
+      try {
+        window = maestroWindowHelper.create()
+      } finally {
+        maestroWindowHelper.clearOpenBootDiagnostics(diagnostics)
+      }
+      diagnostics.completeStage('controller', controllerStartedAt)
       window.on('close', (event) => {
         event.preventDefault()
         window.hide()
@@ -173,20 +246,33 @@ class MaestroWindowHandler extends XpcMainHandler {
       this.assertAuthReady()
       maestroWindowHelper.markBootSuccessful()
     } catch (err) {
+      diagnostics.terminal('failure', classifyMaestroOpenFailure(err))
       await this.destroyMaestroRuntime()
       throw err
     }
   }
 
-  private ensureMaestroSqliteReady(): Promise<void> {
-    if (this.sqliteReadyPromise) return this.sqliteReadyPromise
+  private ensureMaestroSqliteReady(diagnostics?: MaestroOpenBootTrace): Promise<void> {
+    if (this.sqliteReadyPromise) {
+      if (!diagnostics) return this.sqliteReadyPromise
+      const joinedAt = diagnostics.mark()
+      return this.sqliteReadyPromise.then(() => {
+        diagnostics.completeStage('sqlite-window', joinedAt)
+        diagnostics.completeStage('sqlite-preload', joinedAt)
+      })
+    }
     const ready = (async () => {
       this.initializeRuntime()
+      const windowLoadStartedAt = diagnostics?.mark()
       let sqliteWindow = maestroSqliteWindowHelper.browserWindow
       if (!sqliteWindow || sqliteWindow.isDestroyed()) {
         sqliteWindow = maestroSqliteWindowHelper.create()
         await waitForWindowLoad(sqliteWindow, SQLITE_READY_TIMEOUT_MS)
       }
+      if (diagnostics && windowLoadStartedAt !== undefined) {
+        diagnostics.completeStage('sqlite-window', windowLoadStartedAt)
+      }
+      const preloadStartedAt = diagnostics?.mark()
       const result = await withTimeout(
         sqliteBoot.ready(),
         SQLITE_READY_TIMEOUT_MS,
@@ -194,6 +280,9 @@ class MaestroWindowHandler extends XpcMainHandler {
       )
       if (!result?.ok) {
         throw new Error(result?.error || '[maestro sqlite] hidden preload did not become ready')
+      }
+      if (diagnostics && preloadStartedAt !== undefined) {
+        diagnostics.completeStage('sqlite-preload', preloadStartedAt)
       }
     })()
     const tracked = ready.finally(() => {
