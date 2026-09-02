@@ -81,6 +81,7 @@ export interface EyesOnAgentsLastUserPrompt {
 export interface EyesOnAgentsThread extends EyesOnAgentsThreadIdentity {
   archiveState: EyesOnAgentsArchiveState;
   desktopSessionId: EyesOnAgentsDesktopSessionId | null;
+  iterm2SessionId: string | null;
   canCopySessionPath: boolean;
   domainId: number;
   title: string | null;
@@ -340,6 +341,9 @@ export interface EyesOnAgentsClaudeInventoryThread {
   threadId: string;
   desktopSessionId: EyesOnAgentsDesktopSessionId | null;
   desktopMetadataMtime?: number | null;
+  // Optional: an omitted or null value never clears an already-stored iTerm2 identity, matching
+  // (but independent from) the desktopSessionId COALESCE-preserve rule above.
+  iterm2SessionId?: string | null;
   transcriptPath: string | null;
   clearDesktopSessionId?: boolean;
   clearTranscriptPath?: boolean;
@@ -380,6 +384,7 @@ export interface EyesOnAgentsClaudeAgentState {
 export interface EyesOnAgentsClaudeOpenTarget {
   sessionKey: EyesOnAgentsSessionKey;
   desktopSessionId: EyesOnAgentsDesktopSessionId | null;
+  iterm2SessionId: string | null;
   transcriptPath: string | null;
   runtimeState: EyesOnAgentsRuntimeState;
 }
@@ -525,6 +530,10 @@ export interface EyesOnAgentsApi {
   refreshClaudeInventory(): Promise<EyesOnAgentsSnapshot>;
   refreshThreadPages(): Promise<EyesOnAgentsThreadPagesRefreshResult>;
   openThread(params: { sessionKey: EyesOnAgentsSessionKey }): Promise<{
+    url: string;
+    snapshot: EyesOnAgentsSnapshot;
+  }>;
+  openThreadInIterm2(params: { sessionKey: EyesOnAgentsSessionKey }): Promise<{
     url: string;
     snapshot: EyesOnAgentsSnapshot;
   }>;

@@ -30,3 +30,13 @@ Non-blocking review findings are recorded here after task verification.
 - Task 081 review: `docs/INDEX.md` gained its new-feature-doc registration line outside that task's
   declared `Path` list. No functional impact; note the convention gap rather than treating INDEX.md
   updates as automatically in scope for every task.
+- Task 082 review: `eyesOnAgents.contract.ts` now imports `CLAUDE_HOOK_ITERM2_SESSION_ID_PATTERN`
+  from `claudeHookBridge.contract.ts`, closing a bidirectional value-level ESM cycle between the two
+  shared contract files (safe today — both sides use the cross-file binding only inside function
+  bodies, confirmed against a real `electron-vite build`). If a third consumer of this pattern ever
+  appears, relocate the constant to a dependency-free shared module instead of adding a second cycle
+  edge.
+- Task 082 review: `coreSqlite.release.ts`'s new `iterm2_session_id` migration wiring falls outside
+  `typecheck:eyes-on-agents:core`'s include list; it is covered by the separate
+  `typecheck:sqlite-migrations` project, which passed, but the two scoped typecheck projects'
+  coverage boundary is worth aligning if this keeps happening across tasks.

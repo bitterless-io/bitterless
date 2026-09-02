@@ -23,6 +23,7 @@ import type {
 import {
   buildEyesOnAgentsDeepLink,
   buildEyesOnAgentsClaudeDesktopDeepLink,
+  buildEyesOnAgentsIterm2DeepLink,
   effectiveEyesOnAgentsRuntimeState,
   isEyesOnAgentsFocused,
   isEyesOnAgentsRecord,
@@ -827,7 +828,8 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
         : Date.parse(bridge.listeningSince);
       const visibleThreads = persisted.threads.filter((thread) =>
         thread.provider !== 'claude' || (
-          claudeProviderProjectionEnabled && thread.desktopSessionId !== null
+          claudeProviderProjectionEnabled &&
+          (thread.desktopSessionId !== null || thread.iterm2SessionId !== null)
         ));
       const threads = visibleThreads.map((thread) => {
         const observedAt = thread.statusObservedAt === null
@@ -2261,6 +2263,29 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     return { url, snapshot: await this.getSnapshot() };
   }
 
+  async openThreadInIterm2(params: { sessionKey: EyesOnAgentsSessionKey }): Promise<{
+    url: string;
+    snapshot: EyesOnAgentsSnapshot;
+  }> {
+    const sessionKey = parseEyesOnAgentsSessionKey(params?.sessionKey);
+    return await this.runClaudeBridgeLifecycle(async () => {
+      this.requireClaudeProviderEnabled();
+      const stored = (await this.dependencies.repository.getSnapshot()).threads.find(
+        (thread) => thread.sessionKey === sessionKey
+      );
+      if (!stored || stored.provider !== 'claude') throw new Error('Thread was not found');
+      const target = await this.dependencies.repository.getClaudeOpenTarget({ sessionKey });
+      if (!target?.iterm2SessionId) {
+        throw new Error('This Claude session is not matched to an iTerm2 session');
+      }
+      const url = buildEyesOnAgentsIterm2DeepLink(target.iterm2SessionId);
+      await this.dependencies.openExternal(url);
+      await this.dependencies.repository.markOpened({ sessionKey, openedAt: this.now() });
+      this.notify();
+      return { url, snapshot: await this.getSnapshot() };
+    });
+  }
+
   async previewThread(params: { sessionKey: EyesOnAgentsSessionKey }): Promise<void> {
     const sessionKey = parseEyesOnAgentsSessionKey(params?.sessionKey);
     if (!sessionKey.startsWith('claude:')) throw new Error('Only Claude transcripts can be previewed');
@@ -3018,10 +3043,15 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
           payload.transcriptPath,
           payload.sessionId
         );
+        const iterm2SessionId = delivery.event.schemaVersion === 3 &&
+          delivery.event.payload.terminalApp === 'iterm2'
+          ? delivery.event.payload.terminalSessionId
+          : null;
         await this.dependencies.repository.upsertClaudeInventory({
           threads: [{
             threadId: payload.sessionId,
             desktopSessionId: null,
+            iterm2SessionId,
             transcriptPath,
             title: null,
             cwd: payload.cwd,

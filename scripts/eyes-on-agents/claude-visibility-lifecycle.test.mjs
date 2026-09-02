@@ -44,11 +44,14 @@ const waitFor = async (predicate, label) => {
   throw new Error(`Timed out waiting for ${label}`);
 };
 
-const persistedThread = ({ provider, threadId, desktopSessionId, runtimeState = 'idle' }) => ({
+const persistedThread = ({
+  provider, threadId, desktopSessionId, iterm2SessionId = null, runtimeState = 'idle'
+}) => ({
   sessionKey: `${provider}:${threadId}`,
   provider,
   threadId,
   desktopSessionId,
+  iterm2SessionId,
   transcriptPath: provider === 'claude' ? `/tmp/${threadId}.jsonl` : null,
   domainId: 1,
   title: `${provider} task`,

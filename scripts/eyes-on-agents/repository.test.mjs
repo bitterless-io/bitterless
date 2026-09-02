@@ -119,6 +119,7 @@ try {
     ensureEyesOnAgentsClaudeDeletionSchema,
     ensureEyesOnAgentsCompletionAlertSchema,
     ensureEyesOnAgentsHookDeliverySchema,
+    ensureEyesOnAgentsIterm2SessionSchema,
     ensureEyesOnAgentsLastUserPromptSchema,
     ensureEyesOnAgentsLegacyImport,
     ensureEyesOnAgentsProjectMetadataSchema,
@@ -149,6 +150,8 @@ try {
   ensureEyesOnAgentsLastUserPromptSchema(repairDb);
   ensureEyesOnAgentsClaudeDeletionSchema(repairDb);
   ensureEyesOnAgentsClaudeDeletionSchema(repairDb);
+  ensureEyesOnAgentsIterm2SessionSchema(repairDb);
+  ensureEyesOnAgentsIterm2SessionSchema(repairDb);
   repairDb.prepare(
     `INSERT INTO eyes_on_agents_hook_delivery_receipt (
       delivery_id, session_key, provider, thread_id, observed_at, committed_at
@@ -229,6 +232,8 @@ try {
   migrateEyesOnAgentsProviderIdentitySchema(oldDb);
   ensureEyesOnAgentsClaudeDeletionSchema(oldDb);
   ensureEyesOnAgentsClaudeDeletionSchema(oldDb);
+  ensureEyesOnAgentsIterm2SessionSchema(oldDb);
+  ensureEyesOnAgentsIterm2SessionSchema(oldDb);
   const migratedColumns = oldDb.prepare('PRAGMA table_info(eyes_on_agents_thread)').all();
   assert.deepEqual(
     migratedColumns
@@ -251,6 +256,11 @@ try {
     migratedColumns.some((column) => column.name === 'is_deleted'),
     true,
     'old databases must receive the idempotent Claude deletion projection column'
+  );
+  assert.equal(
+    migratedColumns.some((column) => column.name === 'iterm2_session_id'),
+    true,
+    'old databases must receive the idempotent iterm2_session_id column'
   );
   assert.ok(
     oldDb.prepare(
@@ -3211,6 +3221,7 @@ try {
   assert.deepEqual(await repository.getClaudeOpenTarget({ sessionKey: claudeSessionKey }), {
     sessionKey: claudeSessionKey,
     desktopSessionId: `local_${claudeThreadId}`,
+    iterm2SessionId: null,
     transcriptPath: `/tmp/project/${claudeThreadId}.jsonl`,
     runtimeState: 'unknown'
   });
@@ -3275,6 +3286,7 @@ try {
   assert.deepEqual(await repository.getClaudeOpenTarget({ sessionKey: claudeSessionKey }), {
     sessionKey: claudeSessionKey,
     desktopSessionId: null,
+    iterm2SessionId: null,
     transcriptPath: null,
     runtimeState: 'unknown'
   }, 'ambiguous provider identities must revoke Open/Preview capability without deleting the task');
@@ -3373,6 +3385,70 @@ try {
     transcriptNew,
     'complete unique transcript evidence must resolve a path remap'
   );
+
+  const iterm2Thread = '9a9a9a9a-9a9a-4a9a-8a9a-9a9a9a9a9a9a';
+  const iterm2SessionIdA = 'w0t0p0:99999999-9999-4999-8999-999999999999';
+  const iterm2SessionIdB = 'w1t2p3:88888888-8888-4888-8888-888888888888';
+  await repository.upsertClaudeInventory({ threads: [{
+    threadId: iterm2Thread, desktopSessionId: null, iterm2SessionId: iterm2SessionIdA,
+    transcriptPath: null, title: null, cwd: null, archiveState: 'unknown',
+    lastActivityAt: 190_000, observedAt: 190_000
+  }] });
+  assert.equal(
+    (await repository.getClaudeOpenTarget({ sessionKey: claudeKey(iterm2Thread) })).iterm2SessionId,
+    iterm2SessionIdA
+  );
+  await repository.upsertClaudeInventory({ threads: [{
+    threadId: iterm2Thread, desktopSessionId: null, iterm2SessionId: null,
+    transcriptPath: null, title: null, cwd: null, archiveState: 'unknown',
+    lastActivityAt: 191_000, observedAt: 191_000
+  }] });
+  assert.equal(
+    (await repository.getClaudeOpenTarget({ sessionKey: claudeKey(iterm2Thread) })).iterm2SessionId,
+    iterm2SessionIdA,
+    'a later event with no terminal identity must not clear an already-stored iterm2SessionId'
+  );
+  await repository.upsertClaudeInventory({ threads: [{
+    threadId: iterm2Thread, desktopSessionId: null, iterm2SessionId: iterm2SessionIdB,
+    transcriptPath: null, title: null, cwd: null, archiveState: 'unknown',
+    lastActivityAt: 192_000, observedAt: 192_000
+  }] });
+  assert.equal(
+    (await repository.getClaudeOpenTarget({ sessionKey: claudeKey(iterm2Thread) })).iterm2SessionId,
+    iterm2SessionIdB,
+    'a later event with a new terminal identity must replace the stored iterm2SessionId'
+  );
+  const iterm2DesktopId = `local_${iterm2Thread}`;
+  await repository.upsertClaudeInventory({ threads: [{
+    threadId: iterm2Thread, desktopSessionId: iterm2DesktopId, iterm2SessionId: null,
+    desktopEvidenceComplete: true,
+    transcriptPath: null, title: null, cwd: null, archiveState: 'unknown',
+    lastActivityAt: 193_000, observedAt: 193_000
+  }] });
+  assert.deepEqual({
+    desktopSessionId:
+      (await repository.getClaudeOpenTarget({ sessionKey: claudeKey(iterm2Thread) })).desktopSessionId,
+    iterm2SessionId:
+      (await repository.getClaudeOpenTarget({ sessionKey: claudeKey(iterm2Thread) })).iterm2SessionId
+  }, {
+    desktopSessionId: iterm2DesktopId,
+    iterm2SessionId: iterm2SessionIdB
+  }, 'setting desktop_session_id must not disturb the independently preserved iterm2SessionId');
+  await repository.upsertClaudeInventory({ threads: [{
+    threadId: iterm2Thread, desktopSessionId: null, iterm2SessionId: iterm2SessionIdA,
+    transcriptPath: null, title: null, cwd: null, archiveState: 'unknown',
+    lastActivityAt: 194_000, observedAt: 194_000
+  }] });
+  assert.deepEqual({
+    desktopSessionId:
+      (await repository.getClaudeOpenTarget({ sessionKey: claudeKey(iterm2Thread) })).desktopSessionId,
+    iterm2SessionId:
+      (await repository.getClaudeOpenTarget({ sessionKey: claudeKey(iterm2Thread) })).iterm2SessionId
+  }, {
+    desktopSessionId: iterm2DesktopId,
+    iterm2SessionId: iterm2SessionIdA
+  }, 'replacing iterm2SessionId must not disturb the independently preserved desktop_session_id');
+
   await repository.reconcileClaudeAgentStates({
     agents: [{
       threadId: claudeThreadId, runtimeState: 'idle', title: 'Agent View overwrite', cwd: null,

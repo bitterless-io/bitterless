@@ -11,6 +11,9 @@ import type {
   EyesOnAgentsRuntimeState,
   EyesOnAgentsStatusSource
 } from './eyesOnAgents.type';
+// Reuse task 081's ITERM_SESSION_ID shape validator instead of redefining the pattern a
+// third time (see the matching comment in claudeHookBridge.contract.ts).
+import { CLAUDE_HOOK_ITERM2_SESSION_ID_PATTERN } from './claudeHookBridge.contract';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CLAUDE_DESKTOP_SESSION_ID_PATTERN = /^local_([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
@@ -104,6 +107,17 @@ export const parseEyesOnAgentsDesktopSessionId = (
   const match = CLAUDE_DESKTOP_SESSION_ID_PATTERN.exec(value);
   if (!match) throw new Error('desktopSessionId must be a local Claude Desktop session ID');
   return `local_${parseEyesOnAgentsUuid(match[1], 'desktopSessionId')}`;
+};
+
+export const parseEyesOnAgentsIterm2SessionId = (
+  value: unknown
+): string | null => {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') throw new Error('iterm2SessionId must be a string');
+  if (!CLAUDE_HOOK_ITERM2_SESSION_ID_PATTERN.test(value)) {
+    throw new Error('iterm2SessionId must be a valid ITERM_SESSION_ID value');
+  }
+  return value;
 };
 
 export const buildEyesOnAgentsSessionKey = (
@@ -386,6 +400,14 @@ export const buildEyesOnAgentsClaudeDesktopDeepLink = (
   const parsed = parseEyesOnAgentsDesktopSessionId(desktopSessionId);
   if (parsed === null) throw new Error('Claude Desktop session ID is required');
   return `claude://claude.ai/epitaxy/${parsed}`;
+};
+
+export const buildEyesOnAgentsIterm2DeepLink = (
+  iterm2SessionId: unknown
+): string => {
+  const parsed = parseEyesOnAgentsIterm2SessionId(iterm2SessionId);
+  if (parsed === null) throw new Error('iTerm2 session ID is required');
+  return `iterm2:///reveal?sessionid=${encodeURIComponent(parsed)}`;
 };
 
 export const parseEyesOnAgentsSessionKeyParams = (

@@ -32,6 +32,7 @@ export class EyesOnAgentsTable extends BaseTable {
       provider TEXT NOT NULL,
       thread_id TEXT NOT NULL,
       desktop_session_id TEXT,
+      iterm2_session_id TEXT,
       desktop_identity_ambiguous INTEGER NOT NULL DEFAULT 0,
       transcript_path TEXT,
       transcript_identity_ambiguous INTEGER NOT NULL DEFAULT 0,

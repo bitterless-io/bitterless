@@ -162,14 +162,12 @@ Claude Open gains a second, independent route. The existing Desktop route is unc
 `src/shared/eyesOnAgents/eyesOnAgents.contract.ts` gains:
 
 ```ts
-const ITERM2_SESSION_ID_PATTERN = /^w\d+t\d+p\d+:([0-9A-Fa-f-]{36})$/;
-
 export const parseEyesOnAgentsIterm2SessionId = (
   value: unknown
 ): string | null => {
   if (value === undefined || value === null) return null;
   if (typeof value !== 'string') throw new Error('iterm2SessionId must be a string');
-  if (!ITERM2_SESSION_ID_PATTERN.test(value)) {
+  if (!CLAUDE_HOOK_ITERM2_SESSION_ID_PATTERN.test(value)) {
     throw new Error('iterm2SessionId must be a valid ITERM_SESSION_ID value');
   }
   return value;
@@ -184,8 +182,19 @@ export const buildEyesOnAgentsIterm2DeepLink = (
 };
 ```
 
+**Implementation note (task 082):** rather than a locally redefined `ITERM2_SESSION_ID_PATTERN`
+constant, `parseEyesOnAgentsIterm2SessionId` imports and reuses task 081's exported
+`CLAUDE_HOOK_ITERM2_SESSION_ID_PATTERN` from `claudeHookBridge.contract.ts` — that file's own comment
+anticipates exactly this reuse. This makes `eyesOnAgents.contract.ts` and `claudeHookBridge.contract.ts`
+mutually import from each other (each only inside function bodies, never at module top level), which
+is a safe ESM cycle; `yarn typecheck:eyes-on-agents:core` and every bundled test confirm it resolves
+cleanly. `EyesOnAgentsClaudeInventoryThread.iterm2SessionId` (in `eyesOnAgents.type.ts`) is declared
+optional (`iterm2SessionId?: string | null`), unlike the required-but-nullable `desktopSessionId` on
+the same interface, so `claudeObservation.service.ts`'s pre-existing Desktop/transcript inventory call
+(which never carries a terminal identity) needed no change.
+
 `eyesOnAgents.service.ts` gains `openThreadInIterm2({ sessionKey })`, structured like the existing
-`claude:` branch of `openThread` (`src/main/eyesOnAgents/eyesOnAgents.service.ts:2228-2249`):
+`claude:` branch of `openThread` (`src/main/eyesOnAgents/eyesOnAgents.service.ts:2230-2264`):
 resolve the stored thread by `sessionKey`, require `provider === 'claude'`, require
 `iterm2SessionId !== null` (else throw — the row would not have a card if it were null, but the XPC
 boundary still validates), build the deep link, call `this.dependencies.openExternal(url)`, then run
