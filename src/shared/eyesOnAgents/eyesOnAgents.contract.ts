@@ -528,6 +528,21 @@ export const parseEyesOnAgentsClaudeEnvironmentIdParams = (
   return { id: parseEyesOnAgentsClaudeEnvironmentId(value.id) };
 };
 
+// The Claude plugin bridge XPC methods (install/refresh/remove/status) accept an optional
+// environmentId so a call with no params still targets the one automatic environment exactly as
+// before task 086 (preserving every pre-existing zero-arg renderer call site unchanged); an
+// explicitly supplied id is validated as a real Claude environment UUID and resolved/rejected by
+// the handler, never silently substituted.
+export const parseEyesOnAgentsClaudeBridgeEnvironmentParams = (
+  value: unknown
+): { environmentId?: string } => {
+  if (value === undefined) return {};
+  if (!isEyesOnAgentsRecord(value)) throw new Error('Claude bridge params must be an object');
+  assertOnlyKeys(value, ['environmentId'], 'Claude bridge params');
+  if (value.environmentId === undefined) return {};
+  return { environmentId: parseEyesOnAgentsClaudeEnvironmentId(value.environmentId) };
+};
+
 export const parseEyesOnAgentsRenameClaudeEnvironmentParams = (
   value: unknown
 ): { id: string; label: string } => {

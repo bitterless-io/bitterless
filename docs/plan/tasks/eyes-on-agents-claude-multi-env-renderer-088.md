@@ -46,6 +46,14 @@ section (excluding the owner-only manual two-environment check) should be fully 
   interface-satisfaction step, not new business logic). Do this first, before writing any Vue/store
   code that depends on it.
 
+- **Also extend the 4 pre-existing bridge methods' signatures.** Task 086 added an optional
+  `{ environmentId }` parameter to `installClaudeBridge`, `getClaudeBridgeStatus`,
+  `refreshClaudeBridgeStatus`, `removeClaudeBridge`'s main-process implementations, but could not
+  update `EyesOnAgentsApi`'s declared (parameterless) signatures for these same methods without
+  rippling into `eyesOnAgents.type.ts`, which was out of its declared Path. Update those 4 signatures
+  in the same interface-extension pass as the 7 new methods above — otherwise the renderer can only
+  ever manage the default environment's plugin install/status, which defeats this task's purpose.
+
 - `ClaudeObservationCard.vue`'s current single directory block (path/mode/state/last-scan/actions)
   becomes a list, one row per `EyesOnAgentsClaudeEnvironment`/`EyesOnAgentsClaudeEnvironmentStatus`
   pair: label, resolved path or "not configured", mode, the existing status pill values

@@ -12,14 +12,21 @@ export interface ClaudeCommandResult {
 export const runClaudeCommand = (
   executable: string,
   args: readonly string[],
-  options: { timeoutMs?: number; maxOutputBytes?: number } = {}
+  options: { timeoutMs?: number; maxOutputBytes?: number; configDirectory?: string | null } = {}
 ): Promise<ClaudeCommandResult> => new Promise((resolve, reject) => {
   const timeoutMs = options.timeoutMs ?? TIMEOUT_MS;
   const maxOutputBytes = options.maxOutputBytes ?? MAX_OUTPUT_BYTES;
+  // A target configDirectory scopes this one Claude CLI invocation to that environment's
+  // CLAUDE_CONFIG_DIR; omitting it (every pre-086 caller) reproduces today's exact ambient
+  // environment unchanged.
+  const env = options.configDirectory
+    ? { ...process.env, CLAUDE_CONFIG_DIR: options.configDirectory }
+    : process.env;
   const child = spawn(executable, [...args], {
     shell: false,
     windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe']
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env
   });
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];

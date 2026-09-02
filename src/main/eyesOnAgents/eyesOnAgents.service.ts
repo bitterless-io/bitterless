@@ -109,9 +109,13 @@ interface EyesOnAgentsServiceDependencies {
     hasInstallationIntent(): boolean;
     acceptsInstallation(installationId: string): boolean;
     revokeObservationProof(reason?: 'coverage_gap'): void;
-    install(): Promise<EyesOnAgentsClaudeBridgeStatus>;
-    refresh(): Promise<EyesOnAgentsClaudeBridgeStatus>;
-    remove(): Promise<EyesOnAgentsClaudeBridgeStatus>;
+    // configDirectory (task 086) scopes only which CLAUDE_CONFIG_DIR the underlying claude CLI
+    // invocations run against; omitting it reproduces today's exact ambient-environment behavior.
+    // It never introduces a second installationId/socket/outbox — the shared installation-identity
+    // state machine below this dependency is unchanged.
+    install(configDirectory?: string): Promise<EyesOnAgentsClaudeBridgeStatus>;
+    refresh(configDirectory?: string): Promise<EyesOnAgentsClaudeBridgeStatus>;
+    remove(configDirectory?: string): Promise<EyesOnAgentsClaudeBridgeStatus>;
   };
   claudeHookListener?: {
     start(): Promise<void>;
@@ -2787,7 +2791,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     return await this.getSnapshot();
   }
 
-  async installClaudeBridge(): Promise<EyesOnAgentsSnapshot> {
+  async installClaudeBridge(configDirectory?: string): Promise<EyesOnAgentsSnapshot> {
     this.requireClaudeProviderManagementEnabled();
     if (!this.dependencies.claudeBridge || !this.dependencies.claudeHookListener) {
       throw new Error('Claude observation plugin is unavailable');
@@ -2802,7 +2806,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       if (!this.isClaudeProviderManagementCurrent(runtimeVersion)) {
         throw new Error('Claude support changed while the listener was stopping');
       }
-      const status = await this.dependencies.claudeBridge?.install();
+      const status = await this.dependencies.claudeBridge?.install(configDirectory);
       if (!this.isClaudeProviderManagementCurrent(runtimeVersion)) {
         throw new Error('Claude support changed while the plugin was being installed');
       }
@@ -2833,13 +2837,13 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     return await this.changedSnapshot();
   }
 
-  async refreshClaudeBridgeStatus(): Promise<EyesOnAgentsSnapshot> {
+  async refreshClaudeBridgeStatus(configDirectory?: string): Promise<EyesOnAgentsSnapshot> {
     this.requireClaudeProviderManagementEnabled();
     if (!this.dependencies.claudeBridge) throw new Error('Claude observation plugin is unavailable');
     await this.runClaudeBridgeLifecycle(async () => {
       this.requireClaudeProviderManagementEnabled();
       const runtimeVersion = this.claudeProviderRuntimeVersion;
-      const status = await this.dependencies.claudeBridge?.refresh();
+      const status = await this.dependencies.claudeBridge?.refresh(configDirectory);
       if (!this.isClaudeProviderManagementCurrent(runtimeVersion)) return;
       if (!this.claudeProviderProjectionEnabled) {
         await this.activateClaudeProvider(runtimeVersion, false);
@@ -2887,7 +2891,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     return await this.changedSnapshot();
   }
 
-  async removeClaudeBridge(): Promise<EyesOnAgentsSnapshot> {
+  async removeClaudeBridge(configDirectory?: string): Promise<EyesOnAgentsSnapshot> {
     this.requireClaudeProviderManagementEnabled();
     if (!this.dependencies.claudeBridge) throw new Error('Claude observation plugin is unavailable');
     await this.runClaudeBridgeLifecycle(async () => {
@@ -2899,7 +2903,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       await this.invalidateClaudeHookActiveStates();
       if (!this.isClaudeProviderVersionCurrent(runtimeVersion) ||
         !this.claudeProviderPreferenceEnabled) return;
-      await this.dependencies.claudeBridge?.remove();
+      await this.dependencies.claudeBridge?.remove(configDirectory);
     });
     return await this.changedSnapshot();
   }

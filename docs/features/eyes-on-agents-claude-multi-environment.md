@@ -213,11 +213,29 @@ This gains one additional optional parameter threaded from `claudePluginBridge.s
 sites:
 
 ```ts
-runClaudeCommand(args, { configDirectory }?: { configDirectory?: string | null })
+runClaudeCommand(executable, args, {
+  timeoutMs, maxOutputBytes, configDirectory
+}?: { timeoutMs?: number; maxOutputBytes?: number; configDirectory?: string | null })
 // spawn(executable, args, { ..., env: configDirectory
 //   ? { ...process.env, CLAUDE_CONFIG_DIR: configDirectory }
 //   : process.env })
 ```
+
+> **Implementation note (task 086):** `configDirectory` is one more optional field on the existing
+> third `options` object (alongside `timeoutMs`/`maxOutputBytes`), not a second parameter — the
+> earlier sketch above omitted the required `executable` argument and the existing options shape.
+> `ClaudePluginBridgeService`'s private `command(executable, args, configDirectory?)` wrapper is the
+> single call site that forwards it into `runClaudeCommand`'s options; every internal method that
+> transitively calls `command()` (`inspectCurrent`, `refreshWithoutAutomaticUpgrade`,
+> `performTrustedAutomaticUpgrade`, `performInstall`, `remove`,
+> `recoverLegacyProductionDebugMarketplace`, `inspectClaudeNamespace`) gained a matching optional
+> `configDirectory` parameter threaded through unchanged, without touching any installation-identity
+> branching. One deliberate exception: `resolveExecutable()`'s two capability-probe commands
+> (`plugin --help`, `plugin marketplace remove --help`, used to pick which allowlisted `claude`
+> binary supports scoped marketplace removal) are **not** environment-scoped and always run against
+> the ambient environment — the answer to "does this binary support `--scope`" does not depend on
+> which `CLAUDE_CONFIG_DIR` is active, and the resolved executable is cached once per
+> `ClaudePluginBridgeService` instance (shared across every environment) regardless.
 
 Install/enable/remove/status become environment-scoped by adding `{ environmentId }` to each
 existing XPC method's parameters — `installClaudeBridge({ environmentId })`,
@@ -229,11 +247,55 @@ established in "Scope decisions" above, every environment's plugin installation 
 `installationId`/socket/outbox — this task changes only which `CLAUDE_CONFIG_DIR` the CLI targets,
 not the installation-identity state machine itself.
 
+> **Implementation note (task 086):** `{ environmentId }` is **optional**, not required as the
+> sketch above literally reads — an omitted value resolves to `environments[0]` (the one automatic
+> environment), reproducing today's exact zero-argument behavior byte-for-byte. This is a deliberate
+> deviation from the task's literal phrasing, made because `ClaudeObservationCard.vue` and
+> `eyesOnAgents.store.ts` already call all four methods with zero arguments today, and the renderer
+> is explicitly out of this task's scope; extending those call sites to pass a real
+> `{ environmentId }` (e.g. from an environment picker) is left for whichever task first builds that
+> renderer surface — most likely task 088, mirroring task 084's identical scope decision for its own
+> new CRUD methods. Consequently the shared `EyesOnAgentsApi` type (`eyesOnAgents.type.ts`) keeps
+> these four methods' pre-086 zero-argument signatures unchanged: both `EyesOnAgentsHandler` and
+> `EyesOnAgentsService` also declare `implements EyesOnAgentsApi`, and a class method with an added
+> *optional* parameter still satisfies a narrower interface member (it remains callable with zero
+> arguments), so no ripple into that interface or into `EyesOnAgentsService`'s public type is
+> required. An explicitly supplied, unknown `environmentId` still rejects cleanly before any CLI
+> command is attempted — resolution happens via a new pure, unit-tested
+> `resolveClaudeBridgeEnvironment` helper (`claudeBridgeEnvironment.resolver.ts`) called from
+> `eyesOnAgents.handler.ts` before any bridge/service call.
+>
+> **The actual install/enable/remove/status orchestration lives in `eyesOnAgents.service.ts`, not
+> only in `claudePluginBridge.service.ts`.** `EyesOnAgentsHandler`'s four methods delegate to
+> `EyesOnAgentsService.installClaudeBridge`/`refreshClaudeBridgeStatus`/`removeClaudeBridge`/
+> `getClaudeBridgeStatus`, which own the Claude-provider-management guards, the shared Hook listener
+> stop/start dance, and active-state invalidation around the actual `claudeBridge.install()`/
+> `.refresh()`/`.remove()` calls — this file was not in task 086's Path list, but three of those four
+> methods needed a minimal, additive `configDirectory?: string` parameter threaded to
+> `this.dependencies.claudeBridge` (whose `install`/`refresh`/`remove` members gained the same
+> parameter) for the resolved directory to ever reach the CLI layer end to end. `getClaudeBridgeStatus`
+> needed no such change — it is a pure status read (`claudeBridge.getStatus()`, no CLI call), so
+> `{ environmentId }` there only validates that the environment exists before returning the one
+> shared status, matching the non-goal that every environment shares one installation identity.
+
 **Logging.** The existing plugin-bridge lifecycle/error logging (mutation stage + sanitized error
 name, no raw CLI output or executable path, per
 [EyesOnAgents Claude Observation](eyes-on-agents-claude-observation.md)'s privacy rules) gains the
 target environment's `id`/`label`; `configDirectory` values are never logged, matching the data-model
 section's rule.
+
+> **Implementation note (task 086):** inspection of the pre-086 `claudePluginBridge.service.ts` and
+> `eyesOnAgents.service.ts` found no existing `[claude-bridge]`-style plugin-bridge-specific log
+> lines at all (`electron-xpc`'s generic `[XpcMainHandler] error in <channel>` catch-all is the only
+> thing that logged a thrown bridge error, with no stage/id/label structure) — the phrasing above
+> assumed lines to "extend" that did not exist, exactly mirroring task 085's identical finding for
+> the pre-085 watcher. New `[claude-bridge] action=<install|refresh|remove|status> id=<id>
+> label="<label>"[ error=<sanitized, 300-char-bounded>]` lines are added fresh from
+> `eyesOnAgents.handler.ts`, via a small new `logClaudeBridgeAction` helper
+> (`claudeBridgeLog.helper.ts`) — success is logged for install/refresh/remove (mutations), while a
+> pure status read logs only on error. Both helpers avoid touching the invariant-dense
+> `claudePluginBridge.service.ts` state machine, keeping that file's task-086 diff to pure
+> `configDirectory` call-site threading as instructed.
 
 ## Hook payload attribution (schema V4)
 
@@ -370,3 +432,22 @@ rename, remove, enable/disable):
   `CLAUDE_CONFIG_DIR` in that directory's own `settings.json`.
 - [Claude Code CLI configuration](https://code.claude.com/docs/en/settings) — `CLAUDE_CONFIG_DIR`
   environment variable contract.
+- [Explore the .claude directory](https://code.claude.com/docs/en/claude-directory) — "If you set
+  `CLAUDE_CONFIG_DIR`, every `~/.claude` path on this page lives under that directory instead,"
+  including the documented `~/.claude/plugins` path ("Cloned marketplaces, installed plugin
+  versions, and per-plugin data, managed by `claude plugin` commands").
+- [Claude Code plugins](https://code.claude.com/docs/en/plugins-reference) — user-scope
+  (`--scope user`) plugin/marketplace state is declared in `~/.claude/settings.json`, which the
+  `claude-directory` doc above confirms moves under `CLAUDE_CONFIG_DIR` too.
+
+> **Task 086 verified this core assumption twice before implementing against it** — once against
+> the current documentation (both quotes above, fetched 2026-09-02) and once empirically: with a
+> disposable `CLAUDE_CONFIG_DIR` under this repo's own scratch directory (never `~/.claude` or any
+> real Bitterless-managed profile) and a throwaway marketplace/plugin fixture,
+> `claude plugin marketplace add`, `claude plugin install`, and `claude plugin list --json`/
+> `marketplace list --json` all read and wrote exclusively under the isolated directory
+> (`settings.json`, `plugins/known_marketplaces.json`, `plugins/marketplaces/`,
+> `plugins/cache/<marketplace>/<plugin>/<version>/`) — the real ambient `~/.claude` never gained or
+> lost any trace of the probe, in either direction. See the task file's Implementation evidence for
+> the full transcript. This confirms `CLAUDE_CONFIG_DIR` scopes plugin/marketplace registration
+> exactly as this document assumes; no contradicting evidence was found.
