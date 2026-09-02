@@ -5,8 +5,12 @@
 const fs = require('fs');
 const { builtinModules } = require('module');
 const path = require('path');
+const yaml = require('js-yaml');
 const { parse } = require('acorn');
 const { extractFile, listPackage } = require('@electron/asar');
+const { resolveUpdateDirectory, resolveUpdatePlatform } = require('../release/releaseChannel.cjs');
+
+const UPDATE_CONFIG_FILE = 'app-update.yml';
 
 const MIB = 1024 * 1024;
 const DEFAULT_MAX_ASAR_BYTES = 220 * MIB;
@@ -534,6 +538,78 @@ const collectExternalPackageReferences = (asarPath, archiveEntries) => {
   return references;
 };
 
+const readUpdateConfig = (resourcesPath) => {
+  const configPath = path.join(resourcesPath, UPDATE_CONFIG_FILE);
+  return {
+    configPath,
+    content: readRealFile(configPath, UPDATE_CONFIG_FILE).toString('utf8'),
+  };
+};
+
+const setUpdateFeedUrlLine = (content, expectedUrl) => {
+  const lines = content.split('\n');
+  const urlLines = [];
+  for (let index = 0; index < lines.length; index++) {
+    if (lines[index].startsWith('url:')) urlLines.push(index);
+  }
+  if (urlLines.length !== 1) {
+    throw new Error(
+      `${UPDATE_CONFIG_FILE} must declare exactly one top-level url; found ${urlLines.length}`,
+    );
+  }
+  const [target] = urlLines;
+  const carriageReturn = lines[target].endsWith('\r') ? '\r' : '';
+  lines[target] = `url: ${expectedUrl}${carriageReturn}`;
+  return lines.join('\n');
+};
+
+const assertPackagedUpdateFeed = (resourcesPath, releaseChannel, applicationTarget) => {
+  const expectedUrl = resolveUpdateDirectory(
+    releaseChannel,
+    resolveUpdatePlatform(applicationTarget.platform, applicationTarget.arch),
+  );
+  const { content } = readUpdateConfig(resourcesPath);
+  let config;
+  try {
+    config = yaml.load(content);
+  } catch (error) {
+    throw new Error(`${UPDATE_CONFIG_FILE} is invalid: ${error.message}`);
+  }
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
+    throw new Error(`${UPDATE_CONFIG_FILE} must be an object`);
+  }
+  if (config.provider !== 'generic') {
+    throw new Error(
+      `${UPDATE_CONFIG_FILE} provider must stay generic; found ${config.provider ?? 'missing'}`,
+    );
+  }
+  if (config.url !== expectedUrl) {
+    throw new Error(`${UPDATE_CONFIG_FILE} url must be ${expectedUrl}; found ${config.url ?? 'missing'}`);
+  }
+  return expectedUrl;
+};
+
+// Runs from afterPack only, before macOS code signing, so the rewritten resource is signed in its
+// final state. auditDesktopPackage never mutates: it also runs against already-signed bundles.
+// The channel comes from the package's own runtime-profile marker, the same source the audit reads,
+// so the written and the verified value can never diverge.
+const writePackagedUpdateFeed = (inputPath) => {
+  const applicationPath = resolveApplicationPath(inputPath);
+  const resourcesPath = getResourcesPath(applicationPath);
+  const asarPath = path.join(resourcesPath, 'app.asar');
+  const { releaseChannel } = inspectPackagedRuntimeProfile(asarPath, listPackage(asarPath));
+  const applicationTarget = findApplicationTarget(applicationPath, resourcesPath);
+  const expectedUrl = resolveUpdateDirectory(
+    releaseChannel,
+    resolveUpdatePlatform(applicationTarget.platform, applicationTarget.arch),
+  );
+  const { configPath, content } = readUpdateConfig(resourcesPath);
+  const updated = setUpdateFeedUrlLine(content, expectedUrl);
+  if (updated !== content) fs.writeFileSync(configPath, updated, 'utf8');
+  console.log(`[desktop-package-audit] update feed set to ${expectedUrl}`);
+  return expectedUrl;
+};
+
 const auditDesktopPackage = (inputPath, options = {}) => {
   const maxAsarBytes = options.maxAsarBytes ?? DEFAULT_MAX_ASAR_BYTES;
   const maxAppBytes = options.maxAppBytes ?? DEFAULT_MAX_APP_BYTES;
@@ -604,6 +680,19 @@ const auditDesktopPackage = (inputPath, options = {}) => {
       failures.push(`application icon gate failed: ${error.message}`);
     }
   }
+  let packagedUpdateFeedUrl = null;
+  try {
+    if (!packagedRuntimeProfile) throw new Error('the packaged runtime profile is unavailable');
+    if (!applicationTarget) throw new Error('the application target is unavailable');
+    packagedUpdateFeedUrl = assertPackagedUpdateFeed(
+      resourcesPath,
+      packagedRuntimeProfile.releaseChannel,
+      applicationTarget,
+    );
+    console.log(`[desktop-package-audit] update feed ${packagedUpdateFeedUrl} verified`);
+  } catch (error) {
+    failures.push(`update feed gate failed: ${error.message}`);
+  }
   let onlyPreviewAgentSkill = null;
   try {
     onlyPreviewAgentSkill = inspectOnlyPreviewAgentSkill(resourcesPath);
@@ -663,6 +752,7 @@ const auditDesktopPackage = (inputPath, options = {}) => {
     betterSqlite3BinaryPath,
     applicationIconPaths,
     packagedRuntimeProfile,
+    packagedUpdateFeedUrl,
     onlyPreviewAgentSkill,
     trenchAgentSkill,
     externalPackageRoots: [...externalPackageReferences.keys()].sort(),
@@ -689,6 +779,7 @@ const afterPack = async (context) => {
   if (!context || typeof context.appOutDir !== 'string') {
     throw new Error('[desktop-package-audit] Electron Builder context is missing appOutDir');
   }
+  writePackagedUpdateFeed(context.appOutDir);
   auditDesktopPackage(context.appOutDir);
 };
 
@@ -712,6 +803,9 @@ module.exports.getExternalPackageRoot = getExternalPackageRoot;
 module.exports.getPathSize = getPathSize;
 module.exports.inspectApplicationIcons = inspectApplicationIcons;
 module.exports.assertApplicationIconMatchesChannel = assertApplicationIconMatchesChannel;
+module.exports.assertPackagedUpdateFeed = assertPackagedUpdateFeed;
+module.exports.setUpdateFeedUrlLine = setUpdateFeedUrlLine;
+module.exports.writePackagedUpdateFeed = writePackagedUpdateFeed;
 module.exports.inspectBinary = inspectBinary;
 module.exports.inspectOnlyPreviewAgentSkill = inspectOnlyPreviewAgentSkill;
 module.exports.inspectPackagedRuntimeProfile = inspectPackagedRuntimeProfile;

@@ -12,6 +12,7 @@ const {
   OSS_MULTIPART_PART_SIZE_BYTES,
   OSS_MULTIPART_THRESHOLD_BYTES,
   OSS_REQUEST_TIMEOUT_MS,
+  assertNoCrossChannelIdentityReuse,
   assertNoRemoteDowngrade,
   assertReleaseOrder,
   parseUserKeychainSearchList,
@@ -89,9 +90,19 @@ test('Preview publish aliases build and publish current local source without Git
   for (const [script, platform] of Object.entries(expected)) {
     assert.equal(
       pkg.scripts[script],
-      `yarn install --frozen-lockfile && node scripts/publish.js --env preview --platform ${platform} --bump --build`,
+      `yarn install --frozen-lockfile && node scripts/publish.js --env preview --platform ${platform} --build`,
     )
     assert.doesNotMatch(pkg.scripts[script], /git|pull|reset|restore/)
+  }
+})
+
+test('one explicit release cut owns the shared version counter for every platform publisher', () => {
+  const pkg = JSON.parse(read('package.json'))
+  assert.equal(pkg.scripts['release:cut'], 'node scripts/patch.js')
+  const publishers = Object.keys(pkg.scripts).filter((name) => /^publish(_dev|_preview)?(:|$)/.test(name))
+  assert(publishers.length >= 10)
+  for (const name of publishers) {
+    assert.doesNotMatch(pkg.scripts[name], /--bump|patch\.js/, `${name} must not mint a version`)
   }
 })
 
@@ -760,4 +771,117 @@ test('migration audit is pure Node and uses runtime manifests', () => {
   assert.match(source, /todoistSyncMigrations/)
   assert.doesNotMatch(source, /from ['"]electron['"]/)
   assert.doesNotMatch(source, /electron-vite|BrowserWindow/)
+})
+
+const createManifestClient = (manifests, requestedKeys = []) => ({
+  requestedKeys,
+  async get(objectKey) {
+    requestedKeys.push(objectKey)
+    if (!Object.hasOwn(manifests, objectKey)) {
+      const error = new Error(`NoSuchKey: ${objectKey}`)
+      error.code = 'NoSuchKey'
+      throw error
+    }
+    return { content: Buffer.from(JSON.stringify(manifests[objectKey])) }
+  },
+})
+
+const previewPublishOptions = {
+  env: 'preview',
+  platform: 'mac_arm',
+  prefix: 'bitterless/distro',
+}
+
+test('publisher refuses a version_code another channel already published', async () => {
+  const client = createManifestClient({
+    'bitterless/distro/prod/mac_arm/version_info.json': {
+      version: '0.0.84',
+      versionCode: '260901164356',
+    },
+  })
+
+  await assert.rejects(
+    () => assertNoCrossChannelIdentityReuse(client, previewPublishOptions, {
+      version: '0.0.85',
+      version_code: '260901164356',
+    }),
+    /Refusing cross-channel version_code reuse: 260901164356 is already published as prod\/mac_arm 0\.0\.84/,
+  )
+})
+
+test('publisher refuses a version another channel already published under a different code', async () => {
+  const client = createManifestClient({
+    'bitterless/distro/dev/mac_arm/version_info.json': {
+      version: '0.0.84',
+      versionCode: '260901100000',
+    },
+  })
+
+  await assert.rejects(
+    () => assertNoCrossChannelIdentityReuse(client, previewPublishOptions, {
+      version: '0.0.84',
+      version_code: '260901164356',
+    }),
+    /Refusing cross-channel version reuse: 0\.0\.84 is already published as dev\/mac_arm with version_code 260901100000/,
+  )
+})
+
+test('publisher allows an unused identity and inspects only the other channels of one platform', async (t) => {
+  const logs = []
+  const client = createManifestClient({
+    'bitterless/distro/preview/mac_arm/version_info.json': {
+      version: '0.0.84',
+      versionCode: '260901164356',
+    },
+    'bitterless/distro/prod/mac_intel/version_info.json': {
+      version: '0.0.85',
+      versionCode: '260902090000',
+    },
+  })
+  t.mock.method(console, 'log', (...args) => logs.push(args.join(' ')))
+
+  await assertNoCrossChannelIdentityReuse(client, previewPublishOptions, {
+    version: '0.0.85',
+    version_code: '260902090000',
+  })
+
+  assert.deepEqual(client.requestedKeys, [
+    'bitterless/distro/dev/mac_arm/version_info.json',
+    'bitterless/distro/prod/mac_arm/version_info.json',
+  ])
+  assert.deepEqual(logs, [
+    '[publish.js] Cross-channel identity verified: 0.0.85 (260902090000) is unused outside preview',
+  ])
+})
+
+test('publisher refuses to publish when another channel manifest cannot be read', async () => {
+  const transportFailure = new Error('RequestTimeoutError')
+  transportFailure.code = 'RequestTimeoutError'
+  const client = {
+    async get() {
+      throw transportFailure
+    },
+  }
+
+  await assert.rejects(
+    () => assertNoCrossChannelIdentityReuse(client, previewPublishOptions, {
+      version: '0.0.85',
+      version_code: '260902090000',
+    }),
+    /RequestTimeoutError/,
+  )
+})
+
+test('publish runs the cross-channel identity guard in the same preflight as the order guard', () => {
+  const source = read('scripts/publish.js')
+  const mainSource = source.slice(source.indexOf('const main = async () =>'))
+  const orderIndex = mainSource.indexOf('await assertNoRemoteDowngrade')
+  const identityIndex = mainSource.indexOf('await assertNoCrossChannelIdentityReuse')
+  const preflightIndex = mainSource.indexOf('if (options.preflightOnly)')
+  const uploadIndex = mainSource.indexOf('await publishRelease({')
+
+  assert(identityIndex > orderIndex)
+  assert(preflightIndex > identityIndex)
+  assert.equal(mainSource.split('await assertNoCrossChannelIdentityReuse').length - 1, 2)
+  assert(mainSource.lastIndexOf('await assertNoCrossChannelIdentityReuse') < uploadIndex)
 })

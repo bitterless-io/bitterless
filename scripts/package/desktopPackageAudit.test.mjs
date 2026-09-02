@@ -25,7 +25,14 @@ const {
   auditDesktopPackage,
   getPathSize,
   packageIsPresent,
+  setUpdateFeedUrlLine,
+  writePackagedUpdateFeed,
 } = afterPack;
+const {
+  resolveUpdateDirectory,
+  resolveUpdatePlatform,
+} = require('../release/releaseChannel.cjs');
+const PLACEHOLDER_UPDATE_FEED_URL = 'https://assets.terncloud.com/bitterless/distro';
 
 const projectRoot = path.resolve(new URL('../..', import.meta.url).pathname);
 const temporaryRoots = [];
@@ -88,6 +95,8 @@ const createSyntheticApplication = async ({
   includeMacIcon = true,
   includeOnlyPreviewAgentSkill = true,
   includeTrenchAgentSkill = true,
+  includeUpdateConfig = true,
+  updateFeedUrl,
   runtimeProfile = {
     schemaVersion: 1,
     profileName: 'release_prod',
@@ -138,6 +147,19 @@ const createSyntheticApplication = async ({
         ]),
       )
     : {};
+  const updateConfigFiles = includeUpdateConfig
+    ? {
+        [`${resourcesPrefix}/app-update.yml`]: [
+          'provider: generic',
+          `url: ${updateFeedUrl ?? resolveUpdateDirectory(
+            runtimeProfile.releaseChannel,
+            resolveUpdatePlatform(platform === 'mac' ? 'darwin' : 'win32', targetArch),
+          )}`,
+          'updaterCacheDirName: synthetic-updater',
+          '',
+        ].join('\n'),
+      }
+    : {};
   mkdirSync(resourcesPath, { recursive: true });
   await createPackage(archiveSource, path.join(resourcesPath, 'app.asar'));
   writeFixtureFiles(applicationPath, {
@@ -152,6 +174,7 @@ const createSyntheticApplication = async ({
       : {}),
     ...previewSkillFiles,
     ...trenchSkillFiles,
+    ...updateConfigFiles,
     ...appFiles,
   });
 
@@ -717,4 +740,138 @@ test('signedBuild strips generic Apple certificate variables for a Windows targe
   assert.match(source, /const targetsWindows = args\.some/);
   assert.match(source, /if \(targetsWindows\) \{\s+delete env\.CSC_LINK;\s+delete env\.CSC_KEY_PASSWORD;/);
   assert.doesNotMatch(source, /delete env\.WIN_CSC_(?:LINK|KEY_PASSWORD)/);
+});
+
+test('afterPack writes the exact channel and platform update feed into every supported target', async () => {
+  const targets = [
+    {
+      platform: 'mac',
+      arch: 'arm64',
+      channel: 'prod',
+      runtimeProfile: {
+        schemaVersion: 1,
+        profileName: 'release_prod',
+        releaseChannel: 'prod',
+        viteEnv: 'prod',
+        viteMode: 'release',
+      },
+      appFiles: {},
+      expected: 'https://assets.terncloud.com/bitterless/distro/prod/mac_arm',
+    },
+    {
+      platform: 'mac',
+      arch: 'x64',
+      channel: 'preview',
+      runtimeProfile: {
+        schemaVersion: 1,
+        profileName: 'release_preview',
+        releaseChannel: 'preview',
+        viteEnv: 'prod',
+        viteMode: 'release',
+      },
+      appFiles: {
+        'Contents/Resources/icon.icns': readFileSync(
+          path.join(projectRoot, 'build/icon-preview.icns'),
+        ),
+      },
+      expected: 'https://assets.terncloud.com/bitterless/distro/preview/mac_intel',
+    },
+    {
+      platform: 'win',
+      arch: 'x64',
+      channel: 'dev',
+      runtimeProfile: {
+        schemaVersion: 1,
+        profileName: 'release_dev',
+        releaseChannel: 'dev',
+        viteEnv: 'dev',
+        viteMode: 'release',
+      },
+      appFiles: {},
+      expected: 'https://assets.terncloud.com/bitterless/distro/dev/win64',
+    },
+  ];
+
+  for (const target of targets) {
+    const fixture = await createSyntheticApplication({
+      platform: target.platform,
+      arch: target.arch,
+      runtimeProfile: target.runtimeProfile,
+      appFiles: target.appFiles,
+      updateFeedUrl: PLACEHOLDER_UPDATE_FEED_URL,
+    });
+    const configPath = path.join(fixture.resourcesPath, 'app-update.yml');
+    assert.match(readFileSync(configPath, 'utf-8'), /^url: https:\/\/assets\.terncloud\.com\/bitterless\/distro$/m);
+
+    assert.equal(writePackagedUpdateFeed(fixture.applicationPath), target.expected);
+
+    const rewritten = parseYaml(readFileSync(configPath, 'utf-8'));
+    assert.equal(rewritten.url, target.expected);
+    assert.equal(rewritten.provider, 'generic');
+    assert.equal(rewritten.updaterCacheDirName, 'synthetic-updater');
+    assert.equal(auditDesktopPackage(fixture.applicationPath).packagedUpdateFeedUrl, target.expected);
+  }
+});
+
+test('package audit rejects a placeholder, cross-channel, cross-platform, or missing update feed', async () => {
+  const runtimeProfile = {
+    schemaVersion: 1,
+    profileName: 'release_preview',
+    releaseChannel: 'preview',
+    viteEnv: 'prod',
+    viteMode: 'release',
+  };
+  const previewIcon = {
+    'Contents/Resources/icon.icns': readFileSync(path.join(projectRoot, 'build/icon-preview.icns')),
+  };
+
+  const rejected = [
+    'https://example.com/auto-updates',
+    PLACEHOLDER_UPDATE_FEED_URL,
+    'https://assets.terncloud.com/bitterless/distro/prod/mac_arm',
+    'https://assets.terncloud.com/bitterless/distro/preview/win64',
+  ];
+  for (const updateFeedUrl of rejected) {
+    const fixture = await createSyntheticApplication({
+      runtimeProfile,
+      appFiles: previewIcon,
+      updateFeedUrl,
+    });
+    assert.throws(
+      () => auditDesktopPackage(fixture.outputPath),
+      /update feed gate failed: app-update\.yml url must be https:\/\/assets\.terncloud\.com\/bitterless\/distro\/preview\/mac_arm/,
+    );
+  }
+
+  const missing = await createSyntheticApplication({
+    runtimeProfile,
+    appFiles: previewIcon,
+    includeUpdateConfig: false,
+  });
+  assert.throws(() => auditDesktopPackage(missing.outputPath), /update feed gate failed/);
+  assert.throws(() => writePackagedUpdateFeed(missing.outputPath), /app-update\.yml/);
+});
+
+test('update feed rewrite requires exactly one top-level url and preserves line endings', () => {
+  const feed = 'https://assets.terncloud.com/bitterless/distro/preview/mac_arm';
+  assert.equal(
+    setUpdateFeedUrlLine('provider: generic\nurl: https://example.com/x\n', feed),
+    `provider: generic\nurl: ${feed}\n`,
+  );
+  assert.equal(
+    setUpdateFeedUrlLine('provider: generic\r\nurl: https://example.com/x\r\n', feed),
+    `provider: generic\r\nurl: ${feed}\r\n`,
+  );
+  assert.throws(
+    () => setUpdateFeedUrlLine('provider: generic\n', feed),
+    /exactly one top-level url; found 0/,
+  );
+  assert.throws(
+    () => setUpdateFeedUrlLine('url: a\nurl: b\n', feed),
+    /exactly one top-level url; found 2/,
+  );
+  assert.doesNotMatch(
+    setUpdateFeedUrlLine('provider: generic\n  url: nested\nurl: top\n', feed),
+    /url: top/,
+  );
 });

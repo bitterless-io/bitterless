@@ -181,6 +181,9 @@ dmg:
 npmRebuild: false
 publish:
   provider: generic
-  url: https://example.com/auto-updates
+  # Build-time placeholder for the release root only. The afterPack hook rewrites the packaged
+  # app-update.yml to the exact <channel>/<platform> directory, and the package audit rejects
+  # any package still carrying this value.
+  url: https://assets.terncloud.com/bitterless/distro
 #electronDownload:
 #  mirror: https://npmmirror.com/mirrors/electron/

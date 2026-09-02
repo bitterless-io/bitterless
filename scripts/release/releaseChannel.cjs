@@ -9,6 +9,10 @@ const yaml = require('js-yaml');
 const rootDir = path.resolve(__dirname, '..', '..');
 const stableDistDir = path.join(rootDir, 'dist');
 
+// Must stay equal to RELEASE_BASE_URL in src/main/updateHelper/updateChannel.service.ts, which
+// remains the runtime authority. tests/update/updateChannel.test.mjs proves the two agree.
+const RELEASE_BASE_URL = 'https://assets.terncloud.com/bitterless/distro';
+
 const releaseChannelConfigs = Object.freeze({
   dev: Object.freeze({
     appId: 'io.bitterless.desktop_dev',
@@ -62,6 +66,29 @@ const platformConfigs = Object.freeze({
     requiredUpdaterArtifactExtensions: ['.exe']
   })
 });
+
+const updatePlatformTokens = Object.freeze({
+  darwin: Object.freeze({ arm64: 'mac_arm', x64: 'mac_intel' }),
+  win32: Object.freeze({ x64: 'win64' })
+});
+
+const resolveUpdatePlatform = (platform, arch) => {
+  const token = updatePlatformTokens[platform]?.[arch];
+  if (!token) {
+    throw new Error(`Unsupported update platform target: ${platform}/${arch}`);
+  }
+  return token;
+};
+
+const resolveUpdateDirectory = (releaseChannel, platform) => {
+  if (!Object.hasOwn(releaseChannelConfigs, releaseChannel)) {
+    throw new Error(`Unsupported release channel: ${releaseChannel}`);
+  }
+  if (!Object.hasOwn(platformConfigs, platform)) {
+    throw new Error(`Unsupported release platform: ${platform}`);
+  }
+  return `${RELEASE_BASE_URL}/${releaseChannel}/${platform}`;
+};
 
 const listFiles = (dir) => {
   if (!fs.existsSync(dir)) return [];
@@ -349,6 +376,7 @@ const assertBuildIdentity = (
 };
 
 module.exports = {
+  RELEASE_BASE_URL,
   artifactNameMatchesVersion,
   assertBuildIdentity,
   assertLocalReleaseMatchesDist,
@@ -360,6 +388,8 @@ module.exports = {
   readDistVersionInfo,
   releaseChannelConfigs,
   releaseVersionCode,
+  resolveUpdateDirectory,
+  resolveUpdatePlatform,
   sha512Base64,
   stableDistDir,
   updateLatestMacYml,

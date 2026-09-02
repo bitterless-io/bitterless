@@ -1,9 +1,20 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import test from 'node:test';
 import {
   assertManifestReleaseChannel,
   resolveUpdateDirectory
 } from '../../src/main/updateHelper/updateChannel.service.ts';
+
+const require = createRequire(import.meta.url);
+const {
+  RELEASE_BASE_URL,
+  resolveUpdateDirectory: resolvePackagingUpdateDirectory,
+  resolveUpdatePlatform
+} = require('../../scripts/release/releaseChannel.cjs');
+
+const readSource = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf-8');
 
 test('Preview update metadata is pinned to its exact channel and platform directory', () => {
   const expected = resolveUpdateDirectory('preview', 'mac_arm');
@@ -44,4 +55,45 @@ test('Stable accepts legacy metadata only inside the exact Stable platform direc
       ),
     /must equal/
   );
+});
+
+test('packaging and the running application resolve the same updater directory', () => {
+  for (const channel of ['dev', 'preview', 'prod']) {
+    for (const platform of ['mac_arm', 'mac_intel', 'win64']) {
+      assert.equal(
+        resolvePackagingUpdateDirectory(channel, platform),
+        resolveUpdateDirectory(channel, platform)
+      );
+    }
+  }
+  assert.equal(resolveUpdateDirectory('preview', 'mac_arm'), `${RELEASE_BASE_URL}/preview/mac_arm`);
+  assert.throws(() => resolvePackagingUpdateDirectory('beta', 'mac_arm'), /release channel/);
+  assert.throws(() => resolvePackagingUpdateDirectory('prod', 'linux_x64'), /release platform/);
+});
+
+test('packaging resolves the platform tokens the running application detects', () => {
+  assert.equal(resolveUpdatePlatform('darwin', 'arm64'), 'mac_arm');
+  assert.equal(resolveUpdatePlatform('darwin', 'x64'), 'mac_intel');
+  assert.equal(resolveUpdatePlatform('win32', 'x64'), 'win64');
+  for (const [platform, arch] of [
+    ['linux', 'x64'],
+    ['win32', 'arm64'],
+    ['darwin', 'ia32']
+  ]) {
+    assert.throws(
+      () => resolveUpdatePlatform(platform, arch),
+      /Unsupported update platform target/
+    );
+  }
+
+  const updateService = readSource('src/main/updateHelper/update.service.ts');
+  assert.match(updateService, /arch === 'arm64' \? 'mac_arm' : 'mac_intel'/);
+  assert.match(updateService, /platform === 'win32'\) \{\s+return 'win64';/);
+});
+
+test('the packaged updater configuration template never ships a placeholder host', () => {
+  const builderTemplate = readSource('electron-builder.tmp.yml');
+  assert.match(builderTemplate, /^ {2}provider: generic$/m);
+  assert.match(builderTemplate, new RegExp(`^ {2}url: ${RELEASE_BASE_URL}$`, 'm'));
+  assert.doesNotMatch(builderTemplate, /example\.com/);
 });

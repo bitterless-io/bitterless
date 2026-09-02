@@ -586,13 +586,17 @@ const assertReleaseOrder = (localPackage, remoteInfo) => {
   }
 };
 
+const isMissingRemoteObject = (error) => {
+  return error?.code === 'NoSuchKey' || error?.status === 404 || error?.statusCode === 404;
+};
+
 const assertNoRemoteDowngrade = async (client, objectPrefix, localRelease = readPackageRelease()) => {
   let remoteInfo;
   try {
     const result = await client.get(`${objectPrefix}/version_info.json`);
     remoteInfo = JSON.parse(result.content.toString('utf-8'));
   } catch (error) {
-    if (error?.code === 'NoSuchKey' || error?.status === 404 || error?.statusCode === 404) {
+    if (isMissingRemoteObject(error)) {
       console.log('[publish.js] No existing remote version manifest; first publish is allowed.');
       return;
     }
@@ -602,6 +606,46 @@ const assertNoRemoteDowngrade = async (client, objectPrefix, localRelease = read
   assertReleaseOrder(localRelease, remoteInfo);
   console.log(
     `[publish.js] Version order verified: local ${localRelease.version} (${releaseVersionCode(localRelease)}), remote ${remoteInfo.version} (${remoteInfo.versionCode})`,
+  );
+};
+
+// A release identity names one binary lineage. assertNoRemoteDowngrade only compares a channel with
+// itself, so it cannot see an identity another channel already published from the shared
+// package.json counter.
+const assertNoCrossChannelIdentityReuse = async (
+  client,
+  options,
+  localRelease = readPackageRelease(),
+) => {
+  const localVersion = String(localRelease.version ?? '');
+  const localVersionCode = releaseVersionCode(localRelease);
+
+  for (const channel of Object.keys(releaseChannelConfigs)) {
+    if (channel === options.env) continue;
+    const objectKey = `${options.prefix}/${channel}/${options.platform}/version_info.json`;
+    let remoteInfo;
+    try {
+      const result = await client.get(objectKey);
+      remoteInfo = JSON.parse(result.content.toString('utf-8'));
+    } catch (error) {
+      if (isMissingRemoteObject(error)) continue;
+      throw error;
+    }
+
+    const remoteTarget = `${channel}/${options.platform}`;
+    if (String(remoteInfo.versionCode ?? '') === localVersionCode) {
+      throw new Error(
+        `Refusing cross-channel version_code reuse: ${localVersionCode} is already published as ${remoteTarget} ${remoteInfo.version ?? 'unknown'}`,
+      );
+    }
+    if (String(remoteInfo.version ?? '') === localVersion) {
+      throw new Error(
+        `Refusing cross-channel version reuse: ${localVersion} is already published as ${remoteTarget} with version_code ${remoteInfo.versionCode ?? 'unknown'}`,
+      );
+    }
+  }
+  console.log(
+    `[publish.js] Cross-channel identity verified: ${localVersion} (${localVersionCode}) is unused outside ${options.env}`,
   );
 };
 
@@ -715,7 +759,10 @@ const main = async () => {
       retryMax: 3,
       timeout: OSS_REQUEST_TIMEOUT_MS,
     });
-  if (client) await assertNoRemoteDowngrade(client, objectPrefix, packageRelease);
+  if (client) {
+    await assertNoRemoteDowngrade(client, objectPrefix, packageRelease);
+    await assertNoCrossChannelIdentityReuse(client, options, packageRelease);
+  }
   if (options.preflightOnly) {
     console.log('[publish.js] Preflight complete; build, signing, and upload were skipped.');
     return;
@@ -737,7 +784,10 @@ const main = async () => {
   }
   artifacts = findArtifacts(options.platform, versionInfo.version, targetDistDir);
   const versionInfoPath = createVersionInfoForUpload(options, artifacts, targetDistDir);
-  if (client) await assertNoRemoteDowngrade(client, objectPrefix, versionInfo);
+  if (client) {
+    await assertNoRemoteDowngrade(client, objectPrefix, versionInfo);
+    await assertNoCrossChannelIdentityReuse(client, options, versionInfo);
+  }
 
   console.log(`[publish.js] Env file: ${options.envFile}`);
   console.log(`[publish.js] Target: oss://${publishConfig.bucket}/${objectPrefix}/`);
@@ -769,6 +819,7 @@ module.exports = {
   OSS_REQUEST_TIMEOUT_MS,
   assertBuildIdentity,
   assertLocalReleaseMatchesDist,
+  assertNoCrossChannelIdentityReuse,
   assertNoRemoteDowngrade,
   assertReleaseOrder,
   artifactNameMatchesVersion,
