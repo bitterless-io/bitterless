@@ -1,6 +1,7 @@
 import { XpcMainHandler, createXpcMainEmitter } from 'electron-xpc/main';
 import { omniWindowHelper } from '../windows/omniWindow.helper';
 import type {
+  OmniRendererOpenStageParams,
   OmniRendererMountedReadyParams,
   OmniRendererMountedReadyResult,
 } from '../windows/omniWindow.helper';
@@ -17,10 +18,16 @@ class OmniWindowHandler extends XpcMainHandler {
       await omniWindowHelper.create();
       console.log('[OmniWindowHandler] omni window ready');
       return { opened: true };
-    } catch (error) {
-      console.error('[OmniWindowHandler] omni window failed to open:', error);
+    } catch {
+      console.error('[OmniWindowHandler] omni window failed to open');
       return { opened: false };
     }
+  }
+
+  async rendererOpenStage(
+    params: OmniRendererOpenStageParams,
+  ): Promise<OmniRendererMountedReadyResult> {
+    return omniWindowHelper.markRendererOpenStage(params);
   }
 
   async rendererMountedReady(

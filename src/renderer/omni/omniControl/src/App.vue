@@ -6,8 +6,12 @@ import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { layoutStore } from './store/layout.store';
 
 onMounted(async () => {
-  await layoutStore.loadLayout();
-  // syncLayout() removed — main process restoreSavedLayout() already applies the layout on open
+  try {
+    await layoutStore.loadLayout();
+    // syncLayout() removed — main process restoreSavedLayout() already applies the layout on open
+  } finally {
+    globalThis.dispatchEvent(new Event('omni-control-layout-ready'));
+  }
 });
 </script>
 

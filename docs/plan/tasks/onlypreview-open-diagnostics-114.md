@@ -1,7 +1,7 @@
 ---
 id: onlypreview-open-diagnostics-114
 scope: Correlated privacy-safe OnlyPreview window and explicit-target open timing
-status: implemented; Preview rebuild and owner runtime verification pending
+status: implemented; Preview 0.0.86 rebuilt; owner runtime verification pending
 depends-on: [onlypreview-search-startup-diagnostics-041, onlypreview-action-diagnostics-103]
 verify: node --test tests/onlypreview/onlyPreviewOpenDiagnostics.test.mjs tests/onlypreview/onlyPreviewExplicitOpenSerialization.test.mjs tests/onlypreview/onlyPreviewAppWiring.test.mjs && yarn typecheck:node && node scripts/environment/runWithRuntimeProfile.cjs release_preview -- yarn _build:release && git diff --check
 ---
@@ -159,4 +159,6 @@ only collect another trace.
 - Focused regressions, Node typecheck, and directed Web typecheck passed. The two startup-concurrency
   findings from review 4 were fixed, then the same
   [independent review 4](../reviews/onlypreview-open-diagnostics-114-4.md) passed with no remaining
-  P0-P3 finding. Build, Electron/E2E, and packaged runtime were not run in this task stage.
+  P0-P3 finding.
+- Rebuilt the notarized macOS ARM Preview `0.0.86` package. Codesign and stapler validation passed;
+  Electron/E2E and packaged runtime launch were not run, so live latency remains owner verification.

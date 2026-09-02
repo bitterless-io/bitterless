@@ -8,38 +8,70 @@ import { i18n } from '@renderer/common/i18n/i18n.helper';
 import { initializeRendererLanguage } from '@renderer/common/i18n/rendererLanguage';
 import { omniCellEnv } from './contextBridge/cellEnv.bridge';
 import type { OmniWindowHandler } from '@main/xpc/omniWindow.handler';
+import type { OmniRendererBootstrapPhase } from '@shared/omni/omniOpenDiagnostics.mjs';
 
 const omniWindowEmitter = createXpcRendererEmitter<OmniWindowHandler>('OmniWindowHandler');
 
-const bootstrap = async (): Promise<void> => {
-  await initializeRendererLanguage();
-  const { default: App } = await import('./App.vue');
-  createApp(App).use(ArcoVue).use(i18n).mount('#app');
-  await nextTick();
+interface BrowserCellReadyIdentity {
+  token: string;
+  generation: number;
+  role: 'browser-cell';
+  cellId: string;
+}
 
-  const hasAnyReadyIdentity = Boolean(
-    omniCellEnv.readyToken ||
-    omniCellEnv.readyGeneration !== null ||
-    omniCellEnv.readyRole !== null,
-  );
-  if (!hasAnyReadyIdentity) return;
+const getReadyIdentity = (): BrowserCellReadyIdentity | null => {
   if (
     !omniCellEnv.readyToken ||
     omniCellEnv.readyGeneration === null ||
     omniCellEnv.readyRole !== 'browser-cell' ||
     !omniCellEnv.cellId
-  ) {
-    throw new Error('[Omni Cell] Incomplete renderer readiness identity');
-  }
-  const result = await omniWindowEmitter.rendererMountedReady({
+  ) return null;
+  return {
     token: omniCellEnv.readyToken,
     generation: omniCellEnv.readyGeneration,
     role: omniCellEnv.readyRole,
     cellId: omniCellEnv.cellId,
-  });
-  if (!result?.accepted) {
-    throw new Error('[Omni Cell] Stale renderer readiness identity');
+  };
+};
+
+const reportRendererOpenStage = (
+  identity: BrowserCellReadyIdentity | null,
+  phase: OmniRendererBootstrapPhase,
+  outcome?: 'success' | 'failure',
+): void => {
+  if (!identity) return;
+  try {
+    void omniWindowEmitter.rendererOpenStage({
+      ...identity,
+      phase,
+      outcome: outcome ?? 'success',
+    }).catch(() => {});
+  } catch {
+    // Diagnostics must never affect renderer startup.
   }
 };
 
-void bootstrap();
+const bootstrap = async (): Promise<void> => {
+  const identity = getReadyIdentity();
+  let phase: OmniRendererBootstrapPhase = 'renderer-script';
+  reportRendererOpenStage(identity, 'renderer-script');
+  try {
+    phase = 'renderer-language';
+    await initializeRendererLanguage();
+    reportRendererOpenStage(identity, 'renderer-language');
+    phase = 'renderer-import';
+    const { default: App } = await import('./App.vue');
+    reportRendererOpenStage(identity, 'renderer-import');
+    phase = 'renderer-mount';
+    createApp(App).use(ArcoVue).use(i18n).mount('#app');
+    await nextTick();
+    reportRendererOpenStage(identity, 'renderer-mount');
+    if (!identity) return;
+    const result = await omniWindowEmitter.rendererMountedReady(identity);
+    if (!result?.accepted) return;
+  } catch {
+    reportRendererOpenStage(identity, phase, 'failure');
+  }
+};
+
+void bootstrap().catch(() => {});

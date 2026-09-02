@@ -1,6 +1,6 @@
 # Omni Open returns before the browser is ready
 
-Status: in progress; 0.0.86 packaged renderer-start diagnostics incomplete
+Status: reopened; packaged hidden-renderer scheduling regression confirmed; fix in progress
 
 ## Observed behavior
 
@@ -88,3 +88,32 @@ for renderer readiness before showing the window. Process observations showed th
 at a low scheduling priority, while the fast file-search renderer explicitly disables background
 throttling. The next package should verify that boundary with fixed lifecycle/state records before
 changing visibility, throttling, or restore order.
+
+## Near-instant implementation
+
+- Initial first-party top/browser chrome stays runnable while hidden and must complete load plus Vue
+  mount before the native window shows and Open succeeds. Remote browser/mini-app content and Control
+  begin only on a cancellable 16ms event-loop turn after that visible/interactive boundary.
+- Repeated Open joins the same graph without replacing a pending deferred batch. Browser concurrency
+  resources, timers, and listeners are exact-once and generation-safe across success, failure,
+  timeout, close, and retry.
+- Fixed-schema `[omni-open]` records now divide native restore, renderer lifecycle, language/import/
+  mount, accepted/rejected receipt, first-visible/interactive, Control layout readiness, deferred
+  content, and bounded timeout-pending categories without logging user or renderer payload data.
+- [Independent review 2](../plan/reviews/omni-open-readiness-112-2.md) passed with no P0-P2 after the
+  startup, receipt, deferred-content, and semaphore cleanup races were resolved.
+- The notarized macOS ARM Preview `0.0.86` package was rebuilt and passed codesign/stapler
+  validation. Packaged runtime latency and interaction remain owner verification.
+
+## Preview packaged regression evidence
+
+- Native restore of six cells finishes in 54--71ms.
+- While the BaseWindow remains hidden, the first-party top/browser renderer scripts take 18.3
+  seconds to start in one run and never start before the 30-second timeout in another.
+- Remote browser/Mini App navigation starts only after first-visible and completes quickly, so it is
+  not the observed first-window bottleneck.
+
+[desktop-first-visible-performance-117](../plan/tasks/desktop-first-visible-performance-117.md)
+therefore moves native show/focus immediately after restore/view attachment, while retaining the
+shared in-flight readiness promise so rapid repeated Open still joins one graph until local chrome
+is usable.

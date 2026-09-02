@@ -1,6 +1,6 @@
 # OnlyPreview open latency is not fully traceable
 
-Status: implemented; Preview rebuild and owner runtime verification pending
+Status: reopened; packaged hidden-Shell and missing-directory regressions confirmed; fix in progress
 
 ## Observed behavior
 
@@ -120,5 +120,21 @@ performance behavior is changed. The 80-second Project reconciliation is a separ
   local Shell, first-visible, Vue interactive, workspace publication, deferred-index, and background
   reconciliation stages needed to compare future packaged runs.
 - [Independent review 4](../plan/reviews/onlypreview-open-diagnostics-114-4.md) passed after its two
-  startup-concurrency findings were resolved. The next Preview package and live reproduction remain
-  owner verification, not evidence already claimed by this source change.
+  startup-concurrency findings were resolved. The notarized macOS ARM Preview `0.0.86` package was
+  rebuilt and passed codesign/stapler validation; live reproduction remains owner verification, not
+  evidence already claimed by this source change.
+
+## Preview packaged regression evidence
+
+- The hidden file-search runtime is ready in about 200ms, but the attached hidden Shell waits 10.4
+  seconds before its first renderer script executes; first-visible follows at 10.6 seconds.
+- After mount, logs contain `restore-index-grace scheduled` but never `start`, XPC `initialize`, or a
+  root browse listing, even while the process stays alive for minutes. The renderer-owned 750ms
+  timer is the sole restored-Project kickoff and is suppressed after background throttling resumes.
+- The search runtime already emits a root browse listing before its full count/traversal, so an
+  immediate deterministic initialization can populate the directory progressively without gating
+  first-visible on reconciliation.
+
+[desktop-first-visible-performance-117](../plan/tasks/desktop-first-visible-performance-117.md)
+shows the native graph immediately after Shell attachment and removes the renderer timer as the
+only restored-Project initialization path.

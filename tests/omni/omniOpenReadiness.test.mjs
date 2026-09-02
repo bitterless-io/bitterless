@@ -31,18 +31,23 @@ test('Omni cold-open gate waits for explicit trusted renderer mount handshakes',
   assert.match(helper, /\.\.\.initialBrowserRendererReady/);
   assert.match(
     helper,
-    /onInvalidate: \(generation\) => \{[\s\S]*?openStartedAt\.delete\(generation\)/,
+    /onInvalidate: \(generation\) => \{[\s\S]*?finishOpenDiagnostic\(generation, 'superseded', 'invalidated'\)/,
   );
   assert.match(helper, /params\.generation !== fence\.generation/);
   assert.match(helper, /params\.role !== fence\.role/);
   assert.match(helper, /params\.cellId !== fence\.cellId/);
+  assert.match(helper, /OMNI_RENDERER_BOOTSTRAP_PHASES\.has\(params\.phase\)/);
+  assert.match(
+    helper,
+    /cell\.id === fence\.cellId[\s\S]*?cell\.contentMode === 'browser'[\s\S]*?cell\.menubar === fence\.view/,
+  );
 
   for (const source of [topMain, cellMain]) {
     const language = index(source, 'await initializeRendererLanguage();');
     const dynamicImport = index(source, "await import('./App.vue')", language);
     const mount = index(source, ".mount('#app')", dynamicImport);
     const nextTick = index(source, 'await nextTick();', mount);
-    const reportReady = index(source, 'rendererMountedReady({', nextTick);
+    const reportReady = index(source, 'rendererMountedReady(identity)', nextTick);
     assert.ok(language < dynamicImport);
     assert.ok(dynamicImport < mount);
     assert.ok(mount < nextTick);
@@ -56,13 +61,18 @@ test('Omni initial chrome is unthrottled while remote content stays normally thr
     helper.indexOf('private createWebContentsView('),
     helper.indexOf('\n}', helper.indexOf('private createWebContentsView(')),
   );
-  assert.match(helper, /createWebContentsView\([\s\S]*?'omniWindow'[\s\S]*?getRendererReadyArguments\(topRendererReady\)[\s\S]*?true/);
-  assert.match(helper, /createWebContentsView\('omniCell',[\s\S]*?getRendererReadyArguments\(rendererReadyFence\)[\s\S]*?\], true\)/);
+  assert.match(helper, /createWebContentsView\([\s\S]*?'omniWindow'[\s\S]*?getRendererReadyArguments\(topRendererReady\)[\s\S]*?true,[\s\S]*?topRendererReady/);
+  assert.match(helper, /createWebContentsView\('omniCell',[\s\S]*?getRendererReadyArguments\(rendererReadyFence\)[\s\S]*?\], true, rendererReadyFence/);
   assert.match(localFactory, /backgroundThrottling: !startupUnthrottled/);
   assert.match(helper, /createBrowserCellContentView[\s\S]*?backgroundThrottling: true/);
   assert.match(helper, /createMiniAppCellContentView[\s\S]*?backgroundThrottling: true/);
   assert.match(helper, /rendererReadyFences\.delete\(fence\.token\)[\s\S]*?fence\.view\.webContents\.setBackgroundThrottling\(true\)[\s\S]*?fence\.resolve\(\)/);
-  assert.match(helper, /bindRendererReadyFenceView[\s\S]*?fence\.view !== view \|\| fence\.settled[\s\S]*?did-fail-load[\s\S]*?unresponsive[\s\S]*?render-process-gone/);
+  assert.match(helper, /bindRendererReadyFenceView[\s\S]*?did-fail-load[\s\S]*?unresponsive[\s\S]*?responsive[\s\S]*?render-process-gone/);
+  assert.match(helper, /disposeRendererReadyFenceLifecycle[\s\S]*?removeListener\('did-fail-load'[\s\S]*?removeListener\('unresponsive'[\s\S]*?removeListener\('render-process-gone'/);
+  assert.match(helper, /settleRendererReadyFenceIfReady[\s\S]*?fence\.loadPending[\s\S]*?fence\.mountPending[\s\S]*?setBackgroundThrottling\(true\)/);
+  assert.match(helper, /fence\.mountPending = false;[\s\S]*?settleRendererReadyFenceIfReady\(fence\)/);
+  assert.match(helper, /createControlView[\s\S]*?Boolean\(rendererReadyFence\)[\s\S]*?rendererReadyFence \?\? undefined/);
+  assert.match(helper, /rendererReadyFence\.timeoutHandle = setTimeout[\s\S]*?'diagnostic-timeout'[\s\S]*?OMNI_OPEN_READY_TIMEOUT_MS/);
 });
 
 test('Omni defers initial content and Control until after local chrome presentation', () => {
@@ -70,12 +80,76 @@ test('Omni defers initial content and Control until after local chrome presentat
   const present = helper.slice(helper.indexOf('present: (window, generation)'), helper.indexOf('cleanupIncomplete:'));
   const addCell = helper.slice(helper.indexOf('private addCell('), helper.indexOf('private configureBrowserCellContentView('));
   const toggle = helper.slice(helper.indexOf('toggleControl()'), helper.indexOf('getLayoutConfig()'));
-  assert.ok(index(present, 'this.show()') < index(present, 'this.startDeferredInitialContent(generation)'));
+  assert.ok(index(present, 'this.show()') < index(present, 'this.startDeferredInitialContent(generation, state.trace.tag)'));
   assert.match(helper, /deferredInitialContent\.set\(creationGeneration, \[\]\)/);
   assert.match(addCell, /const startContent[\s\S]*?loadMiniAppCellContent[\s\S]*?loadURL\(url\)[\s\S]*?deferred\.push\(startContent\)/);
-  assert.match(helper, /startDeferredInitialContent[\s\S]*?openCoordinator\.isCurrent\(generation\)[\s\S]*?queueMicrotask[\s\S]*?openCoordinator\.isCurrent\(generation\)[\s\S]*?for \(const task of tasks\) task\(\)/);
-  assert.match(helper, /cleanupAllViews[\s\S]*?deferredInitialContent\.clear\(\)/);
+  assert.match(helper, /startDeferredInitialContent[\s\S]*?openCoordinator\.isCurrent\(generation\)[\s\S]*?deferredStartupRegistry\.schedule\(generation[\s\S]*?openCoordinator\.isCurrent\(generation\)[\s\S]*?for \(const task of tasks\)[\s\S]*?try \{[\s\S]*?task\(\)[\s\S]*?catch[\s\S]*?createControlView\(generation, parentTag\)[\s\S]*?catch[\s\S]*?if \(scheduled\) this\.deferredInitialContent\.delete\(generation\)/);
+  assert.match(helper, /cleanupAllViews[\s\S]*?deferredInitialContent\.clear\(\)[\s\S]*?deferredStartupRegistry\.cancelAll\(\)/);
   assert.match(toggle, /if \(!this\.controlView \|\| !this\.isWebContentsAlive[\s\S]*?this\.createControlView\(\)[\s\S]*?setControlVisible/);
+});
+
+test('Omni open diagnostics are fixed, correlated, and do not change the readiness wait', () => {
+  const helper = read('src/main/windows/omniWindow.helper.ts');
+  const handler = read('src/main/xpc/omniWindow.handler.ts');
+
+  assert.match(helper, /createOmniOpenDiagnostics/);
+  assert.match(helper, /trace\('open',[\s\S]*?route: 'api'[\s\S]*?mode,[\s\S]*?generation/);
+  for (const phase of ['native', 'restore', 'first-visible', 'interactive', 'ready']) {
+    assert.match(helper, new RegExp(`phase: '${phase}'`));
+  }
+  assert.match(helper, /getPendingRendererCounts[\s\S]*?pendingTopLoad[\s\S]*?pendingTopMount[\s\S]*?pendingBrowserLoad[\s\S]*?pendingBrowserMount/);
+  assert.match(helper, /error instanceof OmniOpenTimeoutError/);
+  assert.match(helper, /startDeferredInitialContent\(generation, state\.trace\.tag\)/);
+  assert.match(helper, /parentTag: params\.parentTag \?\?[\s\S]*?openDiagnosticStates\.get/);
+  assert.match(handler, /rendererOpenStage[\s\S]*?markRendererOpenStage\(params\)/);
+  assert.match(helper, /params\.outcome !== 'success' && params\.outcome !== 'failure'/);
+  assert.doesNotMatch(helper, /params\.outcome !== undefined[\s\S]*?params\.outcome !== 'success'/);
+
+  const waitStart = index(helper, 'await Promise.all([');
+  const presentStart = index(helper, 'present: (window, generation)');
+  const show = index(helper, 'this.show();', presentStart);
+  const deferred = index(helper, 'this.startDeferredInitialContent', show);
+  assert.ok(waitStart > 0);
+  assert.ok(show < deferred);
+});
+
+test('Omni local lifecycle and deferred navigation diagnostics are exact-generation and bounded', () => {
+  const helper = read('src/main/windows/omniWindow.helper.ts');
+  const factory = helper.slice(
+    helper.indexOf('private createWebContentsView('),
+    helper.indexOf('\n}', helper.indexOf('private createWebContentsView(')),
+  );
+
+  const bind = index(factory, 'this.bindRendererReadyFenceView(rendererReadyFence, view)');
+  const loadStart = index(factory, "'load-start'", bind);
+  const loadCall = Math.min(
+    index(factory, 'view.webContents.loadURL', loadStart),
+    index(factory, 'view.webContents.loadFile', loadStart),
+  );
+  assert.ok(bind < loadStart);
+  assert.ok(loadStart < loadCall);
+  assert.match(helper, /isCreationActive\(fence\.generation\)/);
+  assert.match(helper, /beginDeferredNavigationDiagnostic[\s\S]*?phase: 'scheduled'/);
+  assert.match(helper, /startDeferredNavigationDiagnostic\(deferredNavigation\)[\s\S]*?loadURL\(url\)/);
+  assert.match(helper, /contentMode === 'miniapp'[\s\S]*?startDeferredNavigationDiagnostic\(deferredNavigation\)[\s\S]*?armDeferredNavigationTimeout\(deferredNavigation\)[\s\S]*?loadMiniAppCellContent[\s\S]*?finishDeferredNavigationDiagnostic\(deferredNavigation, outcome\)/);
+  assert.match(helper, /finishDeferredNavigationDiagnostic[\s\S]*?'success' \| 'failure' \| 'timeout' \| 'superseded'/);
+  assert.match(helper, /for \(const navigation of \[\.\.\.this\.deferredNavigationDiagnostics\]\)[\s\S]*?'superseded'/);
+  assert.match(
+    helper,
+    /if \(aborted\) \{[\s\S]*?finishDeferredNavigationDiagnostic\(deferredNavigation, 'superseded'\);[\s\S]*?return;[\s\S]*?if \(!this\.isWebContentsAlive\(content\.webContents\)\) \{[\s\S]*?_loadSemaphore\.release\(\)/,
+  );
+  assert.doesNotMatch(
+    helper,
+    /if \(aborted \|\| !this\.isWebContentsAlive\(content\.webContents\)\) \{[\s\S]*?_loadSemaphore\.release\(\)/,
+  );
+  assert.match(
+    helper,
+    /browserLoadResources = new Set<[\s\S]*?createOmniExactOnceResource[\s\S]*?for \(const resource of \[\.\.\.this\.browserLoadResources\]\) resource\.close\(\);[\s\S]*?this\.browserLoadResources\.clear\(\);[\s\S]*?_loadSemaphore\.drain\(\)/,
+  );
+  assert.match(
+    helper,
+    /const resources = createOmniExactOnceResource\(\);[\s\S]*?browserLoadResources\.add\(resources\);[\s\S]*?resources\.add\(\(\) => this\.browserLoadResources\.delete\(resources\)\);[\s\S]*?resources\.add\(\(\) => this\._loadSemaphore\.release\(\)\)/,
+  );
 });
 
 test('Omni address Enter has exactly one navigation event source', () => {

@@ -1,6 +1,6 @@
 # Maestro window reopen performs a full cold boot
 
-Status: implemented; owner packaged verification pending
+Status: reopened; packaged cold-first-visible regression confirmed; fix in progress
 
 ## Observed behavior
 
@@ -58,3 +58,17 @@ Diagnostic task:
 - Focused diagnostics/lifecycle tests passed 8/8, Node typecheck and the Maestro CLI integration
   check passed, and [independent review 1](../plan/reviews/maestro-open-diagnostics-113-1.md) found no
   P0-P3 issue.
+
+## Preview 0.0.86 regression evidence
+
+- Two normal cold boots reached the primary Shell/Home host mount in 385--417ms but remained hidden
+  until Workbench and pinned Home completed at about 4.3 seconds.
+- A failed run waited 30 seconds for optional Home/startup/all-ready stages and destroyed the whole
+  graph even though the primary Shell had mounted in about 390ms.
+- Fixed Home currently preloads about 8.54MiB of JavaScript, including Settings-only Monaco/editor
+  chunks, because the Home router and Settings panels are statically imported.
+
+The corrective contract is tracked by
+[desktop-first-visible-performance-117](../plan/tasks/desktop-first-visible-performance-117.md):
+show the mounted primary graph first, keep optional startup progressive/non-destructive, and lazy
+load Settings-only heavy bundles. The retained-runtime close/reopen behavior remains unchanged.
