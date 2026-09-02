@@ -28,10 +28,15 @@ const {
 } = fixture;
 
 const runtimeConfig = {
-  config: { schemaVersion: 1, mode: 'custom', configDirectory: configA },
-  hydrate: async () => ({ state: 'valid', config: runtimeConfig.config }),
-  getCurrent: () => runtimeConfig.config,
-  chooseCustom: async () => runtimeConfig.config,
+  config: {
+    id: 'env-default', label: 'Default', mode: 'custom', configDirectory: configA, enabled: true
+  },
+  hydrate: async () => ({
+    state: 'valid',
+    config: { schemaVersion: 2, environments: [runtimeConfig.config] }
+  }),
+  listEnvironments: () => [runtimeConfig.config],
+  chooseCustomDirectory: async () => runtimeConfig.config,
   useAutomatic: async () => runtimeConfig.config
 };
 
@@ -64,15 +69,16 @@ try {
     }
   });
   const replacementConfig = {
-    config: { schemaVersion: 1, mode: 'custom', configDirectory: configA },
-    hydrate: async () => ({ state: 'valid', config: replacementConfig.config }),
-    getCurrent: () => replacementConfig.config,
-    chooseCustom: async () => {
-      replacementConfig.config = {
-        schemaVersion: 1,
-        mode: 'custom',
-        configDirectory: selectedConfig
-      };
+    config: {
+      id: 'env-default', label: 'Default', mode: 'custom', configDirectory: configA, enabled: true
+    },
+    hydrate: async () => ({
+      state: 'valid',
+      config: { schemaVersion: 2, environments: [replacementConfig.config] }
+    }),
+    listEnvironments: () => [replacementConfig.config],
+    chooseCustomDirectory: async () => {
+      replacementConfig.config = { ...replacementConfig.config, mode: 'custom', configDirectory: selectedConfig };
       return replacementConfig.config;
     },
     useAutomatic: async () => replacementConfig.config
@@ -223,12 +229,17 @@ try {
   const staleFailureTimers = createTimerHarness();
   const staleFailureWatcher = createWatcher();
   const staleFailureConfig = {
-    config: { schemaVersion: 1, mode: 'custom', configDirectory: configA },
-    hydrate: async () => ({ state: 'valid', config: staleFailureConfig.config }),
-    getCurrent: () => staleFailureConfig.config,
-    chooseCustom: async () => {
+    config: {
+      id: 'env-default', label: 'Default', mode: 'custom', configDirectory: configA, enabled: true
+    },
+    hydrate: async () => ({
+      state: 'valid',
+      config: { schemaVersion: 2, environments: [staleFailureConfig.config] }
+    }),
+    listEnvironments: () => [staleFailureConfig.config],
+    chooseCustomDirectory: async () => {
       staleFailureConfig.config = {
-        schemaVersion: 1,
+        ...staleFailureConfig.config,
         mode: 'custom',
         configDirectory: staleFailureSelection
       };

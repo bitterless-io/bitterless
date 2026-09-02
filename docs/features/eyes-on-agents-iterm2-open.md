@@ -148,6 +148,34 @@ with an iTerm2 identity still has `archiveState = "unknown"` and no archive/unar
 becomes visible for the same reason a Desktop-matched row is visible, not because CLI-only archive
 semantics changed.
 
+## Concurrent sessions
+
+Running several Claude Code CLI sessions in different iTerm2 panes at the same time on one machine
+needs no additional mechanism beyond what tasks 081/082/083 already built. Each identity path is
+independently keyed:
+
+- `payload.sessionId` (the Claude CLI session UUID) is the `thread_id`/`session_key` primary
+  identity for every hook delivery — two concurrently running sessions have two distinct
+  `sessionId`s and therefore two distinct rows from the first `SessionStart` delivery onward.
+- `ITERM_SESSION_ID` is unique per pane for the lifetime of that pane (iTerm2's own contract), so two
+  panes started at the same or different times never share a `terminalSessionId`.
+- `upsertClaudeInventory`'s COALESCE-preserve rule operates per row (`WHERE thread_id = ?`); writing
+  one session's `iterm2_session_id` never touches another session's row.
+- `getSnapshot()`'s visibility filter and `openThreadInIterm2` both resolve by `sessionKey`, so
+  Focus shows one card per concurrent session and each card's **Open in iTerm2** action opens only
+  its own pane.
+
+This delivery adds no new locking, batching, or session-count limit; N concurrent iTerm2 Claude
+sessions produce N independent, correctly routable rows the same way N concurrent Claude Desktop
+sessions already do — a direct consequence of the per-row design above, not a separately built
+mechanism.
+
+Configuring and observing **additional** `CLAUDE_CONFIG_DIR` environments (e.g. a `claude2`/`claude3`
+setup) is a distinct, larger capability covered by
+[EyesOnAgents Claude Multi-Environment](eyes-on-agents-claude-multi-environment.md), including the
+Agent Connections guidance for it — that doc supersedes what was originally sketched here for that
+purpose.
+
 ## Open
 
 Claude Open gains a second, independent route. The existing Desktop route is unchanged:

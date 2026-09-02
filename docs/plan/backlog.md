@@ -40,6 +40,13 @@ Non-blocking review findings are recorded here after task verification.
   `typecheck:eyes-on-agents:core`'s include list; it is covered by the separate
   `typecheck:sqlite-migrations` project, which passed, but the two scoped typecheck projects'
   coverage boundary is worth aligning if this keeps happening across tasks.
+- Task 084 review: `ClaudeDirectoryConfigService` retains a dead `getCurrent()` method superseded by
+  `listEnvironments()`. Remove it once nothing references it, or confirm it's still an intentional
+  compatibility shim and document why.
+- Task 084 review: test coverage for `useAutomatic` after `environments[0]` is removed/promoted (the
+  "promotion" path) is thin, and persist-failure behavior is only directly tested on 2 of the 7 CRUD
+  methods even though all 7 share the same `persist()` chokepoint. Worth a small follow-up test pass
+  if this service gets touched again.
 - Pre-existing, unrelated to the iTerm2 Open feature: `yarn check:renderer-i18n` crashes on
   `assert(trayCreateIndex > homeCreateIndex, 'Tray must follow Home creation')`
   (`scripts/renderer-i18n/check-renderer-i18n.mjs:172`) because commit `c67ac21` changed

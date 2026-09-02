@@ -501,6 +501,53 @@ export const parseEyesOnAgentsSetClaudeProviderEnabledParams = (
   return { enabled: value.enabled };
 };
 
+export const parseEyesOnAgentsClaudeEnvironmentId = (value: unknown): string => {
+  if (typeof value !== 'string' || !UUID_PATTERN.test(value)) {
+    throw new Error('Claude environment id must be a UUID');
+  }
+  return value.toLowerCase();
+};
+
+export const parseEyesOnAgentsClaudeEnvironmentLabel = (value: unknown): string => {
+  return parseEyesOnAgentsText(value, 'Claude environment label', 80, false) as string;
+};
+
+export const parseEyesOnAgentsAddClaudeEnvironmentParams = (
+  value: unknown
+): { label: string } => {
+  if (!isEyesOnAgentsRecord(value)) throw new Error('Claude environment params must be an object');
+  assertOnlyKeys(value, ['label'], 'Claude environment params');
+  return { label: parseEyesOnAgentsClaudeEnvironmentLabel(value.label) };
+};
+
+export const parseEyesOnAgentsClaudeEnvironmentIdParams = (
+  value: unknown
+): { id: string } => {
+  if (!isEyesOnAgentsRecord(value)) throw new Error('Claude environment params must be an object');
+  assertOnlyKeys(value, ['id'], 'Claude environment params');
+  return { id: parseEyesOnAgentsClaudeEnvironmentId(value.id) };
+};
+
+export const parseEyesOnAgentsRenameClaudeEnvironmentParams = (
+  value: unknown
+): { id: string; label: string } => {
+  if (!isEyesOnAgentsRecord(value)) throw new Error('Claude environment params must be an object');
+  assertOnlyKeys(value, ['id', 'label'], 'Claude environment params');
+  return {
+    id: parseEyesOnAgentsClaudeEnvironmentId(value.id),
+    label: parseEyesOnAgentsClaudeEnvironmentLabel(value.label)
+  };
+};
+
+export const parseEyesOnAgentsSetClaudeEnvironmentEnabledParams = (
+  value: unknown
+): { id: string; enabled: boolean } => {
+  if (!isEyesOnAgentsRecord(value)) throw new Error('Claude environment params must be an object');
+  assertOnlyKeys(value, ['id', 'enabled'], 'Claude environment params');
+  if (typeof value.enabled !== 'boolean') throw new Error('enabled must be a boolean');
+  return { id: parseEyesOnAgentsClaudeEnvironmentId(value.id), enabled: value.enabled };
+};
+
 export const parseEyesOnAgentsThreadRefreshPatch = (
   value: unknown
 ): EyesOnAgentsThreadRefreshPatch => {

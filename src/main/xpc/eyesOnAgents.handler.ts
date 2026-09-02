@@ -7,6 +7,7 @@ import type {
   EyesOnAgentsApi,
   EyesOnAgentsBridgeStatus,
   EyesOnAgentsClaudeBridgeStatus,
+  EyesOnAgentsClaudeEnvironment,
   EyesOnAgentsRepositoryApi,
   EyesOnAgentsSessionKey,
   EyesOnAgentsSnapshot,
@@ -17,11 +18,15 @@ import {
   getCodexHookOutboxPath
 } from '@shared/eyesOnAgents/codexHookBridge.contract';
 import {
+  parseEyesOnAgentsAddClaudeEnvironmentParams,
+  parseEyesOnAgentsClaudeEnvironmentIdParams,
   parseEyesOnAgentsCreateDomainParams,
   parseEyesOnAgentsDomainParams,
   parseEyesOnAgentsMoveThreadParams,
+  parseEyesOnAgentsRenameClaudeEnvironmentParams,
   parseEyesOnAgentsRenameDomainParams,
   parseEyesOnAgentsReorderDomainsParams,
+  parseEyesOnAgentsSetClaudeEnvironmentEnabledParams,
   parseEyesOnAgentsSetClaudeProviderEnabledParams,
   parseEyesOnAgentsSetLastUserPromptCaptureEnabledParams,
   parseEyesOnAgentsSessionKeyParams,
@@ -186,15 +191,17 @@ const appServer = new CodexAppServerSupervisor({
   }
 });
 
+const pickClaudeConfigDirectory = async (): Promise<string | null> => {
+  const result = await dialog.showOpenDialog({
+    title: 'Select Claude config directory',
+    properties: ['openDirectory']
+  });
+  return result.canceled ? null : result.filePaths[0] ?? null;
+};
+
 const claudeDirectoryConfig = new ClaudeDirectoryConfigService({
   settings,
-  pickDirectory: async () => {
-    const result = await dialog.showOpenDialog({
-      title: 'Select Claude config directory',
-      properties: ['openDirectory']
-    });
-    return result.canceled ? null : result.filePaths[0] ?? null;
-  }
+  pickDirectory: pickClaudeConfigDirectory
 });
 const claudeWatcher = new ClaudeWatcherSupervisor({
   userDataPath: app.getPath('userData'),
@@ -397,6 +404,56 @@ export class EyesOnAgentsHandler extends XpcMainHandler implements EyesOnAgentsA
 
   async retryClaudeDirectory(): Promise<EyesOnAgentsSnapshot> {
     return await eyesOnAgentsService.retryClaudeDirectory();
+  }
+
+  // Environment-scoped CRUD (task 084). This mutates only the persisted environment list — it
+  // does not start/stop a watcher for the mutated environment; that fan-out is task 085's job.
+  async listClaudeEnvironments(): Promise<EyesOnAgentsClaudeEnvironment[]> {
+    return claudeDirectoryConfig.listEnvironments();
+  }
+
+  async addClaudeEnvironment(params: { label: string }): Promise<EyesOnAgentsClaudeEnvironment[]> {
+    const { label } = parseEyesOnAgentsAddClaudeEnvironmentParams(params);
+    const configDirectory = await pickClaudeConfigDirectory();
+    if (configDirectory !== null) await claudeDirectoryConfig.addEnvironment({ label, configDirectory });
+    return claudeDirectoryConfig.listEnvironments();
+  }
+
+  async renameClaudeEnvironment(params: {
+    id: string;
+    label: string;
+  }): Promise<EyesOnAgentsClaudeEnvironment[]> {
+    await claudeDirectoryConfig.renameEnvironment(parseEyesOnAgentsRenameClaudeEnvironmentParams(params));
+    return claudeDirectoryConfig.listEnvironments();
+  }
+
+  async removeClaudeEnvironment(params: { id: string }): Promise<EyesOnAgentsClaudeEnvironment[]> {
+    await claudeDirectoryConfig.removeEnvironment(parseEyesOnAgentsClaudeEnvironmentIdParams(params));
+    return claudeDirectoryConfig.listEnvironments();
+  }
+
+  async setClaudeEnvironmentEnabled(params: {
+    id: string;
+    enabled: boolean;
+  }): Promise<EyesOnAgentsClaudeEnvironment[]> {
+    await claudeDirectoryConfig.setEnvironmentEnabled(
+      parseEyesOnAgentsSetClaudeEnvironmentEnabledParams(params)
+    );
+    return claudeDirectoryConfig.listEnvironments();
+  }
+
+  async chooseClaudeEnvironmentDirectory(params: {
+    id: string;
+  }): Promise<EyesOnAgentsClaudeEnvironment[]> {
+    await claudeDirectoryConfig.chooseCustomDirectory(parseEyesOnAgentsClaudeEnvironmentIdParams(params));
+    return claudeDirectoryConfig.listEnvironments();
+  }
+
+  async useAutomaticClaudeEnvironment(params: {
+    id: string;
+  }): Promise<EyesOnAgentsClaudeEnvironment[]> {
+    await claudeDirectoryConfig.useAutomatic(parseEyesOnAgentsClaudeEnvironmentIdParams(params));
+    return claudeDirectoryConfig.listEnvironments();
   }
 
   async setClaudeProviderEnabled(

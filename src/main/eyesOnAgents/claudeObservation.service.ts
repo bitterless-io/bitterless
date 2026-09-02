@@ -1,7 +1,7 @@
 import type {
   EyesOnAgentsClaudeDeletionReconciliation,
-  EyesOnAgentsClaudeDirectoryConfig,
   EyesOnAgentsClaudeDirectoryStatus,
+  EyesOnAgentsClaudeEnvironment,
   EyesOnAgentsClaudeInventoryThread,
   EyesOnAgentsRepositoryApi,
   EyesOnAgentsRepositoryMutationResult
@@ -69,9 +69,12 @@ const stoppedStatus = (): EyesOnAgentsClaudeDirectoryStatus => ({
   error: null
 });
 
+// The Claude directory config service now stores a list of named environments (task 084); this
+// service still watches only environments[0] (the default) until task 085 fans out to the full
+// list, so it keeps comparing that one environment's mode/configDirectory.
 const sameConfig = (
-  left: EyesOnAgentsClaudeDirectoryConfig | null,
-  right: EyesOnAgentsClaudeDirectoryConfig
+  left: EyesOnAgentsClaudeEnvironment | null,
+  right: EyesOnAgentsClaudeEnvironment
 ): boolean => left !== null && left.mode === right.mode &&
   left.configDirectory === right.configDirectory;
 
@@ -84,7 +87,7 @@ export class ClaudeObservationService {
   private desiredStarted = false;
   private generation = 0;
   private lifecycleTail: Promise<void> = Promise.resolve();
-  private appliedConfig: EyesOnAgentsClaudeDirectoryConfig | null = null;
+  private appliedConfig: EyesOnAgentsClaudeEnvironment | null = null;
   private appliedResolution: ClaudeDirectoryResolution | null = null;
   private capabilityClearPending = false;
   private retryTimer: RetryTimer | null = null;
@@ -98,9 +101,9 @@ export class ClaudeObservationService {
     >;
     directoryConfig?: Pick<
       ClaudeDirectoryConfigService,
-      'hydrate' | 'getCurrent' | 'chooseCustom' | 'useAutomatic'
+      'hydrate' | 'listEnvironments' | 'chooseCustomDirectory' | 'useAutomatic'
     >;
-    resolveDirectory?: (config: EyesOnAgentsClaudeDirectoryConfig) => ClaudeDirectoryResolution;
+    resolveDirectory?: (config: EyesOnAgentsClaudeEnvironment) => ClaudeDirectoryResolution;
     resolveRoots?: () => ClaudeObservationRoots;
     agents: ClaudeAgentsAdapter;
     watcher: {
@@ -178,10 +181,17 @@ export class ClaudeObservationService {
     });
   }
 
+  // These two methods still act on the sole default environment (environments[0]) — the
+  // multi-environment CRUD surface added by task 084 is consumed per-environment starting with
+  // task 085's watcher fan-out, not here. When the config service has no currently-known
+  // environment (never hydrated, or a malformed saved value), no id is available yet; an empty
+  // id is passed through and the config service's own recovery branch resets to a fresh default
+  // environment, exactly like the pre-084 single-directory recovery contract.
   async changeDirectory(): Promise<void> {
     await this.runLifecycle(async () => {
-      if (!this.dependencies.directoryConfig) throw new Error('Claude directory configuration is unavailable');
-      const next = await this.dependencies.directoryConfig.chooseCustom();
+      const next = await this.requireDirectoryConfig().chooseCustomDirectory({
+        id: this.resolveDefaultEnvironmentId()
+      });
       if (next === null) return;
       await this.applyPersistedConfig(next);
     });
@@ -189,10 +199,22 @@ export class ClaudeObservationService {
 
   async useAutomaticDirectory(): Promise<void> {
     await this.runLifecycle(async () => {
-      if (!this.dependencies.directoryConfig) throw new Error('Claude directory configuration is unavailable');
-      const next = await this.dependencies.directoryConfig.useAutomatic();
+      const next = await this.requireDirectoryConfig().useAutomatic({
+        id: this.resolveDefaultEnvironmentId()
+      });
       await this.applyPersistedConfig(next);
     });
+  }
+
+  private requireDirectoryConfig(): NonNullable<typeof this.dependencies.directoryConfig> {
+    if (!this.dependencies.directoryConfig) {
+      throw new Error('Claude directory configuration is unavailable');
+    }
+    return this.dependencies.directoryConfig;
+  }
+
+  private resolveDefaultEnvironmentId(): string {
+    return this.requireDirectoryConfig().listEnvironments()[0]?.id ?? '';
   }
 
   async retryDirectory(): Promise<void> {
@@ -261,7 +283,16 @@ export class ClaudeObservationService {
     if (this.dependencies.directoryConfig) return await this.dependencies.directoryConfig.hydrate();
     return {
       state: 'valid',
-      config: { schemaVersion: 1, mode: 'automatic', configDirectory: null }
+      config: {
+        schemaVersion: 2,
+        environments: [{
+          id: 'automatic',
+          label: 'Default',
+          mode: 'automatic',
+          configDirectory: null,
+          enabled: true
+        }]
+      }
     };
   }
 
@@ -288,7 +319,9 @@ export class ClaudeObservationService {
         });
         return;
       }
-      this.appliedConfig = hydration.config;
+      // This service still watches only the sole default environment (environments[0]); the
+      // config service guarantees the list is never empty.
+      this.appliedConfig = hydration.config.environments[0];
       this.capabilityClearPending = true;
       this.retryAttempt = 0;
       await this.recover('full', generation);
@@ -313,7 +346,7 @@ export class ClaudeObservationService {
     }
   }
 
-  private async applyPersistedConfig(config: EyesOnAgentsClaudeDirectoryConfig): Promise<void> {
+  private async applyPersistedConfig(config: EyesOnAgentsClaudeEnvironment): Promise<void> {
     const nextResolution = this.resolve(config);
     if (sameConfig(this.appliedConfig, config)) return;
     if (this.appliedResolution?.effectiveDirectory === nextResolution.effectiveDirectory) {
@@ -515,7 +548,7 @@ export class ClaudeObservationService {
     return { changed };
   }
 
-  private resolve(config: EyesOnAgentsClaudeDirectoryConfig): ClaudeDirectoryResolution {
+  private resolve(config: EyesOnAgentsClaudeEnvironment): ClaudeDirectoryResolution {
     if (this.dependencies.resolveDirectory) return this.dependencies.resolveDirectory(config);
     const roots = this.dependencies.resolveRoots?.() ?? { desktopRoots: [], projectsRoot: null };
     return {
@@ -528,7 +561,7 @@ export class ClaudeObservationService {
   }
 
   private updateResolvedStatus(
-    config: EyesOnAgentsClaudeDirectoryConfig,
+    config: EyesOnAgentsClaudeEnvironment,
     resolution: ClaudeDirectoryResolution,
     state?: EyesOnAgentsClaudeDirectoryStatus['state']
   ): void {

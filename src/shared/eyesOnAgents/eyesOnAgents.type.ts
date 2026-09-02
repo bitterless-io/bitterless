@@ -157,10 +157,22 @@ export interface EyesOnAgentsClaudeBridgeStatus {
 
 export type EyesOnAgentsClaudeDirectoryMode = 'automatic' | 'custom';
 
-export interface EyesOnAgentsClaudeDirectoryConfig {
-  schemaVersion: 1;
+// A single configured Claude environment (one CLAUDE_CONFIG_DIR target). Only environments[0]
+// may ever have mode: 'automatic' — see EyesOnAgentsClaudeDirectoryConfig.
+export interface EyesOnAgentsClaudeEnvironment {
+  id: string;
+  label: string;
   mode: EyesOnAgentsClaudeDirectoryMode;
   configDirectory: string | null;
+  enabled: boolean;
+}
+
+// schemaVersion 2: an array of independently-managed named Claude environments, replacing the
+// former single-scalar schemaVersion 1 shape ({ mode, configDirectory }). Always at least one
+// entry; environments[0] is the sole environment ever eligible for mode: 'automatic'.
+export interface EyesOnAgentsClaudeDirectoryConfig {
+  schemaVersion: 2;
+  environments: EyesOnAgentsClaudeEnvironment[];
 }
 
 export type EyesOnAgentsClaudeDirectoryState =

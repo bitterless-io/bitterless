@@ -46,13 +46,22 @@ try {
       async hydrate() {
         return {
           state: 'valid',
-          config: { schemaVersion: 1, mode: 'custom', configDirectory: configA }
+          config: {
+            schemaVersion: 2,
+            environments: [{
+              id: 'env-default', label: 'Default', mode: 'custom', configDirectory: configA, enabled: true
+            }]
+          }
         };
       },
-      getCurrent() { return null; },
-      async chooseCustom() { return null; },
+      listEnvironments() {
+        return [{
+          id: 'env-default', label: 'Default', mode: 'custom', configDirectory: configA, enabled: true
+        }];
+      },
+      async chooseCustomDirectory() { return null; },
       async useAutomatic() {
-        return { schemaVersion: 1, mode: 'automatic', configDirectory: null };
+        return { id: 'env-default', label: 'Default', mode: 'automatic', configDirectory: null, enabled: true };
       }
     },
     resolveDirectory: () => ({
@@ -93,13 +102,22 @@ try {
       async hydrate() {
         return {
           state: 'valid',
-          config: { schemaVersion: 1, mode: 'custom', configDirectory: configA }
+          config: {
+            schemaVersion: 2,
+            environments: [{
+              id: 'env-default', label: 'Default', mode: 'custom', configDirectory: configA, enabled: true
+            }]
+          }
         };
       },
-      getCurrent() { return null; },
-      async chooseCustom() { return null; },
+      listEnvironments() {
+        return [{
+          id: 'env-default', label: 'Default', mode: 'custom', configDirectory: configA, enabled: true
+        }];
+      },
+      async chooseCustomDirectory() { return null; },
       async useAutomatic() {
-        return { schemaVersion: 1, mode: 'automatic', configDirectory: null };
+        return { id: 'env-default', label: 'Default', mode: 'automatic', configDirectory: null, enabled: true };
       }
     },
     resolveDirectory: () => ({
@@ -130,9 +148,11 @@ try {
   let deferResumeHydrate = false;
   let releaseResumeHydrate = null;
   let resumeHydrateConfig = {
-    schemaVersion: 1,
+    id: 'env-default',
+    label: 'Default',
     mode: 'custom',
-    configDirectory: configA
+    configDirectory: configA,
+    enabled: true
   };
   let resumeHydrateUpserts = 0;
   const resumeHydrateWatcher = createWatcher();
@@ -146,13 +166,14 @@ try {
     directoryConfig: {
       async hydrate() {
         const config = { ...resumeHydrateConfig };
-        if (!deferResumeHydrate) return { state: 'valid', config };
+        const hydration = { state: 'valid', config: { schemaVersion: 2, environments: [config] } };
+        if (!deferResumeHydrate) return hydration;
         return await new Promise((resolveHydrate) => {
-          releaseResumeHydrate = () => resolveHydrate({ state: 'valid', config });
+          releaseResumeHydrate = () => resolveHydrate(hydration);
         });
       },
-      getCurrent() { return resumeHydrateConfig; },
-      async chooseCustom() { return resumeHydrateConfig; },
+      listEnvironments() { return [resumeHydrateConfig]; },
+      async chooseCustomDirectory() { return resumeHydrateConfig; },
       async useAutomatic() { return resumeHydrateConfig; }
     },
     resolveDirectory: (config) => {
@@ -174,9 +195,11 @@ try {
   const upsertsBeforeResume = resumeHydrateUpserts;
   const startsBeforeResume = resumeHydrateWatcher.processStarts;
   resumeHydrateConfig = {
-    schemaVersion: 1,
+    id: 'env-default',
+    label: 'Default',
     mode: 'custom',
-    configDirectory: configB
+    configDirectory: configB,
+    enabled: true
   };
   deferResumeHydrate = true;
   const deferredResume = resumeHydrateRuntime.start();
@@ -265,11 +288,19 @@ try {
   await recoverableRuntime.useAutomaticDirectory();
   assert.equal(recoverableRuntime.getDirectoryStatus().state, 'watching',
     'Use automatic must recover a runtime whose saved setting is malformed');
-  assert.deepEqual(recoverableWrites.at(-1), {
-    schemaVersion: 1,
-    mode: 'automatic',
-    configDirectory: null
-  });
+  const recoveredWrite = recoverableWrites.at(-1);
+  assert.equal(recoveredWrite.schemaVersion, 2);
+  assert.equal(recoveredWrite.environments.length, 1);
+  assert.deepEqual(
+    {
+      label: recoveredWrite.environments[0].label,
+      mode: recoveredWrite.environments[0].mode,
+      configDirectory: recoveredWrite.environments[0].configDirectory,
+      enabled: recoveredWrite.environments[0].enabled
+    },
+    { label: 'Default', mode: 'automatic', configDirectory: null, enabled: true },
+    'recovering from a malformed saved value must reset to one fresh default automatic environment'
+  );
   await recoverableRuntime.stop();
 
   const order = [];
@@ -278,10 +309,15 @@ try {
   const watcher = createWatcher(order);
   const repository = createRepository();
   const runtimeConfig = {
-    config: { schemaVersion: 1, mode: 'custom', configDirectory: configA },
-    async hydrate() { order.push('config:hydrate'); return { state: 'valid', config: this.config }; },
-    getCurrent() { return this.config; },
-    async chooseCustom() { return this.config; },
+    config: {
+      id: 'env-default', label: 'Default', mode: 'custom', configDirectory: configA, enabled: true
+    },
+    async hydrate() {
+      order.push('config:hydrate');
+      return { state: 'valid', config: { schemaVersion: 2, environments: [this.config] } };
+    },
+    listEnvironments() { return [this.config]; },
+    async chooseCustomDirectory() { return this.config; },
     async useAutomatic() { return this.config; }
   };
   const resolveDynamic = () => ({
@@ -417,15 +453,15 @@ try {
     }
   });
   const stoppedActionConfig = {
-    config: { schemaVersion: 1, mode: 'custom', configDirectory: configA },
-    async hydrate() { return { state: 'valid', config: this.config }; },
-    getCurrent() { return this.config; },
-    async chooseCustom() {
-      this.config = {
-        schemaVersion: 1,
-        mode: 'custom',
-        configDirectory: stoppedActionSelection
-      };
+    config: {
+      id: 'env-default', label: 'Default', mode: 'custom', configDirectory: configA, enabled: true
+    },
+    async hydrate() {
+      return { state: 'valid', config: { schemaVersion: 2, environments: [this.config] } };
+    },
+    listEnvironments() { return [this.config]; },
+    async chooseCustomDirectory() {
+      this.config = { ...this.config, mode: 'custom', configDirectory: stoppedActionSelection };
       return this.config;
     },
     async useAutomatic() { return this.config; }
@@ -472,15 +508,15 @@ try {
   let retryResetSelection = configA;
   const retryResetTimers = createTimerHarness();
   const retryResetConfig = {
-    config: { schemaVersion: 1, mode: 'custom', configDirectory: configA },
-    async hydrate() { return { state: 'valid', config: this.config }; },
-    getCurrent() { return this.config; },
-    async chooseCustom() {
-      this.config = {
-        schemaVersion: 1,
-        mode: 'custom',
-        configDirectory: retryResetSelection
-      };
+    config: {
+      id: 'env-default', label: 'Default', mode: 'custom', configDirectory: configA, enabled: true
+    },
+    async hydrate() {
+      return { state: 'valid', config: { schemaVersion: 2, environments: [this.config] } };
+    },
+    listEnvironments() { return [this.config]; },
+    async chooseCustomDirectory() {
+      this.config = { ...this.config, mode: 'custom', configDirectory: retryResetSelection };
       return this.config;
     },
     async useAutomatic() { return this.config; }
@@ -530,13 +566,18 @@ try {
         if (hydrationAttempts === 1) throw new Error('setting unavailable');
         return {
           state: 'valid',
-          config: { schemaVersion: 1, mode: 'custom', configDirectory: configA }
+          config: {
+            schemaVersion: 2,
+            environments: [{
+              id: 'env-default', label: 'Default', mode: 'custom', configDirectory: configA, enabled: true
+            }]
+          }
         };
       },
-      getCurrent() { return null; },
-      async chooseCustom() { return null; },
+      listEnvironments() { return []; },
+      async chooseCustomDirectory() { return null; },
       async useAutomatic() {
-        return { schemaVersion: 1, mode: 'automatic', configDirectory: null };
+        return { id: 'env-default', label: 'Default', mode: 'automatic', configDirectory: null, enabled: true };
       }
     },
     resolveDirectory: () => ({
