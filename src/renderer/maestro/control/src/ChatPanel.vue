@@ -1,16 +1,18 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import { IconFolder, IconFolderOpen, IconListDetails, IconLoader2, IconMicrophone, IconPaperclip, IconPlayerPause, IconPlayerStop, IconPlus, IconRefresh, IconSend2, IconX } from '@tabler/icons-vue'
-import { fileIcon } from './fileIcon'
+import AttachmentCard from './AttachmentCard.vue'
 import { Button, Drawer, Message, Modal, Tooltip } from '@arco-design/web-vue'
 import { createXpcRendererEmitter } from 'electron-xpc/renderer'
 import type { AgentReply } from '@maestro-shared/coach.api'
 import type { CoachXpcContract } from '@maestro-shared/coach.api'
+import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
 import IconBtn from '../../../common/components/IconBtn/IconBtn.vue'
 import MessageList from './MessageList.vue'
 import { channelStore } from './store/channel.store'
 import { messageStore } from './store/message.store'
 import type { ChatAttachment, MessageSession } from './store/message.type'
+import { isRejection } from './store/turn.service'
 import './ChatPanel.less'
 
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
@@ -43,6 +45,7 @@ const voiceRecorder = ref<VoiceRecorder | null>(null)
 const voiceRecordingStartedAt = ref(0)
 const voiceRecordingElapsedMs = ref(0)
 let voiceRecordingTimer: ReturnType<typeof setInterval> | undefined
+const turnLocked = computed(() => Boolean(messageStore.turnService.activeTurn()))
 
 const contextPercent = computed(() => Math.min(100, Math.max(0, props.session.contextUsage.percent)))
 const contextMeterColor = computed(() => (props.session.contextUsage.compressionTriggered ? '#f59e0b' : '#4e5882'))
@@ -214,7 +217,7 @@ async function ensureAiCrmsScribeReady(): Promise<boolean> {
 }
 
 async function startVoiceScribe(): Promise<void> {
-  if (voiceRecording.value || voiceBusy.value || props.session.busy || props.session.archivedAt) return
+  if (voiceRecording.value || voiceBusy.value || props.session.archivedAt) return
   if (!(await ensureAiCrmsScribeReady())) return
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
@@ -279,41 +282,96 @@ onBeforeUnmount(() => cleanupVoiceRecorder())
 async function send(): Promise<void> {
   const message = input.value.trim()
   // Text is REQUIRED to send, even when files are attached.
-  if (!message || props.session.busy || props.sendDisabled) return
-  const files = selectedFiles.value.length ? selectedFiles.value.slice() : undefined
+  if (!message || props.sendDisabled || props.session.turn?.aborting) return
+  if (messageStore.turnService.busyElsewhere(props.session.id)) {
+    Modal.warning({
+      title: i18nHelper.maestroControl.chat.busyTitle,
+      content: i18nHelper.maestroControl.chat.busyContent,
+      okText: i18nHelper.maestroControl.chat.gotIt
+    })
+    return
+  }
+  const steering = Boolean(props.session.turn)
+  const files = !steering && selectedFiles.value.length ? selectedFiles.value.slice() : undefined
   input.value = ''
-  selectedFiles.value = []
+  if (!steering) selectedFiles.value = []
   await nextTick()
   resetComposerHeight()
-  const reply = await messageStore.send(props.session.id, message, files)
-  if (reply) emit('sent', reply)
+  const reply = await messageStore.turnService.send(props.session.id, message, files)
+  if (reply && !isRejection(reply)) {
+    if (!reply.mergedIntoTurn) emit('sent', reply)
+    return
+  }
+  if (!input.value.trim()) {
+    input.value = message
+    if (files?.length) selectedFiles.value = files.slice()
+    await nextTick()
+    resizeComposer()
+  }
+  Modal.warning({
+    title: i18nHelper.maestroControl.chat.messageNotSentTitle,
+    content: i18nHelper.maestroControl.chat.messageNotSentContent,
+    okText: i18nHelper.maestroControl.chat.gotIt
+  })
 }
 
 function pickFiles(): void {
+  if (turnLocked.value || props.session.archivedAt) return
   fileInput.value?.click()
 }
 
 // Add files by ABSOLUTE PATH only (resolved via the preload bridge — webUtils, no bytes
 // read). On send the paths are registered with main and the agent reads them via read_file.
 function addFiles(files: File[]): void {
+  const added: string[] = []
   for (const file of files) {
     const path = window.fileBridge?.getPathForFile(file) || ''
     if (!path || selectedFiles.value.some((f) => f.path === path)) continue
     selectedFiles.value.push({ name: file.name, path })
+    added.push(path)
+  }
+  if (added.length) void markDirectories(added)
+}
+
+// Renderer names cannot reliably distinguish a directory from a file. Main stats each new path and
+// the array entry is replaced through Vue's proxy so the pending card updates immediately.
+async function markDirectories(paths: string[]): Promise<void> {
+  const statuses = await coach.getFileStatuses({ paths }).catch(() => null)
+  if (!statuses) return
+  for (let statusIndex = 0; statusIndex < paths.length; statusIndex += 1) {
+    const status = statuses[statusIndex]
+    if (!status) continue
+    if (!status.isDirectory) continue
+    const index = selectedFiles.value.findIndex((file) => file.path === paths[statusIndex])
+    if (index >= 0) {
+      selectedFiles.value[index] = { ...selectedFiles.value[index], isDirectory: true }
+    }
   }
 }
 
 function onFilesPicked(event: Event): void {
   const el = event.target as HTMLInputElement
+  if (turnLocked.value || props.session.archivedAt) {
+    el.value = ''
+    return
+  }
   addFiles(Array.from(el.files || []))
   el.value = '' // reset so picking the same file again still fires change
 }
 
 async function onComposerPaste(event: ClipboardEvent): Promise<void> {
-  if (!props.session.allowFiles || props.session.busy || props.session.archivedAt) return
-  const hasImage = Array.from(event.clipboardData?.items || []).some((item) => item.kind === 'file' && item.type.startsWith('image/'))
-  if (!hasImage) return
+  if (!props.session.allowFiles || turnLocked.value || props.session.archivedAt) return
+  const files = Array.from(event.clipboardData?.files || [])
+  if (!files.length) return
+  const onDisk = files.filter((file) => Boolean(window.fileBridge?.getPathForFile(file)))
+  const pathlessImages = files.filter(
+    (file) =>
+      file.type.startsWith('image/') && !window.fileBridge?.getPathForFile(file)
+  )
+  if (!onDisk.length && !pathlessImages.length) return
   event.preventDefault()
+  if (onDisk.length) addFiles(onDisk)
+  if (!pathlessImages.length) return
   const attached = await coach.attachClipboardImage({ sessionId: props.session.id }).catch(() => null)
   if (!attached?.ok || !attached.path) return
   if (selectedFiles.value.some((file) => file.path === attached.path)) return
@@ -325,6 +383,7 @@ async function onComposerPaste(event: ClipboardEvent): Promise<void> {
 let dragDepth = 0
 const dragging = ref(false)
 function onDragEnter(): void {
+  if (!props.session.allowFiles || turnLocked.value || props.session.archivedAt) return
   dragDepth += 1
   dragging.value = true
 }
@@ -338,16 +397,17 @@ function onDragLeave(): void {
 function onDrop(event: DragEvent): void {
   dragDepth = 0
   dragging.value = false
-  if (!props.session.allowFiles) return
+  if (!props.session.allowFiles || turnLocked.value || props.session.archivedAt) return
   addFiles(Array.from(event.dataTransfer?.files || []))
 }
 
 function removeFile(i: number): void {
+  if (turnLocked.value) return
   selectedFiles.value.splice(i, 1)
 }
 
 async function startNewChat(): Promise<void> {
-  if (props.session.busy || props.session.source === 'connector') return
+  if (turnLocked.value) return
   input.value = ''
   selectedFiles.value = []
   await nextTick()
@@ -361,7 +421,7 @@ async function selectHistory(sessionId: string): Promise<void> {
 }
 
 async function stop(): Promise<void> {
-  await messageStore.stop(props.session.id)
+  await messageStore.turnService.stop(props.session.id)
 }
 
 function onComposerKeydown(event: KeyboardEvent): void {
@@ -371,17 +431,17 @@ function onComposerKeydown(event: KeyboardEvent): void {
 }
 
 async function chooseWorkspace(): Promise<void> {
-  if (props.session.busy || props.session.archivedAt) return
+  if (turnLocked.value || props.session.archivedAt) return
   await messageStore.chooseWorkspace(props.session.id)
 }
 
 async function clearWorkspace(): Promise<void> {
-  if (props.session.busy || props.session.archivedAt) return
+  if (turnLocked.value || props.session.archivedAt) return
   await messageStore.clearWorkspace(props.session.id)
 }
 
 async function refreshWorkspace(): Promise<void> {
-  if (props.session.busy || props.session.archivedAt) return
+  if (turnLocked.value || props.session.archivedAt) return
   await messageStore.refreshWorkspace(props.session.id)
 }
 
@@ -399,7 +459,7 @@ function setHistoryContainer(el: HTMLElement | null): void {
     @drop.prevent="onDrop"
   >
     <div
-      v-if="dragging && session.allowFiles"
+      v-if="dragging && session.allowFiles && !turnLocked"
       class="chat-panel__drop-overlay"
     >
       <div class="chat-panel__drop-message">
@@ -421,7 +481,7 @@ function setHistoryContainer(el: HTMLElement | null): void {
         class="chat-panel__new-chat"
         type="text"
         size="mini"
-        :disabled="session.busy || session.source === 'connector'"
+        :disabled="turnLocked"
         title="New chat"
         @click="startNewChat"
       >
@@ -476,29 +536,34 @@ function setHistoryContainer(el: HTMLElement | null): void {
     </Drawer>
     <div class="chat-panel__composer">
       <slot name="before-composer"></slot>
-      <!-- Attached files: flex list of removable chips ABOVE the input; hover shows full path. -->
-      <div v-if="session.allowFiles && selectedFiles.length" class="chat-panel__attachments">
-        <Tooltip v-for="(f, i) in selectedFiles" :key="f.path" :content="f.path" position="top">
-          <span class="chat-panel__attachment">
-            <component :is="fileIcon(f.name)" :size="15" stroke="1.8" class="chat-panel__attachment-icon" />
-            <span class="chat-panel__attachment-name">{{ f.name }}</span>
-            <IconBtn
-              class="chat-panel__attachment-remove"
-              title="Remove"
-              :aria-label="`Remove ${f.name}`"
-              @click="removeFile(i)"
-            >
-              <IconX class="chat-panel__button-icon" :size="12" stroke="2" />
-            </IconBtn>
-          </span>
-        </Tooltip>
+      <div
+        v-if="session.allowFiles && selectedFiles.length"
+        name="maestro__composer__attachments"
+        class="chat-panel__attachments"
+      >
+        <div
+          v-for="(f, i) in selectedFiles"
+          :key="f.path"
+          class="chat-panel__attachment-card"
+        >
+          <AttachmentCard :name="f.name" :path="f.path" :is-directory="f.isDirectory" />
+          <IconBtn
+            class="chat-panel__attachment-remove"
+            :disabled="turnLocked"
+            :title="i18nHelper.maestroControl.chat.removeAttachment"
+            :aria-label="i18nHelper.maestroControl.chat.removeAttachmentNamed.replace('{name}', f.name)"
+            @click="removeFile(i)"
+          >
+            <IconX class="chat-panel__button-icon" :size="10" stroke="2.4" />
+          </IconBtn>
+        </div>
       </div>
       <div class="chat-panel__input-wrap">
         <textarea
           ref="composerRef"
           v-model="input"
-          :disabled="session.busy || Boolean(session.archivedAt)"
-          :placeholder="session.archivedAt ? 'Archived conversation' : session.placeholder"
+          :disabled="Boolean(session.archivedAt)"
+          :placeholder="session.archivedAt ? i18nHelper.maestroControl.chat.archivedConversation : session.placeholder"
           rows="1"
           class="chat-panel__textarea"
           :class="{ 'chat-panel__textarea--recording': voiceRecording }"
@@ -529,7 +594,7 @@ function setHistoryContainer(el: HTMLElement | null): void {
           <IconBtn
             v-if="session.allowFiles"
             class="chat-panel__tool-button"
-            :disabled="session.busy"
+            :disabled="turnLocked"
             title="Attach files (PDF, Excel, Word, text…)"
             aria-label="Attach files"
             @click="pickFiles"
@@ -539,7 +604,7 @@ function setHistoryContainer(el: HTMLElement | null): void {
           <Tooltip v-if="session.allowFiles && !workspace" content="Set workspace" position="top">
             <IconBtn
               class="chat-panel__tool-button"
-              :disabled="session.busy || Boolean(session.archivedAt)"
+              :disabled="turnLocked || Boolean(session.archivedAt)"
               title="Set workspace"
               aria-label="Set workspace"
               @click="chooseWorkspace"
@@ -556,7 +621,7 @@ function setHistoryContainer(el: HTMLElement | null): void {
                 class="chat-panel__workspace-select"
                 type="text"
                 size="mini"
-                :disabled="session.busy || Boolean(session.archivedAt)"
+                :disabled="turnLocked || Boolean(session.archivedAt)"
                 title="Switch workspace"
                 @click="chooseWorkspace"
               >
@@ -567,7 +632,7 @@ function setHistoryContainer(el: HTMLElement | null): void {
               </Button>
               <IconBtn
                 class="chat-panel__workspace-action"
-                :disabled="session.busy || Boolean(session.archivedAt)"
+                :disabled="turnLocked || Boolean(session.archivedAt)"
                 title="Refresh workspace"
                 aria-label="Refresh workspace"
                 @click="refreshWorkspace"
@@ -576,7 +641,7 @@ function setHistoryContainer(el: HTMLElement | null): void {
               </IconBtn>
               <IconBtn
                 class="chat-panel__workspace-action chat-panel__workspace-action--danger"
-                :disabled="session.busy || Boolean(session.archivedAt)"
+                :disabled="turnLocked || Boolean(session.archivedAt)"
                 title="Clear workspace"
                 aria-label="Clear workspace"
                 @click="clearWorkspace"
@@ -610,7 +675,7 @@ function setHistoryContainer(el: HTMLElement | null): void {
               'chat-panel__voice-button--recording': voiceRecording,
               'chat-panel__voice-button--busy': voiceBusy
             }"
-            :disabled="Boolean(session.archivedAt) || (!voiceRecording && (session.busy || voiceBusy))"
+            :disabled="Boolean(session.archivedAt) || (!voiceRecording && voiceBusy)"
             :title="voiceRecording ? 'Stop voice scribe' : voiceBusy ? 'Uploading voice' : 'Voice scribe'"
             :aria-label="voiceRecording ? 'Stop voice scribe' : 'Voice scribe'"
             @click="toggleVoiceScribe"
@@ -620,36 +685,35 @@ function setHistoryContainer(el: HTMLElement | null): void {
             <IconMicrophone v-else class="chat-panel__button-icon" :size="18" stroke="1.8" />
           </IconBtn>
           <Button
-            v-if="session.busy"
+            v-if="Boolean(session.turn)"
             class="chat-panel__stop-button"
-            :class="{ 'chat-panel__stop-button--aborting': session.aborting }"
+            :class="{ 'chat-panel__stop-button--aborting': session.turn?.aborting }"
             type="outline"
             status="danger"
             size="small"
-            :disabled="session.aborting"
-            :title="session.aborting ? 'Stopping' : 'Stop'"
-            :aria-label="session.aborting ? 'Stopping' : 'Stop'"
+            :disabled="session.turn?.aborting"
+            :title="session.turn?.aborting ? i18nHelper.maestroControl.chat.stopping : i18nHelper.maestroControl.chat.stop"
+            :aria-label="session.turn?.aborting ? i18nHelper.maestroControl.chat.stopping : i18nHelper.maestroControl.chat.stop"
             @click="stop"
           >
             <template #icon>
               <IconPlayerStop class="chat-panel__button-icon" :size="15" stroke="1.8" />
             </template>
-            Stop
+            {{ i18nHelper.maestroControl.chat.stop }}
           </Button>
           <IconBtn
-            v-else
             name="maestro__composer__send"
             class="chat-panel__send-button"
-            :disabled="!input.trim() || Boolean(session.archivedAt) || sendDisabled"
-            title="Send"
-            aria-label="Send"
+            :disabled="!input.trim() || Boolean(session.archivedAt) || sendDisabled || Boolean(session.turn?.aborting)"
+            :title="session.turn ? i18nHelper.maestroControl.chat.sendIntoTurn : i18nHelper.maestroControl.chat.send"
+            :aria-label="i18nHelper.maestroControl.chat.send"
             @click="send"
           >
             <IconSend2 class="chat-panel__button-icon" :size="15" stroke="1.8" />
           </IconBtn>
         </div>
       </div>
-      <input ref="fileInput" type="file" accept=".pdf,.xlsx,.xlsm,.docx,.csv,.tsv,.md,.markdown,.txt,.json,.html,.htm,.xml,.yaml,.yml,.log,.png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp,image/gif" multiple class="chat-panel__file-input" @change="onFilesPicked" />
+      <input ref="fileInput" type="file" accept=".pdf,.doc,.docx,.docm,.ppt,.pps,.pot,.pptx,.pptm,.ppsx,.ppsm,.xls,.xlsx,.xlsm,.xlsb,.odt,.ods,.odp,.rtf,.epub,.csv,.tsv,.md,.markdown,.txt,.json,.html,.htm,.xml,.yaml,.yml,.log,.zip,.7z,.rar,.tar,.tgz,.gz,.xz,.bz2,.bz3,.zst,.lz4,.lzma,.lz,.sz,.br,.png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp,image/gif" multiple class="chat-panel__file-input" @change="onFilesPicked" />
     </div>
   </div>
 </template>

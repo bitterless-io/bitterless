@@ -34,7 +34,7 @@ try {
     pluginId: 'bitterless-observer@bitterless-local',
     artifactRootRelativePath: 'eyes-on-agents/claude-marketplace'
   }, 'production must preserve the released Claude identity byte-for-byte');
-  for (const profileId of ['production-debug', 'test-debug', 'test-release']) {
+  for (const profileId of ['production-debug', 'production-preview', 'test-debug', 'test-release']) {
     assert.deepEqual(plugin.resolveClaudePluginBridgeIdentity(profileId), {
       marketplaceName: `bitterless-local-${profileId}`,
       pluginName: `bitterless-observer-${profileId}`,

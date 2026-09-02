@@ -8,18 +8,21 @@ import type {
 
 export const ONLY_PREVIEW_DOCUMENT_REBUILD_ERRORS: ReadonlySet<OnlyPreviewErrorCode> = new Set([
   'DOCUMENT_PARSE_FAILED',
+  'DOCUMENT_RENDER_FAILED',
   'DOCUMENT_SANITIZE_FAILED',
   'DOCUMENT_RENDER_TIMEOUT'
 ]);
 
 export const ONLY_PREVIEW_SHEET_REBUILD_ERRORS: ReadonlySet<OnlyPreviewErrorCode> = new Set([
   'SHEET_PARSE_FAILED',
+  'SHEET_RENDER_FAILED',
   'SHEET_EMPTY',
   'SHEET_RENDER_TIMEOUT'
 ]);
 
 export const ONLY_PREVIEW_PRESENTATION_REBUILD_ERRORS: ReadonlySet<OnlyPreviewErrorCode> = new Set([
   'PRESENTATION_PARSE_FAILED',
+  'PRESENTATION_RENDER_FAILED',
   'PRESENTATION_EMPTY',
   'PRESENTATION_RENDER_TIMEOUT'
 ]);
@@ -79,12 +82,7 @@ export const onlyPreviewAdapterProvidesSelectedText = (
 
 export const onlyPreviewAdapterUsesOneShotAsset = (
   adapterId: OnlyPreviewPreviewAdapterId
-): boolean =>
-  adapterId === 'image' ||
-  adapterId === 'ooxml-xlsx' ||
-  adapterId === 'ooxml-docx' ||
-  adapterId === 'ooxml-pptx' ||
-  adapterId === 'drawio-viewer';
+): boolean => adapterId === 'image' || adapterId === 'drawio-viewer';
 
 export const onlyPreviewAdapterUsesVueAsset = (adapterId: OnlyPreviewPreviewAdapterId): boolean =>
   onlyPreviewAdapterUsesOneShotAsset(adapterId) || adapterId === 'audio' || adapterId === 'video';

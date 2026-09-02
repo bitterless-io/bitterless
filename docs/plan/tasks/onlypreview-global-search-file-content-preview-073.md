@@ -27,6 +27,9 @@ evidence, but remove the enlarged context-only Preview.
 Tasks 036/037 remain historical delivery records. This follow-up supersedes only their
 Contents-specific context Preview behavior.
 
+Task 092 later supersedes this task's metadata-only boundary for XLSX/XLSM, DOCX, and PPTX only;
+the text/directory behavior and other non-text `info` variants below remain authoritative.
+
 ## Path
 
 - `src/preload/onlypreview/search/core/global-search-preview.mjs`
@@ -58,8 +61,10 @@ Contents-specific context Preview behavior.
   stable opened-file identity, `O_NOFOLLOW`, realpath containment, exclusions, sensitive-file and
   size fallback, one 256KiB payload, directory direct-child cap, and Main's zero-filesystem-I/O
   relay.
-- Do not add a native view, iframe, renderer, worker, asset URL, Monaco instance, body read, or
-  persistent collection. Non-text files remain `info`; directories remain bounded direct children.
+- This task did not add a native view, iframe, renderer, worker, asset URL, Monaco instance, body
+  read, or persistent collection. Task 092 subsequently adds a Search-local lazy OOXML Worker and
+  Viewer plus an independent bounded Office read lane; other non-text files remain `info`, and
+  directories remain bounded direct children.
 
 ```text
 ┌─ CONTENTS result row ───────────────────────────────────────┐

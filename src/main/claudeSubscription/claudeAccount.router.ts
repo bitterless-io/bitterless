@@ -1,13 +1,29 @@
 import type {
   ClaudeAccountId,
+  ClaudeSubscriptionAccountUsage,
   ClaudeSubscriptionRoutingHealth
 } from '@shared/claudeSubscription/claudeSubscription.contract';
+import { CLAUDE_SUBSCRIPTION_LOW_QUOTA_PERCENT } from '@shared/claudeSubscription/claudeSubscription.contract';
 import type {
   ClaudeAccountExecutionContext,
   ClaudeAccountRoutingRecord,
   ClaudeAccountSource
 } from './claudeAccount.repository';
 import { ClaudeNoEligibleAccountError } from './claudeSubscription.errors';
+
+/** How long a request waits for a busy pool before it is refused. */
+const DEFAULT_LEASE_WAIT_MS = 120_000;
+
+/**
+ * Concurrent turns per account.
+ *
+ * Not unbounded: each turn is a real `claude` child costing a process and CPU, and they
+ * all draw on one subscription's rate limit, so past a point more children make every
+ * turn slower and burn quota faster rather than serving more sessions.
+ */
+/** How long an unsettled pool is given to finish loading before a request is refused. */
+const WARMUP_ATTEMPTS = 20;
+const WARMUP_DELAY_MS = 250;
 
 export interface ClaudeAccountLease {
   readonly accountId: ClaudeAccountId;
@@ -24,6 +40,8 @@ export interface ClaudeAccountRouterOptions {
   now?: () => number;
   defaultCooldownMs?: number;
   onStateChanged?: () => void;
+  /** How long a request waits for a busy pool before it is refused. */
+  leaseWaitMs?: number;
 }
 
 const DEFAULT_COOLDOWN_MS = 60_000;
@@ -34,6 +52,8 @@ export class ClaudeAccountRouter {
   readonly #defaultCooldownMs: number;
   readonly #onStateChanged: () => void;
   readonly #active = new Map<ClaudeAccountId, number>();
+  readonly #rateLimits = new Map<ClaudeAccountId, ClaudeSubscriptionAccountUsage>();
+  readonly #leaseWaitMs: number;
   readonly #maintenance = new Map<ClaudeAccountId, number>();
   readonly #sticky = new Map<string, ClaudeAccountId>();
   readonly #cooldowns = new Map<ClaudeAccountId, number>();
@@ -52,6 +72,7 @@ export class ClaudeAccountRouter {
     this.#now = options.now ?? Date.now;
     this.#defaultCooldownMs = options.defaultCooldownMs ?? DEFAULT_COOLDOWN_MS;
     this.#onStateChanged = options.onStateChanged ?? (() => undefined);
+    this.#leaseWaitMs = options.leaseWaitMs ?? DEFAULT_LEASE_WAIT_MS;
   }
 
   async lease(
@@ -59,6 +80,7 @@ export class ClaudeAccountRouter {
     excludedAccountIds: ReadonlySet<ClaudeAccountId> = new Set()
   ): Promise<ClaudeAccountLease> {
     const excluded = new Set(excludedAccountIds);
+    let warmupAttempts = 0;
 
     while (true) {
       const accounts = await this.#source.listRoutingAccounts();
@@ -66,13 +88,38 @@ export class ClaudeAccountRouter {
       const eligible = accounts.filter(
         (account) => !excluded.has(account.id) && this.#isEligible(account)
       );
-      if (eligible.length === 0) throw new ClaudeNoEligibleAccountError();
+      if (eligible.length === 0) {
+        // Distinguish "not ready yet" from "not usable". An account whose context is
+        // still resolving right after startup is neither cooling nor logged out — it is
+        // simply not loaded — and failing instantly turned the first request after a
+        // restart into a 429 the client could not retry (its own retry budget is 0).
+        // A settled reason is reported at once; a transient one gets a short grace.
+        const candidates = accounts.filter((account) => !excluded.has(account.id));
+        const settled = candidates.every(
+          (account) =>
+            !account.enabled ||
+            this.#accountNeedsLogin(account) ||
+            this.#cooldownUntil(account) > this.#now() ||
+            this.#isUnderMaintenance(account.id)
+        );
+        if (settled || candidates.length === 0 || warmupAttempts >= WARMUP_ATTEMPTS) {
+          throw new ClaudeNoEligibleAccountError();
+        }
+        warmupAttempts += 1;
+        await new Promise((resolve) => setTimeout(resolve, WARMUP_DELAY_MS));
+        continue;
+      }
 
-      // One CLI child per config directory. The CLI rewrites `.claude.json` on
-      // every run, so two children sharing a directory race on it — observed
-      // 2026-08-26 truncating a 50KB config to a fresh-install stub. Busy accounts
-      // are therefore not merely deprioritised, they are not selectable.
-      const idle = eligible.filter((account) => this.activeRequests(account.id) === 0);
+      // Owner decision (2026-08-31): one account is **active** at a time and carries
+      // every turn, with no cap on how many run at once. Each request has its own
+      // scratch config directory — verified by running three children of one account
+      // concurrently and finding the real `.claude.json` byte-identical afterwards —
+      // so the race that once forced serialisation is gone entirely.
+      //
+      // Concentrating on one account rather than spreading across all of them is what
+      // makes the quota rule legible: one account's weekly usage is drawn down and
+      // watched, instead of every account drifting toward the threshold together.
+      const idle = eligible;
       if (idle.length === 0) {
         // Every eligible account is serving a request. Wait for one to finish and
         // re-run selection from scratch, so eligibility, maintenance, cooldown and
@@ -81,12 +128,16 @@ export class ClaudeAccountRouter {
         continue;
       }
 
-      const stickyId = cacheKey ? this.#sticky.get(cacheKey) : undefined;
+      // Quota-aware selection runs before stickiness: an account under the low-quota
+      // threshold is skipped even when a thread is bound to it, because staying on it
+      // only buys one or two more turns before the same switch happens mid-answer.
+      const healthy = this.#withQuotaHeadroom(idle);
       // A busy sticky account loses its binding for this request: prompt-cache
       // locality is an optimisation, and serialisation is correctness. The binding
       // survives, so the next request on this key returns to it once free.
-      const stickyAccount = stickyId ? idle.find((account) => account.id === stickyId) : undefined;
-      const selected = stickyAccount ?? this.#selectLeastActive(idle);
+      // Stickiness no longer competes with selection: every thread lands on the same
+      // active account, so prompt-cache locality follows for free.
+      const selected = this.#selectByQuota(healthy);
 
       try {
         const context = await this.#source.getExecutionContext(selected.id);
@@ -115,14 +166,6 @@ export class ClaudeAccountRouter {
           excluded.add(selected.id);
           continue;
         }
-        // Idleness is re-checked here, not only at selection: the awaits above are
-        // exactly the window in which a concurrent lease could have taken this
-        // account after it was filtered as idle. Waiting rather than excluding,
-        // because the account is healthy — it is merely busy.
-        if (this.activeRequests(selected.id) > 0) {
-          await this.#waitForRelease();
-          continue;
-        }
         this.#active.set(selected.id, this.activeRequests(selected.id) + 1);
         if (cacheKey) this.#sticky.set(cacheKey, selected.id);
         this.#notifyStateChanged();
@@ -142,6 +185,33 @@ export class ClaudeAccountRouter {
         throw error;
       }
     }
+  }
+
+  /**
+   * Records Anthropic's own rate-limit state for an account. Emitted on every request,
+   * not just a rejected one, so it is the only continuous signal available — the panel
+   * would otherwise have nothing to show until an account was already exhausted.
+   * Process-local: it describes a live observation, not stored account metadata.
+   */
+  observeRateLimit(accountId: ClaudeAccountId, usage: ClaudeSubscriptionAccountUsage): void {
+    this.#rateLimits.set(accountId, usage);
+  }
+
+  /**
+   * The account that would serve the next turn: the eligible one with the most weekly
+   * quota left. Reported so the panel can name it rather than leaving the owner to
+   * infer which account their turns are drawing down.
+   */
+  activeAccountId(
+    accounts: readonly ClaudeAccountRoutingRecord[]
+  ): ClaudeAccountId | undefined {
+    const eligible = accounts.filter((account) => this.#isEligible(account));
+    if (eligible.length === 0) return undefined;
+    return this.#selectByQuota(this.#withQuotaHeadroom(eligible)).id;
+  }
+
+  rateLimit(accountId: ClaudeAccountId): ClaudeSubscriptionAccountUsage | undefined {
+    return this.#rateLimits.get(accountId);
   }
 
   activeRequests(accountId: ClaudeAccountId): number {
@@ -225,6 +295,46 @@ export class ClaudeAccountRouter {
     };
   }
 
+  /**
+   * Weekly quota left, as a percentage. Unknown reads as full: an account that has not
+   * been probed yet must not be treated as exhausted, or a cold start would route
+   * everything to whichever account happened to be measured first.
+   */
+  #remainingPercent(accountId: ClaudeAccountId): number {
+    const used = this.#rateLimits.get(accountId)?.weekUsedPercent;
+    return typeof used === 'number' ? Math.max(0, 100 - used) : 100;
+  }
+
+  /**
+   * Accounts with quota to spare. Falls back to the whole set when none qualify:
+   * refusing at the threshold would strand the remaining few percent the owner paid
+   * for, so the pool runs on fumes rather than stopping early.
+   */
+  #withQuotaHeadroom(
+    accounts: readonly ClaudeAccountRoutingRecord[]
+  ): readonly ClaudeAccountRoutingRecord[] {
+    const healthy = accounts.filter(
+      (account) => this.#remainingPercent(account.id) >= CLAUDE_SUBSCRIPTION_LOW_QUOTA_PERCENT
+    );
+    return healthy.length > 0 ? healthy : accounts;
+  }
+
+  /**
+   * Picks the **active** account: the one with the most weekly quota left.
+   *
+   * Because `#withQuotaHeadroom` has already dropped anything under the low-quota
+   * threshold, this stays on one account until that account crosses it and then moves
+   * to the healthiest sibling — the switching rule, expressed as a selection rather
+   * than as a separate state machine that could disagree with it.
+   */
+  #selectByQuota(
+    accounts: readonly ClaudeAccountRoutingRecord[]
+  ): ClaudeAccountRoutingRecord {
+    const best = Math.max(...accounts.map((account) => this.#remainingPercent(account.id)));
+    const tied = accounts.filter((account) => this.#remainingPercent(account.id) === best);
+    return this.#selectLeastActive(tied);
+  }
+
   #selectLeastActive(accounts: readonly ClaudeAccountRoutingRecord[]): ClaudeAccountRoutingRecord {
     const minimum = Math.min(...accounts.map((account) => this.activeRequests(account.id)));
     const tied = accounts.filter((account) => this.activeRequests(account.id) === minimum);
@@ -276,9 +386,34 @@ export class ClaudeAccountRouter {
     return this.#maintenanceCount(accountId) > 0;
   }
 
-  #waitForRelease(): Promise<void> {
-    return new Promise<void>((resolve) => {
-      this.#releaseWaiters.push(resolve);
+  /**
+   * Waits for an account to free up, but never forever.
+   *
+   * Concurrency here equals the number of accounts: one CLI child per config
+   * directory, so a pool of one serialises every session. Queueing for a few seconds
+   * behind another turn is right; queueing indefinitely is not — the caller saw no
+   * error and no progress until Codex's own 15-minute idle timeout fired, which
+   * reports nothing about the cause. The bound turns that into a typed refusal the
+   * client can show and retry.
+   */
+  #waitForRelease(): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      const waiter = (): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(true);
+      };
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        const index = this.#releaseWaiters.indexOf(waiter);
+        if (index !== -1) this.#releaseWaiters.splice(index, 1);
+        resolve(false);
+      }, this.#leaseWaitMs);
+      timer.unref?.();
+      this.#releaseWaiters.push(waiter);
     });
   }
 

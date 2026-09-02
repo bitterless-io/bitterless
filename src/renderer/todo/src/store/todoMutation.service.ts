@@ -1,5 +1,7 @@
 import { Message } from '@arco-design/web-vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
+import { todoistSyncStatusEmitter } from '../emitter/todoistSync.emitter';
+import { resolveTodoUnavailableReason } from './todoSessionState.service';
 
 type TodoMutationFailureRecovery = () => Promise<void>;
 
@@ -30,7 +32,8 @@ export const observeTodoMutation = async <T>(mutation: () => Promise<T>): Promis
   } catch (error) {
     console.error('[todo] mutation failed:', error);
     try {
-      Message.error(i18nHelper.todo.runtimeUnavailable);
+      const reason = await resolveTodoUnavailableReason(todoistSyncStatusEmitter);
+      Message.error(i18nHelper.todo[reason]);
     } catch (notificationError) {
       console.error('[todo] mutation failure notification failed:', notificationError);
     }

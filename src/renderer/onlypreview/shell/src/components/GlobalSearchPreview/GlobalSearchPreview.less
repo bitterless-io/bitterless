@@ -25,6 +25,45 @@
   color: var(--onlypreview-danger);
 }
 
+.onlypreview-search-preview__state strong {
+  max-width: min(440px, 80vw);
+  overflow: hidden;
+  color: var(--onlypreview-ink);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.onlypreview-search-preview__office-state {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 7px;
+  padding: 20px;
+  color: var(--onlypreview-muted);
+  background: #f2f3f7;
+  text-align: center;
+}
+
+.onlypreview-search-preview__office-state strong {
+  max-width: min(440px, 80vw);
+  overflow: hidden;
+  color: var(--onlypreview-ink);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.onlypreview-search-preview__office-state--error {
+  color: var(--onlypreview-danger);
+}
+
+.onlypreview-search-preview .onlypreview-office-preview {
+  position: relative;
+}
+
 .onlypreview-search-preview__plain {
   box-sizing: border-box;
   min-width: 100%;

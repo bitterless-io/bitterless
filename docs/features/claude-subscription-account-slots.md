@@ -77,7 +77,7 @@ survive a failed attempt to register it.
 
 ## Configurable port
 
-The endpoint port is owner-configurable, defaulting to **12841**. It is stored in
+The endpoint port is owner-configurable, defaulting to **12842**. It is stored in
 `<userData>/claude-subscription/settings.json` (`{version, port}`), beside the registry rather than
 inside it: it is not account state, and a malformed settings file must not make the accounts
 unreadable. An absent or out-of-range value falls back to the default instead of failing startup.
@@ -89,22 +89,90 @@ tearing down a listener that may be mid-request. Two consequences follow, and bo
   rather than being a constant. A hard-coded snippet would quietly point Codex at the wrong port.
 - `localClaudeProvider` builds its base URL per call instead of exporting a frozen constant.
 
+## Letting Codex choose the model and effort
+
+Codex does **not** read the provider's `/v1/models`; its picker is populated from
+`model_catalog_json` in `~/.codex/config.toml` (verified against `codex debug models`: a provider
+block alone leaves the built-in OpenAI list in place). Pinning one model in Bitterless was therefore
+not a design choice so much as the absence of a catalog.
+
+`copyCodexProfile` now writes `<userData>/claude-subscription/codex-model-catalog.json` and
+references it from the copied snippet, so Codex offers all three models and every effort:
+
+| | |
+|---|---|
+| Models | `claude-sonnet` · `claude-opus` · `claude-haiku` |
+| Efforts | `low` · `medium` · `high` · `xhigh` · `max` |
+
+Two constraints are encoded rather than discovered again later:
+
+- `model_catalog_json` is emitted **before any table header**. TOML would otherwise scope it into
+  `[model_providers.bitterless_claude]`, where it is ignored as an unknown provider field and the
+  picker silently keeps the OpenAI models.
+- Each entry carries `supports_reasoning_summaries` and `supports_parallel_tool_calls`. codex-cli
+  0.137 rejects an entry without them while the desktop's bundled 0.149 tolerates it, and a single
+  missing field discards the **entire** catalog.
+
+### `max` is a real level, not a synonym
+
+`claude --effort` accepts `low|medium|high|xhigh|max` (verified 2026-08-31). The translator
+previously folded `max` and `ultra` into `xhigh`, so every request asking for the top level was
+served one level weaker without any indication. `max` now maps to `max`.
+
+`--model opus` resolves to **Opus 5** (`modelUsage` reports `claude-opus-5`), and `--effort max` is
+accepted — both confirmed against the live CLI on `~/.claude2`.
+
+## Confirmed: the pool spends subscription quota, not API credit
+
+Read from the code this looked settled — the registry stores only `pro | max | team | enterprise`,
+and the child environment is an allowlist that omits `ANTHROPIC_API_KEY`. But that is an argument,
+not an observation, so it was checked against Anthropic's own report. A real inference through
+`~/.claude2` on 2026-08-31, under the exact production environment:
+
+```
+apiKeySource      "none"
+model             claude-sonnet-5
+rate_limit_event  { status: "allowed",
+                    rateLimitType: "five_hour",
+                    overageStatus: "rejected",
+                    overageDisabledReason: "org_level_disabled",
+                    isUsingOverage: false }
+```
+
+`rate_limit_event` is Anthropic's authoritative quota state, not a local guess. `five_hour` is the
+**subscription** window — pay-as-you-go API usage has no such window — and `isUsingOverage: false`
+says nothing spilled into paid usage.
+
+It also closes the caveat this document and the panel's usage note raise. Extra Usage is not merely
+switched off for the account: `overageDisabledReason: "org_level_disabled"` means the **Micromeet
+org** disables it, so a request cannot fall through to paid usage even after the limit is reached. It
+is refused instead.
+
+One reading trap: the CLI still reports `total_cost_usd` (0.166 for that one-word reply). That is
+list-price arithmetic on the tokens, not a charge — `isUsingOverage: false` is what says whether
+money moved.
+
+**Reproducing this needs `ANTHROPIC_CONFIG_DIR`.** With only `CLAUDE_CONFIG_DIR` and
+`CLAUDE_SECURESTORAGE_CONFIG_DIR` set, `auth status --json` reports `loggedIn: false` for a slot that
+is in fact signed in — the credential is not found and the slot looks logged out. All three
+directories are required together, which is what `buildClaudeSubscriptionEnvironment` already does.
+
 ## End-to-end verification
 
-Run 2026-08-28 against the production classes — repository, router, `ClaudeCliExecutor`,
+Run 2026-08-31 against the production classes — repository, router, `ClaudeCliExecutor`,
 `ClaudeCliAccountAuth`, `ClaudeResponsesRuntime`, `ClaudeResponsesServer` — assembled outside
 Electron, with a temporary registry so no real `userData` or `~/.claude*` directory was written:
 
 ```
-repository.serverPort() = 12841
+repository.serverPort() = 12842
 adoptable slots  [{"slot":2,"initialized":true},{"slot":3,"initialized":false}, …]
 verify           loggedIn:true, claude.ai, firstParty, team
-listening        http://127.0.0.1:12841
+listening        http://127.0.0.1:12842
 POST /v1/responses → HTTP 200
   events   response.created, output_item.added, content_part.added, output_text.delta,
            output_text.done, content_part.done, output_item.done, response.completed, [DONE]
-  usage    {"input_tokens":2,"output_tokens":79,"total_tokens":81}
-  text     "Anthropic built me."   (4142 ms)
+  usage    {"input_tokens":2,"output_tokens":204,"total_tokens":206}
+  text     "Anthropic built me."   (4421 ms)
 ```
 
 This is the first time the chain has been exercised end to end. What it does **not** cover: the

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { Button, Message, Notification, Spin, Trigger } from '@arco-design/web-vue'
-import { IconBrandWhatsapp, IconLogin2, IconPlayerPlay, IconSparkle2, IconX } from '@tabler/icons-vue'
+import { IconLogin2, IconSparkle2, IconX } from '@tabler/icons-vue'
 import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer'
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
 import type {
@@ -22,17 +22,17 @@ import { AUTH_BROADCAST } from '@maestro-shared/session.api'
 import type { AuthBroadcast } from '@maestro-shared/session.api'
 import { CLAUDE_SUBSCRIPTION_SNAPSHOT_CHANGED_EVENT } from '@shared/claudeSubscription/claudeSubscription.contract'
 import ChatPanel from './ChatPanel.vue'
+import ResponseStatus from './ResponseStatus.vue'
+import ChatConfirmSheet from './task/ChatConfirmSheet.vue'
 import { channelStore } from './store/channel.store'
 import { messageStore } from './store/message.store'
+import { isRejection } from './store/turn.service'
+import { taskStore } from './store/task.store'
 import './ControlApp.less'
 
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
 
 const status = ref('idle')
-const demoOpening = ref(false)
-const demoMenuVisible = ref(false)
-const compactDemoRunning = ref(false)
-const compactDemoRunId = ref(0)
 const controlLoading = ref(true)
 const controlLoadError = ref('')
 const llmSwitching = ref(false)
@@ -42,10 +42,12 @@ const providerPickerVisible = ref(false)
 const modelPickerVisible = ref(false)
 const effortPickerVisible = ref(false)
 const activeSession = computed(() => channelStore.activeSession)
-const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
-const COMPACT_DEMO_CONTEXT_LIMIT_K = 1
-const COMPACT_DEMO_CONTEXT_LABEL = '1K'
-const COMPACT_DEMO_COMPRESSION_REMAINING_PERCENT = 10
+const llmLocked = computed(
+  () =>
+    llmSwitching.value ||
+    Boolean(messageStore.turnService.activeTurn()) ||
+    Boolean(messageStore.activeAgentTurnSnapshot)
+)
 
 interface ControlLlmProviderGroup {
   provider: string
@@ -135,7 +137,7 @@ const onSwitchLlmTarget = async (
   target: { provider: string; model: string; effort: LlmEffort },
   closePicker: 'provider' | 'model' | false = false
 ): Promise<void> => {
-  if (!target || llmSwitching.value) return
+  if (!target || llmLocked.value) return
   llmSwitching.value = true
   status.value = 'switching model'
   try {
@@ -168,7 +170,7 @@ const onSwitchLlmModel = async (model: LlmTarget): Promise<void> => {
 
 const onSwitchLlmEffort = async (value: unknown): Promise<void> => {
   const cfg = llmConfig.value
-  if (!cfg || llmSwitching.value) return
+  if (!cfg || llmLocked.value) return
   const effort = toLlmEffort(value)
   if (effort === cfg.effort) return
   llmSwitching.value = true
@@ -200,7 +202,7 @@ const loginActiveProvider = async (): Promise<void> => {
 
 const configureLocalProvider = async (): Promise<void> => {
   await coach.setWorkbenchVisible({ visible: true })
-  xpcRenderer.broadcast('coach/workbench-pane', { pane: 'configuration' })
+  xpcRenderer.broadcast('coach/workbench-pane', { pane: 'sub2api' })
 }
 
 // The Home renderer owns sidebar geometry. Ask its layout store to collapse the placeholder;
@@ -209,96 +211,20 @@ const closePanel = (): void => {
   xpcRenderer.broadcast('coach/sidebar-close', { ts: Date.now() })
 }
 
-const openDemo = async (): Promise<void> => {
-  if (demoOpening.value) return
-  demoMenuVisible.value = false
-  demoOpening.value = true
-  status.value = 'demo'
-  try {
-    await coach.openDemo()
-  } finally {
-    demoOpening.value = false
-    status.value = 'idle'
-  }
-}
-
-const compactDemoMessage = (turn: number): string =>
-  [
-    `Compact demo real-chat turn ${turn}.`,
-    'This is an intentional real model-token load test for recursive context compaction.',
-    'Do not use browser tools and do not interact with the page. Reply in chat only.',
-    'Produce a detailed, structured English response of about 900-1200 words if possible.',
-    'Use harmless non-sensitive demo content only. Include the marker CompactDemoRealTurn-' + turn + ' in each section.',
-    'Sections to include: Current demo state, Decisions to preserve, Boundary facts for future compaction, Next-turn continuity notes.'
-  ].join('\n')
-
-const stopCompactDemo = async (): Promise<void> => {
-  compactDemoRunning.value = false
-  compactDemoRunId.value += 1
-  const session = activeSession.value
-  if (session?.busy) await messageStore.stop(session.id).catch(() => undefined)
-  if (llmConfig.value) syncLlmContextWindow(llmConfig.value)
-  status.value = llmConfig.value?.ready ? 'idle' : 'login needed'
-}
-
-const startCompactDemo = async (): Promise<void> => {
-  if (compactDemoRunning.value) {
-    await stopCompactDemo()
-    return
-  }
-  if (!llmAvailable.value) {
-    Message.warning('Sign in to the active model first.')
-    return
-  }
-
-  demoMenuVisible.value = false
-  const session = await channelStore.startFreshMaestroSession('Compact demo')
-  if (!session) {
-    Message.warning('Wait for the current Maestro turn to finish first.')
-    return
-  }
-  await nextTick()
-
-  compactDemoRunning.value = true
-  const runId = compactDemoRunId.value + 1
-  compactDemoRunId.value = runId
-  status.value = 'compact demo'
-  messageStore.setContextWindow(COMPACT_DEMO_CONTEXT_LIMIT_K, COMPACT_DEMO_CONTEXT_LABEL, COMPACT_DEMO_COMPRESSION_REMAINING_PERCENT)
-
-  try {
-    let turn = 1
-    while (compactDemoRunning.value && compactDemoRunId.value === runId) {
-      const current = activeSession.value
-      if (!current || current.source !== 'cowork' || current.archivedAt) break
-      const reply = await messageStore.send(current.id, compactDemoMessage(turn))
-      if (!reply || !reply.ok) {
-        Message.warning(reply?.text || 'Compact demo stopped because the model did not return a successful reply.')
-        break
-      }
-      turn += 1
-      await wait(500)
-    }
-  } finally {
-    if (compactDemoRunId.value === runId) {
-      compactDemoRunning.value = false
-      if (llmConfig.value) syncLlmContextWindow(llmConfig.value)
-      status.value = llmConfig.value?.ready ? 'idle' : 'login needed'
-    }
-  }
-}
-
 const triggerInjectedSkill = async (trigger: InjectedSkillTrigger): Promise<void> => {
   const message = trigger.message?.trim()
   if (!message) return
   channelStore.selectSource('cowork')
   await nextTick()
   const session = activeSession.value || (await channelStore.startFreshMaestroSession('Maestro'))
-  if (!session || session.busy || session.archivedAt) {
+  if (!session || session.turn || session.archivedAt) {
     Message.warning('Maestro is busy. Try the injected skill again after the current turn finishes.')
     return
   }
-  const reply = await messageStore.send(session.id, message)
-  if (!reply?.ok) Message.warning(reply?.text || `Could not run ${trigger.skillTitle}`)
+  const reply = await messageStore.turnService.send(session.id, message)
+  if (!reply || isRejection(reply) || !reply.ok) {
+    Message.warning((reply && !isRejection(reply) && reply.text) || `Could not run ${trigger.skillTitle}`)
+  }
 }
 
 const onChatReply = (reply: AgentReply): void => {
@@ -418,6 +344,9 @@ onMounted(async () => {
   })
 
   await loadControlConfig()
+  // Task snapshots can contain pending confirmations from before a renderer reload. Bind/load the
+  // chat session first so replay is idempotent and lands in its original session.
+  if (channelStore.activeSession) await taskStore.init()
 })
 </script>
 
@@ -436,61 +365,9 @@ onMounted(async () => {
             <IconSparkle2 :size="14" />
             <span>Maestro</span>
           </button>
-          <button
-            type="button"
-            class="control-app__channel"
-            :class="{ 'control-app__channel--active': channelStore.activeSource === 'connector' }"
-            :disabled="controlLoading"
-            @click="channelStore.selectSource('connector')"
-          >
-            <IconBrandWhatsapp :size="14" />
-            <span>Connector</span>
-          </button>
         </div>
 
         <div class="control-app__toolbar-actions">
-          <Trigger
-            v-model:popup-visible="demoMenuVisible"
-            trigger="click"
-            position="bottom"
-            :popup-offset="6"
-            :disabled="controlLoading"
-            :unmount-on-close="true"
-            :content-style="{ padding: '0' }"
-          >
-            <button
-              name="control__demo__button"
-              type="button"
-              class="control-app__text-button control-app__demo-button"
-              :disabled="controlLoading || demoOpening"
-              title="Demo"
-            >
-              <IconPlayerPlay :size="14" />
-              <span>{{ demoOpening ? 'Opening' : 'Demo' }}</span>
-            </button>
-            <template #content>
-              <div name="control__demo__menu" class="control-app__popup control-app__popup--demo">
-                <button
-                  name="control__demo__booking"
-                  type="button"
-                  class="control-app__popup-option"
-                  :disabled="demoOpening"
-                  @click="openDemo"
-                >
-                  Booking
-                </button>
-                <button
-                  name="control__demo__compact"
-                  type="button"
-                  class="control-app__popup-option"
-                  :class="{ 'control-app__popup-option--danger': compactDemoRunning }"
-                  @click="startCompactDemo"
-                >
-                  {{ compactDemoRunning ? 'Stop compacting' : 'Compact' }}
-                </button>
-              </div>
-            </template>
-          </Trigger>
           <button
             name="control__header__close"
             type="button"
@@ -515,13 +392,15 @@ onMounted(async () => {
         </div>
       </div>
       <ChatPanel
-        v-else-if="channelStore.activeSource === 'cowork' && activeSession"
+        v-else-if="activeSession"
         :key="activeSession.id"
         :session="activeSession"
         :send-disabled="!llmAvailable || llmLoginLoading"
         @sent="onChatReply"
       >
         <template #before-composer>
+          <ChatConfirmSheet :session="activeSession" />
+          <ResponseStatus :session="activeSession" />
           <div
             v-if="needsLlmLogin"
             name="control__llm__login_card"
@@ -548,7 +427,7 @@ onMounted(async () => {
               trigger="click"
               position="top"
               :popup-offset="6"
-              :disabled="llmSwitching"
+              :disabled="llmLocked"
               :unmount-on-close="true"
               :content-style="{ padding: '0' }"
             >
@@ -556,7 +435,7 @@ onMounted(async () => {
                 name="control__llm__provider_button"
                 type="button"
                 class="control-app__text-button"
-                :disabled="llmSwitching"
+                :disabled="llmLocked"
                 :title="`Provider: ${activeProviderLabel}`"
               >
                 {{ activeProviderLabel }}
@@ -570,7 +449,7 @@ onMounted(async () => {
                     type="button"
                     class="control-app__popup-option control-app__popup-option--split"
                     :class="{ 'control-app__popup-option--active': group.provider === llmConfig.provider }"
-                    :disabled="llmSwitching"
+                    :disabled="llmLocked"
                     @click="onSwitchLlmProvider(group.provider)"
                   >
                     <span class="control-app__option-label">{{ group.label }}</span>
@@ -583,7 +462,7 @@ onMounted(async () => {
               trigger="click"
               position="top"
               :popup-offset="6"
-              :disabled="llmSwitching"
+              :disabled="llmLocked"
               :unmount-on-close="true"
               :content-style="{ padding: '0' }"
             >
@@ -591,7 +470,7 @@ onMounted(async () => {
                 name="control__llm__model_button"
                 type="button"
                 class="control-app__text-button"
-                :disabled="llmSwitching"
+                :disabled="llmLocked"
                 :title="controlLlmTitle"
               >
                 {{ activeModelLabel }}
@@ -605,7 +484,7 @@ onMounted(async () => {
                     type="button"
                     class="control-app__popup-option control-app__popup-option--split"
                     :class="{ 'control-app__popup-option--active': model.model === llmConfig.model }"
-                    :disabled="llmSwitching"
+                    :disabled="llmLocked"
                     @click="onSwitchLlmModel(model)"
                   >
                     <span class="control-app__option-label">{{ model.shortLabel || model.label }}</span>
@@ -619,7 +498,7 @@ onMounted(async () => {
               trigger="click"
               position="top"
               :popup-offset="6"
-              :disabled="llmSwitching || llmEffortDisabled"
+              :disabled="llmLocked || llmEffortDisabled"
               :unmount-on-close="true"
               :content-style="{ padding: '0' }"
             >
@@ -627,7 +506,7 @@ onMounted(async () => {
                 name="control__llm__effort_button"
                 type="button"
                 class="control-app__text-button control-app__text-button--effort"
-                :disabled="llmSwitching || llmEffortDisabled"
+                :disabled="llmLocked || llmEffortDisabled"
                 :title="`Effort: ${activeLlmEffortLabel}`"
               >
                 {{ activeLlmEffortLabel || llmEffortValue }}
@@ -640,7 +519,7 @@ onMounted(async () => {
                     type="button"
                     class="control-app__popup-option"
                     :class="{ 'control-app__popup-option--active': effort.id === llmEffortValue }"
-                    :disabled="llmSwitching"
+                    :disabled="llmLocked"
                     @click="onSwitchLlmEffort(effort.id)"
                   >
                     {{ effort.label }}
@@ -651,11 +530,6 @@ onMounted(async () => {
           </div>
         </template>
       </ChatPanel>
-      <div v-else class="control-app__state">
-        <div class="control-app__connector-empty">
-          Connector
-        </div>
-      </div>
     </div>
   </div>
 

@@ -17,6 +17,7 @@ const { loadCanonicalRigEnvironment } = nodeRequire(
   loadCanonicalRigEnvironment(projectRoot: string): {
     environment: Record<string, string>;
     profileName: string;
+    releaseChannel: 'dev' | 'prod' | 'preview';
     viteEnv: 'dev' | 'prod';
     viteMode: 'debug' | 'release';
   };
@@ -26,7 +27,8 @@ const dotenvResult = dotenvConfig({ path: resolve('.env.rig'), override: true })
 if (dotenvResult.error) throw dotenvResult.error;
 if (
   process.env.VITE_MODE !== canonicalRigEnvironment.viteMode ||
-  process.env.VITE_ENV !== canonicalRigEnvironment.viteEnv
+  process.env.VITE_ENV !== canonicalRigEnvironment.viteEnv ||
+  process.env.VITE_RELEASE_CHANNEL !== canonicalRigEnvironment.releaseChannel
 ) {
   throw new Error('The selected Rig profile was not applied to the Electron build process');
 }
@@ -45,7 +47,10 @@ const bitterlessPreloadBuildDefine = {
   __BITTERLESS_VERSION_CODE__: JSON.stringify(packageMetadata.version_code),
   'import.meta.env.VITE_BITTERLESS_CORE_URL': JSON.stringify(process.env.VITE_BITTERLESS_CORE_URL),
   'import.meta.env.VITE_ENV': JSON.stringify(canonicalRigEnvironment.viteEnv),
-  'import.meta.env.VITE_MODE': JSON.stringify(canonicalRigEnvironment.viteMode)
+  'import.meta.env.VITE_MODE': JSON.stringify(canonicalRigEnvironment.viteMode),
+  'import.meta.env.VITE_RELEASE_CHANNEL': JSON.stringify(
+    canonicalRigEnvironment.releaseChannel
+  )
 };
 
 const maestroBuildDefine = {
@@ -271,7 +276,7 @@ const onlyPreviewHtmlSecurityPlugin = {
     }
   },
   closeBundle() {
-    for (const mode of ['shell', 'preview', 'settings', 'guide']) {
+    for (const mode of ['shell', 'preview', 'globalSearch', 'settings', 'guide']) {
       const htmlPath = resolve('out/renderer/onlypreview', mode, 'index.html');
       const html = readFileSync(htmlPath, 'utf8');
       const head = html.match(/<head>([\s\S]*?)<\/head>/i)?.[1] ?? '';
@@ -283,11 +288,15 @@ const onlyPreviewHtmlSecurityPlugin = {
       if (html.toLowerCase().indexOf('<meta charset=') >= 1024) {
         throw new Error(`OnlyPreview ${mode} charset declaration is outside the first 1024 bytes`);
       }
-      if (mode === 'preview' && !head.includes("'wasm-unsafe-eval'")) {
-        throw new Error('OnlyPreview preview CSP must authorize same-origin OOXML WASM');
+      const supportsOffice = mode === 'preview' || mode === 'globalSearch';
+      if (supportsOffice && !head.includes("'wasm-unsafe-eval'")) {
+        throw new Error(`OnlyPreview ${mode} CSP must authorize same-origin OOXML WASM`);
       }
-      if (mode !== 'preview' && head.includes("'wasm-unsafe-eval'")) {
+      if (!supportsOffice && head.includes("'wasm-unsafe-eval'")) {
         throw new Error(`OnlyPreview ${mode} must not inherit the OOXML WASM capability`);
+      }
+      if (supportsOffice && !head.includes("worker-src 'self' blob:")) {
+        throw new Error(`OnlyPreview ${mode} CSP must authorize same-origin OOXML Workers`);
       }
       if (html.includes('"./monacoeditorwork/')) {
         throw new Error(`OnlyPreview ${mode} contains a nested broken Monaco worker path`);
@@ -381,6 +390,7 @@ const runtimeProfileBuildMarkerPlugin = {
         {
           schemaVersion: 1,
           profileName: canonicalRigEnvironment.profileName,
+          releaseChannel: canonicalRigEnvironment.releaseChannel,
           viteEnv: canonicalRigEnvironment.viteEnv,
           viteMode: canonicalRigEnvironment.viteMode
         },

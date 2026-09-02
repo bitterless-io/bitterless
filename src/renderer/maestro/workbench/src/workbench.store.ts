@@ -1,7 +1,10 @@
 import { reactive } from 'vue'
 import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer'
 import { encode } from 'gpt-tokenizer/encoding/o200k_base'
+import { AGENT_TURN_CHANNEL } from '@maestro-shared/coach.api'
 import type {
+  AgentTurnRecoverySnapshot,
+  AgentTurnUpdate,
   BrowserRequestReplayRequest,
   BrowserRequestReplayResult,
   CaptureExportFormat,
@@ -139,7 +142,7 @@ export const workbenchPanes: WorkbenchPane[] = [
   'injections',
   'tools',
   'models',
-  'configuration',
+  'sub2api',
   'apps',
   'connectors',
   'settings',
@@ -228,6 +231,7 @@ class WorkbenchStoreState {
   llmLoading = false
   llmActionSaving = false
   llmLoginProvider = ''
+  agentTurnActive = false
   hostToolCatalog: HostToolCatalogResult | null = null
   hostToolLoading = false
   hostApprovalLoading = false
@@ -267,6 +271,7 @@ class WorkbenchStoreState {
   initialized = false
   private captureRecordsEdited = false
   private captureRecordSyncTimer: ReturnType<typeof setTimeout> | null = null
+  private agentTurnRevision = 0
 
   readonly filterCats = [
     { key: 'action', label: 'Action' },
@@ -446,9 +451,12 @@ class WorkbenchStoreState {
       const state = payload.params as LlmLoginState
       this.llmLoginProvider = state?.loading ? state.provider : ''
     })
+    xpcRenderer.subscribe(AGENT_TURN_CHANNEL, (payload) => {
+      this.applyAgentTurnUpdate(payload.params as AgentTurnUpdate)
+    })
     xpcRenderer.subscribe('coach/auth', () => void this.refreshLlmConfig())
     xpcRenderer.subscribe(CLAUDE_SUBSCRIPTION_SNAPSHOT_CHANGED_EVENT, () => {
-      if (this.activePane === 'models' || this.activePane === 'configuration') {
+      if (this.activePane === 'models' || this.activePane === 'sub2api') {
         void this.refreshLlmConfig()
       }
     })
@@ -469,6 +477,8 @@ class WorkbenchStoreState {
     await this.seedDomain()
     await this.refreshSkills()
     await this.refreshLlmConfig()
+    const turnRecovery = await coach.getActiveAgentTurn().catch(() => null)
+    if (turnRecovery) this.applyAgentTurnRecovery(turnRecovery)
     if (this.activePane === 'tools') {
       await this.refreshHostToolCatalog()
       await this.refreshHostApprovalEvents()
@@ -509,7 +519,7 @@ class WorkbenchStoreState {
       void this.refreshHostApprovalEvents()
     }
     if (this.initialized && pane === 'injections') void this.refreshInjectedButtons()
-    if (this.initialized && (pane === 'models' || pane === 'configuration')) {
+    if (this.initialized && (pane === 'models' || pane === 'sub2api')) {
       void this.refreshLlmConfig()
     }
   }
@@ -556,6 +566,22 @@ class WorkbenchStoreState {
 
   get llmSaving(): boolean {
     return this.llmActionSaving || Boolean(this.llmLoginProvider)
+  }
+
+  get llmTargetLocked(): boolean {
+    return this.llmSaving || this.agentTurnActive
+  }
+
+  private applyAgentTurnUpdate(update: AgentTurnUpdate): void {
+    if (update.revision < this.agentTurnRevision) return
+    this.agentTurnRevision = update.revision
+    this.agentTurnActive = Boolean(update.turn)
+  }
+
+  private applyAgentTurnRecovery(recovery: AgentTurnRecoverySnapshot): void {
+    if (recovery.revision < this.agentTurnRevision) return
+    this.agentTurnRevision = recovery.revision
+    this.agentTurnActive = Boolean(recovery.turn)
   }
 
   async refreshLlmConfig(): Promise<void> {
@@ -907,7 +933,7 @@ class WorkbenchStoreState {
   }
 
   private async setLlmTarget(provider: string, model: string, effort: LlmEffort): Promise<void> {
-    if (this.llmSaving) return
+    if (this.llmTargetLocked) return
     this.llmActionSaving = true
     try {
       this.llmConfig = await coach.setLlmConfig({ provider, model, effort })

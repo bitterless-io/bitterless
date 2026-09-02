@@ -7,6 +7,8 @@ import type { OnlyPreviewResult } from '@shared/onlypreview/onlyPreview.types';
 import type { OnlyPreviewSearchBootstrap } from '@shared/onlypreview/onlyPreviewSearchBootstrap.types';
 import {
   parseOnlyPreviewBrowseDirectoryRequest,
+  parseOnlyPreviewGlobalSearchOfficeReadChunkRequest,
+  parseOnlyPreviewGlobalSearchOfficeReadRequest,
   parseOnlyPreviewGlobalSearchPreviewRequest,
   parseOnlyPreviewSearchCancelRequest,
   parseOnlyPreviewSearchInitializeRequest,
@@ -22,6 +24,10 @@ import {
   ONLY_PREVIEW_SEARCH_WATCH_COMMIT_EVENT,
   type OnlyPreviewBrowseDirectoryRequest,
   type OnlyPreviewBrowseListing,
+  type OnlyPreviewGlobalSearchOfficeReadChunkRequest,
+  type OnlyPreviewGlobalSearchOfficeReadChunkResult,
+  type OnlyPreviewGlobalSearchOfficeReadOpenResult,
+  type OnlyPreviewGlobalSearchOfficeReadRequest,
   type OnlyPreviewGlobalSearchPreview,
   type OnlyPreviewGlobalSearchPreviewRequest,
   type OnlyPreviewSearchCancelRequest,
@@ -227,6 +233,36 @@ export class FileSearchRuntime implements OnlyPreviewSearchRuntimeApi {
       const request = parseOnlyPreviewGlobalSearchPreviewRequest(params);
       const active = this._requireActiveRequest(request);
       return await active.coordinator.preview(request);
+    });
+  }
+
+  async openOfficeRead(
+    params: OnlyPreviewGlobalSearchOfficeReadRequest
+  ): Promise<OnlyPreviewResult<OnlyPreviewGlobalSearchOfficeReadOpenResult>> {
+    return await runOperation(async () => {
+      const request = parseOnlyPreviewGlobalSearchOfficeReadRequest(params);
+      const active = this._requireActiveRequest(request);
+      return await active.coordinator.openOfficeRead(request);
+    });
+  }
+
+  async readOfficeChunk(
+    params: OnlyPreviewGlobalSearchOfficeReadChunkRequest
+  ): Promise<OnlyPreviewResult<OnlyPreviewGlobalSearchOfficeReadChunkResult>> {
+    return await runOperation(async () => {
+      const request = parseOnlyPreviewGlobalSearchOfficeReadChunkRequest(params);
+      const active = this._requireActiveRequest(request);
+      return await active.coordinator.readOfficeChunk(request);
+    });
+  }
+
+  async cancelOfficeRead(
+    params: OnlyPreviewGlobalSearchOfficeReadRequest
+  ): Promise<OnlyPreviewResult<void>> {
+    return await runOperation(async () => {
+      const request = parseOnlyPreviewGlobalSearchOfficeReadRequest(params);
+      const active = this._requireActiveRequest(request);
+      await active.coordinator.cancelOfficeRead(request);
     });
   }
 

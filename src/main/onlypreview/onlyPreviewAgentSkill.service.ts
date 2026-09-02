@@ -96,6 +96,7 @@ export const createOnlyPreviewAgentSetupInstruction = ({
     'Codex destination: `~/.codex/skills/bitterless-preview/`',
     'Claude Code destination: `~/.claude/skills/bitterless-preview/` (or `.claude/skills/bitterless-preview/` inside the project)',
     'Copy the directory contents additively into the destination and overwrite same-named files. Do not delete other skills.',
+    "When installing a different or newer Bitterless edition later, copy that edition's current Guide again; its setup supersedes this one and overwrites same-named skill files.",
     '',
     'After installing or updating the skill, start a new agent session. Keep the current Bitterless application running while the agent uses MCP.',
     createInstanceSafetyInstruction(serverName)

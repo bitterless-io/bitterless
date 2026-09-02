@@ -11,7 +11,7 @@
           aria-haspopup="dialog"
           aria-controls="eyes-on-agents-thread-search-dialog"
           :aria-expanded="eyesOnAgentsStore.threadSearchVisible"
-          @click="eyesOnAgentsStore.openThreadSearch"
+          @click="openThreadSearch"
         >
           <template #icon>
             <IconSearch :size="14" aria-hidden="true" />
@@ -53,6 +53,10 @@ defineProps<{
 const searchTooltip = computed(() => uaHelper.isMac
   ? i18nHelper.eyesOnAgents.actions.searchTitlesMac
   : i18nHelper.eyesOnAgents.actions.searchTitlesWindows);
+
+const openThreadSearch = (): void => {
+  eyesOnAgentsStore.openThreadSearch();
+};
 </script>
 
 <style lang="less">

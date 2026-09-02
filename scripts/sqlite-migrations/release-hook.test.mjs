@@ -12,17 +12,23 @@ const {
   OSS_MULTIPART_PART_SIZE_BYTES,
   OSS_MULTIPART_THRESHOLD_BYTES,
   OSS_REQUEST_TIMEOUT_MS,
-  assertLocalReleaseMatchesDist,
+  assertNoCrossChannelIdentityReuse,
+  assertNoRemoteDowngrade,
   assertReleaseOrder,
-  artifactNameMatchesVersion,
   parseUserKeychainSearchList,
   publishRelease,
   selectDeveloperIdApplicationIdentity,
   uploadFile,
   uploadReleaseFiles,
-  validateUpdaterArtifacts,
   withTemporaryUserKeychainSearchList,
 } = require('../publish.js')
+const {
+  assertLocalReleaseMatchesDist,
+  artifactNameMatchesVersion,
+  createVersionInfoForUpload,
+  releaseChannelConfigs,
+  validateUpdaterArtifacts,
+} = require('../release/releaseChannel.cjs')
 const {
   isTransientNetworkFailure,
   parseNotarizationStatus,
@@ -68,15 +74,66 @@ test('direct package scripts have migration pre-hooks', () => {
   }
   assert.equal(pkg.scripts['prebuild_dev:mac_arm'], 'yarn audit:sqlite-migrations')
   assert.equal(pkg.scripts['prebuild_dev:win'], 'yarn audit:sqlite-migrations')
+  assert.equal(pkg.scripts['prebuild_preview:mac_arm'], 'yarn audit:sqlite-migrations')
+  assert.equal(pkg.scripts['prebuild_preview:mac_intel'], 'yarn audit:sqlite-migrations')
+  assert.equal(pkg.scripts['prebuild_preview:win'], 'yarn audit:sqlite-migrations')
+})
+
+test('Preview publish aliases build and publish current local source without Git operations', () => {
+  const pkg = JSON.parse(read('package.json'))
+  const expected = {
+    'publish_preview:mac_arm': 'yarn install --frozen-lockfile && node scripts/publish.js --env preview --platform mac_arm --bump --build',
+    'publish_preview:mac_intel': 'yarn install --frozen-lockfile && node scripts/publish.js --env preview --platform mac_intel --build',
+    'publish_preview:win': 'yarn install --frozen-lockfile && node scripts/publish.js --env preview --platform win64 --build',
+  }
+  assert.equal(pkg.scripts.publish_preview, 'yarn publish_preview:mac_arm')
+  for (const [script, command] of Object.entries(expected)) {
+    assert.equal(pkg.scripts[script], command)
+    assert.doesNotMatch(pkg.scripts[script], /git|pull|reset|restore/)
+  }
+})
+
+test('only canonical Preview mac ARM auto-cuts the shared release identity', () => {
+  const pkg = JSON.parse(read('package.json'))
+  assert.equal(pkg.scripts['release:cut'], 'node scripts/patch.js')
+  const publishers = Object.keys(pkg.scripts).filter((name) => /^publish(_dev|_preview)?(:|$)/.test(name))
+  assert(publishers.length >= 10)
+  const autoCutPublishers = publishers.filter((name) => pkg.scripts[name].includes('--bump'))
+  assert.deepEqual(autoCutPublishers, ['publish_preview:mac_arm'])
+  for (const name of publishers) {
+    assert.doesNotMatch(pkg.scripts[name], /patch\.js/, `${name} must not invoke the patch script`)
+    if (name === 'publish_preview:mac_arm') {
+      assert.equal(pkg.scripts[name].match(/--bump/g)?.length, 1)
+      assert.ok(pkg.scripts[name].indexOf('--bump') < pkg.scripts[name].indexOf('--build'))
+    } else {
+      assert.doesNotMatch(pkg.scripts[name], /--bump/, `${name} must reuse the cut identity`)
+    }
+  }
+})
+
+test('Stable publish aliases rebuild the selected production artifact before upload', () => {
+  const pkg = JSON.parse(read('package.json'))
+  const expected = {
+    'publish:mac_arm': 'mac_arm',
+    'publish:mac_intel': 'mac_intel',
+    'publish:win': 'win64',
+  }
+  for (const [script, platform] of Object.entries(expected)) {
+    assert.equal(
+      pkg.scripts[script],
+      `node scripts/publish.js --env prod --platform ${platform} --build`,
+    )
+  }
 })
 
 test('fast mac ARM publish uses local source and locked dependencies before patch, build, and publish', () => {
   const pkg = JSON.parse(read('package.json'))
   assert.equal(
     pkg.scripts['fast_publish:mac_arm'],
-    'yarn install --frozen-lockfile && node scripts/patch.js && node scripts/publish.js --env prod --platform mac_arm --preflight-only && DEBUG=electron-osx-sign yarn build:mac_arm && yarn publish:mac_arm',
+    'yarn install --frozen-lockfile && node scripts/patch.js && DEBUG=electron-osx-sign yarn publish:mac_arm',
   )
   assert.doesNotMatch(pkg.scripts['fast_publish:mac_arm'], /git_pull\.js/)
+  assert.match(pkg.scripts['publish:mac_arm'], /--env prod --platform mac_arm --build$/)
 })
 
 test('desktop runtime pins Electron 40 and SQLite 12.11 without the Electron 43 ABI override', () => {
@@ -149,6 +206,36 @@ test('release ordering rejects semantic downgrade and conflicting version reuse'
   )
 })
 
+test('publisher validates the exact existing Preview manifest before logging release order', async (t) => {
+  const requestedKeys = []
+  const logs = []
+  const client = {
+    async get(objectKey) {
+      requestedKeys.push(objectKey)
+      return {
+        content: Buffer.from(JSON.stringify({
+          version: '0.0.79',
+          versionCode: '260831120000',
+        })),
+      }
+    },
+  }
+  t.mock.method(console, 'log', (...args) => logs.push(args.join(' ')))
+
+  await assertNoRemoteDowngrade(
+    client,
+    'bitterless/distro/preview/mac_arm',
+    { version: '0.0.80', version_code: '260901100018' },
+  )
+
+  assert.deepEqual(requestedKeys, [
+    'bitterless/distro/preview/mac_arm/version_info.json',
+  ])
+  assert.deepEqual(logs, [
+    '[publish.js] Version order verified: local 0.0.80 (260901100018), remote 0.0.79 (260831120000)',
+  ])
+})
+
 test('publisher requires package and dist to describe the exact same release', () => {
   assert.doesNotThrow(() => {
     assertLocalReleaseMatchesDist(
@@ -163,6 +250,72 @@ test('publisher requires package and dist to describe the exact same release', (
     ),
     /Stale dist release metadata/,
   )
+  assert.doesNotThrow(() => assertLocalReleaseMatchesDist(
+    { version: '0.0.60', version_code: '260802114545' },
+    { version: '0.0.60', versionCode: '260802114545', channel: 'preview' },
+    'preview',
+  ))
+  assert.throws(
+    () => assertLocalReleaseMatchesDist(
+      { version: '0.0.60', version_code: '260802114545' },
+      { version: '0.0.60', versionCode: '260802114545', channel: 'prod' },
+      'preview',
+    ),
+    /expected channel preview/,
+  )
+})
+
+test('local release artifacts use distinct Stable, Development, and Preview directories', () => {
+  const projectRoot = join(import.meta.dirname, '..', '..')
+  assert.equal(releaseChannelConfigs.prod.distDir, join(projectRoot, 'dist'))
+  assert.equal(releaseChannelConfigs.dev.distDir, join(projectRoot, 'dist', 'dev'))
+  assert.equal(releaseChannelConfigs.preview.distDir, join(projectRoot, 'dist', 'preview'))
+  assert.deepEqual(
+    Object.fromEntries(
+      Object.entries(releaseChannelConfigs).map(([channel, config]) => [
+        channel,
+        config.outputDirectory,
+      ]),
+    ),
+    {
+      dev: 'dist/dev',
+      preview: 'dist/preview',
+      prod: 'dist',
+    },
+  )
+})
+
+test('publisher emits exact additive Preview installer metadata', () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'bitterless-preview-manifest-'))
+  const installer = join(tempDir, 'Bitterless-Preview-0.0.79.dmg')
+  const versionInfo = join(tempDir, 'version_info.json')
+  try {
+    writeFileSync(installer, 'preview-installer')
+    writeFileSync(versionInfo, JSON.stringify({
+      version: '0.0.79',
+      versionCode: '260831120000',
+      channel: 'preview',
+      releaseNotes: 'Preview',
+    }))
+    const output = createVersionInfoForUpload({
+      env: 'preview',
+      platform: 'mac_arm',
+      prefix: 'bitterless/distro',
+      publicBaseUrl: 'https://assets.terncloud.com',
+    }, [installer], tempDir)
+    const manifest = JSON.parse(readFileSync(output, 'utf8'))
+    assert.equal(manifest.channel, 'preview')
+    assert.equal(manifest.platform, 'mac_arm')
+    assert.equal(manifest.installerName, 'Bitterless-Preview-0.0.79.dmg')
+    assert.equal(
+      manifest.installerUrl,
+      'https://assets.terncloud.com/bitterless/distro/preview/mac_arm/Bitterless-Preview-0.0.79.dmg',
+    )
+    assert.equal(manifest.installerSize, statSync(installer).size)
+    assert.match(manifest.installerSha512, /^[A-Za-z0-9+/]+={0,2}$/)
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
 })
 
 test('publisher validates updater references and required blockmaps', () => {
@@ -417,6 +570,7 @@ test('mac application and DMG notarization use one logged network-retry workflow
   const builder = read('electron-builder.tmp.yml')
   const notarizeSource = read('scripts/notarize.js')
   const publishSource = read('scripts/publish.js')
+  const releaseChannelSource = read('scripts/release/releaseChannel.cjs')
   const pkg = JSON.parse(read('package.json'))
   const submitStart = notarizeSource.indexOf('const submitWithRetry = async')
   const waitStart = notarizeSource.indexOf('const waitWithRetry = async')
@@ -453,9 +607,9 @@ test('mac application and DMG notarization use one logged network-retry workflow
   assert.match(publishSource, /const \{ notarizeDmg \} = require\('\.\/notarize\.js'\)/)
   assert.match(publishSource, /const finalizeMacDmg = async/)
   assert.match(publishSource, /await notarizeDmg\(dmgPath\)/)
-  assert.match(publishSource, /await finalizeMacDmg\(options\.platform\)/)
-  assert.match(publishSource, /artifactNameMatchesVersion\(name, version\)/)
-  assert.match(publishSource, /Expected exactly one DMG artifact for version/)
+  assert.match(publishSource, /await finalizeMacDmg\(options\.platform, targetDistDir\)/)
+  assert.match(releaseChannelSource, /artifactNameMatchesVersion\(name, version\)/)
+  assert.match(releaseChannelSource, /Expected exactly one DMG artifact for version/)
 })
 
 test('notarization retry classification is limited to concrete transient transport failures', () => {
@@ -622,4 +776,117 @@ test('migration audit is pure Node and uses runtime manifests', () => {
   assert.match(source, /todoistSyncMigrations/)
   assert.doesNotMatch(source, /from ['"]electron['"]/)
   assert.doesNotMatch(source, /electron-vite|BrowserWindow/)
+})
+
+const createManifestClient = (manifests, requestedKeys = []) => ({
+  requestedKeys,
+  async get(objectKey) {
+    requestedKeys.push(objectKey)
+    if (!Object.hasOwn(manifests, objectKey)) {
+      const error = new Error(`NoSuchKey: ${objectKey}`)
+      error.code = 'NoSuchKey'
+      throw error
+    }
+    return { content: Buffer.from(JSON.stringify(manifests[objectKey])) }
+  },
+})
+
+const previewPublishOptions = {
+  env: 'preview',
+  platform: 'mac_arm',
+  prefix: 'bitterless/distro',
+}
+
+test('publisher refuses a version_code another channel already published', async () => {
+  const client = createManifestClient({
+    'bitterless/distro/prod/mac_arm/version_info.json': {
+      version: '0.0.84',
+      versionCode: '260901164356',
+    },
+  })
+
+  await assert.rejects(
+    () => assertNoCrossChannelIdentityReuse(client, previewPublishOptions, {
+      version: '0.0.85',
+      version_code: '260901164356',
+    }),
+    /Refusing cross-channel version_code reuse: 260901164356 is already published as prod\/mac_arm 0\.0\.84/,
+  )
+})
+
+test('publisher refuses a version another channel already published under a different code', async () => {
+  const client = createManifestClient({
+    'bitterless/distro/dev/mac_arm/version_info.json': {
+      version: '0.0.84',
+      versionCode: '260901100000',
+    },
+  })
+
+  await assert.rejects(
+    () => assertNoCrossChannelIdentityReuse(client, previewPublishOptions, {
+      version: '0.0.84',
+      version_code: '260901164356',
+    }),
+    /Refusing cross-channel version reuse: 0\.0\.84 is already published as dev\/mac_arm with version_code 260901100000/,
+  )
+})
+
+test('publisher allows an unused identity and inspects only the other channels of one platform', async (t) => {
+  const logs = []
+  const client = createManifestClient({
+    'bitterless/distro/preview/mac_arm/version_info.json': {
+      version: '0.0.84',
+      versionCode: '260901164356',
+    },
+    'bitterless/distro/prod/mac_intel/version_info.json': {
+      version: '0.0.85',
+      versionCode: '260902090000',
+    },
+  })
+  t.mock.method(console, 'log', (...args) => logs.push(args.join(' ')))
+
+  await assertNoCrossChannelIdentityReuse(client, previewPublishOptions, {
+    version: '0.0.85',
+    version_code: '260902090000',
+  })
+
+  assert.deepEqual(client.requestedKeys, [
+    'bitterless/distro/dev/mac_arm/version_info.json',
+    'bitterless/distro/prod/mac_arm/version_info.json',
+  ])
+  assert.deepEqual(logs, [
+    '[publish.js] Cross-channel identity verified: 0.0.85 (260902090000) is unused outside preview',
+  ])
+})
+
+test('publisher refuses to publish when another channel manifest cannot be read', async () => {
+  const transportFailure = new Error('RequestTimeoutError')
+  transportFailure.code = 'RequestTimeoutError'
+  const client = {
+    async get() {
+      throw transportFailure
+    },
+  }
+
+  await assert.rejects(
+    () => assertNoCrossChannelIdentityReuse(client, previewPublishOptions, {
+      version: '0.0.85',
+      version_code: '260902090000',
+    }),
+    /RequestTimeoutError/,
+  )
+})
+
+test('publish runs the cross-channel identity guard in the same preflight as the order guard', () => {
+  const source = read('scripts/publish.js')
+  const mainSource = source.slice(source.indexOf('const main = async () =>'))
+  const orderIndex = mainSource.indexOf('await assertNoRemoteDowngrade')
+  const identityIndex = mainSource.indexOf('await assertNoCrossChannelIdentityReuse')
+  const preflightIndex = mainSource.indexOf('if (options.preflightOnly)')
+  const uploadIndex = mainSource.indexOf('await publishRelease({')
+
+  assert(identityIndex > orderIndex)
+  assert(preflightIndex > identityIndex)
+  assert.equal(mainSource.split('await assertNoCrossChannelIdentityReuse').length - 1, 2)
+  assert(mainSource.lastIndexOf('await assertNoCrossChannelIdentityReuse') < uploadIndex)
 })

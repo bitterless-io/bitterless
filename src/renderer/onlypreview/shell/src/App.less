@@ -282,8 +282,12 @@ select {
 }
 
 .onlypreview-shell__tree-row--selected {
-  background: #e3e6f1;
+  background: #d6e4ff;
   color: #303858;
+}
+
+.onlypreview-shell__tree-row--selected:hover {
+  background: #d6e4ff;
 }
 
 .onlypreview-shell__tree-row--search-excluded {
@@ -575,18 +579,6 @@ select {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.onlypreview-shell__global-search-scrim {
-  position: absolute;
-  inset: 0;
-  z-index: 40;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  cursor: default;
-  -webkit-app-region: no-drag;
 }
 
 @media (prefers-reduced-motion: reduce) {

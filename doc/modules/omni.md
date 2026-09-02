@@ -44,4 +44,4 @@
 - **并发保护**：`_creating` 锁防止 `ipcMain.handle` 并发调用导致 `create()` 重入
 - **XPC 事件方向**：main 通过 `xpcMain.broadcast` 推送 URL 变更；renderer 通过 `xpcRenderer.send` 发起导航和布局保存
 - **无反馈循环**：`onResize` 只更新内存 sizes，仅 `onResizeEnd`（拖动结束）触发一次 XPC 同步；URL 变更由 `lastUrl` 去重拦截重复广播
-- **浏览器身份分流**：普通站点保持原生 Electron + `persist:omni`；Google/YouTube 在首个请求前切到 `persist:omni-google`，UA 只删除 `Electron/<version>` 并保留真实 `Bitterless/<version>` 应用标识
+- **浏览器会话分流**：普通站点使用 `persist:omni`；Google/YouTube 在首个请求前切到 `persist:omni-google`，两个 session 都保留原生 Electron/Chromium UA、UA-CH 和 JS 身份，不做伪装

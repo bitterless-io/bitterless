@@ -4,15 +4,19 @@ Status: Current delivery contract
 
 Upstream baseline: `projects/micromeet-cowork` commit
 `689832d39e4b78f2717d5beedbe1c1c3f8db7f71` (2026-07-14).
-Current MenuBar/control and fixed-local-tab parity reference: Cowork `dev/next` commit `19b0621`.
+Current MenuBar/fixed-local-tab parity reference: Cowork `dev/next` commit `19b0621`.
+Current Control-chat parity source: Cowork `dev/next` commit
+`67b056bc08ac345d223a69fb3f954613f3e588d3` (2026-08-31).
 
 ## Purpose
 
-The runtime originally migrated from Micromeet Cowork is now the authenticated Bitterless
-**primary window**. Home remains alive as a hidden authentication/bootstrap shell; after session
-activation prepares Maestro successfully, Main hides Home and presents the singleton Maestro
-window. Dock activation, tray Open, and a second application launch return to Maestro while that
-session is active. Logout or invalidation destroys authenticated windows and returns to Home login.
+The runtime originally migrated from Micromeet Cowork is now Bitterless's sole visible **primary
+window**, whether the customer is signed in or signed out. The legacy Home renderer remains alive
+as a permanently hidden authentication/bootstrap authority. Its token-free bridge drives the fixed
+`bitterless://home` tab: signed-out and recovery states render the existing Login experience, while
+only an active password-complete session renders the Mini Apps workspace. Dock activation, tray
+Open, a second application launch, logout, and invalidation all keep Maestro visible and never
+reveal the legacy Home `BrowserWindow`.
 
 Maestro also remains visible in the Workbench Apps catalog. Its Open action focuses the same
 singleton rather than creating another window graph. Runtime state, packaged resources, and
@@ -29,17 +33,17 @@ Maestro is not a Vue route or one renderer. The embedded unit is its complete El
 ```text
 ┌──────────────────── Bitterless process ────────────────────────────────┐
 │                                                                        │
-│  Home renderer (login, token, bootstrap; hidden after activation)      │
-│       │ AuthHandler.activateSession                                    │
+│  legacy Home renderer (token/auth/bootstrap authority; always hidden) │
+│       │ token-free HomeShellBridge + AuthHandler lifecycle             │
 │       ▼                                                                │
-│  MaestroWindowHandler (authenticated primary singleton)               │
+│  MaestroWindowHandler (sole visible primary singleton)                │
 │       │                                                                │
 │       ├── hidden Maestro SQLite BrowserWindow + isolated preload      │
 │       │       └── config/tabs/chat/session/filter/injection DAOs       │
 │       │                                                                │
 │       └── Maestro BrowserWindow                                       │
 │             ├── Home renderer (tabs, address bar, capture controls)    │
-│             ├── fixed local Home (Mini Apps / Connector / Settings)    │
+│             ├── fixed local Home (Login or Mini Apps / Connector)      │
 │             ├── operation WebContentsViews (unprivileged web pages)    │
 │             ├── Control WebContentsView (Maestro chat)                │
 │             └── Workbench WebContentsView                              │
@@ -73,20 +77,26 @@ The four renderer entries are `maestroHome`, `maestroControl`, `maestroWorkbench
 
 | Event | Required behavior |
 |---|---|
-| Bitterless startup, with or without a valid persisted session | Create Home only as a hidden compatibility/auth host; open fully ready Maestro as the sole visible primary window. |
+| Bitterless startup, with or without a valid persisted session | Create Home only as a hidden compatibility/auth host; open fully ready Maestro as the sole visible primary window. Fixed Home subscribes, reads current auth state, and shows Login until an active session is confirmed. |
 | Development hot reload or Main restart | Recreate/focus Maestro; never reveal the legacy Home `BrowserWindow`. |
-| Session activation | Boot the hidden Maestro database, wait for localized Home mount plus required operation/Control/Workbench readiness, show Maestro, then keep Home hidden. |
+| Session activation | Boot authenticated runtimes, keep legacy Home hidden, broadcast the token-free snapshot, and switch fixed Home from Login to Mini Apps. |
 | Mini Apps renders | Render the localized Maestro card in Workbench Apps; Open focuses the current singleton. |
-| Repeated Open | Restore/focus the existing Maestro window; never create a second graph. |
-| Window close | Stop or preserve work safely without quitting Bitterless; Dock/tray/second-instance activation recreates Maestro for the active session. |
-| Bitterless auth invalidation/logout | Destroy authenticated secondary runtimes, then recreate/focus Maestro; legacy Home remains hidden. |
+| Repeated Open | Restore/focus the existing Maestro window; never create a second graph. Record whether the request reused the singleton, joined a boot, or started a cold boot. |
+| Window close | Hide and preserve the live Maestro window graph; Dock/tray/second-instance/Mini Apps Open restores and focuses the same singleton without a cold boot. |
+| Bitterless auth invalidation/logout | Destroy authenticated secondary runtimes, recreate/focus Maestro when needed, and switch fixed Home to Login; legacy Home remains hidden. |
 | Bitterless quit/update install | Stop Maestro schedulers/capture/agents and destroy Maestro windows before process exit. |
 | `Cmd+Q` quit confirmation | Parent the dialog to the focused visible `BaseWindow`; never select or reveal hidden Home. If no visible owner exists, use an unparented app-modal dialog. |
-| Home remains alive | Home retains compatibility customer-token, Todo-readiness, and renderer/XPC responsibilities without ever becoming a visible native window. |
+| Home remains alive | Legacy Home retains customer-token, auth HTTP, Todo-readiness, and renderer/XPC responsibilities without ever becoming a visible native window. Fixed Home receives only strict presentation snapshots and addressed commands. |
 
 Maestro keeps its large working size (`1360x900`) and never permits a window below `800x600`.
 Window geometry follows the shared [top-level window state contract](window-state-persistence.md);
 the legacy Cowork `cowork-main` entry is imported once when the unified Maestro key is absent.
+
+Main emits a fixed `[maestro-open]` timing timeline into the existing profile `main.log`. One short
+request ID and, for cold boots, one shared boot ID correlate cleanup, route selection, SQLite load
+and preload readiness, Session, Shell, fixed Home, Control, Workbench, all-ready, and final show.
+Only fixed enums and monotonic durations are recorded; URLs, paths, tabs, sessions, accounts,
+tokens, renderer values, and raw errors are forbidden.
 
 ## Feature parity surface
 
@@ -101,13 +111,19 @@ the legacy Cowork `cowork-main` entry is imported once when the unified Maestro 
 
 ### Maestro chat and agents
 
-- Persistent session/history management, streamed replies, thinking/activity state, abort, context
-  compaction, Markdown, skill/replay cards, and generated file artifacts.
+- Persistent session/history management, per-session Turn lifecycle, streamed replies, in-turn
+  steering, retry/status feedback, inactivity watchdog, abort, context compaction, Markdown,
+  skill/replay cards, chronological task/confirmation entries, and generated file artifacts.
+- The Cowork `67b056b` chat-core and file vertical slices are implemented under
+  [tasks 089](../plan/tasks/maestro-cowork-chat-core-089.md) and
+  [090](../plan/tasks/maestro-cowork-chat-files-090.md); both independent reviews report no
+  unresolved P0-P2 findings, with runtime/E2E acceptance owned by Ral.
 - AI-CRMS and OpenAI Codex provider/model/effort/compression selection with existing login flows.
   GPT-5.5 remains selectable and a stored GPT-5.5 target is preserved alongside GPT-5.6 Luna, Sol,
   and Terra; the new-install Codex default may remain GPT-5.6 Luna.
-- Attach/drop/paste for supported text, image, PDF, Excel/CSV/TSV, and Word inputs; workspace-scoped
-  file search/read/write; artifact open/reveal state.
+- Unified attachment cards and attach/drop/paste for supported files and directories, bounded image
+  thumbnails, archive operations, bundled-CLI document conversion, workspace-scoped file
+  search/read/write, and artifact open/reveal state.
 - Voice recording and AI-CRMS transcription within the upstream five-minute limit.
 - Maestro, Coach, and Delegate agent runtimes with host tool policy and approval history.
 
@@ -120,17 +136,41 @@ the legacy Cowork `cowork-main` entry is imported once when the unified Maestro 
 - `Apps`, `Connectors`, and `Settings` embed the former Home surfaces inside Workbench. Home owns
   customer authentication and Todo readiness through a bounded metadata/command bridge; it never
   copies its token or browser storage into Maestro's Chromium partition.
+- Workbench `Settings` contains a dedicated inner `Account` category after `General`. It reads only
+  the current email from the token-free Home bridge and owns the visible Logout action; General no
+  longer mixes account lifecycle controls with preferences. Successful logout closes Workbench and
+  leaves Maestro on its pinned fixed Home Login surface, never on a restored web or startup tab.
 - `Configuration` owns metadata-only Claude subscription accounts, isolated Claude CLI login,
   routing enablement/status, and the fixed `Local` provider/model/effort controls. It exposes only
   `http://127.0.0.1:8741/v1`; no API key or configurable remote endpoint is accepted.
 - Bundled Micromeet CLI invocation and credential synchronization remain available to integration
   flows in packaged builds.
 
+### Bundled external tools
+
+Maestro's standalone executables and native document converter are application resources, not
+JavaScript dependencies. `yarn external-tools:init` prepares the pinned Bun, ripgrep, fd, Ouch, and
+AnyDoc inventories for `mac_arm`, `mac_intel`, and `win` under the gitignored `external_tools/`
+store. Packaging never downloads them: after the Micromeet CLI build clears and recreates the
+staging root, the selected platform is validated and copied to `build/maestro-tools`, which Electron
+Builder installs as `Resources/maestro-tools`.
+
+Only the target platform enters an application bundle. `external_tools/**` and the legacy
+`prebuilt/**` cache are excluded from `app.asar`; macOS executable/native entries remain in the
+explicit signing inventory. AnyDoc and Ouch consume these resource paths today. Bun, ripgrep, and
+fd are pre-positioned for migrated Maestro capabilities but this packaging contract does not enable
+pi builtins, change process-global pi offline/model behavior, or introduce a Bun skill runner.
+Operator initialization, package ordering, upgrades, and recovery are defined in the
+[Maestro CLI executable installation guide](../guides/maestro-cli-executable-installation.md).
+
 Current upstream limitations are parity, not migration defects:
 
 - Connectors retain their existing management UI and runtime behavior; a unified connector inbox is
   still outside this migration.
 - Voice scribe audio over five minutes remains unsupported.
+- Cowork's five-segment context-compaction replacement remains deferred in Maestro until its own
+  real-session acceptance and projection contract are complete; this chat parity delivery preserves
+  Maestro's current compaction behavior.
 
 ## Host substitutions
 
@@ -161,7 +201,7 @@ default renderer session.
 | Claude subscription account metadata | Main-owned `userData/claude-subscription`; renderer never receives profile paths or credentials. |
 | Local provider route | Fixed loopback `127.0.0.1:8741`; Pi receives no bearer header and no remote URL override. |
 | Window and pane preferences | Legacy-compatible Maestro keys/files. |
-| CLI shim/credential envelope | existing `~/.micromeet` contract, initialized idempotently. |
+| CLI shim/credential envelope | Stable keeps the existing `~/.micromeet` contract. Preview owns `${app.getPath('userData')}/cowork/cli` and never touches the Stable tree. |
 
 The hidden database XPC handler names are namespaced wherever they collide with Bitterless. In
 particular, Maestro's auth-session DAO must not register as Bitterless's existing `SessionDao`.
@@ -175,6 +215,28 @@ icon filenames use `Maestro`. The literals `userData/cowork`, `persist:bitterles
 `cowork_chat_*`, chat source `cowork`, host-tool scope `cowork`, and CLI auth source `cowork` remain
 only as compatibility identifiers. Renaming those values requires an explicit profile/schema
 migration and is outside this source-layout change.
+
+The bundled Micromeet CLI resolves its executable and writable paths by desktop release channel.
+Stable preserves the public external-CLI layout: shim under `~/.micromeet/bin`, encrypted CRMS/Sys
+credentials and their shared random key under `~/.micromeet/credentials`, and legacy session at
+`~/.micromeet/session.json`. Stable continues honoring supplied executable, realm-specific, generic
+credential, and session overrides before falling back to those established global defaults.
+
+Preview instead places its shim, `credentials/crms.json`, `credentials/sys.json`, shared
+`credentials/.credential-key-v2`, and `session.json` below
+`${app.getPath('userData')}/cowork/cli`. It prepends that local `bin` directory to its internal PATH,
+ignores inherited `MICROMEET_CLI_PATH`, uses only its packaged/development bundled executable, and
+never probes, migrates, clears, or otherwise touches `~/.micromeet`. Main and every CLI child receive
+forced `MICROMEET_CLI_PATH`, `MICROMEET_CRMS_CREDENTIAL_FILE`,
+`MICROMEET_SYS_CREDENTIAL_FILE`, `MICROMEET_CREDENTIAL_FILE`, and `MICROMEET_SESSION_FILE` values;
+the generic credential variable is pinned locally as defense against fallback, while exact realm
+paths remain authoritative for login/logout.
+
+Preview installs this environment boundary before any directory, permission, shim, or cleanup I/O.
+An initialization failure propagates, leaves hostile inherited path values overwritten, and does
+not mark the Maestro runtime initialized. A later open may retry the idempotent CLI setup; no window
+boot, device initialization, or shortcut activation begins before it succeeds. Maestro's handler
+modules remain process-level imports and are not repeatedly registered by that retry.
 
 Because the embedded profile is new, it must not retain the standalone application's fixed legacy
 SQLCipher fallback. If an embedded `config.db` exists without its generated key file, startup fails
@@ -236,18 +298,21 @@ i18n rules; the fixed Home-tab label also follows the active renderer language.
 
 ### Startup visibility and MenuBar geometry
 
-For a persisted authenticated session, Home's BrowserWindow is created but does not inherit the
-shared `ready-to-show` auto-reveal. Home is shown explicitly only when the public Login route mounts
-or the authenticated-primary boot path fails. Maestro startup is bounded; a timeout destroys its
-partial window graph and returns to Home instead of leaving the application with no visible window.
+The legacy Home `BrowserWindow` is created but never inherits the shared `ready-to-show`
+auto-reveal and is never a visible fallback. Maestro startup is bounded and remains the only visible
+primary. Its fixed Home subscribes to authentication changes before reading the hidden authority's
+current token-free snapshot. Unknown or restoring state cannot mount Mini Apps; signed-out,
+invalid, recovery-failed, and password-setup states render the shared Login surface inside Maestro.
 
 Maestro's localized Home renderer reports a post-mount render tick to Main. The primary window may
 be shown only after that fence and the existing operation, Control, and Workbench readiness chain.
 
 ```text
 ┌──────────────────────── Maestro 36px tab strip ────────────────────────┐
-│ macOS ● ● ●   pinned tab · browser tabs · +       recording status    │
-├──────────────────────── address/actions 48px ──────────────────────────┤
+│ 4px inset                                                             │
+│ macOS ● ● ●   rounded pinned/browser tabs · +      recording status   │
+│ 3px inset + 1px divider                                               │
+├──────────────────────── address/actions 42px ──────────────────────────┤
 │ navigation · address · snapshot? · Control · Workbench · update       │
 ├────────────────────────────────────────────────────────────────────────┤
 │ operation surface                                      │ Maestro Chat │
@@ -255,10 +320,19 @@ be shown only after that fence and the existing operation, Control, and Workbenc
 ```
 
 The top strip keeps Omni Browser's Royal Blue visual treatment at `#4e5882`, with a `#3d4666`
-bottom divider, while using the follow-up compact 36px geometry. Tabs and tab-row wrappers are 28px.
-On macOS the native controls use `trafficLightPosition: { x: 12, y: 10 }` and content clears the same
-78px traffic-light gutter. The address row remains 48px, so total top chrome is 84px. DOM-measured
-placeholders remain the only owner of operation and Control native-view bounds.
+bottom divider, while using the follow-up compact 36px geometry. Its 28px tabs and tab-row wrappers
+sit in a `4px` top / `3px` bottom content inset; the bottom divider supplies the fourth visible
+bottom pixel. Every tab retains a complete border and uses a 6px radius on all four corners. On
+macOS the native controls use `trafficLightPosition: { x: 12, y: 11 }` and content clears the same
+78px traffic-light gutter. The address row is 42px, so total top chrome is 78px. Its navigation
+group and address input share an exact 28px height; the navigation actions are 24px square inside
+the group's 2px padding. DOM-measured placeholders remain the authoritative owner of operation and
+Control native-view bounds after mount, while Main uses the same 78px total for the first frame.
+
+The close action inside each closable tab and the adjacent New-tab action both use the shared
+`IconBtn` primitive with Tabler SVG glyphs. The close control remains `20 × 20px` and the New-tab
+control remains `28 × 28px`; shared flex centering removes font-baseline drift while preserving the
+strip's existing Royal Blue hover contrast, pressed scale, focus visibility, and tab behavior.
 
 ### Per-tab page loading indicator
 
@@ -287,18 +361,37 @@ Control header can broadcast `coach/sidebar-close`; Home subscribes once, persis
 and the Sparkles action remains the reopen path. The chat composer does not duplicate the Skills
 entry; the Settings Workbench toggle remains the visible route to that pane.
 
-The fixed first tab is a local `home` tab rather than the legacy remote `ai-crms` tab. Its dedicated
-renderer opens Mini Apps by default and presents the existing 56px Home rail with only Mini Apps
-and Connector visible; the local Settings route remains registered without a rail button. A local
-no-auth router mounts only the existing Mini App and Settings pages; the Connector rail action opens
-the existing Workbench Connector pane so its
-preload and renderer remain the single runtime/handler owner. Chat, MessageSearch, the normal Home
-router/login shell, MenuBar, update polling, and Home singleton subscribers are absent. Todo
+The Control header exposes Maestro plus its close action; its obsolete Connector selector and Demo
+menu are absent. This is an entry-only retirement: the fixed Home Connector action still opens the
+Workbench Connector pane, and the Connector runtime plus Main Demo service/XPC contracts remain
+available to their existing non-Control callers.
+
+All Maestro renderer bootstraps that load Arco compile it through the repository's Less theme
+pipeline rather than importing the precompiled Arcoblue CSS. Standard Arco Button states therefore
+inherit the canonical Royal Blue mapping from `theme.ts`: `#4e5882` by default, `#606b9d` on hover,
+and `#323955` while pressed. Danger, warning, success, loading, recording, and disabled semantics
+retain their own colors.
+
+The fixed first tab is a local `home` tab rather than the legacy remote `ai-crms` tab. Before
+authentication it renders the same Login presentation and interaction flow as the hidden Home route,
+backed by an adapter over `HomeShellBridgeHandler`; it never imports `authStore`, persists a customer
+token, or calls authentication HTTP directly. The bridge snapshot is explicit and token-free, and
+window recreation subscribes before the initial read so authenticated content fails closed.
+
+After an active password-complete session is confirmed, the dedicated renderer presents the
+existing 56px Home rail with only Mini Apps and Connector visible; the local Settings route remains
+registered without a rail button. The Connector rail action opens the existing Workbench Connector
+pane so its preload and renderer remain the single runtime/handler owner. Chat, MessageSearch, the
+normal Home router, MenuBar, update polling, and Home singleton subscribers are absent. Todo
 delegates to the hidden Home shell for authenticated readiness, and this no-Chat surface hides the
-legacy Chat-menu setting. The fixed view keeps an XPC-only preload, is pinned, address-locked,
-non-recordable, confined to the local entry, and displays `bitterless://home` rather than a
-dev-server URL or packaged file path. AI-CRMS provider/login code is not allowed to navigate or
-replace this fixed tab.
+legacy Chat-menu setting. Password/OTP values exist only in addressed bridge commands and are never
+logged or broadcast; token, session ID, device ID, and raw customer records never leave the hidden
+authority. Login success changes fixed Home to `/mini-app`, while logout or invalidation changes it
+back to Login without exposing the legacy native window.
+
+The fixed view keeps an XPC-only preload, is pinned, address-locked, non-recordable, confined to the
+local entry, and displays `bitterless://home` rather than a dev-server URL or packaged file path.
+AI-CRMS provider/login code is not allowed to navigate or replace this fixed tab.
 
 The pinned Home tab favicon and the centered blank New-tab splash use one bundled Bitterless icon
 derived from the canonical `build/icon.png` artwork. They do not reuse Maestro's blue `M` app logo;
@@ -312,8 +405,9 @@ Maestro renderer DevTools policies remain independent.
 
 This focused parity pass deliberately excludes Cowork's forked CRMS renderer, AI-CRMS avatar/profile
 UI, generic mini-app page-type menus, update-progress protocol, and loading/crash tab-state
-expansion. Maestro's localized updater, Demo controls, Control chat, Local provider, and browser
-tabs remain authoritative.
+expansion. Maestro's localized updater, Control chat, Local provider, and browser tabs remain
+authoritative. The former visible Demo controls were retired by the Control-entry follow-up while
+the Main-owned Demo service/XPC contract stayed intact.
 
 ## Verification contract
 

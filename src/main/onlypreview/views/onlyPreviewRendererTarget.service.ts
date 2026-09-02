@@ -4,12 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { is } from '@electron-toolkit/utils';
 import type { OnlyPreviewHostCapability } from '@main/onlypreview/onlyPreviewHost.registry';
 
-export type OnlyPreviewRendererMode =
-  | 'shell'
-  | 'preview'
-  | 'globalSearch'
-  | 'settings'
-  | 'guide';
+export type OnlyPreviewRendererMode = 'shell' | 'preview' | 'globalSearch' | 'settings' | 'guide';
 
 export const getOnlyPreviewRendererTarget = (
   mode: OnlyPreviewRendererMode,
@@ -29,12 +24,22 @@ export const getOnlyPreviewRendererTarget = (
 export const getOnlyPreviewRendererArguments = (
   host: OnlyPreviewHostCapability,
   mode: OnlyPreviewRendererMode,
-  previewRuntimeToken?: string
+  previewRuntimeToken?: string,
+  officeBrokerCapability?: string,
+  previewReadBrokerCapability?: string,
+  openTag?: string
 ): string[] => [
   `--onlypreview-host-token=${host.hostToken}`,
   `--onlypreview-host-id=${host.hostId}`,
   `--onlypreview-mode=${mode}`,
-  ...(previewRuntimeToken ? [`--onlypreview-runtime-token=${previewRuntimeToken}`] : [])
+  ...(previewRuntimeToken ? [`--onlypreview-runtime-token=${previewRuntimeToken}`] : []),
+  ...(officeBrokerCapability
+    ? [`--onlypreview-office-broker-capability=${officeBrokerCapability}`]
+    : []),
+  ...(previewReadBrokerCapability
+    ? [`--onlypreview-read-broker-capability=${previewReadBrokerCapability}`]
+    : []),
+  ...(openTag ? [`--onlypreview-open-tag=${openTag}`] : [])
 ];
 
 export const configureOnlyPreviewNavigationFence = (

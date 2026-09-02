@@ -1,13 +1,14 @@
 import { clipboard, dialog, shell } from 'electron'
-import type { BrowserWindow, MessageBoxOptions } from 'electron'
+import type { BrowserWindow } from 'electron'
 import { createXpcMainEmitter, xpcMain } from 'electron-xpc/main'
 import { randomUUID } from 'crypto'
+import { AsyncLocalStorage } from 'async_hooks'
 import { basename, extname, join, resolve, sep } from 'path'
 import { mkdirSync, statSync, writeFileSync } from 'fs'
 import { fetch } from 'undici'
 import { injectable } from 'inversify'
 import { CommonService } from '@maestro-shared/iocHelper/ioc.helper'
-import { BaseAgent, type PiToolSpec } from '@maestro-main/agent/BaseAgent'
+import { BaseAgent, STEER_NOT_STREAMING, type PiToolSpec } from '@maestro-main/agent/BaseAgent'
 import { MaestroAgent } from '@maestro-main/agent/MaestroAgent'
 import { CoachAgent } from '@maestro-main/agent/CoachAgent'
 import { DelegateAgent } from '@maestro-main/agent/DelegateAgent'
@@ -63,7 +64,13 @@ import {
 } from '@maestro-main/agent/runtime/agentPrompt'
 import type { CaptureRecordSource } from '@maestro-main/capture/captureRecordSource'
 import { cleanupTempFile } from '@maestro-main/files/tempCleanup.service'
+import {
+  MAX_ARCHIVE_ATTACHMENT_BYTES,
+  isArchivePath
+} from '@maestro-main/files/archive.service'
 import { maestroDataRoot } from '@maestro-main/data/maestroDataRoot'
+import { buildUnknownConfirmPayload } from '@maestro-main/drive/confirmPayload'
+import { taskRegistry } from '@maestro-main/tasks/taskRegistry.service'
 import { maestroAuthPath, maestroModelsPath } from '@maestro-main/llm/llmPaths'
 import { providerLabel, type LlmStoredTarget } from '@maestro-main/llm/llmModels'
 import { uploadFileThroughAiCrmsCore } from '@maestro-main/networking/api/aiCrmsCoreFileUpload.api'
@@ -77,7 +84,14 @@ import type {
   AgentCompactRequest,
   AgentConversationContext,
   AgentFileArtifact,
+  AgentMessageRequest,
   AgentReply,
+  AgentTurnClaimRequest,
+  AgentTurnClaimResult,
+  AgentTurnFinished,
+  AgentTurnRecoverySnapshot,
+  AgentTurnSnapshot,
+  AgentTurnUpdate,
   AttachFileResult,
   AudioScribeRequest,
   AudioScribeResult,
@@ -95,6 +109,7 @@ import type {
   TabInfo,
   WorkspaceRef
 } from '@maestro-shared/coach.api'
+import { AGENT_TURN_CHANNEL, MODEL_RETRY_CHANNEL, type ModelRetryProgress } from '@maestro-shared/coach.api'
 import type { AuthSession, SessionApi } from '@maestro-shared/session.api'
 import {
   HOST_APPROVAL_HISTORY_KEY,
@@ -106,6 +121,42 @@ import type { TraceEvent } from '@maestro-shared/trace.types'
 
 const configStore = createXpcMainEmitter<ConfigApi>('ConfigDao')
 const aiCrmsSession = createXpcMainEmitter<SessionApi>('MaestroSessionDao')
+
+const MODEL_RETRY_MAX = 5
+const MODEL_RETRY_GAP_MS = 3_000
+const AGENT_TURN_RESERVATION_TIMEOUT_MS = 3 * 60_000
+const FINISHED_AGENT_TURN_TTL_MS = 30 * 60_000
+const MAX_RECENT_FINISHED_AGENT_TURNS = 20
+
+const isTransientModelError = (raw: string): boolean => {
+  const text = String(raw || '').toLowerCase()
+  if (!text) return false
+  if (
+    /not signed in|auth file|missing provider|no provider credentials|credential|unauthorized|forbidden|invalid[_ -]?api[_ -]?key/.test(
+      text
+    )
+  ) {
+    return false
+  }
+  if (/\b(400|401|403|404|422)\b/.test(text)) return false
+  if (
+    /insufficient[_ -]?quota|quota (?:exceeded|exhausted)|exceeded your (?:current )?quota|check your plan and billing|usage limit reached|(?:out of|exhausted your) credits|no credits (?:left|remaining)/.test(
+      text
+    )
+  ) {
+    return false
+  }
+  return (
+    /server_error|internal error|internal server|bad gateway|service unavailable|gateway timeout/.test(
+      text
+    ) ||
+    /\b(500|502|503|504|429)\b/.test(text) ||
+    /timed? ?out|timeout|econnreset|econnrefused|enotfound|socket hang up|network|fetch failed|stream (?:closed|error)/.test(
+      text
+    ) ||
+    /you can retry/.test(text)
+  )
+}
 
 interface MaestroAgentRuntimeServices {
   registry: SkillRegistryService
@@ -137,6 +188,16 @@ export interface MaestroAgentInstances {
   piGen: BaseAgent
 }
 
+interface ActiveAgentTurn extends AgentTurnSnapshot {
+  generation: number
+  rootStarted: boolean
+  rootStartPromise: Promise<boolean>
+  resolveRootStart: (started: boolean) => void
+  reservationTimer: ReturnType<typeof setTimeout> | undefined
+}
+
+type AgentTurnIdentity = Pick<AgentTurnSnapshot, 'sessionId' | 'turnId' | 'generation'>
+
 /**
  * Maestro's agent runtime and session boundary.
  *
@@ -156,6 +217,23 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
   private readonly delegateAgents = new Map<string, DelegateAgent>()
   private readonly hydratedMaestroAgentSessions = new Set<string>()
   private readonly attachedPaths = new Map<string, Set<string>>()
+  /**
+   * Main-process source of truth for the one global Maestro root Turn. The renderer must claim this
+   * slot before workspace/attachment/compaction awaits, so a second message can only be steering.
+   */
+  private activeAgentTurn: ActiveAgentTurn | null = null
+  private agentTurnGeneration = 0
+  /**
+   * Captures the exact Turn generation around the complete async tool loop. Direct activity emitted
+   * by nested services must use this identity instead of looking up whichever Turn happens to be
+   * active when an old async operation eventually returns.
+   */
+  private readonly agentTurnContext = new AsyncLocalStorage<AgentTurnIdentity>()
+  private agentTurnRevision = 0
+  private readonly recentFinishedAgentTurns = new Map<
+    string,
+    { finished: AgentTurnFinished; expiresAt: number }
+  >()
 
   lastAgentRun: {
     skill?: SkillSummary
@@ -191,8 +269,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
           scope: 'summarize',
           authPath: maestroAuthPath(),
           modelsPath: maestroModelsPath(),
-          onDebug: broadcastCodexDebug,
-          onActivity: this.relayAgentActivity
+          onDebug: broadcastCodexDebug
         })
       )
     }
@@ -203,9 +280,9 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
           authPath: maestroAuthPath(),
           modelsPath: maestroModelsPath(),
           onDebug: broadcastCodexDebug,
-          onActivity: this.relayAgentActivity,
-          onThinking: (state) => broadcastAgentThinking('default', state),
-          onStream: (delta) => broadcastAgentStream('default', delta)
+          onActivity: (step) => this.relayAgentActivity('default', step),
+          onThinking: (state) => this.relayAgentThinking('default', state),
+          onStream: (delta) => this.relayAgentStream('default', delta)
         })
       )
     }
@@ -215,8 +292,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
           buildTools: () => this.buildTrainerTools(),
           authPath: maestroAuthPath(),
           modelsPath: maestroModelsPath(),
-          onDebug: broadcastCodexDebug,
-          onActivity: this.relayAgentActivity
+          onDebug: broadcastCodexDebug
         })
       )
     }
@@ -226,8 +302,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
           buildTools: () => this._state.buildPiTools({ sessionKey: 'default' }),
           authPath: maestroAuthPath(),
           modelsPath: maestroModelsPath(),
-          onDebug: broadcastCodexDebug,
-          onActivity: this.relayAgentActivity
+          onDebug: broadcastCodexDebug
         })
       )
     }
@@ -240,6 +315,13 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
   }
 
   applyLlmTarget(provider: string, model: string, effort: LlmEffort = 'low'): void {
+    const targetChanged =
+      provider !== this.activeLlmProvider ||
+      model !== this.activeLlmModel ||
+      effort !== this.activeLlmEffort
+    if (targetChanged && this.activeAgentTurn) {
+      throw new Error('The model cannot be changed while a Maestro turn is active.')
+    }
     this.activeLlmProvider = provider
     this.activeLlmModel = model
     this.activeLlmEffort = effort
@@ -296,6 +378,14 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
 
   async shutdown(): Promise<void> {
     this.shuttingDown = true
+    const activeTurn = this.activeAgentTurn
+    if (activeTurn) {
+      activeTurn.state = 'aborting'
+      if (activeTurn.reservationTimer) clearTimeout(activeTurn.reservationTimer)
+      activeTurn.reservationTimer = undefined
+      activeTurn.resolveRootStart(false)
+      this.broadcastAgentTurn({ turn: this.agentTurnSnapshot(activeTurn) })
+    }
     const agents = new Set(
       [
         this.pi,
@@ -322,6 +412,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     this.lastAgentArtifacts = []
     this.tabsOpenedThisTurn = []
     this.lastTrainerRun = {}
+    if (activeTurn) this.finishAgentTurn(activeTurn, 'stopped')
   }
 
   async getHostToolCatalog(params?: {
@@ -512,16 +603,31 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       }
       try {
         const stats = statSync(abs)
+        if (stats.isDirectory()) {
+          allow.add(abs)
+          results.push({ ok: true, name, path: abs, isDirectory: true })
+          continue
+        }
         if (!stats.isFile()) {
           results.push({ ok: false, name, path: abs, error: 'not-a-file' })
           continue
         }
-        if (stats.size > MAX_ATTACHMENT_BYTES) {
+        const limit = isArchivePath(abs)
+          ? MAX_ARCHIVE_ATTACHMENT_BYTES
+          : MAX_ATTACHMENT_BYTES
+        if (stats.size > limit) {
+          const asGb = limit >= 1024 * 1024 * 1024
+          const shown = asGb
+            ? `${(stats.size / 1024 / 1024 / 1024).toFixed(1)} GB`
+            : `${(stats.size / 1024 / 1024).toFixed(1)} MB`
+          const cap = asGb
+            ? `${(limit / 1024 / 1024 / 1024).toFixed(0)} GB`
+            : `${(limit / 1024 / 1024).toFixed(0)} MB`
           results.push({
             ok: false,
             name,
             path: abs,
-            error: `too-large (${(stats.size / 1024 / 1024).toFixed(1)} MB)`
+            error: `too-large (${shown}; limit ${cap})`
           })
           continue
         }
@@ -559,7 +665,11 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       }
     }
     const key = this.agentSessionKey(params?.sessionId)
-    const safeKey = key.replace(/[^a-zA-Z0-9._-]/g, '_') || 'default'
+    const sanitizedKey = key.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 96)
+    const safeKey =
+      sanitizedKey && sanitizedKey !== '.' && sanitizedKey !== '..'
+        ? sanitizedKey
+        : 'default'
     const dir = join(maestroDataRoot(), 'attachments', safeKey)
     mkdirSync(dir, { recursive: true })
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
@@ -792,11 +902,132 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     }
   }
 
-  async sendAgentMessage(params: {
-    message: string
-    sessionId?: string
-    context?: AgentConversationContext
-  }): Promise<AgentReply> {
+  claimAgentTurn(params: AgentTurnClaimRequest): AgentTurnClaimResult {
+    const sessionId = this.agentSessionKey(params.sessionId)
+    const turnId = params.turnId.trim()
+    const rootText = params.rootText.trim()
+    if (!turnId || !rootText) {
+      throw new Error('A Maestro Turn requires a turnId and root text.')
+    }
+
+    const current = this.activeAgentTurn
+    if (current) {
+      const sameTurn = current.sessionId === sessionId && current.turnId === turnId
+      return {
+        ok: sameTurn,
+        turn: this.agentTurnSnapshot(current),
+        reason: sameTurn ? undefined : current.sessionId === sessionId ? 'busy-here' : 'busy-elsewhere'
+      }
+    }
+
+    let resolveRootStart: (started: boolean) => void = () => undefined
+    const rootStartPromise = new Promise<boolean>((resolveStart) => {
+      resolveRootStart = resolveStart
+    })
+    const turn: ActiveAgentTurn = {
+      sessionId,
+      operationTabId: params.operationTabId,
+      turnId,
+      rootText,
+      startedAt: Number.isFinite(params.startedAt) ? params.startedAt : Date.now(),
+      state: 'reserved',
+      generation: ++this.agentTurnGeneration,
+      rootStarted: false,
+      rootStartPromise,
+      resolveRootStart,
+      reservationTimer: undefined
+    }
+    turn.reservationTimer = setTimeout(() => {
+      if (this.activeAgentTurn !== turn || turn.rootStarted) return
+      this.finishAgentTurn(turn, 'reservation-expired')
+    }, AGENT_TURN_RESERVATION_TIMEOUT_MS)
+    this.activeAgentTurn = turn
+    this.broadcastAgentTurn({ turn: this.agentTurnSnapshot(turn) })
+    return { ok: true, turn: this.agentTurnSnapshot(turn) }
+  }
+
+  getActiveAgentTurn(): AgentTurnRecoverySnapshot {
+    this.pruneFinishedAgentTurns()
+    return {
+      revision: this.agentTurnRevision,
+      turn: this.activeAgentTurn ? this.agentTurnSnapshot(this.activeAgentTurn) : null,
+      finished: [...this.recentFinishedAgentTurns.values()].map((record) => record.finished)
+    }
+  }
+
+  ackAgentTurnFinished(params: { sessionId: string; turnId: string }): void {
+    this.recentFinishedAgentTurns.delete(this.agentTurnKey(params.sessionId, params.turnId))
+  }
+
+  hasActiveAgentTurn(): boolean {
+    return Boolean(this.activeAgentTurn)
+  }
+
+  private agentTurnSnapshot(turn: ActiveAgentTurn): AgentTurnSnapshot {
+    return {
+      sessionId: turn.sessionId,
+      operationTabId: turn.operationTabId,
+      turnId: turn.turnId,
+      generation: turn.generation,
+      rootText: turn.rootText,
+      startedAt: turn.startedAt,
+      state: turn.state
+    }
+  }
+
+  private activeTurnFor(sessionId: string, turnId: string): ActiveAgentTurn | null {
+    const active = this.activeAgentTurn
+    return active?.sessionId === sessionId && active.turnId === turnId ? active : null
+  }
+
+  private broadcastAgentTurn(update: Omit<AgentTurnUpdate, 'revision'>): void {
+    const versioned: AgentTurnUpdate = { ...update, revision: ++this.agentTurnRevision }
+    if (versioned.finished) {
+      const key = this.agentTurnKey(versioned.finished.turn.sessionId, versioned.finished.turn.turnId)
+      this.recentFinishedAgentTurns.delete(key)
+      this.recentFinishedAgentTurns.set(key, {
+        finished: versioned.finished,
+        expiresAt: Date.now() + FINISHED_AGENT_TURN_TTL_MS
+      })
+      this.pruneFinishedAgentTurns()
+    }
+    xpcMain.broadcast(AGENT_TURN_CHANNEL, versioned)
+  }
+
+  private finishAgentTurn(
+    turn: ActiveAgentTurn,
+    reason: AgentTurnFinished['reason'],
+    reply?: AgentReply
+  ): void {
+    if (this.activeAgentTurn !== turn) return
+    const snapshot = this.agentTurnSnapshot(turn)
+    if (turn.reservationTimer) clearTimeout(turn.reservationTimer)
+    turn.reservationTimer = undefined
+    turn.resolveRootStart(false)
+    this.activeAgentTurn = null
+    this.broadcastAgentTurn({
+      turn: null,
+      finished: { turn: snapshot, reason, reply }
+    })
+  }
+
+  private agentTurnKey(sessionId: string, turnId: string): string {
+    return `${sessionId}\u0000${turnId}`
+  }
+
+  private pruneFinishedAgentTurns(): void {
+    const now = Date.now()
+    for (const [key, record] of this.recentFinishedAgentTurns) {
+      if (record.expiresAt <= now) this.recentFinishedAgentTurns.delete(key)
+    }
+    while (this.recentFinishedAgentTurns.size > MAX_RECENT_FINISHED_AGENT_TURNS) {
+      const oldest = this.recentFinishedAgentTurns.keys().next().value as string | undefined
+      if (!oldest) break
+      this.recentFinishedAgentTurns.delete(oldest)
+    }
+  }
+
+  async sendAgentMessage(params: AgentMessageRequest): Promise<AgentReply> {
     const message = params.message.trim()
     if (!message) {
       return {
@@ -806,10 +1037,55 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         error: 'empty-message'
       }
     }
+    const sessionKey = this.agentSessionKey(params.sessionId)
+    const turn = this.activeTurnFor(sessionKey, params.turnId)
+    if (!turn || turn.state === 'aborting') {
+      return {
+        ok: false,
+        text: 'This Maestro turn is no longer active.',
+        ts: Date.now(),
+        error: 'turn-not-active'
+      }
+    }
+
+    const root = params.intent === 'root'
+    if (root) {
+      if (turn.rootStarted) {
+        return {
+          ok: false,
+          text: 'This Maestro root turn has already started.',
+          ts: Date.now(),
+          error: 'duplicate-root-turn'
+        }
+      }
+      turn.rootStarted = true
+      turn.state = 'running'
+      if (turn.reservationTimer) clearTimeout(turn.reservationTimer)
+      turn.reservationTimer = undefined
+      turn.resolveRootStart(true)
+      this.broadcastAgentTurn({ turn: this.agentTurnSnapshot(turn) })
+    } else if (!turn.rootStarted) {
+      const started = await turn.rootStartPromise
+      if (!started || this.activeTurnFor(sessionKey, params.turnId) !== turn || turn.state === 'aborting') {
+        return {
+          ok: false,
+          text: 'The root turn ended before this message could be added.',
+          ts: Date.now(),
+          error: 'steer-failed'
+        }
+      }
+    }
+
     let reply: AgentReply
     try {
       await this._state.ensurePersistedCaptureRecordsLoaded()
-      reply = await this.routeAgentMessage(message, params.sessionId, params.context)
+      reply = await this.routeAgentMessage(
+        message,
+        params.sessionId,
+        params.context,
+        turn,
+        !root
+      )
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err)
       reply = {
@@ -819,20 +1095,24 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         error
       }
     }
-    broadcastCodexDebug({
-      scope: 'agent',
-      phase: 'agent-reply',
-      level: reply.ok ? 'info' : 'warn',
-      message: 'agent reply returned to renderer.',
-      detail: {
-        sessionId: this.agentSessionKey(params.sessionId),
-        ok: reply.ok,
-        textChars: reply.text?.length || 0,
-        error: reply.error
-      },
-      ts: Date.now()
-    })
-    return reply
+    try {
+      broadcastCodexDebug({
+        scope: 'agent',
+        phase: 'agent-reply',
+        level: reply.ok ? 'info' : 'warn',
+        message: 'agent reply returned to renderer.',
+        detail: {
+          sessionId: sessionKey,
+          ok: reply.ok,
+          textChars: reply.text?.length || 0,
+          error: reply.error
+        },
+        ts: Date.now()
+      })
+      return reply
+    } finally {
+      if (root) this.finishAgentTurn(turn, 'completed', reply)
+    }
   }
 
   async compactConversation(params: AgentCompactRequest): Promise<AgentCompactReply> {
@@ -891,9 +1171,22 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     return { ok: true }
   }
 
-  async abortAgent(params?: { sessionId?: string }): Promise<void> {
-    this.hydratedMaestroAgentSessions.delete(this.agentSessionKey(params?.sessionId))
-    await this.getExistingMaestroAgent(params?.sessionId)?.abort()
+  async abortAgent(params: { sessionId: string; turnId: string }): Promise<void> {
+    const sessionKey = this.agentSessionKey(params.sessionId)
+    const turn = this.activeTurnFor(sessionKey, params.turnId)
+    if (!turn || turn.state === 'aborting') return
+    turn.state = 'aborting'
+    if (turn.reservationTimer) clearTimeout(turn.reservationTimer)
+    turn.reservationTimer = undefined
+    turn.resolveRootStart(false)
+    this.broadcastAgentTurn({ turn: this.agentTurnSnapshot(turn) })
+    this.hydratedMaestroAgentSessions.delete(sessionKey)
+    taskRegistry.cancelTransient('active turn stopped')
+    try {
+      await this.getExistingMaestroAgent(params.sessionId)?.abort()
+    } finally {
+      this.finishAgentTurn(turn, 'stopped')
+    }
   }
 
   async abortTrainer(params?: { sessionId?: string }): Promise<void> {
@@ -919,8 +1212,57 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     return agent
   }
 
-  private readonly relayAgentActivity = (step: AgentActivityStep): void => {
-    broadcastAgentActivity(step.phase, step.label, step.ok)
+  private agentTurnIdentity(sessionKey: string): AgentTurnIdentity | null {
+    const turn = this.activeAgentTurn
+    if (!turn || turn.sessionId !== sessionKey || turn.state !== 'running') return null
+    return { sessionId: turn.sessionId, turnId: turn.turnId, generation: turn.generation }
+  }
+
+  private relayAgentActivity(sessionKey: string, step: AgentActivityStep): void {
+    const identity = this.agentTurnIdentity(sessionKey)
+    if (identity) broadcastAgentActivity(step.phase, step.label, step.ok, identity)
+  }
+
+  private relayAgentThinking(sessionKey: string, state: Omit<AgentThinkingState, 'sessionId'>): void {
+    const identity = this.agentTurnIdentity(sessionKey)
+    if (identity) broadcastAgentThinking(identity, state)
+  }
+
+  private relayAgentStream(sessionKey: string, delta: string): void {
+    const identity = this.agentTurnIdentity(sessionKey)
+    if (identity) broadcastAgentStream(identity, delta)
+  }
+
+  broadcastActiveAgentActivity(phase: AgentActivityStep['phase'], label: string, ok = true): void {
+    const identity = this.agentTurnContext.getStore()
+    if (!identity) return
+    const active = this.activeAgentTurn
+    if (
+      !active ||
+      active.state !== 'running' ||
+      active.sessionId !== identity.sessionId ||
+      active.turnId !== identity.turnId ||
+      active.generation !== identity.generation
+    ) {
+      return
+    }
+    broadcastAgentActivity(phase, label, ok, identity)
+  }
+
+  private broadcastModelRetry(progress: Pick<ModelRetryProgress, 'attempt' | 'max' | 'recovered'>): void {
+    const identity = this.agentTurnContext.getStore()
+    if (!identity) return
+    const active = this.activeAgentTurn
+    if (
+      !active ||
+      active.state !== 'running' ||
+      active.sessionId !== identity.sessionId ||
+      active.turnId !== identity.turnId ||
+      active.generation !== identity.generation
+    ) {
+      return
+    }
+    xpcMain.broadcast(MODEL_RETRY_CHANNEL, { ...identity, ...progress } satisfies ModelRetryProgress)
   }
 
   private getMaestroAgent(sessionId?: string): MaestroAgent {
@@ -935,9 +1277,9 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
           authPath: maestroAuthPath(),
           modelsPath: maestroModelsPath(),
           onDebug: broadcastCodexDebug,
-          onActivity: this.relayAgentActivity,
-          onThinking: (state) => broadcastAgentThinking(key, state),
-          onStream: (delta) => broadcastAgentStream(key, delta)
+          onActivity: (step) => this.relayAgentActivity(key, step),
+          onThinking: (state) => this.relayAgentThinking(key, state),
+          onStream: (delta) => this.relayAgentStream(key, delta)
         })
       )
       this.maestroAgents.set(key, agent)
@@ -956,8 +1298,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
           buildTools: () => this.buildTrainerTools(),
           authPath: maestroAuthPath(),
           modelsPath: maestroModelsPath(),
-          onDebug: broadcastCodexDebug,
-          onActivity: this.relayAgentActivity
+          onDebug: broadcastCodexDebug
         })
       )
       this.trainerAgents.set(key, agent)
@@ -976,8 +1317,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
           buildTools: () => this._state.buildPiTools({ sessionKey: key }),
           authPath: maestroAuthPath(),
           modelsPath: maestroModelsPath(),
-          onDebug: broadcastCodexDebug,
-          onActivity: this.relayAgentActivity
+          onDebug: broadcastCodexDebug
         })
       )
       this.delegateAgents.set(key, agent)
@@ -1016,19 +1356,35 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     const allow = this.attachedPaths.get(sessionKey)
     const media: AgentRuntimeMediaRef[] = []
     const skipped: string[] = []
+    const directories: string[] = []
+    const archives: string[] = []
     for (const path of paths) {
-      if (media.length >= MAX_AGENT_MEDIA_REFS) {
-        skipped.push(`${basename(path)} (too many media refs)`)
-        continue
-      }
       if (!allow?.has(path)) {
         skipped.push(`${basename(path)} (not registered)`)
+        continue
+      }
+      let stats: ReturnType<typeof statSync>
+      try {
+        stats = statSync(path)
+      } catch {
+        skipped.push(`${basename(path)} (unreadable)`)
+        continue
+      }
+      if (stats.isDirectory()) {
+        directories.push(path)
+        continue
+      }
+      if (isArchivePath(path)) {
+        archives.push(path)
+        continue
+      }
+      if (media.length >= MAX_AGENT_MEDIA_REFS) {
+        skipped.push(`${basename(path)} (too many media refs)`)
         continue
       }
       const mimeType = agentMediaMimeForPath(path)
       const isImage = Boolean(AGENT_IMAGE_MIME_BY_EXT[extname(path).toLowerCase()])
       try {
-        const stats = statSync(path)
         if (!stats.isFile()) {
           skipped.push(`${basename(path)} (not a file)`)
           continue
@@ -1062,7 +1418,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       refs = upload.refs
       uploadWarnings.push(...upload.warnings)
       if (upload.uploaded > 0) {
-        broadcastAgentActivity(
+        this.broadcastActiveAgentActivity(
           'tool',
           `uploaded ${upload.uploaded} media ref${upload.uploaded === 1 ? '' : 's'} for URL transport`
         )
@@ -1075,7 +1431,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       maxImages: MAX_AGENT_IMAGES
     })
     if (media.length > 0) {
-      broadcastAgentActivity(
+      this.broadcastActiveAgentActivity(
         'tool',
         `attached ${media.length} media path ref${media.length === 1 ? '' : 's'}`
       )
@@ -1091,6 +1447,18 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     if (warnings.length) {
       parts.push(
         'Attached media transport warnings:\n' + warnings.map((item) => `- ${item}`).join('\n')
+      )
+    }
+    if (directories.length) {
+      parts.push(
+        'Attached directories (folders, not files — nothing was uploaded; use list_workspace_files to see what is inside, then read_file on the entries you need):\n' +
+          directories.map((item) => `- ${item}`).join('\n')
+      )
+    }
+    if (archives.length) {
+      parts.push(
+        'Attached archives (not uploaded and not readable directly; use list_archive or extract_archive):\n' +
+          archives.map((item) => `- ${item}`).join('\n')
       )
     }
     if (skipped.length) {
@@ -1111,17 +1479,49 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
   private async routeAgentMessage(
     message: string,
     sessionId?: string,
-    context?: AgentConversationContext
+    context?: AgentConversationContext,
+    turn?: ActiveAgentTurn,
+    steeringOnly = false
   ): Promise<AgentReply> {
-    await this.loadHostToolPolicies()
     const sessionKey = this.agentSessionKey(sessionId)
-    this._state.syncWorkspaceFromContext(sessionKey, context?.workspace)
-    const includeConversationMemory = !this.hydratedMaestroAgentSessions.has(sessionKey)
-    const mediaInput = await this.buildAgentMediaInput(sessionKey, context?.attachedPaths)
-    return await this.handleAgentTurn(message, this.getMaestroAgent(sessionId), context, {
-      includeConversationMemory,
-      mediaInput,
-      onAgentSessionUsed: () => this.hydratedMaestroAgentSessions.add(sessionKey)
+    const isCancelled = (): boolean =>
+      Boolean(
+        turn &&
+          (this.activeTurnFor(sessionKey, turn.turnId) !== turn || turn.state === 'aborting')
+      )
+    if (!turn) {
+      return {
+        ok: false,
+        text: 'This Maestro turn is no longer active.',
+        ts: Date.now(),
+        error: 'turn-not-active'
+      }
+    }
+    const identity: AgentTurnIdentity = {
+      sessionId: turn.sessionId,
+      turnId: turn.turnId,
+      generation: turn.generation
+    }
+    return await this.agentTurnContext.run(identity, async () => {
+      await this.loadHostToolPolicies()
+      this._state.syncWorkspaceFromContext(sessionKey, context?.workspace)
+      const includeConversationMemory = !this.hydratedMaestroAgentSessions.has(sessionKey)
+      const mediaInput = await this.buildAgentMediaInput(sessionKey, context?.attachedPaths)
+      if (isCancelled()) {
+        return {
+          ok: false,
+          text: '',
+          ts: Date.now(),
+          error: 'turn-aborted'
+        }
+      }
+      return await this.handleAgentTurn(message, this.getMaestroAgent(sessionId), context, {
+        includeConversationMemory,
+        mediaInput,
+        onAgentSessionUsed: () => this.hydratedMaestroAgentSessions.add(sessionKey),
+        isCancelled,
+        steeringOnly
+      })
     })
   }
 
@@ -1137,8 +1537,39 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         note: string
       }
       onAgentSessionUsed?: () => void
+      isCancelled?: () => boolean
+      steeringOnly?: boolean
     }
   ): Promise<AgentReply> {
+    const cancelledReply = (): AgentReply => ({
+      ok: false,
+      text: 'Stopped.',
+      ts: Date.now(),
+      error: 'aborted'
+    })
+    if (options?.isCancelled?.()) return cancelledReply()
+    const steered = await agent.steerActiveTurn(message, Boolean(options?.steeringOnly))
+    if (options?.isCancelled?.()) return cancelledReply()
+    if (steered.outcome === 'delivered') {
+      return { ok: true, text: '', ts: Date.now(), mergedIntoTurn: true }
+    }
+    if (steered.outcome === 'failed') {
+      return {
+        ok: false,
+        text: steered.error || 'Could not deliver the message into the active turn.',
+        ts: Date.now(),
+        error: 'steer-failed'
+      }
+    }
+    if (options?.steeringOnly) {
+      return {
+        ok: false,
+        text: STEER_NOT_STREAMING,
+        ts: Date.now(),
+        error: 'steer-failed'
+      }
+    }
+
     const services = this._state.ensureServices()
     const recordings = services.registry.listSkillsForDomain(this._state.currentUrl)
     const skillBriefs: AgentSkillBrief[] = recordings.map((skill) => {
@@ -1173,27 +1604,72 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     this.lastAgentArtifacts = []
     this.tabsOpenedThisTurn = []
     const turnMedia = options?.mediaInput || { note: '' }
-    const result = await agent.prompt(
-      buildAgentTurnPrompt({
-        message,
-        context,
-        includeConversationMemory: Boolean(options?.includeConversationMemory),
-        nowIso: new Date().toISOString(),
-        currentUrl: this._state.currentUrl,
-        briefs: skillBriefs
-      }) + turnMedia.note,
-      undefined,
-      {
-        freshSession: false,
-        media: turnMedia.media,
-        images: turnMedia.images
-      }
-    )
+    const runPrompt = async (): Promise<Awaited<ReturnType<BaseAgent['prompt']>>> =>
+      await agent.prompt(
+        buildAgentTurnPrompt({
+          message,
+          context,
+          includeConversationMemory: Boolean(options?.includeConversationMemory),
+          nowIso: new Date().toISOString(),
+          currentUrl: this._state.currentUrl,
+          briefs: skillBriefs
+        }) + turnMedia.note,
+        undefined,
+        {
+          freshSession: false,
+          media: turnMedia.media,
+          images: turnMedia.images
+        }
+      )
+
+    if (options?.isCancelled?.()) return cancelledReply()
+    let result = await runPrompt()
+    if (options?.isCancelled?.()) return cancelledReply()
+    let retriedAttempts = 0
+    for (let attempt = 2; attempt <= MODEL_RETRY_MAX; attempt += 1) {
+      const error = result.errorMessage || (result.ok ? '' : result.error || '')
+      if (!error || !isTransientModelError(error)) break
+      // A whole-turn retry after any tool ran can repeat writes or external side effects. Leave
+      // recovery to an explicit user retry, which preserves the completed tool evidence.
+      if ((result.toolCalls ?? 0) > 0) break
+      broadcastCodexDebug({
+        scope: 'agent',
+        phase: 'model-retry',
+        level: 'warn',
+        message: `retried: ${attempt}/${MODEL_RETRY_MAX}`,
+        detail: {
+          attempt,
+          max: MODEL_RETRY_MAX,
+          gapMs: MODEL_RETRY_GAP_MS,
+          error: error.slice(0, 400)
+        },
+        ts: Date.now()
+      })
+      this.broadcastModelRetry({
+        attempt,
+        max: MODEL_RETRY_MAX
+      })
+      retriedAttempts = attempt
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, MODEL_RETRY_GAP_MS))
+      if (options?.isCancelled?.()) return cancelledReply()
+      result = await runPrompt()
+      if (options?.isCancelled?.()) return cancelledReply()
+    }
+    if (retriedAttempts > 0 && !result.errorMessage && result.ok) {
+      this.broadcastModelRetry({
+        attempt: 0,
+        max: MODEL_RETRY_MAX,
+        recovered: true
+      })
+    }
     if (result.ok) options?.onAgentSessionUsed?.()
     const { skill, skills, replay } = this.lastAgentRun
     const files = this.lastAgentArtifacts.slice()
     if (!result.ok) {
       const error = result.error || 'Agent failed.'
+      const retryExhausted = retriedAttempts && isTransientModelError(error)
+        ? { attempt: retriedAttempts, max: MODEL_RETRY_MAX }
+        : undefined
       return {
         ok: false,
         text: describeAgentPromptError(this.activeLlmProvider, this.activeLlmModel, error),
@@ -1202,7 +1678,8 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         skills,
         replay,
         files,
-        error: 'agent-failed'
+        error: 'agent-failed',
+        retryExhausted
       }
     }
     if (replay) {
@@ -1214,19 +1691,29 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         skills,
         replay,
         files,
-        error: replay.ok ? undefined : 'replay-failed'
+        error: replay.ok ? undefined : 'replay-failed',
+        authoredByModel: Boolean(result.text)
       }
     }
     const backend = `${providerLabel(this.activeLlmProvider)} (${this.activeLlmModel})`
     if (result.errorMessage) {
+      const retryExhausted = retriedAttempts && isTransientModelError(result.errorMessage)
+        ? { attempt: retriedAttempts, max: MODEL_RETRY_MAX }
+        : undefined
       return {
         ok: false,
-        text: describeModelError(this.activeLlmProvider, this.activeLlmModel, result.errorMessage),
+        text: describeModelError(
+          this.activeLlmProvider,
+          this.activeLlmModel,
+          result.errorMessage,
+          Boolean(retryExhausted)
+        ),
         ts: Date.now(),
         skill,
         skills,
         files,
-        error: 'model-error'
+        error: 'model-error',
+        retryExhausted
       }
     }
     if (result.text) {
@@ -1420,7 +1907,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       query: args.query ? String(args.query) : '',
       policies: this.hostToolPolicies
     })
-    broadcastAgentActivity('tool', `read host_tool_catalog (${payload.tools.length})`)
+    this.broadcastActiveAgentActivity('tool', `read host_tool_catalog (${payload.tools.length})`)
     return JSON.stringify(payload, null, 2)
   }
 
@@ -1461,7 +1948,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       scope: request.scope,
       toolName: request.toolName
     })
-    broadcastAgentActivity('tool', `awaiting approval: ${request.toolName}`)
+    this.broadcastActiveAgentActivity('tool', `awaiting approval: ${request.toolName}`)
     broadcastCodexDebug({
       scope: 'agent',
       phase: 'tool-confirm',
@@ -1474,21 +1961,19 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       },
       ts: Date.now()
     })
-    const options: MessageBoxOptions = {
-      type: 'question',
-      buttons: ['Allow once', 'Deny'],
-      defaultId: 0,
-      cancelId: 1,
-      title: 'Approve Agent Tool Call',
-      message: `Allow the agent to run ${request.toolName}?`,
-      detail
-    }
-    const result = this._state.browserWindow
-      ? await dialog.showMessageBox(this._state.browserWindow, options)
-      : await dialog.showMessageBox(options)
-    const allowed = result.response === 0
+    const allowed = await taskRegistry.askOperator({
+      name: 'tool-approval',
+      title: `Allow the agent to run ${request.toolName}?`,
+      detail,
+      confirmLabel: 'Allow once',
+      cancelLabel: 'Deny',
+      payload: buildUnknownConfirmPayload({
+        summary: `${request.scope} · ${request.toolName}`,
+        body: { args: argsSummary }
+      })
+    })
     await this.resolveHostApprovalEvent(eventId, allowed ? 'approved' : 'denied')
-    broadcastAgentActivity(
+    this.broadcastActiveAgentActivity(
       'tool',
       `${allowed ? 'approved' : 'denied'}: ${request.toolName}`,
       allowed
@@ -1545,7 +2030,12 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
   }
 }
 
-const describeModelError = (provider: string, model: string, errorMessage: string): string => {
+const describeModelError = (
+  provider: string,
+  model: string,
+  errorMessage: string,
+  retried = false
+): string => {
   const head = `${providerLabel(provider)} (${model}) rejected the request: ${errorMessage}`
   if (/blocked|cloudflare|html error page|unreachable/i.test(errorMessage)) {
     return (
@@ -1554,10 +2044,10 @@ const describeModelError = (provider: string, model: string, errorMessage: strin
       'OpenAI (Codex is geo-restricted in some regions), then retry.'
     )
   }
-  return (
-    head +
-    '\n\nRetry once the provider is available, or check that the app is signed in to this provider.'
-  )
+  return retried
+    ? head
+    : head +
+        '\n\nRetry once the provider is available, or check that the app is signed in to this provider.'
 }
 
 const describeAgentPromptError = (

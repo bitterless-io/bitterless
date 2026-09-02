@@ -2,7 +2,7 @@
   position: relative;
   z-index: 10;
   display: flex;
-  height: 84px;
+  height: 78px;
   flex-shrink: 0;
   flex-direction: column;
 }
@@ -11,10 +11,12 @@
   display: flex;
   height: 36px;
   flex-shrink: 0;
-  align-items: flex-end;
+  align-items: center;
   border-bottom: 1px solid #3d4666;
   background: #4e5882;
+  padding-top: 4px;
   padding-right: 8px;
+  padding-bottom: 3px;
   padding-left: 12px;
   -webkit-app-region: drag;
 }
@@ -27,7 +29,7 @@
 .maestro-menu-bar__tab-list {
   display: flex;
   min-width: 0;
-  align-items: flex-end;
+  align-items: center;
   gap: 4px;
   overflow: hidden;
 }
@@ -40,8 +42,7 @@
   gap: 6px;
   overflow: hidden;
   border: 1px solid transparent;
-  border-bottom: 0;
-  border-radius: 6px 6px 0 0;
+  border-radius: 6px;
   padding: 0 12px;
   font-size: 13px;
   cursor: default;
@@ -65,45 +66,38 @@
 .maestro-menu-bar__tab-label { min-width: 0; flex: 1; overflow: hidden; padding-right: 20px; text-overflow: ellipsis; white-space: nowrap; user-select: none; }
 .maestro-menu-bar__tab-label--pinned { padding-right: 0; font-weight: 500; }
 
-.maestro-menu-bar__tab-close {
+.maestro-menu-bar__tab-close.icon-btn.arco-btn {
   position: absolute;
-  top: 50%;
+  top: 4px;
   right: 4px;
   display: none;
   width: 20px;
+  min-width: 20px;
   height: 20px;
-  align-items: center;
-  justify-content: center;
-  transform: translateY(-50%);
-  border: 0;
+  flex: 0 0 20px;
   border-radius: 4px;
   background: transparent;
   color: currentColor;
-  font-size: 15px;
   cursor: default;
-  line-height: 1;
 }
 
-.maestro-menu-bar__tab:hover .maestro-menu-bar__tab-close,
-.maestro-menu-bar__tab-close--active { display: flex; }
-.maestro-menu-bar__tab-close:hover { background: rgba(78, 88, 130, 0.14); color: currentColor; }
-.maestro-menu-bar__tab--idle .maestro-menu-bar__tab-close:hover { background: rgba(255, 255, 255, 0.18); color: #ffffff; }
+.maestro-menu-bar__tab:hover .maestro-menu-bar__tab-close.icon-btn.arco-btn,
+.maestro-menu-bar__tab-close--active.icon-btn.arco-btn { display: inline-flex; }
+.maestro-menu-bar__tab-close.icon-btn.arco-btn:hover { background: rgba(78, 88, 130, 0.14); color: currentColor; }
+.maestro-menu-bar__tab--idle .maestro-menu-bar__tab-close.icon-btn.arco-btn:hover { background: rgba(255, 255, 255, 0.18); color: #ffffff; }
 
-.maestro-menu-bar__tab-divider-wrap { display: flex; height: 28px; flex-shrink: 0; align-items: center; align-self: flex-end; padding: 0 2px; }
+.maestro-menu-bar__tab-divider-wrap { display: flex; height: 28px; flex-shrink: 0; align-items: center; align-self: center; padding: 0 2px; }
 .maestro-menu-bar__tab-divider { width: 1px; height: 20px; background: rgba(255, 255, 255, 0.28); }
-.maestro-menu-bar__new-tab-wrap { display: flex; height: 28px; flex-shrink: 0; align-items: center; align-self: flex-end; padding-left: 6px; }
-.maestro-menu-bar__new-tab { display: flex; width: 28px; height: 28px; align-items: center; justify-content: center; border: 0; border-radius: 999px; background: transparent; color: rgba(255, 255, 255, 0.84); font-size: 16px; -webkit-app-region: no-drag; }
-.maestro-menu-bar__new-tab:hover { background: rgba(255, 255, 255, 0.16); color: #ffffff; }
-.maestro-menu-bar__capture-status { display: flex; width: 28px; height: 28px; flex-shrink: 0; align-items: center; justify-content: center; align-self: flex-end; margin-left: auto; }
+.maestro-menu-bar__new-tab-wrap { display: flex; height: 28px; flex-shrink: 0; align-items: center; align-self: center; padding-left: 6px; }
+.maestro-menu-bar__new-tab.icon-btn.arco-btn { width: 28px; min-width: 28px; height: 28px; flex: 0 0 28px; border-radius: 999px; background: transparent; color: rgba(255, 255, 255, 0.84); }
+.maestro-menu-bar__new-tab.icon-btn.arco-btn:hover { background: rgba(255, 255, 255, 0.16); color: #ffffff; }
+.maestro-menu-bar__capture-status { display: flex; width: 28px; height: 28px; flex-shrink: 0; align-items: center; justify-content: center; align-self: center; margin-left: auto; }
 .maestro-menu-bar__capture-status-icon { color: #ef4444; animation: maestroMenuPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
-.maestro-menu-bar__tab-close:focus-visible,
-.maestro-menu-bar__new-tab:focus-visible { outline: 2px solid rgba(255, 255, 255, 0.88); outline-offset: -2px; }
-.maestro-menu-bar__tab--active .maestro-menu-bar__tab-close:focus-visible { outline-color: #4e5882; }
 
 .maestro-menu-bar__address-row {
   position: relative;
   display: flex;
-  height: 48px;
+  height: 42px;
   flex-shrink: 0;
   align-items: center;
   gap: 8px;
@@ -112,7 +106,7 @@
   padding: 0 12px;
 }
 
-.maestro-menu-bar__navigation { display: flex; flex-shrink: 0; align-items: center; gap: 2px; border-radius: 10px; background: rgba(0, 0, 0, 0.05); padding: 2px; }
+.maestro-menu-bar__navigation { display: flex; height: 28px; flex-shrink: 0; align-items: center; gap: 2px; border-radius: 10px; background: rgba(0, 0, 0, 0.05); padding: 2px; }
 
 .maestro-menu-bar__nav-button,
 .maestro-menu-bar__snapshot {
@@ -131,6 +125,11 @@
   -webkit-app-region: no-drag;
 }
 
+.maestro-menu-bar__navigation .maestro-menu-bar__nav-button {
+  width: 24px;
+  height: 24px;
+}
+
 .maestro-menu-bar__nav-button:hover,
 .maestro-menu-bar__snapshot:hover { background: rgba(0, 0, 0, 0.1); color: #1f2937; }
 .maestro-menu-bar__nav-button:active,
@@ -144,7 +143,7 @@
 
 .maestro-menu-bar__address {
   min-width: 160px;
-  height: 32px;
+  height: 28px;
   flex: 1;
   border: 1px solid #d1d5db;
   border-radius: 8px;

@@ -30,6 +30,8 @@ interface MessageRow {
   skills_json: string
   replay_json: string
   activity_json: string
+  tasks_json: string
+  confirm_json: string
   streaming: number
   error: number
   compressed: number
@@ -40,6 +42,8 @@ interface MessageRow {
   ts: number
   sort_order: number
 }
+
+const STORED_MESSAGE_TYPES = new Set(['files', 'compact', 'task', 'confirm'])
 
 const parseJson = <T>(value: string, fallback: T): T => {
   try {
@@ -67,13 +71,15 @@ const toMessage = (row: MessageRow): MaestroChatMessage => ({
   id: row.id,
   source: 'cowork',
   role: row.role === 'human' ? 'human' : 'ai',
-  type: row.type === 'files' || row.type === 'compact' ? row.type : 'text',
+  type: STORED_MESSAGE_TYPES.has(row.type) ? (row.type as MaestroChatMessage['type']) : 'text',
   content: row.content,
   files: parseJson(row.files_json, []),
   skill: row.skill_json ? parseJson(row.skill_json, undefined as MaestroChatMessage['skill']) : undefined,
   skills: parseJson(row.skills_json, []),
   replay: row.replay_json ? parseJson(row.replay_json, undefined as MaestroChatMessage['replay']) : undefined,
   activity: parseJson(row.activity_json, []),
+  tasks: parseJson(row.tasks_json, []),
+  confirm: row.confirm_json ? parseJson(row.confirm_json, undefined as MaestroChatMessage['confirm']) : undefined,
   streaming: Boolean(row.streaming),
   error: Boolean(row.error),
   compressed: Boolean(row.compressed),
@@ -146,7 +152,7 @@ export class MaestroChatDao extends XpcPreloadHandler implements MaestroChatApi 
     if (!row) return null
     const messages = sqliteManager.db
       .prepare(
-        `SELECT id, session_id, source, role, type, content, files_json, skill_json, skills_json, replay_json, activity_json, streaming, error, compressed, prompt_excluded, compact_summary, compact_until_message_id, token_count, ts, sort_order
+        `SELECT id, session_id, source, role, type, content, files_json, skill_json, skills_json, replay_json, activity_json, streaming, error, compressed, prompt_excluded, compact_summary, compact_until_message_id, token_count, ts, sort_order, tasks_json, confirm_json
          FROM cowork_chat_message
          WHERE session_id = ?
          ORDER BY sort_order ASC, ts ASC`
@@ -171,8 +177,8 @@ export class MaestroChatDao extends XpcPreloadHandler implements MaestroChatApi 
     const deleteMessages = db.prepare('DELETE FROM cowork_chat_message WHERE session_id = ?')
     const insertMessage = db.prepare(
       `INSERT INTO cowork_chat_message
-       (id, session_id, source, role, type, content, files_json, skill_json, skills_json, replay_json, activity_json, streaming, error, compressed, prompt_excluded, compact_summary, compact_until_message_id, token_count, ts, sort_order)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       (id, session_id, source, role, type, content, files_json, skill_json, skills_json, replay_json, activity_json, streaming, error, compressed, prompt_excluded, compact_summary, compact_until_message_id, token_count, ts, sort_order, tasks_json, confirm_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
 
     const run = db.transaction(() => {
@@ -207,7 +213,9 @@ export class MaestroChatDao extends XpcPreloadHandler implements MaestroChatApi 
           message.compactUntilMessageId || '',
           message.tokenCount || 0,
           message.ts,
-          index
+          index,
+          JSON.stringify(message.tasks || []),
+          message.confirm ? JSON.stringify(message.confirm) : ''
         )
       })
     })

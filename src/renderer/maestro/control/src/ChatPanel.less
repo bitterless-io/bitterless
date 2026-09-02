@@ -163,45 +163,31 @@
 
 .chat-panel__attachments {
   display: flex;
-  flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 8px;
+  padding-top: 4px;
+  overflow-x: auto;
+  overflow-y: visible;
 }
 
-.chat-panel__attachment {
-  display: inline-flex;
-  max-width: 200px;
-  min-width: 0;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 4px 4px 6px;
-  color: var(--color-text-2);
-  font-size: 12px;
-  border: 1px solid var(--color-border-2);
-  border-radius: 6px;
-  background: #ffffff;
-}
-
-.chat-panel__attachment-icon {
-  display: block;
+.chat-panel__attachment-card {
+  position: relative;
   flex: 0 0 auto;
-  color: var(--color-text-4);
-}
-
-.chat-panel__attachment-name {
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }
 
 .chat-panel__attachment-remove.icon-btn.arco-btn {
-  width: 20px;
-  min-width: 20px;
-  height: 20px;
-  flex-basis: 20px;
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  flex-basis: 18px;
   color: var(--color-text-4);
-  border-radius: 4px;
+  border: 1px solid #d8dbe6;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgb(32 37 58 / 10%);
 }
 
 .chat-panel__attachment-remove.icon-btn.arco-btn:hover {

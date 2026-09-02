@@ -562,3 +562,29 @@ test('only the Omni window Menu Bar owns the compact ready update action', () =>
     );
   }
 });
+
+test('Omni browser cells keep native identity on their selected persistent session', () => {
+  const mainSource = read('src/main/windows/omniWindow.helper.ts');
+  const preloadSource = read('src/preload/omni/omniCellContent.preload.ts');
+  const factoryStart = mainSource.indexOf('  private createBrowserCellContentView(');
+  const factoryEnd = mainSource.indexOf('  private createMiniAppCellContentView(', factoryStart);
+
+  assert.ok(factoryStart >= 0 && factoryEnd > factoryStart, 'browser content factory must exist');
+  const factorySource = mainSource.slice(factoryStart, factoryEnd);
+
+  assert.match(mainSource, /const OMNI_PARTITION = 'persist:omni';/);
+  assert.match(mainSource, /const OMNI_GOOGLE_PARTITION = 'persist:omni-google';/);
+  assert.match(
+    factorySource,
+    /profile === 'google' \? OMNI_GOOGLE_PARTITION : OMNI_PARTITION/
+  );
+  assert.match(factorySource, /session\.fromPartition\(partition\)/);
+  assert.match(factorySource, /session:\s*browserSession/);
+
+  const identitySurface = `${mainSource}\n${preloadSource}`;
+  assert.doesNotMatch(identitySurface, /webRequest\.onBeforeSendHeaders/);
+  assert.doesNotMatch(identitySurface, /Sec-CH-UA/i);
+  assert.doesNotMatch(identitySurface, /\.setUserAgent\s*\(/);
+  assert.doesNotMatch(identitySurface, /setUserAgentOverride|debugger\.attach/);
+  assert.doesNotMatch(identitySurface, /navigator\.userAgent(?:Data)?\b/);
+});

@@ -21,7 +21,6 @@ import type {
   OnlyPreviewProjectItemCopyRequest,
   OnlyPreviewProjectRootCopyRequest,
   OnlyPreviewProjectRootRequest,
-  OnlyPreviewTextReadRequest,
   OnlyPreviewSettings
 } from './onlyPreview.types';
 
@@ -256,12 +255,33 @@ export const parseOnlyPreviewGlobalSearchContextSnapshot = (
   value: unknown
 ): OnlyPreviewGlobalSearchContextSnapshot => {
   const record = expectRecord(value, 'Global Search context snapshot');
-  expectExactKeys(record, ['revision', 'active', 'workspace']);
+  expectExactKeys(record, ['revision', 'active', 'workspace', 'layout']);
   const revision = expectNonNegativeSafeInteger(record.revision, 'Global Search context revision');
   if (typeof record.active !== 'boolean') {
     throw new OnlyPreviewContractError('INVALID_INPUT', 'Global Search visibility is invalid.');
   }
-  if (record.workspace === null) return { revision, active: record.active, workspace: null };
+  let layout: OnlyPreviewGlobalSearchContextSnapshot['layout'] = null;
+  if (record.layout !== null) {
+    const layoutRecord = expectRecord(record.layout, 'Global Search layout');
+    expectExactKeys(layoutRecord, ['viewBounds', 'workspaceBounds']);
+    const viewBounds = parseOnlyPreviewBounds(layoutRecord.viewBounds);
+    const workspaceBounds = parseOnlyPreviewBounds(layoutRecord.workspaceBounds);
+    if (
+      viewBounds.x !== 0 ||
+      viewBounds.y !== 0 ||
+      workspaceBounds.x + workspaceBounds.width > viewBounds.width ||
+      workspaceBounds.y + workspaceBounds.height > viewBounds.height
+    ) {
+      throw new OnlyPreviewContractError(
+        'INVALID_INPUT',
+        'Global Search workspace bounds must stay inside its native view.'
+      );
+    }
+    layout = { viewBounds, workspaceBounds };
+  }
+  if (record.workspace === null) {
+    return { revision, active: record.active, workspace: null, layout };
+  }
   const workspace = expectRecord(record.workspace, 'Global Search workspace context');
   expectExactKeys(workspace, [
     'workspaceId',
@@ -276,6 +296,7 @@ export const parseOnlyPreviewGlobalSearchContextSnapshot = (
   return {
     revision,
     active: record.active,
+    layout,
     workspace: {
       workspaceId: expectBoundedToken(workspace.workspaceId, 'Workspace capability'),
       generation: expectNonNegativeSafeInteger(
@@ -302,7 +323,8 @@ export const parseOnlyPreviewGlobalSearchContextReportRequest = (
     workspace: parseOnlyPreviewGlobalSearchContextSnapshot({
       revision: 0,
       active: false,
-      workspace: record.workspace
+      workspace: record.workspace,
+      layout: null
     }).workspace
   };
 };
@@ -548,16 +570,6 @@ export const parseOnlyPreviewFindResultRequest = (value: unknown): OnlyPreviewFi
   };
 };
 
-export const parseOnlyPreviewTextReadRequest = (value: unknown): OnlyPreviewTextReadRequest => {
-  const request = parseOnlyPreviewPreviewRevisionRequest(value);
-  const fileRef = parseOnlyPreviewFileRef(value);
-  const record = expectRecord(value, 'Preview text request');
-  if (record.adapterId !== 'monaco' && record.adapterId !== 'markdown-dom') {
-    throw new OnlyPreviewContractError('INVALID_INPUT', 'Preview text adapter is invalid.');
-  }
-  return { ...request, ...fileRef, adapterId: record.adapterId };
-};
-
 export const parseOnlyPreviewPreviewErrorRequest = (
   value: unknown
 ): OnlyPreviewPreviewErrorRequest => {
@@ -580,13 +592,16 @@ export const parseOnlyPreviewPreviewErrorRequest = (
     'OOXML_ENCRYPTED',
     'OOXML_ARCHIVE_INVALID',
     'SHEET_PARSE_FAILED',
+    'SHEET_RENDER_FAILED',
     'SHEET_EMPTY',
     'SHEET_RENDER_TIMEOUT',
     'DOCUMENT_PARSE_FAILED',
+    'DOCUMENT_RENDER_FAILED',
     'DOCUMENT_EMPTY',
     'DOCUMENT_SANITIZE_FAILED',
     'DOCUMENT_RENDER_TIMEOUT',
     'PRESENTATION_PARSE_FAILED',
+    'PRESENTATION_RENDER_FAILED',
     'PRESENTATION_EMPTY',
     'PRESENTATION_RENDER_TIMEOUT',
     'DIAGRAM_PARSE_FAILED',

@@ -25,7 +25,14 @@ const {
   auditDesktopPackage,
   getPathSize,
   packageIsPresent,
+  setUpdateFeedUrlLine,
+  writePackagedUpdateFeed,
 } = afterPack;
+const {
+  resolveUpdateDirectory,
+  resolveUpdatePlatform,
+} = require('../release/releaseChannel.cjs');
+const PLACEHOLDER_UPDATE_FEED_URL = 'https://assets.terncloud.com/bitterless/distro';
 
 const projectRoot = path.resolve(new URL('../..', import.meta.url).pathname);
 const temporaryRoots = [];
@@ -88,6 +95,15 @@ const createSyntheticApplication = async ({
   includeMacIcon = true,
   includeOnlyPreviewAgentSkill = true,
   includeTrenchAgentSkill = true,
+  includeUpdateConfig = true,
+  updateFeedUrl,
+  runtimeProfile = {
+    schemaVersion: 1,
+    profileName: 'release_prod',
+    releaseChannel: 'prod',
+    viteEnv: 'prod',
+    viteMode: 'release',
+  },
 } = {}) => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'bitterless-desktop-package-'));
   temporaryRoots.push(fixtureRoot);
@@ -96,12 +112,7 @@ const createSyntheticApplication = async ({
   writeFixtureFiles(archiveSource, {
     'package.json': '{"name":"synthetic-app"}\n',
     'out/main/app.main.js': 'module.exports = {};\n',
-    'out/.bitterless-runtime-profile.json': JSON.stringify({
-      schemaVersion: 1,
-      profileName: 'release_prod',
-      viteEnv: 'prod',
-      viteMode: 'release',
-    }),
+    'out/.bitterless-runtime-profile.json': JSON.stringify(runtimeProfile),
     ...archiveFiles,
   });
 
@@ -136,6 +147,19 @@ const createSyntheticApplication = async ({
         ]),
       )
     : {};
+  const updateConfigFiles = includeUpdateConfig
+    ? {
+        [`${resourcesPrefix}/app-update.yml`]: [
+          'provider: generic',
+          `url: ${updateFeedUrl ?? resolveUpdateDirectory(
+            runtimeProfile.releaseChannel,
+            resolveUpdatePlatform(platform === 'mac' ? 'darwin' : 'win32', targetArch),
+          )}`,
+          'updaterCacheDirName: synthetic-updater',
+          '',
+        ].join('\n'),
+      }
+    : {};
   mkdirSync(resourcesPath, { recursive: true });
   await createPackage(archiveSource, path.join(resourcesPath, 'app.asar'));
   writeFixtureFiles(applicationPath, {
@@ -150,6 +174,7 @@ const createSyntheticApplication = async ({
       : {}),
     ...previewSkillFiles,
     ...trenchSkillFiles,
+    ...updateConfigFiles,
     ...appFiles,
   });
 
@@ -193,12 +218,40 @@ test('synthetic app.asar passes the desktop package audit', async () => {
   await afterPack({ appOutDir: fixture.outputPath, electronPlatformName: 'darwin', arch: 3 });
 });
 
+test('synthetic Preview package requires the dedicated Preview ICNS', async () => {
+  const runtimeProfile = {
+    schemaVersion: 1,
+    profileName: 'release_preview',
+    releaseChannel: 'preview',
+    viteEnv: 'prod',
+    viteMode: 'release',
+  };
+  const valid = await createSyntheticApplication({
+    runtimeProfile,
+    appFiles: {
+      'Contents/Resources/icon.icns': readFileSync(
+        path.join(projectRoot, 'build/icon-preview.icns'),
+      ),
+    },
+  });
+  const result = auditDesktopPackage(valid.outputPath);
+  assert.equal(result.packagedRuntimeProfile.profileName, 'release_preview');
+  assert.equal(result.packagedRuntimeProfile.releaseChannel, 'preview');
+
+  const stableArtwork = await createSyntheticApplication({ runtimeProfile });
+  assert.throws(
+    () => auditDesktopPackage(stableArtwork.outputPath),
+    /bundle ICNS does not match icon-preview\.icns/,
+  );
+});
+
 test('packaged runtime profile gate rejects debug and missing markers', async () => {
   const debug = await createSyntheticApplication({
     archiveFiles: {
       'out/.bitterless-runtime-profile.json': JSON.stringify({
         schemaVersion: 1,
         profileName: 'debug_dev',
+        releaseChannel: 'dev',
         viteEnv: 'dev',
         viteMode: 'debug',
       }),
@@ -517,7 +570,6 @@ test('dependency classification keeps external runtime roots and bundles selecte
     'vue-router',
     'vuedraggable',
     'xterm',
-    'youtube-dl-exec',
   ];
 
   assert.deepEqual(Object.keys(packageJson.dependencies), externalRuntimeDependencies);
@@ -560,10 +612,20 @@ test('Electron Builder registers the audit and excludes non-runtime roots', () =
   const builder = readProjectFile('electron-builder.tmp.yml');
   assert.match(builder, /^afterPack: scripts\/package\/desktopPackage\.audit\.cjs$/m);
   assert.match(builder, /^\s+- '!tests\/\*\*'$/m);
+  assert.match(builder, /^\s+- '!dist\/\*\*'$/m);
+  assert.match(builder, /^\s+- '!tmp\/\*\*'$/m);
   assert.match(builder, /^\s+- '!output\/\*\*'$/m);
   assert.match(builder, /^\s+- '!node_modules\/@micromeet\/cli\{,\/\*\*\}'$/m);
   assert.match(builder, /^\s+- '!node_modules\/\*\*\/\*\.map'$/m);
   const config = parseYaml(builder);
+  assert(
+    config.files?.includes('!prebuilt/**'),
+    'Electron Builder template must exclude the legacy prebuilt cache from app.asar',
+  );
+  assert(
+    config.files?.includes('!external_tools/**'),
+    'Electron Builder template must exclude the external tools cache from app.asar',
+  );
   assert(
     config.extraResources?.some(
       (resource) =>
@@ -580,6 +642,43 @@ test('Electron Builder registers the audit and excludes non-runtime roots', () =
     ),
     'Electron Builder must copy the complete Bitterless Trench skill directory',
   );
+  assert(
+    config.extraResources?.some(
+      (resource) =>
+        resource.from === 'build/maestro-tools'
+        && resource.to === 'maestro-tools',
+    ),
+    'Electron Builder template must copy staged Maestro tools to Resources/maestro-tools',
+  );
+
+  for (const binaryPath of [
+    'Contents/Resources/maestro-tools/micromeet',
+    'Contents/Resources/maestro-tools/bun',
+    'Contents/Resources/maestro-tools/rg',
+    'Contents/Resources/maestro-tools/fd',
+    'Contents/Resources/maestro-tools/ouch',
+    'Contents/Resources/maestro-tools/anydoc/anydoc.node',
+  ]) {
+    assert(
+      config.mac?.binaries?.includes(binaryPath),
+      `Electron Builder template must register ${binaryPath} for macOS signing`,
+    );
+  }
+});
+
+test('Electron Builder excludes complete release and temporary roots for Preview output', () => {
+  const templateSource = readProjectFile('electron-builder.tmp.yml');
+  const previewSource = templateSource.replace(/^(\s+output:).*$/m, '$1 dist/preview');
+  const configurations = [
+    { label: 'Stable template', config: parseYaml(templateSource), output: 'dist' },
+    { label: 'Preview generated config', config: parseYaml(previewSource), output: 'dist/preview' },
+  ];
+
+  for (const { label, config, output } of configurations) {
+    assert.equal(config.directories?.output, output, `${label} must use the expected output`);
+    assert(config.files?.includes('!dist/**'), `${label} must exclude the complete dist root`);
+    assert(config.files?.includes('!tmp/**'), `${label} must exclude the complete tmp root`);
+  }
 });
 
 test('Electron Builder locale allowlist is exact in the template and optional generated config', () => {
@@ -625,8 +724,8 @@ test('publish audits an existing packaged app before DMG finalization or upload'
   const source = readProjectFile('scripts/publish.js');
   const mainSource = source.slice(source.indexOf('const main = async () =>'));
   const buildIndex = mainSource.indexOf('runBuild(options)');
-  const auditIndex = mainSource.indexOf('auditPackagedApplication(options.platform)');
-  const finalizeIndex = mainSource.indexOf('finalizeMacDmg(options.platform)');
+  const auditIndex = mainSource.indexOf('auditPackagedApplication(options.platform, options.env)');
+  const finalizeIndex = mainSource.indexOf('finalizeMacDmg(options.platform, targetDistDir)');
   const uploadIndex = mainSource.indexOf('await publishRelease({');
 
   assert(buildIndex >= 0);
@@ -641,4 +740,138 @@ test('signedBuild strips generic Apple certificate variables for a Windows targe
   assert.match(source, /const targetsWindows = args\.some/);
   assert.match(source, /if \(targetsWindows\) \{\s+delete env\.CSC_LINK;\s+delete env\.CSC_KEY_PASSWORD;/);
   assert.doesNotMatch(source, /delete env\.WIN_CSC_(?:LINK|KEY_PASSWORD)/);
+});
+
+test('afterPack writes the exact channel and platform update feed into every supported target', async () => {
+  const targets = [
+    {
+      platform: 'mac',
+      arch: 'arm64',
+      channel: 'prod',
+      runtimeProfile: {
+        schemaVersion: 1,
+        profileName: 'release_prod',
+        releaseChannel: 'prod',
+        viteEnv: 'prod',
+        viteMode: 'release',
+      },
+      appFiles: {},
+      expected: 'https://assets.terncloud.com/bitterless/distro/prod/mac_arm',
+    },
+    {
+      platform: 'mac',
+      arch: 'x64',
+      channel: 'preview',
+      runtimeProfile: {
+        schemaVersion: 1,
+        profileName: 'release_preview',
+        releaseChannel: 'preview',
+        viteEnv: 'prod',
+        viteMode: 'release',
+      },
+      appFiles: {
+        'Contents/Resources/icon.icns': readFileSync(
+          path.join(projectRoot, 'build/icon-preview.icns'),
+        ),
+      },
+      expected: 'https://assets.terncloud.com/bitterless/distro/preview/mac_intel',
+    },
+    {
+      platform: 'win',
+      arch: 'x64',
+      channel: 'dev',
+      runtimeProfile: {
+        schemaVersion: 1,
+        profileName: 'release_dev',
+        releaseChannel: 'dev',
+        viteEnv: 'dev',
+        viteMode: 'release',
+      },
+      appFiles: {},
+      expected: 'https://assets.terncloud.com/bitterless/distro/dev/win64',
+    },
+  ];
+
+  for (const target of targets) {
+    const fixture = await createSyntheticApplication({
+      platform: target.platform,
+      arch: target.arch,
+      runtimeProfile: target.runtimeProfile,
+      appFiles: target.appFiles,
+      updateFeedUrl: PLACEHOLDER_UPDATE_FEED_URL,
+    });
+    const configPath = path.join(fixture.resourcesPath, 'app-update.yml');
+    assert.match(readFileSync(configPath, 'utf-8'), /^url: https:\/\/assets\.terncloud\.com\/bitterless\/distro$/m);
+
+    assert.equal(writePackagedUpdateFeed(fixture.applicationPath), target.expected);
+
+    const rewritten = parseYaml(readFileSync(configPath, 'utf-8'));
+    assert.equal(rewritten.url, target.expected);
+    assert.equal(rewritten.provider, 'generic');
+    assert.equal(rewritten.updaterCacheDirName, 'synthetic-updater');
+    assert.equal(auditDesktopPackage(fixture.applicationPath).packagedUpdateFeedUrl, target.expected);
+  }
+});
+
+test('package audit rejects a placeholder, cross-channel, cross-platform, or missing update feed', async () => {
+  const runtimeProfile = {
+    schemaVersion: 1,
+    profileName: 'release_preview',
+    releaseChannel: 'preview',
+    viteEnv: 'prod',
+    viteMode: 'release',
+  };
+  const previewIcon = {
+    'Contents/Resources/icon.icns': readFileSync(path.join(projectRoot, 'build/icon-preview.icns')),
+  };
+
+  const rejected = [
+    'https://example.com/auto-updates',
+    PLACEHOLDER_UPDATE_FEED_URL,
+    'https://assets.terncloud.com/bitterless/distro/prod/mac_arm',
+    'https://assets.terncloud.com/bitterless/distro/preview/win64',
+  ];
+  for (const updateFeedUrl of rejected) {
+    const fixture = await createSyntheticApplication({
+      runtimeProfile,
+      appFiles: previewIcon,
+      updateFeedUrl,
+    });
+    assert.throws(
+      () => auditDesktopPackage(fixture.outputPath),
+      /update feed gate failed: app-update\.yml url must be https:\/\/assets\.terncloud\.com\/bitterless\/distro\/preview\/mac_arm/,
+    );
+  }
+
+  const missing = await createSyntheticApplication({
+    runtimeProfile,
+    appFiles: previewIcon,
+    includeUpdateConfig: false,
+  });
+  assert.throws(() => auditDesktopPackage(missing.outputPath), /update feed gate failed/);
+  assert.throws(() => writePackagedUpdateFeed(missing.outputPath), /app-update\.yml/);
+});
+
+test('update feed rewrite requires exactly one top-level url and preserves line endings', () => {
+  const feed = 'https://assets.terncloud.com/bitterless/distro/preview/mac_arm';
+  assert.equal(
+    setUpdateFeedUrlLine('provider: generic\nurl: https://example.com/x\n', feed),
+    `provider: generic\nurl: ${feed}\n`,
+  );
+  assert.equal(
+    setUpdateFeedUrlLine('provider: generic\r\nurl: https://example.com/x\r\n', feed),
+    `provider: generic\r\nurl: ${feed}\r\n`,
+  );
+  assert.throws(
+    () => setUpdateFeedUrlLine('provider: generic\n', feed),
+    /exactly one top-level url; found 0/,
+  );
+  assert.throws(
+    () => setUpdateFeedUrlLine('url: a\nurl: b\n', feed),
+    /exactly one top-level url; found 2/,
+  );
+  assert.doesNotMatch(
+    setUpdateFeedUrlLine('provider: generic\n  url: nested\nurl: top\n', feed),
+    /url: top/,
+  );
 });

@@ -10,7 +10,9 @@ import {
   writeFile
 } from 'node:fs/promises';
 import path from 'node:path';
+import type { ClaudeSubscriptionCatalogEntry } from '@shared/claudeSubscription/claudeSubscription.contract';
 import {
+  buildClaudeSubscriptionCodexModelCatalog,
   CLAUDE_SUBSCRIPTION_DEFAULT_PORT,
   CLAUDE_SUBSCRIPTION_MAX_PORT,
   CLAUDE_SUBSCRIPTION_MIN_PORT
@@ -99,6 +101,7 @@ export interface ClaudeAccountRepositoryOptions {
 
 const REGISTRY_FILE = 'accounts.json';
 const SETTINGS_FILE = 'settings.json';
+const CODEX_CATALOG_FILE = 'codex-model-catalog.json';
 const ANTHROPIC_DIRECTORY = 'anthropic';
 const REGISTRY_VERSION = 3;
 const SLOT_DIRECTORY_PREFIX = '.claude';
@@ -253,6 +256,29 @@ export class ClaudeAccountRepository implements ClaudeAccountSource {
       await renameFile(temporaryPath, settingsPath);
       this.#serverPort = port;
     });
+  }
+
+  /**
+   * Writes the Codex model catalog beside the registry and returns its path, so a
+   * copied profile can point at a file that actually exists. Rewritten on every
+   * copy: the catalog is derived, never edited by hand.
+   */
+  async writeCodexModelCatalog(
+    entries: readonly ClaudeSubscriptionCatalogEntry[]
+  ): Promise<string> {
+    this.#assertInitialized();
+    const catalogPath = path.join(this.#rootDirectory, CODEX_CATALOG_FILE);
+    const temporaryPath = path.join(
+      this.#rootDirectory,
+      `${CODEX_CATALOG_FILE}.tmp-${process.pid}-${randomUUID()}`
+    );
+    await writeFile(
+      temporaryPath,
+      JSON.stringify(buildClaudeSubscriptionCodexModelCatalog(entries), null, 2),
+      { mode: 0o600 }
+    );
+    await renameFile(temporaryPath, catalogPath);
+    return catalogPath;
   }
 
   async #loadServerPort(): Promise<number> {
@@ -533,6 +559,8 @@ export class ClaudeAccountRepository implements ClaudeAccountSource {
     return {
       id: account.id,
       label: account.label,
+      // Derived from the slot, like every other path for this account.
+      directory: this.#expectedIdentity(account.id, account.slot).configDirectory,
       ...(account.email ? { email: account.email } : {}),
       subscriptionType: account.subscriptionType,
       enabled: account.enabled,

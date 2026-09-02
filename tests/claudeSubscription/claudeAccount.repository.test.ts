@@ -60,6 +60,9 @@ test('persists only registry v3 account metadata and exact slot paths', async ()
     assert.deepEqual(account, {
       id: identity.id,
       label: 'Personal Max',
+      // Derived from the slot, never read back from the registry — the panel needs to
+      // show which ~/.claude<N> environment an account is bound to.
+      directory: identity.configDirectory,
       email: 'ral@example.com',
       subscriptionType: 'max',
       enabled: true,

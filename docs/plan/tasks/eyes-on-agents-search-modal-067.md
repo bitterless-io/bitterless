@@ -89,9 +89,9 @@ overflow actions all come from the existing `ThreadCard`.
 - Up/Down wrap through the current results and scroll the selected card into view.
 - Arrow and Enter handling synchronously commits the latest input draft before resolving results,
   so the existing throttled search cannot navigate or open a stale match.
-- Enter opens the selected task through the existing `openThread(sessionKey)` path. The modal,
-  query, and selection remain available after Open; the owner closes them explicitly with the
-  shortcut, Escape, Close, or the mask.
+- Enter opens the selected task through the existing `openThread(sessionKey)` path. Task 067 kept
+  the modal available after Open; task 070 supersedes that lifecycle by closing Search after a
+  successful Open while preserving it after failure.
 - Existing card Open/menu behavior remains intact. No Main, XPC, SQLite, App Server, polling, or
   provider-open contract changes are introduced.
 
@@ -130,8 +130,9 @@ overflow actions all come from the existing `ThreadCard`.
 Implemented. Focus now always renders the complete `focusThreads` list and its header contains one
 Search action. The contained modal reuses `ThreadCard`, owns renderer-only query and selected
 `sessionKey` state, wraps Up/Down, flushes the latest throttled draft before Arrow/Enter, and keeps
-the modal available after the established provider Open path. Closing through the shortcut,
-Escape, Close, mask, or unmount clears every transient value.
+the modal available after the established provider Open path. Task 070 later changes successful
+Open to close and clear Search. Closing through the shortcut, Escape, Close, mask, or unmount
+clears every transient value.
 
 An independent review found and then verified the repair of one asynchronous focus race: provider
 Open no longer focuses the search input after its promise resolves, so the opened Codex or Claude

@@ -8,6 +8,7 @@ import { after, test } from 'node:test';
 import { deflateRawSync } from 'node:zlib';
 import { build } from 'esbuild';
 import ExcelJS from 'exceljs';
+import { buildIndexingXlsxFixture } from '../indexing/corpus.mjs';
 
 const projectRoot = resolve(dirname(new URL(import.meta.url).pathname), '..', '..');
 const buildRoot = mkdtempSync(join(tmpdir(), 'bitterless-onlypreview-ooxml-'));
@@ -281,6 +282,151 @@ test('accepts the directory and ZIP structure emitted by the installed ExcelJS e
   assert.equal(
     result.entries.some((entry) => entry.name.endsWith('/')),
     true
+  );
+  assert.deepEqual(result.xlsxCompatibility, {
+    macroEnabled: false,
+    worksheetCount: 1,
+    missingSheetDataCount: 0,
+    requiresSheetDataNormalization: false
+  });
+});
+
+test('the deterministic indexing XLSX passes Office preflight without compatibility repair', async () => {
+  const fixture = await buildIndexingXlsxFixture();
+  const result = await preflight(fixture);
+  assert.deepEqual([...fixture.subarray(0, 4)], [0x50, 0x4b, 0x03, 0x04]);
+  assert.deepEqual(result.xlsxCompatibility, {
+    macroEnabled: false,
+    worksheetCount: 1,
+    missingSheetDataCount: 0,
+    requiresSheetDataNormalization: false
+  });
+});
+
+test('marks exactly missing sheetData, detects XLSM content, and rejects duplicate sheetData', async () => {
+  const missing = await preflight(
+    buildZip(xlsxEntries([worksheetEntry(Buffer.from('<worksheet></worksheet>'))]))
+  );
+  assert.deepEqual(missing.xlsxCompatibility, {
+    macroEnabled: false,
+    worksheetCount: 1,
+    missingSheetDataCount: 1,
+    requiresSheetDataNormalization: true
+  });
+
+  const twoWorksheets = await preflight(
+    buildZip(
+      xlsxEntries([
+        worksheetEntry(Buffer.from('<worksheet></worksheet>')),
+        {
+          name: 'xl/worksheets/sheet2.xml',
+          data: Buffer.from('<worksheet><sheetData/></worksheet>')
+        }
+      ])
+    )
+  );
+  assert.deepEqual(twoWorksheets.xlsxCompatibility, {
+    macroEnabled: false,
+    worksheetCount: 2,
+    missingSheetDataCount: 1,
+    requiresSheetDataNormalization: true
+  });
+
+  const macro = await preflight(
+    buildZip([
+      {
+        name: '[Content_Types].xml',
+        data: Buffer.from(
+          '<Types><Override ContentType="application/vnd.ms-excel.sheet.macroEnabled.main+xml"/></Types>'
+        )
+      },
+      { name: '_rels/.rels' },
+      { name: 'xl/workbook.xml' },
+      worksheetEntry(Buffer.from('<worksheet></worksheet>'))
+    ])
+  );
+  assert.equal(macro.xlsxCompatibility.macroEnabled, true);
+  assert.equal(macro.xlsxCompatibility.requiresSheetDataNormalization, true);
+
+  const entityEncodedMacro = await preflight(
+    buildZip([
+      {
+        name: '[Content_Types].xml',
+        data: Buffer.from(
+          '<Types><Override ContentType="application/vnd.ms-excel.sheet.macro&#69;nabled.main+xml"/></Types>'
+        )
+      },
+      { name: '_rels/.rels' },
+      { name: 'xl/workbook.xml' },
+      worksheetEntry(Buffer.from('<worksheet></worksheet>'))
+    ])
+  );
+  assert.equal(entityEncodedMacro.xlsxCompatibility.macroEnabled, false);
+  assert.equal(entityEncodedMacro.xlsxCompatibility.requiresSheetDataNormalization, true);
+
+  await expectCode(
+    buildZip(
+      xlsxEntries([
+        worksheetEntry(
+          Buffer.from(
+            '<worksheet><sheetData></sheetData><!-- <sheetData/> --><sheetData/></worksheet>'
+          )
+        )
+      ])
+    ),
+    'OOXML_ARCHIVE_INVALID'
+  );
+});
+
+test('streams a namespace-prefixed sheetData tag across 64KiB in a deflated worksheet', async () => {
+  const opening = Buffer.from(
+    '<worksheet xmlns:x="urn:onlypreview"><!-- <sheetData/> --><![CDATA[<sheetData/>]]>'
+  );
+  const tagPrefixBytes = Buffer.byteLength('<x:');
+  const paddingLength = 64 * 1024 - opening.byteLength - tagPrefixBytes;
+  assert.ok(paddingLength > 0);
+  const padding = Buffer.allocUnsafe(paddingLength);
+  let state = 0x9e3779b9;
+  for (let index = 0; index < padding.length; index += 1) {
+    state = (Math.imul(state, 1_664_525) + 1_013_904_223) >>> 0;
+    padding[index] = 0x61 + (state % 26);
+  }
+  const worksheet = Buffer.concat([
+    opening,
+    padding,
+    Buffer.from('<x:sheetData></x:sheetData></worksheet>')
+  ]);
+  assert.equal(worksheet.indexOf('<x:sheetData'), 64 * 1024 - tagPrefixBytes);
+
+  const result = await preflight(
+    buildZip(
+      xlsxEntries([
+        worksheetEntry(undefined, {
+          method: 8,
+          uncompressedData: worksheet
+        })
+      ])
+    )
+  );
+  assert.deepEqual(result.xlsxCompatibility, {
+    macroEnabled: false,
+    worksheetCount: 1,
+    missingSheetDataCount: 0,
+    requiresSheetDataNormalization: false
+  });
+
+  await expectCode(
+    buildZip(
+      xlsxEntries([
+        worksheetEntry(undefined, {
+          method: 8,
+          uncompressedData: Buffer.from(
+            '<worksheet xmlns:x="urn:onlypreview"><x:sheetData/><x:sheetData/></worksheet>'
+          )
+        })
+      ])
+    ),
+    'OOXML_ARCHIVE_INVALID'
   );
 });
 

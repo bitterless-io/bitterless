@@ -4,6 +4,7 @@ import {
   ONLY_PREVIEW_OOXML_MAX_COMPRESSION_RATIO,
   ONLY_PREVIEW_OOXML_MAX_ENTRIES,
   ONLY_PREVIEW_OOXML_MAX_ENTRY_UNCOMPRESSED_BYTES,
+  ONLY_PREVIEW_OOXML_MAX_MERGE_TAG_BYTES,
   ONLY_PREVIEW_OOXML_MAX_TOTAL_UNCOMPRESSED_BYTES,
   ONLY_PREVIEW_OOXML_PREFLIGHT_TIMEOUT_MS,
   OnlyPreviewOoxmlPreflightError,
@@ -12,6 +13,7 @@ import {
   type OnlyPreviewOoxmlPreflightOptions,
   type OnlyPreviewOoxmlPreflightResult,
   type OnlyPreviewOoxmlValidatedEntry,
+  type OnlyPreviewXlsxCompatibility,
   type OnlyPreviewWorksheetMergeBudget
 } from './onlyPreviewOoxmlPreflight.type';
 
@@ -36,6 +38,11 @@ export {
 type CentralEntry = OnlyPreviewOoxmlCentralEntry;
 type ValidatedEntry = OnlyPreviewOoxmlValidatedEntry;
 
+interface WorksheetSheetDataScanner {
+  push(chunk: Uint8Array): void;
+  finish(): number;
+}
+
 const LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50;
 const CENTRAL_DIRECTORY_HEADER_SIGNATURE = 0x02014b50;
 const END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
@@ -48,6 +55,9 @@ const ENCRYPTION_FLAGS = 0x2041;
 const DEFLATE_OPTION_FLAGS = 0x0006;
 const SUPPORTED_FLAGS = UTF8_NAME_FLAG | DEFLATE_OPTION_FLAGS;
 const XML_SCAN_CHUNK_BYTES = 64 * 1024;
+const XLSM_MAIN_CONTENT_TYPE = new TextEncoder().encode(
+  'application/vnd.ms-excel.sheet.macroenabled.main+xml'
+);
 const CRC32_TABLE = new Uint32Array(256);
 
 for (let index = 0; index < CRC32_TABLE.length; index += 1) {
@@ -224,6 +234,176 @@ const entryNamespaceKey = (name: string): string => (name.endsWith('/') ? name.s
 
 const isWorkbookXmlEntry = (name: string): boolean =>
   !name.endsWith('/') && name.startsWith('xl/') && name.toLowerCase().endsWith('.xml');
+
+const isWorksheetXmlEntry = (name: string): boolean => /^xl\/worksheets\/[^/]+\.xml$/iu.test(name);
+
+const createAsciiTokenScanner = (
+  token: Uint8Array
+): { push(chunk: Uint8Array): void; found(): boolean } => {
+  const prefix = new Uint32Array(token.byteLength);
+  for (let index = 1, matched = 0; index < token.byteLength; index += 1) {
+    while (matched > 0 && token[index] !== token[matched]) matched = prefix[matched - 1];
+    if (token[index] === token[matched]) matched += 1;
+    prefix[index] = matched;
+  }
+  let matched = 0;
+  let complete = false;
+  return {
+    push(chunk) {
+      if (complete) return;
+      for (const sourceByte of chunk) {
+        const byte = sourceByte >= 0x41 && sourceByte <= 0x5a ? sourceByte + 0x20 : sourceByte;
+        while (matched > 0 && byte !== token[matched]) matched = prefix[matched - 1];
+        if (byte === token[matched]) matched += 1;
+        if (matched === token.byteLength) {
+          complete = true;
+          return;
+        }
+      }
+    },
+    found: () => complete
+  };
+};
+
+const isSheetDataQualifiedName = (name: string): boolean => {
+  const parts = name.split(':');
+  if (parts.at(-1) !== 'sheetData') return false;
+  if (parts.length === 1) return true;
+  if (parts.length !== 2 || !/^[A-Za-z_][A-Za-z0-9_.-]*$/u.test(parts[0])) {
+    invalid('XLSX sheetData namespace prefix is malformed');
+  }
+  return true;
+};
+
+const createWorksheetSheetDataScanner = (): WorksheetSheetDataScanner => {
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  let mode: 'text' | 'markup' | 'tag' | 'comment' | 'cdata' | 'processing-instruction' = 'text';
+  let marker = '';
+  let tagName = '';
+  let closing = false;
+  let nameComplete = false;
+  let quote: '"' | "'" | null = null;
+  let count = 0;
+
+  const reset = (): void => {
+    mode = 'text';
+    marker = '';
+    tagName = '';
+    closing = false;
+    nameComplete = false;
+    quote = null;
+  };
+
+  const completeName = (): void => {
+    if (tagName.length === 0) invalid('XLSX worksheet tag name is malformed');
+    if (!closing && isSheetDataQualifiedName(tagName)) {
+      count += 1;
+      if (count > 1) invalid('XLSX worksheet contains multiple sheetData elements');
+    }
+    nameComplete = true;
+  };
+
+  const consumeTag = (character: string): void => {
+    if (!nameComplete) {
+      if (tagName.length === 0 && character === '/') {
+        closing = true;
+        return;
+      }
+      if (character === '>' || character === '/' || /[\t\n\r ]/u.test(character)) {
+        completeName();
+        if (character === '>') reset();
+        return;
+      }
+      tagName += character;
+      if (tagName.length > ONLY_PREVIEW_OOXML_MAX_MERGE_TAG_BYTES) {
+        invalid('XLSX worksheet tag name exceeds the preflight limit');
+      }
+      return;
+    }
+    if (quote !== null) {
+      if (character === quote) quote = null;
+      return;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      return;
+    }
+    if (character === '<') invalid('XLSX worksheet tag contains ambiguous nested markup');
+    if (character === '>') reset();
+  };
+
+  const consume = (source: string): void => {
+    for (const character of source) {
+      if (mode === 'text') {
+        if (character === '<') {
+          mode = 'markup';
+          marker = '<';
+        }
+        continue;
+      }
+      if (mode === 'markup') {
+        marker += character;
+        if (marker === '<?') {
+          mode = 'processing-instruction';
+          marker = '';
+        } else if ('<!--'.startsWith(marker)) {
+          if (marker === '<!--') {
+            mode = 'comment';
+            marker = '';
+          }
+        } else if ('<![CDATA['.startsWith(marker)) {
+          if (marker === '<![CDATA[') {
+            mode = 'cdata';
+            marker = '';
+          }
+        } else if (marker.startsWith('<!')) {
+          invalid('XLSX XML declarations and entities are not supported');
+        } else {
+          mode = 'tag';
+          const pending = marker.slice(1);
+          marker = '';
+          for (const pendingCharacter of pending) consumeTag(pendingCharacter);
+        }
+        continue;
+      }
+      if (mode === 'tag') {
+        consumeTag(character);
+        continue;
+      }
+      if (mode === 'processing-instruction') {
+        marker = `${marker}${character}`.slice(-2);
+        if (marker === '?>') reset();
+        continue;
+      }
+      if (mode === 'comment') {
+        marker = `${marker}${character}`.slice(-3);
+        if (marker === '-->') reset();
+        continue;
+      }
+      marker = `${marker}${character}`.slice(-3);
+      if (marker === ']]>') reset();
+    }
+  };
+
+  const decode = (chunk?: Uint8Array): string => {
+    try {
+      return chunk === undefined ? decoder.decode() : decoder.decode(chunk, { stream: true });
+    } catch {
+      return invalid('XLSX XML is not valid UTF-8');
+    }
+  };
+
+  return {
+    push(chunk) {
+      consume(decode(chunk));
+    },
+    finish() {
+      consume(decode());
+      if (mode !== 'text') invalid('XLSX worksheet markup does not close exactly');
+      return count;
+    }
+  };
+};
 
 const validateExtraFields = (
   view: DataView,
@@ -593,16 +773,33 @@ const validateEntryPayloads = async (
   entries: readonly ValidatedEntry[],
   assertWithinDeadline: () => void,
   kind: OnlyPreviewOoxmlPackageKind
-): Promise<void> => {
+): Promise<OnlyPreviewXlsxCompatibility | undefined> => {
   let totalUncompressedBytes = 0;
   let totalCompressedBytes = 0;
   const mergeBudget: OnlyPreviewWorksheetMergeBudget = { ranges: 0, expandedCells: 0 };
+  let worksheetCount = 0;
+  let missingSheetDataCount = 0;
+  let macroEnabled = false;
   for (const entry of entries) {
     assertWithinDeadline();
     const mergeScanner =
       kind === 'xlsx' && entry.scanWorkbookXml
         ? createOnlyPreviewWorksheetMergeScanner(mergeBudget)
         : null;
+    const sheetDataScanner =
+      kind === 'xlsx' && isWorksheetXmlEntry(entry.name) ? createWorksheetSheetDataScanner() : null;
+    const macroScanner =
+      kind === 'xlsx' && entry.name === '[Content_Types].xml'
+        ? createAsciiTokenScanner(XLSM_MAIN_CONTENT_TYPE)
+        : null;
+    const scanChunk =
+      mergeScanner || sheetDataScanner || macroScanner
+        ? (chunk: Uint8Array): void => {
+            mergeScanner?.push(chunk);
+            sheetDataScanner?.push(chunk);
+            macroScanner?.push(chunk);
+          }
+        : undefined;
     const acceptedBytes =
       entry.compressionMethod === 0
         ? validateStoredPayload(
@@ -610,16 +807,21 @@ const validateEntryPayloads = async (
             entry,
             totalUncompressedBytes,
             assertWithinDeadline,
-            mergeScanner?.push
+            scanChunk
           )
         : await validateDeflatedPayload(
             bytes,
             entry,
             totalUncompressedBytes,
             assertWithinDeadline,
-            mergeScanner?.push
+            scanChunk
           );
     mergeScanner?.finish();
+    if (sheetDataScanner) {
+      worksheetCount += 1;
+      if (sheetDataScanner.finish() === 0) missingSheetDataCount += 1;
+    }
+    if (macroScanner?.found()) macroEnabled = true;
     assertWithinDeadline();
     totalUncompressedBytes += acceptedBytes;
     totalCompressedBytes += entry.compressedSize;
@@ -631,6 +833,14 @@ const validateEntryPayloads = async (
   ) {
     limit('ZIP payloads exceed the aggregate actual compression-ratio limit');
   }
+  return kind === 'xlsx'
+    ? {
+        macroEnabled,
+        worksheetCount,
+        missingSheetDataCount,
+        requiresSheetDataNormalization: missingSheetDataCount > 0
+      }
+    : undefined;
 };
 
 export const preflightOnlyPreviewOoxml = async (
@@ -719,7 +929,12 @@ export const preflightOnlyPreviewOoxml = async (
   for (const requiredPart of REQUIRED_PARTS[kind]) {
     if (!names.has(requiredPart)) invalid(`OOXML package is missing ${requiredPart}`);
   }
-  await validateEntryPayloads(bytes, validatedEntries, assertWithinDeadline, kind);
+  const xlsxCompatibility = await validateEntryPayloads(
+    bytes,
+    validatedEntries,
+    assertWithinDeadline,
+    kind
+  );
 
   const totalCompressedBytes = centralEntries.reduce(
     (total, entry) => total + entry.compressedSize,
@@ -740,6 +955,7 @@ export const preflightOnlyPreviewOoxml = async (
       })
     ),
     totalCompressedBytes,
-    totalUncompressedBytes
+    totalUncompressedBytes,
+    ...(xlsxCompatibility ? { xlsxCompatibility } : {})
   };
 };

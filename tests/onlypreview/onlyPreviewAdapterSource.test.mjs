@@ -259,8 +259,9 @@ test('image and native media adapters keep renderer-owned lifecycle and no text/
   assert.match(mediaService, /code === 1[\s\S]*code === 2[\s\S]*code === 3[\s\S]*code === 4/);
 
   const region = source('src/main/onlypreview/views/onlyPreviewPreviewRegion.service.ts');
-  assert.match(region, /adapter\.adapterId === 'audio' \|\| adapter\.adapterId === 'video'/);
-  assert.match(region, /\? 'selection'[\s\S]*: 'ttl'/);
+  const delivery = source('src/main/onlypreview/views/onlyPreviewSelectionDelivery.service.ts');
+  assert.match(delivery, /adapter\.adapterId === 'audio' \|\| adapter\.adapterId === 'video'/);
+  assert.match(delivery, /\? 'selection'[\s\S]*: 'ttl'/);
   assert.match(region, /this\.presentation\.status !== 'loading'/);
   const adapterSource = source('src/main/onlypreview/views/onlyPreviewPreviewAdapter.service.ts');
   const adapterTextGate = adapterSource.slice(
@@ -304,7 +305,8 @@ test('deep Project rows stay complete while HTML routes to the isolated Chrome s
   const viewService = source('src/main/onlypreview/views/onlyPreviewPreviewView.service.ts');
   const previewAdapter = source('src/main/onlypreview/views/onlyPreviewPreviewAdapter.service.ts');
   assert.match(previewAdapter, /adapterId:\s*'html-page'/);
-  assert.match(region, /onlyPreviewDocumentRegistry\.issue\(opened, revision\)/);
+  const delivery = source('src/main/onlypreview/views/onlyPreviewSelectionDelivery.service.ts');
+  assert.match(delivery, /onlyPreviewDocumentRegistry\.issue\(hostToken, prepared, selectionRevision\)/);
   assert.match(viewService, /installOnlyPreviewSessionProtocol/);
   assert.match(viewService, /setProxy\(/);
   assert.match(viewService, /setWebRTCIPHandlingPolicy\('disable_non_proxied_udp'\)/);

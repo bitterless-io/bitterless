@@ -36,6 +36,24 @@
       <button
         type="button"
         class="onlypreview-image__control"
+        :aria-label="onlyPreviewI18n.preview.imageRotateLeft"
+        :title="onlyPreviewI18n.preview.imageRotateLeft"
+        @click="rotateImage('left')"
+      >
+        <IconRotate :size="16" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        class="onlypreview-image__control"
+        :aria-label="onlyPreviewI18n.preview.imageRotateRight"
+        :title="onlyPreviewI18n.preview.imageRotateRight"
+        @click="rotateImage('right')"
+      >
+        <IconRotateClockwise :size="16" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        class="onlypreview-image__control"
         :disabled="viewportState.scale <= minimumScale"
         :aria-label="onlyPreviewI18n.preview.imageZoomOut"
         :title="onlyPreviewI18n.preview.imageZoomOut"
@@ -86,7 +104,14 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
-import { IconAspectRatio, IconZoomIn, IconZoomOut, IconZoomReset } from '@tabler/icons-vue';
+import {
+  IconAspectRatio,
+  IconRotate,
+  IconRotateClockwise,
+  IconZoomIn,
+  IconZoomOut,
+  IconZoomReset
+} from '@tabler/icons-vue';
 import type { OnlyPreviewImageRender } from '../../onlyPreviewImage.service';
 import { onlyPreviewPreviewStore } from '../../onlyPreviewPreview.store';
 import {
@@ -98,6 +123,7 @@ import {
   panOnlyPreviewImageViewport,
   resetOnlyPreviewImageViewport,
   resizeOnlyPreviewImageViewport,
+  rotateOnlyPreviewImageViewport,
   zoomOnlyPreviewImageViewport,
   type OnlyPreviewImageDimensions,
   type OnlyPreviewImageViewportState
@@ -114,6 +140,7 @@ const viewportElement = ref<HTMLElement | null>(null);
 const viewportSize = reactive({ width: 0, height: 0 });
 const viewportState = reactive<OnlyPreviewImageViewportState>({
   mode: 'fit',
+  rotation: 0,
   scale: 1,
   offsetX: 0,
   offsetY: 0
@@ -135,12 +162,17 @@ const assignState = (state: OnlyPreviewImageViewportState): void => {
   Object.assign(viewportState, state);
 };
 
-const panBounds = computed(() => getOnlyPreviewImagePanBounds(dimensions(), viewportState.scale));
-const minimumScale = computed(() => getOnlyPreviewImageMinimumScale(dimensions()));
+const panBounds = computed(() =>
+  getOnlyPreviewImagePanBounds(dimensions(), viewportState.scale, viewportState.rotation)
+);
+const minimumScale = computed(() =>
+  getOnlyPreviewImageMinimumScale(dimensions(), viewportState.rotation)
+);
 const isPannable = computed(() => panBounds.value.maxX > 0 || panBounds.value.maxY > 0);
 const isAtReset = computed(
   () =>
     viewportState.mode === 'manual' &&
+    viewportState.rotation === 0 &&
     viewportState.scale === 1 &&
     viewportState.offsetX === 0 &&
     viewportState.offsetY === 0
@@ -150,7 +182,9 @@ const originStyle = computed(() => ({
   height: `${props.content.naturalHeight}px`,
   transform: `translate(-50%, -50%) translate(${viewportState.offsetX}px, ${viewportState.offsetY}px)`
 }));
-const imageStyle = computed(() => ({ transform: `scale(${viewportState.scale})` }));
+const imageStyle = computed(() => ({
+  transform: `rotate(${viewportState.rotation}deg) scale(${viewportState.scale})`
+}));
 
 const releasePointer = (): void => {
   const drag = dragState.value;
@@ -162,7 +196,7 @@ const releasePointer = (): void => {
 
 const fitImage = (): void => {
   releasePointer();
-  assignState(fitOnlyPreviewImageViewport(dimensions()));
+  assignState(fitOnlyPreviewImageViewport(dimensions(), viewportState.rotation));
 };
 
 const resetImage = (): void => {
@@ -173,6 +207,11 @@ const resetImage = (): void => {
 const zoomImage = (direction: 'in' | 'out'): void => {
   releasePointer();
   assignState(zoomOnlyPreviewImageViewport(viewportState, direction, dimensions()));
+};
+
+const rotateImage = (direction: 'left' | 'right'): void => {
+  releasePointer();
+  assignState(rotateOnlyPreviewImageViewport(viewportState, direction, dimensions()));
 };
 
 const handlePointerDown = (event: PointerEvent): void => {
@@ -251,7 +290,7 @@ const handleImageError = async (): Promise<void> => {
   if (failed.value) return;
   const revision = props.reportingRevision;
   failed.value = true;
-  releasePointer();
+  resetImage();
   await nextTick();
   if (!active || revision !== props.reportingRevision || !failed.value) return;
   onlyPreviewPreviewStore.reportSurfaceError(revision, 'IMAGE_DECODE_FAILED');
@@ -279,7 +318,7 @@ onBeforeUnmount(() => {
   active = false;
   resizeObserver?.disconnect();
   resizeObserver = null;
-  releasePointer();
+  resetImage();
   failed.value = true;
 });
 </script>

@@ -234,13 +234,16 @@ test('executes final and available tool decisions through an isolated fake CLI',
     argumentsJson: '{"path":"package.json"}'
   });
   const request = await executionRequest();
-  assert.throws(
-    () =>
-      validateClaudeDecision(
-        { action: 'final', text: 'ok', extra: true },
-        request.payload.available_tools
-      ),
-    ClaudeDecisionError
+  // An unrecognised key is adapted away, not rejected. This asserted the opposite, and
+  // that strictness cost a real turn: "Claude tool decisions contain unsupported
+  // fields" for extra keys that carried no meaning. The provider's exact key set is
+  // not this bridge's to police.
+  assert.deepEqual(
+    validateClaudeDecision(
+      { action: 'final', text: 'ok', extra: true },
+      request.payload.available_tools
+    ),
+    { action: 'final', text: 'ok' }
   );
   await assert.rejects(
     executor('malformed').execute(await executionRequest()),
@@ -323,13 +326,39 @@ test('the decision schema stays within Anthropic tool-schema limits', async () =
     { action: 'final', text: 'ok' }
   );
 
-  // A populated foreign field is genuinely ambiguous and must still be refused.
+  // Previously a populated foreign field was refused as "ambiguous". It is not:
+  // `action` already says which variant the model meant, and a real turn was lost to
+  // "Claude tool decisions contain unsupported fields" over keys that changed nothing.
+  // Claude is an LLM provider here, so extra keys are adapted away, not adjudicated.
+  assert.deepEqual(
+    validateClaudeDecision({ action: 'final', text: 'ok', tool_name: 'read_file' }, tools),
+    { action: 'final', text: 'ok' }
+  );
+
+  // `arguments` is taken as the object itself, not only as an encoded string — the
+  // schema asks for a string and the model routinely returns the object.
+  assert.deepEqual(
+    validateClaudeDecision(
+      { action: 'tool_call', tool_name: 'read_file', arguments: { path: 'a.ts' } },
+      tools
+    ),
+    { action: 'tool_call', toolName: 'read_file', argumentsJson: '{"path":"a.ts"}' }
+  );
+
+  // `name` is accepted where the model forgets the schema's `tool_name`.
+  assert.deepEqual(
+    validateClaudeDecision({ action: 'tool_call', name: 'read_file', arguments: '{}' }, tools),
+    { action: 'tool_call', toolName: 'read_file', argumentsJson: '{}' }
+  );
+
+  // Still refused, because neither can be adapted: no tool named, and a tool the
+  // client never offered.
   assert.throws(
-    () => validateClaudeDecision({ action: 'final', text: 'ok', tool_name: 'read_file' }, tools),
+    () => validateClaudeDecision({ action: 'tool_call', arguments: '{}' }, tools),
     ClaudeDecisionError
   );
   assert.throws(
-    () => validateClaudeDecision({ action: 'tool_call', arguments: '{}' }, tools),
+    () => validateClaudeDecision({ action: 'tool_call', tool_name: 'nope', arguments: '{}' }, tools),
     ClaudeDecisionError
   );
 });

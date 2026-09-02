@@ -141,12 +141,26 @@ class FakeWebContents extends EventEmitter {
     this.loadedUrls = [];
     // Electron exposes the frame tree here; the Chromium PDF viewer's document frame is the extra
     // non-main frame that a blank viewer never produces.
-    this.mainFrame = { url: '', framesInSubtree: [] };
+    this.mainFrame = this.createFrame('');
     this.mainFrame.framesInSubtree.push(this.mainFrame);
   }
 
+  createFrame(url) {
+    const frame = {
+      url,
+      processId: 101,
+      routingId: state.nextFrameRoutingId++,
+      framesInSubtree: [],
+      isDestroyed: () => false
+    };
+    state.framesById.set(`${frame.processId}:${frame.routingId}`, frame);
+    return frame;
+  }
+
   addSubframe(url) {
-    this.mainFrame.framesInSubtree.push({ url });
+    const frame = this.createFrame(url);
+    this.mainFrame.framesInSubtree.push(frame);
+    return frame;
   }
 
   isDestroyed() {
@@ -243,6 +257,7 @@ const createState = () => ({
   nextChromeLoadError: null,
   nextVueLoadError: null,
   nextDocumentIssueDeferred: null,
+  nextPreviewPrepareDeferred: null,
   describe: async () => descriptorFor('notes/readme.md', 'text'),
   readText: async (_file, adapterId) => ({
     workspaceId: 'workspace-id',
@@ -252,6 +267,13 @@ const createState = () => ({
     size: adapterId.length
   }),
   assertOpenedFileCurrent: async () => undefined,
+  authorizeProjectItem: async ({ relativePath }) => ({
+    relativePath,
+    nodeKind: 'file',
+    size: 3,
+    modifiedAt: 1
+  }),
+  projectAuthorizations: [],
   textReadCalls: [],
   assetIssues: [],
   assetRevocations: 0,
@@ -260,7 +282,18 @@ const createState = () => ({
   documentRevisionRevocations: [],
   assetUrlsRevoked: [],
   findBinds: [],
-  findUnbinds: []
+  findUnbinds: [],
+  previewBinds: [],
+  officeBinds: [],
+  officePrepares: [],
+  officeCancels: [],
+  nextOfficePrepareDeferred: null,
+  previewPrepares: [],
+  previewCancels: [],
+  framesById: new Map(),
+  nextFrameRoutingId: 1,
+  activeViewAttachNotifications: 0,
+  openTraceRecords: []
 });
 
 const host = {
@@ -278,6 +311,22 @@ const hostRegistry = {
 };
 
 const workspaceRegistry = {
+  getPreviewAuthorityItemRef: (_hostToken, fileRef) => ({
+    workspaceId: fileRef.workspaceId,
+    workspaceGeneration: fileRef.workspaceId === 'external-workspace-id' ? 1 : 17,
+    relativePath: fileRef.relativePath,
+    rootPath: fileRef.workspaceId === 'external-workspace-id' ? '/external/private' : '/workspace'
+  }),
+  getProjectAuthorityItemRef: (_hostToken, fileRef) => ({
+    workspaceId: fileRef.workspaceId,
+    workspaceGeneration: 23,
+    relativePath: fileRef.relativePath
+  }),
+  getOfficeReadBootstrap: (_hostToken, fileRef) => ({
+    workspaceId: fileRef.workspaceId,
+    relativePath: fileRef.relativePath,
+    rootPath: '/workspace'
+  }),
   openFile: async (_hostToken, fileRef) => ({
     host,
     workspace: { workspaceId: fileRef.workspaceId },
@@ -294,9 +343,9 @@ const workspaceRegistry = {
 };
 
 const assetRegistry = {
-  issue: (file, mimeType, options) => {
-    state.assetIssues.push({ file, mimeType, options });
-    return `bitterless-preview://asset/${'a'.repeat(64)}/${options.selectionRevision}-${file.relativePath}`;
+  issue: (hostToken, selection, mimeType, options) => {
+    state.assetIssues.push({ hostToken, file: selection, mimeType, options });
+    return `bitterless-preview://asset/${'a'.repeat(64)}/${options.selectionRevision}-${selection.relativePath}`;
   },
   revokeHost: () => {
     state.assetRevocations += 1;
@@ -311,12 +360,9 @@ const assetRegistry = {
 };
 
 const documentRegistry = {
-  issue: async (_file, revision) => {
+  issue: (_hostToken, selection, revision) => {
     const url = `bitterless-preview://document/${'d'.repeat(64)}/${revision}.html`;
-    const pending = state.nextDocumentIssueDeferred;
-    state.nextDocumentIssueDeferred = null;
-    pending?.started.resolve({ revision, url });
-    if (pending) await pending.completion.promise;
+    state.nextDocumentIssueDeferred?.started.resolve({ revision, url, selection });
     return url;
   },
   revokeSelection: (hostToken, revision) => {
@@ -392,7 +438,13 @@ const findSpecs = {
 const viewModule = loadTypeScriptModule(
   'src/main/onlypreview/views/onlyPreviewPreviewView.service.ts',
   {
-    electron: { BaseWindow: class {}, WebContentsView: FakeChromeView },
+    electron: {
+      BaseWindow: class {},
+      WebContentsView: FakeChromeView,
+      webFrameMain: {
+        fromId: (processId, routingId) => state.framesById.get(`${processId}:${routingId}`)
+      }
+    },
     '@shared/onlypreview/onlyPreview.contract': {
       OnlyPreviewContractError: ContractError
     },
@@ -413,9 +465,112 @@ const previewAdapterModule = loadTypeScriptModule(
   {}
 );
 
+class FakePreviewReadBrokerService {
+  setPreviewAuthority(brokerCapability, prepared) {
+    this.previewAuthority = { brokerCapability, prepared };
+  }
+  setOfficeAuthority(authority) {
+    this.officeAuthority = authority;
+  }
+  hasOfficeSelection(selectionRevision) {
+    return this.officeAuthority?.selectionRevision === selectionRevision;
+  }
+  revokeOfficeReadAuthority() {
+    const authority = this.officeAuthority;
+    this.officeAuthority = null;
+    state.officeCancels.push(
+      authority
+        ? {
+            grantId: authority.grantId,
+            runtimeId: authority.runtimeId,
+            selectionRevision: authority.selectionRevision
+          }
+        : {}
+    );
+  }
+  revokePreviewReadAuthority() {
+    const authority = this.previewAuthority;
+    this.previewAuthority = null;
+    if (authority) {
+      state.previewCancels.push({
+        grantId: authority.prepared.grantId,
+        selectionRevision: authority.prepared.selectionRevision
+      });
+    }
+  }
+  revokeAll() {
+    this.revokePreviewReadAuthority();
+    this.revokeOfficeReadAuthority();
+  }
+  async waitForOfficeCancellation() {
+    return undefined;
+  }
+  async cancelPreparedOffice(grantId, runtimeId, selectionRevision) {
+    state.officeCancels.push({ grantId, runtimeId, selectionRevision });
+  }
+  async prepareOfficeSelection(params) {
+    const grant = {
+      grantId: 'office-grant-for-tests',
+      runtimeId: params.runtimeId,
+      selectionRevision: params.selectionRevision,
+      kind: params.kind,
+      workspaceId: params.fileRef.workspaceId,
+      relativePath: params.fileRef.relativePath,
+      maxBytes: 25 * 1024 * 1024
+    };
+    state.officePrepares.push(grant);
+    const pending = state.nextOfficePrepareDeferred;
+    state.nextOfficePrepareDeferred = null;
+    pending?.started.resolve(grant);
+    if (pending) await pending.completion.promise;
+    const extension = `.${params.kind}`;
+    const descriptorKind =
+      params.kind === 'xlsx' ? 'sheet' : params.kind === 'docx' ? 'document' : 'presentation';
+    return {
+      adapterId: `ooxml-${params.kind}`,
+      grantId: grant.grantId,
+      descriptor: {
+        ...descriptorFor(params.fileRef.relativePath, descriptorKind),
+        workspaceId: params.fileRef.workspaceId,
+        extension
+      }
+    };
+  }
+}
+
+const selectedFileIdentityModule = loadTypeScriptModule(
+  'src/main/onlypreview/views/onlyPreviewSelectedFileIdentity.service.ts',
+  {
+    '@main/fileSearch/fileSearchWindow.service': {
+      fileSearchWindowService: {
+        authorizeProjectItem: async (request) => {
+          state.projectAuthorizations.push(request);
+          return await state.authorizeProjectItem(request);
+        }
+      }
+    },
+    '@main/onlypreview/onlyPreviewWorkspace.registry': {
+      onlyPreviewWorkspaceRegistry: workspaceRegistry
+    },
+    '@shared/onlypreview/onlyPreview.types': {}
+  }
+);
 const regionModule = loadTypeScriptModule(
   'src/main/onlypreview/views/onlyPreviewPreviewRegion.service.ts',
   {
+    '@main/onlypreview/onlyPreviewOpenDiagnostics.runtime': {
+      onlyPreviewOpenDiagnostics: {
+        trace: (_flow, fields) => {
+          const record = { fields, marks: [], terminals: [] };
+          state.openTraceRecords.push(record);
+          return {
+            tag: `p${state.openTraceRecords.length}`,
+            mark: (value) => (record.marks.push(value), true),
+            end: (value) => (record.terminals.push(value), true)
+          };
+        }
+      }
+    },
     electron: { BaseWindow: class {}, WebContentsView: FakeChromeView },
     'electron-xpc/main': {
       xpcMain: {
@@ -465,6 +620,59 @@ const regionModule = loadTypeScriptModule(
     '@shared/onlypreview/onlyPreviewFind.registry': {
       getOnlyPreviewAdapterSpec: (adapterId) => findSpecs[adapterId]
     },
+    '@shared/onlypreview/onlyPreviewOfficeReadRuntime.types': {
+      ONLY_PREVIEW_OFFICE_READ_MAX_BYTES: 25 * 1024 * 1024,
+      getOnlyPreviewOfficePackageKind: (relativePath) => {
+        const extension = relativePath.slice(relativePath.lastIndexOf('.')).toLowerCase();
+        if (extension === '.xlsx' || extension === '.xlsm') return 'xlsx';
+        if (extension === '.docx') return 'docx';
+        if (extension === '.pptx') return 'pptx';
+        return null;
+      }
+    },
+    '@main/fileSearch/fileSearchWindow.service': {
+      fileSearchWindowService: {
+        bindPreviewReadWorkspace: async (request) => state.previewBinds.push(request),
+        preparePreviewRead: async (grant) => {
+          state.previewPrepares.push(grant);
+          await state.assertOpenedFileCurrent();
+          const descriptor = await state.describe();
+          const pending = state.nextPreviewPrepareDeferred;
+          state.nextPreviewPrepareDeferred = null;
+          pending?.started.resolve(grant);
+          if (pending) await pending.completion.promise;
+          return {
+            ...grant,
+            runtimeInstanceId: 'preview-runtime-for-tests',
+            descriptor
+          };
+        },
+        cancelPreviewRead: async (request) => state.previewCancels.push(request),
+        bindOfficeWorkspace: async (request) => state.officeBinds.push(request),
+        prepareOfficeRead: async (grant) => {
+          state.officePrepares.push(grant);
+          const pending = state.nextOfficePrepareDeferred;
+          state.nextOfficePrepareDeferred = null;
+          pending?.started.resolve(grant);
+          if (pending) await pending.completion.promise;
+          return {
+            grantId: grant.grantId,
+            runtimeId: grant.runtimeId,
+            selectionRevision: grant.selectionRevision,
+            kind: grant.kind,
+            size: 3,
+            modifiedAt: 1
+          };
+        },
+        openOfficeRead: async () => {
+          throw new ContractError('OPERATION_FAILED', 'Office reader was not configured.');
+        },
+        readNextOfficeChunk: async () => {
+          throw new ContractError('OPERATION_FAILED', 'Office reader was not configured.');
+        },
+        cancelOfficeRead: async (request) => state.officeCancels.push(request)
+      }
+    },
     '@main/onlypreview/onlyPreviewAsset.registry': {
       onlyPreviewAssetRegistry: assetRegistry
     },
@@ -488,7 +696,60 @@ const regionModule = loadTypeScriptModule(
     },
     './onlyPreviewFind.service': { OnlyPreviewFindService: FakeFindService },
     './onlyPreviewPreviewAdapter.service': previewAdapterModule,
-    './onlyPreviewPreviewView.service': viewModule
+    './onlyPreviewPreviewView.service': viewModule,
+    './onlyPreviewPreviewReadBroker.service': {
+      OnlyPreviewPreviewReadBrokerService: FakePreviewReadBrokerService
+    },
+    './onlyPreviewSelectedFileIdentity.service': selectedFileIdentityModule,
+    './onlyPreviewSelectionDelivery.service': {
+      issueOnlyPreviewSelectionDelivery: ({ hostToken, selectionRevision, prepared, adapter }) => {
+        let descriptor = prepared.descriptor;
+        let navigationUrl = null;
+        let assetIssued = false;
+        if (adapter.adapterId === 'html-page') {
+          navigationUrl = documentRegistry.issue(hostToken, prepared, selectionRevision);
+          descriptor = { ...descriptor, assetUrl: navigationUrl };
+        } else if (adapter.adapterId === 'chromium-pdf') {
+          const limit = 100 * 1024 * 1024;
+          navigationUrl = assetRegistry.issue(hostToken, prepared, descriptor.mimeType, {
+            selectionRevision,
+            maxBytes: Math.min(descriptor.size, limit)
+          });
+          descriptor = { ...descriptor, assetUrl: navigationUrl };
+          assetIssued = true;
+        } else if (adapter.adapterId === 'drawio-viewer') {
+          descriptor = {
+            ...descriptor,
+            assetUrl: assetRegistry.issue(hostToken, prepared, descriptor.mimeType, {
+              selectionRevision,
+              maxBytes: Math.min(descriptor.size, 20 * 1024 * 1024)
+            })
+          };
+          assetIssued = true;
+        } else if (
+          adapter.adapterId === 'image' ||
+          adapter.adapterId === 'audio' ||
+          adapter.adapterId === 'video'
+        ) {
+          const limit = {
+            image: 100 * 1024 * 1024,
+            audio: null,
+            video: null
+          }[adapter.adapterId];
+          descriptor = {
+            ...descriptor,
+            assetUrl: assetRegistry.issue(hostToken, prepared, descriptor.mimeType, {
+              selectionRevision,
+              maxBytes: Math.min(descriptor.size, limit ?? descriptor.size),
+              lifetime:
+                adapter.adapterId === 'audio' || adapter.adapterId === 'video' ? 'selection' : 'ttl'
+            })
+          };
+          assetIssued = true;
+        }
+        return { descriptor, navigationUrl, assetIssued };
+      }
+    }
   }
 );
 const presentationModule = loadTypeScriptModule(
@@ -517,9 +778,10 @@ const createHarness = () => {
   const runtime = {
     window,
     host,
-    createVuePreviewView: (previewRuntimeToken) => {
+    createVuePreviewView: (previewRuntimeToken, officeBrokerCapability) => {
       const view = new FakeView('vue');
       view.previewRuntimeToken = previewRuntimeToken;
+      view.officeBrokerCapability = officeBrokerCapability;
       state.vueViews.push(view);
       return view;
     },
@@ -533,6 +795,9 @@ const createHarness = () => {
     },
     bindChromeShortcuts: (webContents) => {
       webContents.shortcutsBound = true;
+    },
+    onActiveViewAttached: () => {
+      state.activeViewAttachNotifications += 1;
     }
   };
   const service = new regionModule.OnlyPreviewPreviewRegionService();

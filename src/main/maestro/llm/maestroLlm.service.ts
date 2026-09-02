@@ -124,6 +124,7 @@ const createPiModelRegistry = async (pi: PiAuthModule): Promise<{ modelRuntime?:
 export interface MaestroLlmServiceState {
   applyLlmTarget(provider: string, model: string, effort: LlmEffort): void
   getLlmRuntimeTarget(): LlmStoredTarget
+  hasActiveAgentTurn(): boolean
   resetLlmTurnState(): void
   resetLlmAgentSessions(): void
   readMaestroSettings(): CoachSettings
@@ -312,6 +313,9 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
   }
 
   async setLlmConfig(params: { provider: string; model: string; effort?: LlmEffort }): Promise<LlmConfig> {
+    if (this._state.hasActiveAgentTurn()) {
+      throw new Error('The model cannot be changed while a Maestro turn is active.')
+    }
     const target = requireSelectableLlmTarget(params)
     if (target.provider === 'ai-crms') await this.syncAiCrmsProviderModels()
     if (target.provider === LOCAL_LLM_PROVIDER) await this.syncLocalClaudeProviderModels()

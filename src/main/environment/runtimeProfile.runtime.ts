@@ -18,6 +18,7 @@ export const applyRuntimeProfile = (): ApplicationRuntimeProfile => {
     processViteMode: process.env.VITE_MODE
   });
   const profile = resolveRuntimeProfile({
+    releaseChannel: import.meta.env.VITE_RELEASE_CHANNEL,
     viteEnv: import.meta.env.VITE_ENV,
     viteMode: import.meta.env.VITE_MODE
   });

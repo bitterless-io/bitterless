@@ -16,6 +16,67 @@ import {
   withFakeTimeouts
 } from './onlyPreviewPreviewRegionTest.helper.mjs';
 
+test('Preview open diagnostics terminate each revision once and stale revisions cannot finish the new trace', async () => {
+  const { service } = createHarness();
+  service.updateBounds(host.hostToken, bounds);
+
+  await service.present(host.hostToken, fileRef('notes/first.md'));
+  const firstView = acknowledgeCurrentVue(service);
+  let snapshot = service.snapshot(host.hostToken);
+  service.reportVueReady(host.hostToken, snapshot.selectionRevision, firstView.previewRuntimeToken);
+  assert.deepEqual(state.openTraceRecords[0].terminals, [
+    { revision: snapshot.selectionRevision, surface: 'vue', outcome: 'ready' }
+  ]);
+
+  await service.present(host.hostToken, fileRef('notes/second.md'));
+  const secondRevision = service.snapshot(host.hostToken).selectionRevision;
+  await service.present(host.hostToken, fileRef('notes/third.md'));
+  snapshot = service.snapshot(host.hostToken);
+  assert.deepEqual(state.openTraceRecords[1].terminals, [
+    { revision: secondRevision, surface: 'vue', outcome: 'superseded' }
+  ]);
+  assert.equal(state.openTraceRecords[2].terminals.length, 0);
+
+  assert.throws(() =>
+    service.reportVueReady(host.hostToken, secondRevision, firstView.previewRuntimeToken)
+  );
+  assert.equal(state.openTraceRecords[2].terminals.length, 0);
+  assert.equal(snapshot.selectionRevision > secondRevision, true);
+});
+
+test('Preview open diagnostics cover Chrome ready/error and clear/destroy terminals', async () => {
+  let harness = createHarness();
+  harness.service.updateBounds(host.hostToken, bounds);
+  state.describe = async () => descriptorFor('page.html', 'text');
+  await harness.service.present(host.hostToken, fileRef('page.html'));
+  state.chromeViews[0].webContents.emit('did-finish-load');
+  assert.deepEqual(state.openTraceRecords[0].terminals, [
+    { revision: 1, surface: 'chrome', outcome: 'ready' }
+  ]);
+
+  harness = createHarness();
+  harness.service.updateBounds(host.hostToken, bounds);
+  state.describe = async () => descriptorFor('page.html', 'text');
+  state.nextChromeLoadError = new Error('fixture load failed');
+  await harness.service.present(host.hostToken, fileRef('page.html'));
+  assert.deepEqual(state.openTraceRecords[0].terminals, [
+    { revision: 1, surface: 'chrome', outcome: 'error' }
+  ]);
+
+  harness = createHarness();
+  harness.service.updateBounds(host.hostToken, bounds);
+  await harness.service.present(host.hostToken, fileRef('clear.md'));
+  harness.service.clearWorkspace(host.hostToken, 'workspace-id');
+  assert.deepEqual(state.openTraceRecords[0].terminals, [
+    { revision: 1, surface: 'vue', outcome: 'superseded' }
+  ]);
+  await harness.service.present(host.hostToken, fileRef('destroy.md'));
+  harness.service.destroy();
+  assert.deepEqual(state.openTraceRecords[1].terminals, [
+    { revision: 3, surface: 'vue', outcome: 'superseded' }
+  ]);
+});
+
 test('first valid bounds creates Vue detached and exact reset acknowledgement attaches it', () => {
   const { service, children, additions } = createHarness();
   assert.equal(state.vueViews.length, 0);
@@ -101,15 +162,15 @@ test('presentation revalidates the opened identity before installing any descrip
   assert.ok(state.documentRevocations > 0);
 });
 
-test('late HTML document issuance is revoked and cannot overwrite a newer Vue selection', async () => {
+test('late HTML preview preparation is cancelled and cannot overwrite a newer Vue selection', async () => {
   const { service, children } = createHarness();
   service.updateBounds(host.hostToken, bounds);
   const vue = acknowledgeCurrentVue(service);
-  const issue = { started: deferred(), completion: deferred() };
-  state.nextDocumentIssueDeferred = issue;
+  const prepare = { started: deferred(), completion: deferred() };
+  state.nextPreviewPrepareDeferred = prepare;
   state.describe = async () => descriptorFor('stale.html', 'text');
   const stalePresentation = service.present(host.hostToken, fileRef('stale.html'));
-  const issued = await issue.started.promise;
+  const staleGrant = await prepare.started.promise;
 
   state.describe = async () => descriptorFor('current.md', 'text');
   await service.present(host.hostToken, fileRef('current.md'));
@@ -117,15 +178,19 @@ test('late HTML document issuance is revoked and cannot overwrite a newer Vue se
   assert.equal(service.snapshot(host.hostToken).fileRef.relativePath, 'current.md');
   assert.equal(service.snapshot(host.hostToken).selectionRevision, 2);
 
-  issue.completion.resolve();
+  prepare.completion.resolve();
   await stalePresentation;
   assert.equal(service.snapshot(host.hostToken).fileRef.relativePath, 'current.md');
   assert.equal(state.chromeViews.length, 0);
   assert.equal(state.protocolInstalls.length, 0);
-  assert.deepEqual(state.documentRevisionRevocations.at(-1), {
-    hostToken: host.hostToken,
-    revision: issued.revision
-  });
+  assert.equal(
+    state.previewCancels.some(
+      (request) =>
+        request.grantId === staleGrant.grantId &&
+        request.selectionRevision === staleGrant.selectionRevision
+    ),
+    true
+  );
   acknowledgeCurrentVue(service);
   assert.equal(children.has(vue), true);
 });
@@ -412,7 +477,7 @@ test('image/media errors remove dead capabilities, demote ready, and reject late
   }
 });
 
-test('XLSX stays on Vue, exposes one bounded private asset, and rebuilds Vue on renderer failure', async () => {
+test('XLSX stays on Vue, grants one bounded preload read, and rebuilds Vue on renderer failure', async () => {
   const { service } = createHarness();
   service.updateBounds(host.hostToken, bounds);
   const vue = state.vueViews[0];
@@ -424,15 +489,12 @@ test('XLSX stays on Vue, exposes one bounded private asset, and rebuilds Vue on 
   assert.equal(snapshot.adapterId, 'ooxml-xlsx');
   assert.equal(snapshot.descriptor.assetUrl, undefined);
   assert.equal(
-    service
-      .snapshotForVue(host.hostToken, vue.previewRuntimeToken)
-      .descriptor.assetUrl?.startsWith('bitterless-preview://asset/'),
-    true
+    service.snapshotForVue(host.hostToken, vue.previewRuntimeToken).descriptor.assetUrl,
+    undefined
   );
-  assert.deepEqual(state.assetIssues.at(-1).options, {
-    selectionRevision: snapshot.selectionRevision,
-    maxBytes: 3
-  });
+  assert.equal(state.assetIssues.length, 0);
+  assert.equal(state.officePrepares.at(-1).selectionRevision, snapshot.selectionRevision);
+  assert.equal(state.officePrepares.at(-1).maxBytes, 25 * 1024 * 1024);
 
   acknowledgeCurrentVue(service);
   service.reportVueError(
@@ -441,6 +503,9 @@ test('XLSX stays on Vue, exposes one bounded private asset, and rebuilds Vue on 
     vue.previewRuntimeToken,
     'SHEET_PARSE_FAILED'
   );
+  assert.deepEqual(state.openTraceRecords[0].terminals, [
+    { revision: 1, surface: 'office', outcome: 'error' }
+  ]);
   snapshot = service.snapshot(host.hostToken);
   assert.equal(snapshot.status, 'unavailable');
   assert.equal(snapshot.error.code, 'SHEET_PARSE_FAILED');
@@ -485,7 +550,7 @@ test('XLSX stays on Vue, exposes one bounded private asset, and rebuilds Vue on 
   snapshot = service.snapshotForVue(host.hostToken, replacementVue.previewRuntimeToken);
   assert.equal(snapshot.status, 'ready');
   assert.equal(snapshot.descriptor.assetUrl, undefined);
-  assert.ok(state.assetRevocations >= 2);
+  assert.ok(state.officeCancels.length >= 2);
 });
 
 test('Monaco readiness proves the exact registered content adapter before becoming find-ready', async () => {
@@ -526,7 +591,7 @@ test('Monaco readiness proves the exact registered content adapter before becomi
   assert.equal(service.snapshot(host.hostToken).status, 'ready');
 });
 
-test('DOCX stays on Vue, exposes one bounded private asset, and publishes ready only for its exact runtime', async () => {
+test('DOCX stays on Vue, grants one bounded preload read, and publishes ready only for its exact runtime', async () => {
   await withFakeTimeouts(async (timers) => {
     const { service } = createHarness();
     service.updateBounds(host.hostToken, bounds);
@@ -540,15 +605,11 @@ test('DOCX stays on Vue, exposes one bounded private asset, and publishes ready 
     assert.equal(snapshot.selectedTextAvailable, true);
     assert.equal(snapshot.descriptor.assetUrl, undefined);
     assert.equal(
-      service
-        .snapshotForVue(host.hostToken, vue.previewRuntimeToken)
-        .descriptor.assetUrl?.startsWith('bitterless-preview://asset/'),
-      true
+      service.snapshotForVue(host.hostToken, vue.previewRuntimeToken).descriptor.assetUrl,
+      undefined
     );
-    assert.deepEqual(state.assetIssues.at(-1).options, {
-      selectionRevision: snapshot.selectionRevision,
-      maxBytes: 3
-    });
+    assert.equal(state.assetIssues.length, 0);
+    assert.equal(state.officePrepares.at(-1).selectionRevision, snapshot.selectionRevision);
     assert.equal(timers.filter((timer) => timer.delay === 30_000).length, 1);
 
     acknowledgeCurrentVue(service);
@@ -561,6 +622,9 @@ test('DOCX stays on Vue, exposes one bounded private asset, and publishes ready 
     );
     snapshot = service.snapshotForVue(host.hostToken, vue.previewRuntimeToken);
     assert.equal(snapshot.status, 'ready');
+    assert.deepEqual(state.openTraceRecords[0].terminals, [
+      { revision: 1, surface: 'office', outcome: 'ready' }
+    ]);
     assert.equal(snapshot.descriptor.assetUrl, undefined);
     assert.equal(timers[0].active, false);
     service.destroy();
@@ -591,6 +655,9 @@ test('DOCX Main watchdog rebuilds an unresponsive Vue renderer without waiting f
     assert.equal(originalVue.webContents.destroyed, true);
     assert.equal(state.vueViews.length, 2);
     assert.notEqual(state.vueViews[1].previewRuntimeToken, originalVue.previewRuntimeToken);
+    assert.deepEqual(state.openTraceRecords[0].terminals, [
+      { revision: 1, surface: 'office', outcome: 'error' }
+    ]);
     service.destroy();
   });
 });
@@ -677,32 +744,22 @@ test('DOCX engine and sanitizer failures rebuild only the Vue surface while empt
   }
 });
 
-test('a sheet asset issued before a stale identity check is revoked by its exact old revision', async () => {
+test('a stale Office prepare is cancelled and cannot replace the newer Markdown selection', async () => {
   const { service } = createHarness();
   service.updateBounds(host.hostToken, bounds);
-  const identityCheck = { started: deferred(), completion: deferred() };
-  let identityChecks = 0;
-  state.assertOpenedFileCurrent = async () => {
-    identityChecks += 1;
-    if (identityChecks === 2) {
-      identityCheck.started.resolve();
-      await identityCheck.completion.promise;
-    }
-  };
-  state.describe = async () => descriptorFor('stale.xlsx', 'sheet');
+  const prepare = { started: deferred(), completion: deferred() };
+  state.nextOfficePrepareDeferred = prepare;
   const stalePresentation = service.present(host.hostToken, fileRef('stale.xlsx'));
-  await identityCheck.started.promise;
+  const staleGrant = await prepare.started.promise;
 
   state.describe = async () => descriptorFor('current.md', 'text');
   await service.present(host.hostToken, fileRef('current.md'));
-  identityCheck.completion.resolve();
+  prepare.completion.resolve();
   await stalePresentation;
 
   assert.equal(service.snapshot(host.hostToken).fileRef.relativePath, 'current.md');
   assert.equal(
-    state.assetSelectionRevocations.some(
-      (revocation) => revocation.hostToken === host.hostToken && revocation.selectionRevision === 1
-    ),
+    state.officeCancels.some((request) => request.grantId === staleGrant.grantId),
     true
   );
 });

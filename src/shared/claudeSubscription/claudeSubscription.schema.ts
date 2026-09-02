@@ -57,12 +57,30 @@ export const claudeSubscriptionAccountViewSchema = z
   .object({
     id: claudeSubscriptionAccountIdSchema,
     label: claudeSubscriptionLabelSchema,
+    // Derived from the slot, never trusted from the registry — see
+    // docs/features/claude-subscription-account-slots.md.
+    directory: z.string().min(1).max(512).optional(),
     email: z.string().email().max(320).optional(),
     subscriptionType: z.enum(['pro', 'max', 'team', 'enterprise']),
     enabled: z.boolean(),
     status: claudeSubscriptionAccountStatusSchema,
     activeRequests: z.number().int().nonnegative(),
+    active: z.boolean().optional(),
     cooldownUntil: z.number().int().nonnegative().optional(),
+    usage: z
+      .object({
+        status: z.string().min(1).max(64).optional(),
+        window: z.string().min(1).max(64).optional(),
+        resetsAt: z.number().int().nonnegative().optional(),
+        usingOverage: z.boolean().optional(),
+        sessionUsedPercent: z.number().min(0).max(100).optional(),
+        weekUsedPercent: z.number().min(0).max(100).optional(),
+        sessionResetsAt: z.string().min(1).max(120).optional(),
+        weekResetsAt: z.string().min(1).max(120).optional(),
+        observedAt: z.number().int().nonnegative()
+      })
+      .strict()
+      .optional(),
     createdAt: z.string().datetime({ offset: true }),
     updatedAt: z.string().datetime({ offset: true })
   })
@@ -82,6 +100,7 @@ export const claudeSubscriptionAuthFlowViewSchema = z
     accountId: claudeSubscriptionAccountIdSchema,
     status: z.enum(['starting', 'browser_open', 'awaiting_code', 'saving']),
     canSubmitCode: z.boolean(),
+    codeAttempt: z.number().int().min(0),
     error: claudeSubscriptionOperationErrorSchema.optional()
   })
   .strict();
@@ -94,7 +113,23 @@ export const claudeSubscriptionSnapshotSchema = z
     secureStorageAvailable: z.boolean(),
     accounts: z.array(claudeSubscriptionAccountViewSchema),
     server: claudeSubscriptionServerViewSchema,
-    authFlow: claudeSubscriptionAuthFlowViewSchema.nullable()
+    authFlow: claudeSubscriptionAuthFlowViewSchema.nullable(),
+    codexUpstream: z
+      .object({
+        connected: z.boolean(),
+        models: z.array(z.string().min(1)),
+        accounts: z.array(
+          z
+            .object({
+              id: z.string().min(1).max(64),
+              label: z.string().min(1).max(64),
+              active: z.boolean(),
+              createdAt: z.string().min(1).max(64)
+            })
+            .strict()
+        )
+      })
+      .strict()
   })
   .strict();
 

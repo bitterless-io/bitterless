@@ -1,6 +1,6 @@
 # EyesOnAgents Global Title Search
 
-Status: restored with full-card results by task 067; owner verification pending
+Status: restored with full-card results, deterministic focus, and close reset; owner verification pending
 
 Tasks 031–033 first delivered this modal, task 055 retired it into a permanent Focus filter, and
 [eyes-on-agents-search-modal-067](../plan/tasks/eyes-on-agents-search-modal-067.md) restores it as
@@ -59,12 +59,14 @@ query: "ops git"
 - Each result renders the existing complete `ThreadCard`; provider, runtime/loading, unread state,
   latest question, time, folder, Open, and overflow actions stay identical to the board.
 - A single click selects a card. Enter and the card's existing Open affordances invoke the existing
-  `openThread(sessionKey)` path. Opening does not close the modal or clear its query, so repeated
-  task lookup remains available.
+  `openThread(sessionKey)` path. A successful Open closes the modal and clears its transient query
+  and selection. A failed or guarded Open leaves Search unchanged so the owner can retry.
 - Escape closes the modal and clears its renderer-only query and selection. No search state is
   persisted and no XPC, SQLite, App Server, or polling behavior is added.
 - The Focus board stays complete behind the modal. Its header contains only one Search button;
   there is no permanent title input or visible **Read all** action.
+- Vue component events must call the class-based EOA store through receiver-safe local wrappers;
+  passing a store method directly as an Arco model-update or click callback loses `this` at runtime.
 
 Delivery:
 [eyes-on-agents-global-title-search-031](../plan/tasks/eyes-on-agents-global-title-search-031.md),
@@ -73,4 +75,11 @@ superseded for empty-query and matching semantics by
 with result metadata refined by
 [eyes-on-agents-search-result-domain-033](../plan/tasks/eyes-on-agents-search-result-domain-033.md),
 and restored with the current full-card contract by
-[eyes-on-agents-search-modal-067](../plan/tasks/eyes-on-agents-search-modal-067.md).
+[eyes-on-agents-search-modal-067](../plan/tasks/eyes-on-agents-search-modal-067.md). The receiver
+regression found in that restoration is repaired by
+[eyes-on-agents-search-receiver-safety-069](../plan/tasks/eyes-on-agents-search-receiver-safety-069.md).
+The successful-Open lifecycle is refined by
+[eyes-on-agents-search-close-after-open-070](../plan/tasks/eyes-on-agents-search-close-after-open-070.md).
+Deterministic shortcut focus and close-path reset are tracked by
+[eyes-on-agents-search-shortcut-focus-reset-072](../plan/tasks/eyes-on-agents-search-shortcut-focus-reset-072.md),
+with [review 1](../plan/reviews/eyes-on-agents-search-shortcut-focus-reset-072-1.md) passed.

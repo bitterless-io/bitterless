@@ -129,5 +129,12 @@ assert(activityForTool('page_snapshot', {}).label === 'page_snapshot', 'tool act
 assert(activityForTool('ui_act', {}).phase === 'tool', 'ui_act should classify as a tool call')
 assert(activityForTool('run_skill_script', {}).phase === 'skill', 'skill-execution tools should classify as skill')
 assert(activityEndpoint('/api/patients/1234567890/detail?phone=081234567890') === '/api/patients/:id/detail?phone=<phone>', 'activityEndpoint should hide ids and query values directly')
+assert(activityEndpoint('/api/%E0%A4%A?token=secret') === '/api/:value?token=<token>', 'malformed path escapes must not expose the raw URL or its query value')
+assert(activityEndpoint('http://[broken?token=secret') === '/api', 'unparseable URLs must fall back without echoing their raw content')
+assert(activityEndpoint('file:///Users/ral/secret.txt?token=secret') === '/api', 'non-HTTP URLs must not expose local paths in API activity')
+const longActivity = activityForTool('browser_exec', {
+  commands_json: JSON.stringify([{ command: 'fetch', method: 'GET', url: `/api/${'segment/'.repeat(40)}?token=secret` }])
+})
+assert(longActivity.label.length <= 180 && !longActivity.label.includes('secret'), 'API activity labels should stay capped and hide query values')
 
 console.log('[check-agent-activity] ok')

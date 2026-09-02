@@ -5,6 +5,7 @@ import {
   ONLY_PREVIEW_FOCUS_PROJECT_EVENT,
   ONLY_PREVIEW_FOCUS_SEARCH_EVENT,
   ONLY_PREVIEW_GLOBAL_SEARCH_CONTEXT_CHANGED_EVENT,
+  ONLY_PREVIEW_GLOBAL_SEARCH_LAYOUT_EVENT,
   ONLY_PREVIEW_GLOBAL_SEARCH_REVEAL_DIRECTORY_EVENT,
   ONLY_PREVIEW_GLOBAL_SEARCH_VISIBILITY_EVENT,
   type OnlyPreviewGlobalSearchContextSnapshot,
@@ -12,7 +13,8 @@ import {
   type OnlyPreviewGlobalSearchDirectoryRevealAction,
   type OnlyPreviewGlobalSearchDirectoryRevealCompletion,
   type OnlyPreviewGlobalSearchDirectoryRevealRequest,
-  type OnlyPreviewGlobalSearchFocusOrigin
+  type OnlyPreviewGlobalSearchFocusOrigin,
+  type OnlyPreviewGlobalSearchLayout
 } from '@shared/onlypreview/onlyPreview.types';
 import type { OnlyPreviewHostCapability } from '@main/onlypreview/onlyPreviewHost.registry';
 
@@ -54,6 +56,22 @@ const sameRevealIdentity = (
   action.generation === completion.generation &&
   action.relativePath === completion.relativePath;
 
+const sameBounds = (left: Rectangle, right: Rectangle): boolean =>
+  left.x === right.x &&
+  left.y === right.y &&
+  left.width === right.width &&
+  left.height === right.height;
+
+const cloneLayout = (
+  layout: OnlyPreviewGlobalSearchLayout | null
+): OnlyPreviewGlobalSearchLayout | null =>
+  layout
+    ? {
+        viewBounds: { ...layout.viewBounds },
+        workspaceBounds: { ...layout.workspaceBounds }
+      }
+    : null;
+
 export class OnlyPreviewGlobalSearchViewService {
   private runtime: OnlyPreviewGlobalSearchViewRuntime | null = null;
   private view: WebContentsView | null = null;
@@ -62,7 +80,8 @@ export class OnlyPreviewGlobalSearchViewService {
   private context: OnlyPreviewGlobalSearchContextSnapshot = {
     revision: 0,
     active: false,
-    workspace: null
+    workspace: null,
+    layout: null
   };
   private pendingReveal: PendingDirectoryReveal | null = null;
 
@@ -84,7 +103,8 @@ export class OnlyPreviewGlobalSearchViewService {
     return {
       revision: this.context.revision,
       active: this.context.active,
-      workspace: this.context.workspace ? { ...this.context.workspace } : null
+      workspace: this.context.workspace ? { ...this.context.workspace } : null,
+      layout: cloneLayout(this.context.layout)
     };
   }
 
@@ -96,7 +116,8 @@ export class OnlyPreviewGlobalSearchViewService {
     this.context = {
       revision: this.context.revision + 1,
       active: this.context.active,
-      workspace: workspace ? { ...workspace } : null
+      workspace: workspace ? { ...workspace } : null,
+      layout: this.context.layout
     };
     runtime.broadcast(ONLY_PREVIEW_GLOBAL_SEARCH_CONTEXT_CHANGED_EVENT, {
       hostId: runtime.host.hostId,
@@ -105,11 +126,29 @@ export class OnlyPreviewGlobalSearchViewService {
     this.broadcastVisibility(runtime);
   }
 
-  updateBounds(hostToken: string, bounds: Rectangle): void {
-    this.requireRuntime(hostToken);
-    this.bounds = { ...bounds };
-    if (!this.context.active) return;
-    this.attachTopmost();
+  updateBounds(hostToken: string, viewBounds: Rectangle, workspaceBounds: Rectangle): void {
+    const runtime = this.requireRuntime(hostToken);
+    const layoutChanged =
+      !this.context.layout ||
+      !sameBounds(this.context.layout.viewBounds, viewBounds) ||
+      !sameBounds(this.context.layout.workspaceBounds, workspaceBounds);
+    this.bounds = { ...viewBounds };
+    if (layoutChanged) {
+      this.context = {
+        ...this.context,
+        revision: this.context.revision + 1,
+        layout: {
+          viewBounds: { ...viewBounds },
+          workspaceBounds: { ...workspaceBounds }
+        }
+      };
+      runtime.broadcast(ONLY_PREVIEW_GLOBAL_SEARCH_LAYOUT_EVENT, {
+        hostId: runtime.host.hostId,
+        revision: this.context.revision,
+        layout: cloneLayout(this.context.layout)
+      });
+    }
+    if (this.context.active) this.attachTopmost();
   }
 
   show(hostToken: string, origin: OnlyPreviewGlobalSearchFocusOrigin): WebContentsView | null {
@@ -220,7 +259,7 @@ export class OnlyPreviewGlobalSearchViewService {
     closeContentView(view);
     this.runtime = null;
     this.bounds = null;
-    this.context = { revision: 0, active: false, workspace: null };
+    this.context = { revision: 0, active: false, workspace: null, layout: null };
   }
 
   private ensureView(): WebContentsView | null {

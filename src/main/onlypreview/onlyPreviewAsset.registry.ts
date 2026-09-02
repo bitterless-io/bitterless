@@ -1,13 +1,13 @@
-import type { ReadStream } from 'node:fs';
-import type { FileHandle } from 'node:fs/promises';
-import { pipeline, Readable, Transform } from 'node:stream';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { net } from 'electron';
+import { fileSearchWindowService } from '@main/fileSearch/fileSearchWindow.service';
 import { OnlyPreviewContractError } from '@shared/onlypreview/onlyPreview.contract';
 import { ONLY_PREVIEW_SCHEME } from '@shared/onlypreview/onlyPreview.types';
-import type { OpenedOnlyPreviewFile } from './onlyPreviewWorkspace.registry';
+import type {
+  OnlyPreviewPreviewReadChunkResult,
+  OnlyPreviewPreviewReadPreparedSelection,
+  OnlyPreviewPreviewReadSource
+} from '@shared/onlypreview/onlyPreviewPreviewReadRuntime.types';
 import { onlyPreviewHostRegistry, type OnlyPreviewHostRegistry } from './onlyPreviewHost.registry';
 import {
   onlyPreviewWorkspaceRegistry,
@@ -26,33 +26,20 @@ interface AssetTokenRecord {
   hostToken: string;
   workspaceId: string;
   relativePath: string;
+  grantId: string;
   mimeType: string;
   selectionRevision: number;
   expectedSize: number;
-  expectedDeviceId: bigint;
-  expectedInode: bigint;
-  expectedModifiedTimeNanoseconds: bigint;
-  expectedRealPath: string;
   maxBytes: number;
   createdAt: number;
   lifetime: 'ttl' | 'selection';
-  delivery: OnlyPreviewAssetDelivery;
-  activeStreams: Set<ReadStream>;
+  activeSessions: Set<string>;
 }
-
-export type OnlyPreviewAssetDelivery = 'stream' | 'network';
 
 export interface OnlyPreviewAssetIssueOptions {
   selectionRevision: number;
   maxBytes: number;
   lifetime?: 'ttl' | 'selection';
-  /**
-   * `stream` reads the file in this process and keeps the byte-ceiling and streaming identity
-   * guards. `network` hands the admitted range to Chromium's network service instead, so no file
-   * byte passes through Main — used by the raw Chromium adapters, whose payloads are the large ones
-   * and whose renderer never sees the bytes as data.
-   */
-  delivery?: OnlyPreviewAssetDelivery;
 }
 
 const isAssetExpired = (asset: AssetTokenRecord): boolean =>
@@ -100,22 +87,20 @@ export const parseOnlyPreviewRange = (
   return { kind: 'range', range: { start, end } };
 };
 
-export const createOnlyPreviewFileResponse = async (params: {
+export const createOnlyPreviewReadResponse = async (params: {
   request: Request;
-  fileHandle: FileHandle;
+  grantId: string;
+  selectionRevision: number;
+  source: OnlyPreviewPreviewReadSource;
   fileSize: number;
   mimeType: string;
   maxBytes: number;
   responseHeaders?: Readonly<Record<string, string>>;
-  beforeStream?: (acceptedBytes: number) => boolean;
-  verifyAfterStream?: () => Promise<boolean>;
-  onStream?: (stream: ReadStream) => void;
+  onSession?: (sessionId: string) => void;
+  onSessionClosed?: (sessionId: string) => void;
+  isSessionLive?: (sessionId: string) => boolean;
 }): Promise<Response> => {
-  const closeHandle = async (): Promise<void> => {
-    await params.fileHandle.close().catch(() => undefined);
-  };
   if (params.request.method !== 'GET' && params.request.method !== 'HEAD') {
-    await closeHandle();
     return new Response(null, { status: 405, headers: { Allow: 'GET, HEAD' } });
   }
   if (
@@ -123,10 +108,8 @@ export const createOnlyPreviewFileResponse = async (params: {
     params.maxBytes < 0 ||
     params.fileSize > params.maxBytes
   ) {
-    await closeHandle();
     return new Response(null, { status: 413 });
   }
-
   const parsedRange = parseOnlyPreviewRange(params.request.headers.get('range'), params.fileSize);
   const baseHeaders = {
     'Accept-Ranges': 'bytes',
@@ -137,7 +120,6 @@ export const createOnlyPreviewFileResponse = async (params: {
     ...params.responseHeaders
   };
   if (parsedRange.kind === 'invalid') {
-    await closeHandle();
     return new Response(null, {
       status: 416,
       headers: {
@@ -147,11 +129,10 @@ export const createOnlyPreviewFileResponse = async (params: {
       }
     });
   }
-
   const range =
     parsedRange.kind === 'range'
       ? parsedRange.range
-      : { start: 0, end: Math.max(0, params.fileSize - 1) };
+      : { start: 0, end: params.fileSize === 0 ? -1 : params.fileSize - 1 };
   const contentLength = params.fileSize === 0 ? 0 : range.end - range.start + 1;
   const headers: Record<string, string> = {
     ...baseHeaders,
@@ -160,141 +141,98 @@ export const createOnlyPreviewFileResponse = async (params: {
   if (parsedRange.kind === 'range') {
     headers['Content-Range'] = `bytes ${range.start}-${range.end}/${params.fileSize}`;
   }
+
+  const sessionId = randomUUID();
+  const identity = {
+    grantId: params.grantId,
+    selectionRevision: params.selectionRevision,
+    sessionId
+  };
+  let closed = false;
+  const close = (): void => {
+    if (closed) return;
+    closed = true;
+    params.request.signal.removeEventListener('abort', abort);
+    params.onSessionClosed?.(sessionId);
+  };
+  const cancel = (): void => {
+    close();
+    void fileSearchWindowService.cancelPreviewRead(identity).catch(() => undefined);
+  };
+  const abort = (): void => cancel();
+  const isLive = (): boolean =>
+    !closed && !params.request.signal.aborted && (params.isSessionLive?.(sessionId) ?? true);
+
+  params.onSession?.(sessionId);
+  params.request.signal.addEventListener('abort', abort, { once: true });
+  if (!isLive()) {
+    cancel();
+    throw new OnlyPreviewContractError('OPERATION_FAILED', 'Preview Read was cancelled.');
+  }
+
+  const opened = await fileSearchWindowService
+    .openPreviewRead({
+      ...identity,
+      method: params.request.method,
+      source: params.source,
+      start: range.start,
+      end: range.end
+    })
+    .catch((error) => {
+      cancel();
+      throw error;
+    });
+  if (!isLive()) {
+    cancel();
+    throw new OnlyPreviewContractError('OPERATION_FAILED', 'Preview Read was cancelled.');
+  }
+  if (opened.totalBytes !== params.fileSize) {
+    cancel();
+    throw new OnlyPreviewContractError(
+      'PROTOCOL_ERROR',
+      'Preview Read source length changed before delivery.'
+    );
+  }
   if (params.request.method === 'HEAD' || params.fileSize === 0) {
-    await closeHandle();
+    close();
     return new Response(null, {
       status: parsedRange.kind === 'range' ? 206 : 200,
       headers
     });
   }
-  if (params.beforeStream && !params.beforeStream(contentLength)) {
-    await closeHandle();
-    return new Response(null, { status: 429 });
-  }
 
-  const nodeStream = params.fileHandle.createReadStream({
-    start: range.start,
-    end: range.end,
-    autoClose: false,
-    signal: params.request.signal
-  });
-  params.onStream?.(nodeStream);
-  let streamedBytes = 0;
-  const boundedStream = new Transform({
-    transform(chunk: Buffer | string, encoding, callback) {
-      const chunkBytes = Buffer.isBuffer(chunk)
-        ? chunk.byteLength
-        : Buffer.byteLength(chunk, encoding);
-      streamedBytes += chunkBytes;
-      if (streamedBytes > contentLength || streamedBytes > params.maxBytes) {
-        callback(new Error('OnlyPreview asset stream exceeded its admitted byte range.'));
-        return;
+  let offset = range.start;
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        if (params.request.signal.aborted) {
+          cancel();
+          controller.error(new Error('Preview Read was aborted.'));
+          return;
+        }
+        const chunk: OnlyPreviewPreviewReadChunkResult =
+          await fileSearchWindowService.readNextPreviewChunk({ ...identity, offset });
+        if (!isLive()) {
+          cancel();
+          controller.error(new Error('Preview Read was cancelled.'));
+          return;
+        }
+        controller.enqueue(new Uint8Array(chunk.bytes));
+        offset += chunk.bytes.byteLength;
+        if (chunk.eof) {
+          close();
+          controller.close();
+        }
+      } catch (error) {
+        cancel();
+        controller.error(error);
       }
-      callback(null, chunk);
     },
-    flush(callback) {
-      if (streamedBytes !== contentLength) {
-        callback(new Error('OnlyPreview asset stream ended before its admitted byte range.'));
-        return;
-      }
-      if (!params.verifyAfterStream) {
-        callback();
-        return;
-      }
-      void params.verifyAfterStream().then(
-        (valid) =>
-          callback(
-            valid
-              ? undefined
-              : new Error('OnlyPreview asset identity changed while it was streaming.')
-          ),
-        (error: unknown) =>
-          callback(error instanceof Error ? error : new Error('Asset verification failed.'))
-      );
+    cancel() {
+      cancel();
     }
   });
-  pipeline(nodeStream, boundedStream, () => {
-    // Pipeline consumes source errors and propagates revoke/overflow teardown to the response body.
-    void closeHandle();
-  });
-  const body = Readable.toWeb(boundedStream) as unknown as BodyInit;
   return new Response(body, {
-    status: parsedRange.kind === 'range' ? 206 : 200,
-    headers
-  });
-};
-
-/**
- * Same admitted-range contract as `createOnlyPreviewFileResponse`, with Chromium's network service
- * — not this process — reading the file. `net.fetch` honours `Range` at the byte level but answers
- * `200` with no range headers, so the `206`/`Content-Range`/`Content-Length` contract is synthesized
- * from the already-verified file identity. The byte-counting ceiling and the streaming re-`stat` are
- * unavailable here by construction; identity is instead re-verified per request before the fetch.
- */
-export const createOnlyPreviewNetworkFileResponse = async (params: {
-  request: Request;
-  realPath: string;
-  fileSize: number;
-  mimeType: string;
-  maxBytes: number;
-  responseHeaders?: Readonly<Record<string, string>>;
-}): Promise<Response> => {
-  if (params.request.method !== 'GET' && params.request.method !== 'HEAD') {
-    return new Response(null, { status: 405, headers: { Allow: 'GET, HEAD' } });
-  }
-  if (
-    !Number.isSafeInteger(params.maxBytes) ||
-    params.maxBytes < 0 ||
-    params.fileSize > params.maxBytes
-  ) {
-    return new Response(null, { status: 413 });
-  }
-
-  const parsedRange = parseOnlyPreviewRange(params.request.headers.get('range'), params.fileSize);
-  const baseHeaders = {
-    'Accept-Ranges': 'bytes',
-    'Content-Type': params.mimeType,
-    'Cache-Control': 'no-store',
-    'X-Content-Type-Options': 'nosniff',
-    'X-DNS-Prefetch-Control': 'off',
-    ...params.responseHeaders
-  };
-  if (parsedRange.kind === 'invalid') {
-    return new Response(null, {
-      status: 416,
-      headers: {
-        ...baseHeaders,
-        'Content-Range': `bytes */${params.fileSize}`,
-        'Content-Length': '0'
-      }
-    });
-  }
-
-  const range =
-    parsedRange.kind === 'range'
-      ? parsedRange.range
-      : { start: 0, end: Math.max(0, params.fileSize - 1) };
-  const contentLength = params.fileSize === 0 ? 0 : range.end - range.start + 1;
-  const headers: Record<string, string> = {
-    ...baseHeaders,
-    'Content-Length': String(contentLength)
-  };
-  if (parsedRange.kind === 'range') {
-    headers['Content-Range'] = `bytes ${range.start}-${range.end}/${params.fileSize}`;
-  }
-  if (params.request.method === 'HEAD' || params.fileSize === 0) {
-    return new Response(null, {
-      status: parsedRange.kind === 'range' ? 206 : 200,
-      headers
-    });
-  }
-
-  const upstream = await net.fetch(pathToFileURL(params.realPath).toString(), {
-    headers: { Range: `bytes=${range.start}-${range.end}` },
-    bypassCustomProtocolHandlers: true
-  });
-  if (!upstream.ok || !upstream.body) return new Response(null, { status: 502 });
-  return new Response(upstream.body, {
     status: parsedRange.kind === 'range' ? 206 : 200,
     headers
   });
@@ -305,32 +243,32 @@ export class OnlyPreviewAssetRegistry {
 
   constructor(
     private readonly hosts: OnlyPreviewHostRegistry,
-    private readonly workspaces: OnlyPreviewWorkspaceRegistry
+    workspaces: OnlyPreviewWorkspaceRegistry
   ) {
     hosts.onRevoke((host) => this.revokeHost(host.hostToken));
     workspaces.onRevoke((workspace) => this.revokeWorkspace(workspace.workspaceId));
   }
 
   issue(
-    file: OpenedOnlyPreviewFile,
+    hostToken: string,
+    selection: OnlyPreviewPreviewReadPreparedSelection,
     mimeType: string,
     options: OnlyPreviewAssetIssueOptions
   ): string {
+    this.hosts.require(hostToken, ['content']);
     if (
       !Number.isSafeInteger(options.selectionRevision) ||
       options.selectionRevision < 1 ||
+      options.selectionRevision !== selection.selectionRevision ||
       !Number.isSafeInteger(options.maxBytes) ||
       options.maxBytes < 0 ||
       (options.lifetime !== undefined &&
         options.lifetime !== 'ttl' &&
-        options.lifetime !== 'selection') ||
-      (options.delivery !== undefined &&
-        options.delivery !== 'stream' &&
-        options.delivery !== 'network')
+        options.lifetime !== 'selection')
     ) {
       throw new OnlyPreviewContractError('INVALID_INPUT', 'Asset byte ceiling is invalid.');
     }
-    if (file.size > options.maxBytes) {
+    if (selection.descriptor.size > options.maxBytes) {
       throw new OnlyPreviewContractError(
         'PROTOCOL_ERROR',
         'The selected file exceeds the bounded preview size.'
@@ -344,23 +282,19 @@ export class OnlyPreviewAssetRegistry {
     const token = randomBytes(32).toString('hex');
     this.assets.set(token, {
       token,
-      hostToken: file.host.hostToken,
-      workspaceId: file.workspace.workspaceId,
-      relativePath: file.relativePath,
+      hostToken,
+      workspaceId: selection.workspaceId,
+      relativePath: selection.relativePath,
+      grantId: selection.grantId,
       mimeType,
       selectionRevision: options.selectionRevision,
-      expectedSize: file.size,
-      expectedDeviceId: file.deviceId,
-      expectedInode: file.inode,
-      expectedModifiedTimeNanoseconds: file.modifiedTimeNanoseconds,
-      expectedRealPath: file.realPath,
+      expectedSize: selection.descriptor.size,
       maxBytes: options.maxBytes,
       createdAt: Date.now(),
       lifetime: options.lifetime ?? 'ttl',
-      delivery: options.delivery ?? 'stream',
-      activeStreams: new Set()
+      activeSessions: new Set()
     });
-    return `${ONLY_PREVIEW_SCHEME}://asset/${token}/${encodeURIComponent(basename(file.relativePath))}`;
+    return `${ONLY_PREVIEW_SCHEME}://asset/${token}/${encodeURIComponent(basename(selection.relativePath))}`;
   }
 
   async respond(request: Request): Promise<Response> {
@@ -386,8 +320,7 @@ export class OnlyPreviewAssetRegistry {
     ) {
       return new Response(null, { status: 404 });
     }
-    const token = rawMatch[1];
-    const asset = this.assets.get(token);
+    const asset = this.assets.get(rawMatch[1]);
     let displayName: string;
     try {
       displayName = decodeURIComponent(rawMatch[2]);
@@ -401,100 +334,29 @@ export class OnlyPreviewAssetRegistry {
     ) {
       return new Response(null, { status: 404 });
     }
-    if (isAssetExpired(asset)) {
-      this.revokeToken(token);
+    if (isAssetExpired(asset) || !this.hosts.isLive(asset.hostToken)) {
+      this.revokeToken(asset.token);
       return new Response(null, { status: 404 });
     }
-    if (!this.hosts.isLive(asset.hostToken)) {
-      this.revokeToken(token);
-      return new Response(null, { status: 404 });
-    }
-    let file: Awaited<ReturnType<OnlyPreviewWorkspaceRegistry['openFile']>> | null = null;
     try {
-      file = await this.workspaces.openFile(asset.hostToken, {
-        workspaceId: asset.workspaceId,
-        relativePath: asset.relativePath
-      });
-      if (
-        this.assets.get(token) !== asset ||
-        !this.hosts.isLive(asset.hostToken) ||
-        isAssetExpired(asset)
-      ) {
-        await file.fileHandle.close().catch(() => undefined);
-        return new Response(null, { status: 404 });
-      }
-      if (
-        file.size !== asset.expectedSize ||
-        file.deviceId !== asset.expectedDeviceId ||
-        file.inode !== asset.expectedInode ||
-        file.modifiedTimeNanoseconds !== asset.expectedModifiedTimeNanoseconds ||
-        file.realPath !== asset.expectedRealPath
-      ) {
-        await file.fileHandle.close().catch(() => undefined);
-        return new Response(null, { status: 409 });
-      }
-      if (file.size > asset.maxBytes) {
-        await file.fileHandle.close().catch(() => undefined);
-        return new Response(null, { status: 413 });
-      }
-      if (asset.delivery === 'network') {
-        // The handle only proved this request's identity; the bytes never enter this process.
-        const realPath = file.realPath;
-        await file.fileHandle.close().catch(() => undefined);
-        file = null;
-        return await createOnlyPreviewNetworkFileResponse({
-          request,
-          realPath,
-          fileSize: asset.expectedSize,
-          mimeType: asset.mimeType,
-          maxBytes: asset.maxBytes,
-          responseHeaders: ASSET_FETCH_RESPONSE_HEADERS
-        });
-      }
-      return await createOnlyPreviewFileResponse({
+      return await createOnlyPreviewReadResponse({
         request,
-        fileHandle: file.fileHandle,
-        fileSize: file.size,
+        grantId: asset.grantId,
+        selectionRevision: asset.selectionRevision,
+        source: { kind: 'selection' },
+        fileSize: asset.expectedSize,
         mimeType: asset.mimeType,
         maxBytes: asset.maxBytes,
         responseHeaders: ASSET_FETCH_RESPONSE_HEADERS,
-        verifyAfterStream: async () => {
-          const streamedStat = await file.fileHandle.stat({ bigint: true });
-          if (
-            streamedStat.size !== BigInt(asset.expectedSize) ||
-            streamedStat.dev !== asset.expectedDeviceId ||
-            streamedStat.ino !== asset.expectedInode ||
-            streamedStat.mtimeNs !== asset.expectedModifiedTimeNanoseconds ||
-            this.assets.get(token) !== asset ||
-            !this.hosts.isLive(asset.hostToken)
-          ) {
-            return false;
-          }
-          const current = await this.workspaces.openFile(asset.hostToken, {
-            workspaceId: asset.workspaceId,
-            relativePath: asset.relativePath
-          });
-          try {
-            return (
-              current.size === asset.expectedSize &&
-              current.deviceId === asset.expectedDeviceId &&
-              current.inode === asset.expectedInode &&
-              current.modifiedTimeNanoseconds === asset.expectedModifiedTimeNanoseconds &&
-              current.realPath === asset.expectedRealPath &&
-              this.assets.get(token) === asset &&
-              this.hosts.isLive(asset.hostToken)
-            );
-          } finally {
-            await current.fileHandle.close().catch(() => undefined);
-          }
-        },
-        onStream: (stream) => {
-          asset.activeStreams.add(stream);
-          stream.once('close', () => asset.activeStreams.delete(stream));
-        }
+        onSession: (sessionId) => asset.activeSessions.add(sessionId),
+        onSessionClosed: (sessionId) => asset.activeSessions.delete(sessionId),
+        isSessionLive: (sessionId) =>
+          this.assets.get(asset.token) === asset &&
+          asset.activeSessions.has(sessionId) &&
+          !isAssetExpired(asset) &&
+          this.hosts.isLive(asset.hostToken)
       });
     } catch {
-      await file?.fileHandle.close().catch(() => undefined);
       return new Response(null, { status: 404 });
     }
   }
@@ -538,8 +400,16 @@ export class OnlyPreviewAssetRegistry {
     const asset = this.assets.get(token);
     if (!asset) return;
     this.assets.delete(token);
-    for (const stream of asset.activeStreams) stream.destroy();
-    asset.activeStreams.clear();
+    for (const sessionId of asset.activeSessions) {
+      void fileSearchWindowService
+        .cancelPreviewRead({
+          grantId: asset.grantId,
+          selectionRevision: asset.selectionRevision,
+          sessionId
+        })
+        .catch(() => undefined);
+    }
+    asset.activeSessions.clear();
   }
 }
 

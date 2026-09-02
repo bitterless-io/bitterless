@@ -128,7 +128,8 @@ same modal as the header button:
 | `Escape`, Close, or mask | close the modal and clear query/selection |
 | typing | search titles inside the modal; the Focus board remains complete |
 | Up / Down | wrap through results and scroll the selected card into view |
-| Enter | open the selected task through its existing provider path; keep the modal open |
+| Enter | open the selected task through its existing provider path; close Search after success |
+| double-click or card-menu Open | open that task; close Search after success |
 
 The popup is contained by `.eyes-on-agents__main`. Its input stays fixed above a separately
 scrolling result region, and the complete modal is bounded by the current viewport. An empty,
@@ -148,7 +149,9 @@ Matching keeps the stronger token semantics delivered by
 Every result directly renders the normal `ThreadCard`, so provider, title, loader, unread dot,
 latest question, time, folder, Open, overflow actions, and accessibility remain identical to the
 board. The first result is selected; selection is retained by provider-qualified `sessionKey`, a
-single click selects, and Up/Down wrap. Enter and card Open use the existing `openThread` path.
+single click selects, and Up/Down wrap. Enter, double-click, and card-menu Open use the existing
+`openThread` path. Search closes and clears its transient query/selection only after that path
+succeeds; an unavailable, already-opening, or failed Open preserves the current Search state.
 
 ### Typing is decoupled from filtering
 
@@ -184,16 +187,37 @@ The card has one status slot and one menu:
   `unknown`. Spinner and dot are mutually exclusive there, so the card never grows a second status
   region and an active row never shows the dot. Covering `unknown` is deliberate: such a row is
   promoted to the unread tier, so it must be able to explain its own position.
-- **Overflow menu** (`…`, always present):
+- **Card menu** — the `…` button is always present and remains the keyboard-accessible trigger.
+  Right-clicking anywhere on the card opens the exact same menu at the pointer. The popup teleports
+  to the renderer body so card/list overflow cannot clip it; Arco fits it inside the viewport,
+  placing it mainly to the right of a left-edge pointer, mainly to the left of a right-edge pointer,
+  and above the pointer when there is not enough room below. Opening either trigger closes the
+  other popup, and scrolling closes a pointer-anchored menu.
+  Menu contents are:
   1. **Open in Codex** / **Open in Claude** — named for the row's provider, with a quiet
      `(double click)` / `（双击）` hint, because double-click and `Enter` do the same thing. Omitted for
      a Claude row with no trusted Desktop route.
   2. **Mark as read** / **Mark as unread** — labelled from the row's stored unread flag.
   3. **Copy session path** — copies the session JSONL's absolute path to the clipboard, for Claude
      rows with a known transcript. Codex rows have no discovered session file, so the item is absent.
+  4. **Archive** — last and visually separated, shown only for Codex. It invokes the provider's
+     `thread/archive` request and removes the card only after provider success. Claude does not show
+     this item because neither Claude Code nor Claude Hooks exposes a supported archive mutation;
+     Bitterless never writes Claude Desktop's private metadata to imitate one.
 - There is no icon-only Open button. Double-click, `Enter`, and the menu item all run the same
   `openThread` path, so read acknowledgement, `last_opened_*` evidence, and the on-Open status sync
   are unchanged.
+
+```text
+left-edge right-click                  right-edge right-click
+× ┌ Card menu ───────────┐             ┌ Card menu ───────────┐ ×
+  │ Open / read / copy   │             │ Open / read / copy   │
+  │ ──────────────────── │             │ ──────────────────── │
+  │ Archive (Codex only) │             │ Archive (Codex only) │
+  └──────────────────────┘             └──────────────────────┘
+
+near bottom: the same complete menu flips above × instead of clipping.
+```
 
 Manual read state is an acknowledgement, not a lock: it writes only the unread flag — never
 `last_opened_*`, runtime evidence, or archive state — and a later accepted Hook/App Server
@@ -203,7 +227,7 @@ only becomes visible once the row settles.
 Otherwise cards are unchanged except for Domain affordances:
 
 - the `Move to Domain` group is removed from the overflow menu, together with card drag-and-drop;
-- the overflow control is always present, because the read-state item always applies;
+- the `…` control is always present, because the read-state item always applies;
 - `eyes-on-agents-hide-unavailable-claude-open-044`'s unread affordance now needs no fallback: with
   the dot in the title slot, a row with neither Open nor Preview still shows its unread attention.
 
@@ -246,8 +270,9 @@ labels are all untouched.
   close and clear it.
 - Token matching behaves as specified without narrowing Focus, and every result reuses the normal
   `ThreadCard` with a selected state.
-- Up/Down wrap; Enter flushes the current draft and opens the selected provider-qualified session
-  without closing the modal.
+- Up/Down wrap; Enter flushes the current draft and opens the selected provider-qualified session.
+  A successful Enter, card double-click, or card-menu Open closes Search; unsuccessful Open keeps
+  the query and selection available for retry.
 - Typing writes only the draft; the throttled trailing commit leaves modal results matching the
   last keystroke, and closing mid-throttle cannot resurrect a stale query.
 - Repeated reads of the Focus list for one snapshot reuse the same sorted array, and a renamed thread

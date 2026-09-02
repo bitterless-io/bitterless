@@ -13,6 +13,10 @@ export interface AgentToolSpec {
   name: string
   description: string
   params: AgentToolParamSpec[]
+  /** Optional per-tool wall clock override for long bounded operations. */
+  timeoutMs?: number
+  /** Short action phrase appended to timeout guidance. */
+  timeoutHint?: string
   /** Runs the underlying coach tool; returns an observation string for the agent. */
   execute: (args: Record<string, unknown>) => Promise<string>
 }
@@ -70,6 +74,8 @@ export interface AgentRuntimeSession {
   subscribe: (listener: (event: AgentRuntimeEvent) => void) => undefined | (() => void)
   prompt: (message: AgentRuntimePrompt) => Promise<unknown>
   abort: () => Promise<void>
+  /** Optional capability used only to steer an already-running runtime turn safely. */
+  readonly isStreaming?: boolean
 }
 
 export interface AgentRuntimeAdapter {

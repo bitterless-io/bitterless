@@ -2279,6 +2279,54 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     });
   }
 
+  async archiveThread(params: {
+    sessionKey: EyesOnAgentsSessionKey;
+  }): Promise<EyesOnAgentsSnapshot> {
+    const sessionKey = parseEyesOnAgentsSessionKey(params?.sessionKey);
+    if (sessionKey.startsWith('claude:')) {
+      throw new Error('Only Codex tasks can be archived');
+    }
+    const stored = (await this.dependencies.repository.getSnapshot()).threads.find(
+      (thread) => thread.sessionKey === sessionKey && thread.provider === 'codex'
+    );
+    if (!stored) throw new Error('Thread was not found');
+    const threadId = parseEyesOnAgentsUuid(stored.threadId);
+
+    this.foregroundAppServerOperationPending += 1;
+    try {
+      if (this.appServerTeardownPromise) {
+        await this.appServerTeardownPromise;
+        throw new Error('Codex archive was cancelled by a connection change');
+      }
+      await this.joinBackgroundRefresh();
+      const intentVersion = this.appServerLifecycleVersion;
+      await this.attemptInstalledObservationActive();
+      let providerArchived = false;
+      await this.runAppServerOperation(intentVersion, async (context) => {
+        if (!await this.ensureAppServerConnected(context)) {
+          throw new Error('Codex archive was cancelled by a connection change');
+        }
+        if (!this.isAppServerActive(context)) {
+          throw new Error('Codex archive was cancelled by a connection change');
+        }
+        await this.dependencies.appServer.archiveThread(threadId);
+        providerArchived = true;
+        await this.dependencies.repository.setThreadArchived({
+          threadId,
+          archived: true,
+          observedAt: this.now()
+        });
+        this.notify();
+      });
+      if (!providerArchived) {
+        throw new Error('Codex archive was cancelled by a connection change');
+      }
+      return await this.getSnapshot();
+    } finally {
+      this.foregroundAppServerOperationPending -= 1;
+    }
+  }
+
   async previewThread(params: { sessionKey: EyesOnAgentsSessionKey }): Promise<void> {
     const sessionKey = parseEyesOnAgentsSessionKey(params?.sessionKey);
     if (!sessionKey.startsWith('claude:')) throw new Error('Only Claude transcripts can be previewed');

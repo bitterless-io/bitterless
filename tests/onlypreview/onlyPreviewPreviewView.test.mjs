@@ -15,49 +15,21 @@ import {
   withFakeTimeouts
 } from './onlyPreviewPreviewRegionTest.helper.mjs';
 
-test('Vue text reads require the exact runtime, revision, file ref, and adapter and reject late bodies', async () => {
+test('Vue Preview View exposes no legacy whole-text read and delegates text bytes to Preview Read', () => {
   const { service } = createHarness();
-  service.updateBounds(host.hostToken, bounds);
-  state.describe = async () => descriptorFor('notes/readme.md', 'text');
-  await service.present(host.hostToken, fileRef('notes/readme.md'));
-  const vue = acknowledgeCurrentVue(service);
-  const current = service.snapshot(host.hostToken);
-  const request = {
-    previewRuntimeToken: vue.previewRuntimeToken,
-    selectionRevision: current.selectionRevision,
-    ...current.fileRef,
-    adapterId: 'markdown-dom'
-  };
+  const region = source('src/main/onlypreview/views/onlyPreviewPreviewRegion.service.ts');
+  const viewService = source('src/main/onlypreview/views/onlyPreviewPreviewView.service.ts');
+  const readBroker = source('src/main/onlypreview/views/onlyPreviewPreviewReadBroker.service.ts');
 
-  assert.equal((await service.readText(host.hostToken, request)).text, 'markdown-dom');
-  assert.equal(state.textReadCalls.length, 1);
-  for (const forged of [
-    { ...request, previewRuntimeToken: 'forged-runtime-token' },
-    { ...request, selectionRevision: request.selectionRevision + 1 },
-    { ...request, relativePath: 'other.md' },
-    { ...request, adapterId: 'monaco' }
-  ]) {
-    await assert.rejects(
-      service.readText(host.hostToken, forged),
-      (error) => error.code === 'INVALID_INPUT' || error.code === 'HOST_ROLE_DENIED'
-    );
-  }
-  assert.equal(state.textReadCalls.length, 1);
-
-  const pending = deferred();
-  state.readText = async () => await pending.promise;
-  const staleRead = service.readText(host.hostToken, request);
-  await tick();
-  state.describe = async () => descriptorFor('next.md', 'text');
-  await service.present(host.hostToken, fileRef('next.md'));
-  pending.resolve({
-    workspaceId: 'workspace-id',
-    relativePath: 'notes/readme.md',
-    text: 'stale',
-    encoding: 'utf-8',
-    size: 5
-  });
-  await assert.rejects(staleRead, (error) => error.code === 'INVALID_INPUT');
+  assert.equal(typeof service.readText, 'undefined');
+  assert.doesNotMatch(viewService, /\breadText\s*\(/);
+  assert.doesNotMatch(region, /onlyPreviewClassifierService\.readText/);
+  assert.match(region, /this\.viewService\.getPreviewReadBrokerCapability\(\)/);
+  assert.match(region, /this\.readBroker\.setPreviewAuthority\(brokerCapability, prepared\)/);
+  assert.match(readBroker, /async openCurrentPreviewText\(/);
+  assert.match(readBroker, /fileSearchWindowService\.openPreviewRead\(\{/);
+  assert.match(readBroker, /async readCurrentPreviewTextChunk\(/);
+  assert.match(readBroker, /fileSearchWindowService\.readNextPreviewChunk\(\{/);
 });
 
 test('Chrome setup failure revokes authority and falls back to a truthful Vue error', async () => {
@@ -290,7 +262,7 @@ test('Vue bundle load failure publishes unavailable without an automatic recreat
   assert.equal(children.has(state.vueViews[1]), true);
 });
 
-test('PDF readiness waits for the viewer document frame and reports a truthful timeout', async () => {
+test('PDF readiness requires the exact document-frame finish event and reports a truthful timeout', async () => {
   await withFakeTimeouts(async (timers) => {
     const { service } = createHarness();
     service.updateBounds(host.hostToken, bounds);
@@ -298,33 +270,47 @@ test('PDF readiness waits for the viewer document frame and reports a truthful t
     await service.present(host.hostToken, fileRef('paper.pdf'));
     const chrome = state.chromeViews.at(-1);
     const navigationUrl = chrome.webContents.loadedUrls.at(-1);
+    const attachNotifications = state.activeViewAttachNotifications;
 
-    // A blank viewer still finishes loading, so the navigation alone must not publish ready.
+    // Main-frame completion and mere matching-frame existence cannot publish PDFium readiness.
     chrome.webContents.emit('did-finish-load');
     assert.equal(service.snapshot(host.hostToken).status, 'loading');
-
-    const runPendingPoll = () => {
-      const pending = timers.filter((timer) => timer.active).at(-1);
-      assert.ok(pending, 'a document-frame poll must be scheduled');
-      pending.active = false;
-      pending.callback(...pending.args);
-    };
-
-    runPendingPoll();
+    const documentFrame = chrome.webContents.addSubframe(navigationUrl);
     assert.equal(service.snapshot(host.hostToken).status, 'loading');
 
-    chrome.webContents.addSubframe(
+    const foreignFrame = chrome.webContents.addSubframe(
       'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html'
     );
-    runPendingPoll();
+    chrome.webContents.emit(
+      'did-frame-finish-load',
+      {},
+      true,
+      documentFrame.processId,
+      documentFrame.routingId
+    );
+    chrome.webContents.emit(
+      'did-frame-finish-load',
+      {},
+      false,
+      foreignFrame.processId,
+      foreignFrame.routingId
+    );
     assert.equal(service.snapshot(host.hostToken).status, 'loading');
 
-    chrome.webContents.addSubframe(navigationUrl);
-    runPendingPoll();
+    chrome.webContents.emit(
+      'did-frame-finish-load',
+      {},
+      false,
+      documentFrame.processId,
+      documentFrame.routingId
+    );
     const ready = service.snapshot(host.hostToken);
     assert.equal(ready.status, 'ready');
     assert.equal(ready.adapterId, 'chromium-pdf');
     assert.equal(ready.error, null);
+    assert.equal(state.activeViewAttachNotifications, attachNotifications + 1);
+    assert.equal(chrome.webContents.listenerCount('did-frame-finish-load'), 0);
+    assert.equal(timers.filter((timer) => timer.active).length, 0);
   });
 
   await withFakeTimeouts(async (timers) => {
@@ -338,18 +324,18 @@ test('PDF readiness waits for the viewer document frame and reports a truthful t
       'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html'
     );
 
-    for (let attempt = 0; attempt < 80; attempt += 1) {
-      const pending = timers.filter((timer) => timer.active).at(-1);
-      if (!pending) break;
-      pending.active = false;
-      pending.callback(...pending.args);
-    }
+    const pending = timers.find((timer) => timer.active);
+    assert.ok(pending, 'a bounded document-frame deadline must be scheduled');
+    assert.equal(pending.delay, 8_000);
+    pending.active = false;
+    pending.callback(...pending.args);
 
     const snapshot = service.snapshot(host.hostToken);
     assert.equal(snapshot.status, 'unavailable');
     assert.equal(snapshot.surface, 'vue');
     assert.equal(snapshot.error.code, 'PDF_VIEWER_UNAVAILABLE');
     assert.equal(chrome.webContents.destroyed, true);
+    assert.equal(chrome.webContents.listenerCount('did-frame-finish-load'), 0);
   });
 });
 

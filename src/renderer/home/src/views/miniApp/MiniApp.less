@@ -13,9 +13,24 @@
 
 .mini-app-page__card {
   width: 320px;
+  height: 184px;
+  display: flex;
+  flex-direction: column;
   border-radius: 8px;
   border: 1px solid oklch(0.85 0 0);
   background: oklch(1 0 0);
+}
+
+.mini-app-page__card > .arco-card-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.mini-app-page__card .arco-card-actions {
+  flex-shrink: 0;
+  margin-top: auto;
 }
 
 .mini-app-page__card-title {
@@ -31,10 +46,17 @@
 }
 
 .mini-app-page__card-content {
+  flex: 1;
+  min-height: 0;
   padding: 8px 0;
 }
 
 .mini-app-page__card-subtitle {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
   color: oklch(0.5 0 0);
   font-size: 14px;
   line-height: 1.5;

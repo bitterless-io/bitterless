@@ -341,16 +341,6 @@
         {{ formatOnlyPreviewBytes(onlyPreviewShellStore.selectedEntry.size) }}
       </span>
     </footer>
-
-    <button
-      v-if="onlyPreviewGlobalSearchVisibilityStore.active"
-      name="onlypreview__globalSearchScrim"
-      class="onlypreview-shell__global-search-scrim"
-      type="button"
-      tabindex="-1"
-      :aria-label="onlyPreviewI18n.globalSearch.dismiss"
-      @click="dismissOnlyPreviewGlobalSearch"
-    ></button>
   </div>
 </template>
 
@@ -376,8 +366,7 @@ import { formatOnlyPreviewBytes, interpolateOnlyPreview } from '../../common/onl
 import { onlyPreviewEnv } from '../../common/contextBridge/onlyPreviewEnv.bridge';
 import { onlyPreviewI18n } from '../../common/onlyPreviewI18n';
 import PreviewToolbar from './components/PreviewToolbar/PreviewToolbar.vue';
-import { dismissOnlyPreviewGlobalSearch } from './onlyPreviewGlobalSearchDismiss.service';
-import { onlyPreviewGlobalSearchVisibilityStore } from './onlyPreviewGlobalSearchVisibility.store';
+import { onlyPreviewProjectWidthPersistence } from './onlyPreviewProjectWidthPersistence.service';
 import { onlyPreviewShellStore } from './onlyPreviewShell.store';
 
 const previewHostRef = ref<HTMLElement | null>(null);
@@ -426,6 +415,8 @@ const handleMenuBarDoubleClick = (event: MouseEvent): void => {
   void onlyPreviewShellStore.toggleMaximizeWindow();
 };
 
+const flushProjectWidth = (): void => onlyPreviewProjectWidthPersistence.flush();
+
 const startProjectResize = (event: PointerEvent): void => {
   const target = event.currentTarget as HTMLElement;
   target.setPointerCapture(event.pointerId);
@@ -437,6 +428,7 @@ const startProjectResize = (event: PointerEvent): void => {
     target.removeEventListener('pointermove', move);
     target.removeEventListener('pointerup', stop);
     target.removeEventListener('pointercancel', stop);
+    flushProjectWidth();
   };
   target.addEventListener('pointermove', move);
   target.addEventListener('pointerup', stop);
@@ -527,6 +519,7 @@ const handleShellKeydown = (event: KeyboardEvent): void => {
 };
 
 onMounted(() => {
+  window.addEventListener('pagehide', flushProjectWidth);
   void onlyPreviewShellStore.initialize();
 });
 
@@ -550,6 +543,8 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  window.removeEventListener('pagehide', flushProjectWidth);
+  flushProjectWidth();
   resizeObserver?.disconnect();
   if (resizeFrame) cancelAnimationFrame(resizeFrame);
 });

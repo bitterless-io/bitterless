@@ -711,6 +711,149 @@ try {
   assert.deepEqual(openedUrls, [`codex://threads/${THREAD_ID}`]);
   assert.deepEqual(marked, [{ sessionKey: SESSION_KEY, openedAt: 456 }]);
 
+  const CLAUDE_ARCHIVE_ID = '22222222-2222-4222-8222-222222222222';
+  const makeArchiveHarness = ({ providerError = null, archiveProvider } = {}) => {
+    const order = [];
+    const transitions = [];
+    let broadcasts = 0;
+    let threads = [{
+      sessionKey: SESSION_KEY,
+      provider: 'codex',
+      threadId: THREAD_ID,
+      runtimeState: 'idle',
+      statusSource: 'discovery',
+      statusObservedAt: null,
+      isUnread: true
+    }, {
+      sessionKey: `claude:${CLAUDE_ARCHIVE_ID}`,
+      provider: 'claude',
+      threadId: CLAUDE_ARCHIVE_ID,
+      runtimeState: 'idle',
+      statusSource: 'discovery',
+      statusObservedAt: null,
+      isUnread: false
+    }];
+    const archiveAppServer = {
+      ...appServer,
+      getStatus: (autoConnectEnabled) => ({
+        state: 'connected',
+        lastSyncedAt: null,
+        error: null,
+        autoConnectEnabled
+      }),
+      isConnected: () => true,
+      archiveThread: archiveProvider ?? (async (threadId) => {
+        order.push(`provider:${threadId}`);
+        if (providerError) throw providerError;
+      })
+    };
+    const service = new EyesOnAgentsService({
+      repository: {
+        ...repository,
+        getSnapshot: async () => ({ domains: [], threads }),
+        setThreadArchived: async (params) => {
+          order.push('repository');
+          transitions.push(params);
+          if (params.archived) {
+            threads = threads.filter((thread) => thread.threadId !== params.threadId);
+          }
+        }
+      },
+      settings,
+      appServer: archiveAppServer,
+      desktopBridge,
+      bridgeListener,
+      openExternal: async () => undefined,
+      broadcastChanged: () => { broadcasts += 1; },
+      now: () => 987
+    });
+    return {
+      service,
+      appServer: archiveAppServer,
+      order,
+      transitions,
+      get broadcasts() { return broadcasts; },
+      get threads() { return threads; }
+    };
+  };
+
+  const archiveActionHarness = makeArchiveHarness();
+  const archivedSnapshot = await archiveActionHarness.service.archiveThread({
+    sessionKey: SESSION_KEY
+  });
+  assert.deepEqual(
+    archiveActionHarness.order,
+    [`provider:${THREAD_ID}`, 'repository'],
+    'archive must commit at the provider before writing the local projection'
+  );
+  assert.deepEqual(archiveActionHarness.transitions, [{
+    threadId: THREAD_ID,
+    archived: true,
+    observedAt: 987
+  }]);
+  assert.equal(archivedSnapshot.threads.some((thread) => thread.sessionKey === SESSION_KEY), false);
+  assert.equal(archiveActionHarness.broadcasts, 1);
+
+  await assert.rejects(
+    () => archiveActionHarness.service.archiveThread({
+      sessionKey: `claude:${CLAUDE_ARCHIVE_ID}`
+    }),
+    /Only Codex tasks can be archived/
+  );
+  await assert.rejects(
+    () => archiveActionHarness.service.archiveThread({
+      sessionKey: 'codex:33333333-3333-4333-8333-333333333333'
+    }),
+    /Thread was not found/
+  );
+
+  const rejectedArchiveHarness = makeArchiveHarness({
+    providerError: new Error('provider archive rejected')
+  });
+  await assert.rejects(
+    () => rejectedArchiveHarness.service.archiveThread({ sessionKey: SESSION_KEY }),
+    /provider archive rejected/
+  );
+  assert.deepEqual(rejectedArchiveHarness.transitions, []);
+  assert.equal(
+    rejectedArchiveHarness.threads.some((thread) => thread.sessionKey === SESSION_KEY),
+    true,
+    'provider failure must keep the visible local row'
+  );
+  assert.equal(rejectedArchiveHarness.broadcasts, 0);
+
+  let rejectPendingArchive;
+  const pendingProviderArchive = new Promise((resolvePromise, rejectPromise) => {
+    rejectPendingArchive = rejectPromise;
+  });
+  let markArchiveStarted;
+  const archiveStarted = new Promise((resolvePromise) => {
+    markArchiveStarted = resolvePromise;
+  });
+  const lifecycleArchiveHarness = makeArchiveHarness({
+    archiveProvider: async () => {
+      lifecycleArchiveHarness.order.push('provider');
+      markArchiveStarted();
+      await pendingProviderArchive;
+    }
+  });
+  lifecycleArchiveHarness.appServer.disconnect = async () => {
+    rejectPendingArchive(new Error('provider disconnected'));
+  };
+  const pendingArchive = lifecycleArchiveHarness.service.archiveThread({
+    sessionKey: SESSION_KEY
+  });
+  await archiveStarted;
+  const archivePendingDisconnect = lifecycleArchiveHarness.service.disconnectAppServer();
+  await assert.rejects(pendingArchive, /provider disconnected/);
+  await archivePendingDisconnect;
+  assert.deepEqual(lifecycleArchiveHarness.transitions, []);
+  assert.equal(
+    lifecycleArchiveHarness.threads.some((thread) => thread.sessionKey === SESSION_KEY),
+    true,
+    'lifecycle cancellation before acknowledgement must not write local archive state'
+  );
+
   const markAllReadCalls = [];
   let markAllReadChanged = false;
   let readSnapshotRevision = 0;

@@ -7,15 +7,22 @@
       "type": "message",
       "role": "user",
       "content": [
-        { "type": "input_text", "text": "Say hello." },
+        {
+          "type": "input_text",
+          "text": "Say hello."
+        },
         {
           "type": "input_image",
           "detail": "high",
-          "image_url": "data:image/png;base64,NOT_FORWARDED"
+          "image_url": "data:image/png;base64,RklYVFVSRS1JTUFHRQ=="
         }
       ]
     }
   ],
-  "tools": [{ "type": "web_search_preview" }],
+  "tools": [
+    {
+      "type": "web_search_preview"
+    }
+  ],
   "prompt_cache_key": "conversation-text-1"
 }

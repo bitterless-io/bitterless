@@ -90,3 +90,14 @@ export const resolveTranslatorLogFile = (
   profile.viteMode === 'debug'
     ? join(paths.userData, 'logs', 'translator', 'translator.log')
     : join(paths.libraryDefaultDir, 'translator', 'translator.log');
+
+export const resolveOnlyPreviewLogFile = (
+  profile: ApplicationRuntimeProfile,
+  paths: {
+    userData: string;
+    libraryDefaultDir: string;
+  }
+): string =>
+  profile.viteMode === 'debug'
+    ? join(paths.userData, 'logs', 'onlypreview', 'onlypreview.log')
+    : join(paths.libraryDefaultDir, 'onlypreview', 'onlypreview.log');

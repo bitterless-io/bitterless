@@ -42,10 +42,6 @@ await build({
       projectRoot,
       'src/renderer/onlypreview/preview/src/onlyPreviewImage.service.ts'
     ),
-    imageViewport: join(
-      projectRoot,
-      'src/renderer/onlypreview/preview/src/onlyPreviewImageViewport.service.ts'
-    ),
     mediaSession: join(
       projectRoot,
       'src/renderer/onlypreview/preview/src/onlyPreviewMedia.service.ts'
@@ -108,6 +104,8 @@ await build({
                   preview: {
                     imageViewport: 'Image preview viewport',
                     imageFit: 'Fit image',
+                    imageRotateLeft: 'Rotate left',
+                    imageRotateRight: 'Rotate right',
                     imageZoomOut: 'Zoom out',
                     imageZoomIn: 'Zoom in',
                     imageReset: 'Reset image',
@@ -126,6 +124,8 @@ await build({
               const icon = { render: () => h('svg', { 'aria-hidden': 'true' }) };
               export const IconAspectRatio = icon;
               export const IconMusic = icon;
+              export const IconRotate = icon;
+              export const IconRotateClockwise = icon;
               export const IconZoomIn = icon;
               export const IconZoomOut = icon;
               export const IconZoomReset = icon;
@@ -138,7 +138,6 @@ await build({
 });
 
 const imageSession = await import(pathToFileURL(join(buildRoot, 'imageSession.mjs')).href);
-const imageViewport = await import(pathToFileURL(join(buildRoot, 'imageViewport.mjs')).href);
 const mediaSession = await import(pathToFileURL(join(buildRoot, 'mediaSession.mjs')).href);
 
 after(() => rmSync(buildRoot, { recursive: true, force: true }));
@@ -177,122 +176,6 @@ const mediaResponse = (size, overrides = {}) =>
       ...(overrides.acceptRanges === false ? {} : { 'Accept-Ranges': 'bytes' })
     }
   });
-
-test('image viewport keeps true fit, bounded manual zoom, exact reset, and centered pan clamps', () => {
-  const landscape = {
-    naturalWidth: 1_000,
-    naturalHeight: 500,
-    viewportWidth: 400,
-    viewportHeight: 300
-  };
-  assert.equal(imageViewport.getOnlyPreviewImageFitScale(landscape), 0.4);
-  assert.equal(imageViewport.getOnlyPreviewImageMinimumScale(landscape), 0.1);
-  assert.deepEqual(imageViewport.fitOnlyPreviewImageViewport(landscape), {
-    mode: 'fit',
-    scale: 0.4,
-    offsetX: 0,
-    offsetY: 0
-  });
-  assert.deepEqual(imageViewport.getOnlyPreviewImagePanBounds(landscape, 1), {
-    maxX: 300,
-    maxY: 100
-  });
-  assert.deepEqual(
-    imageViewport.panOnlyPreviewImageViewport(
-      { mode: 'manual', scale: 1, offsetX: 0, offsetY: 0 },
-      999,
-      -999,
-      landscape
-    ),
-    { mode: 'manual', scale: 1, offsetX: 300, offsetY: -100 }
-  );
-
-  const huge = {
-    naturalWidth: 100_000,
-    naturalHeight: 50_000,
-    viewportWidth: 100,
-    viewportHeight: 100
-  };
-  assert.equal(imageViewport.getOnlyPreviewImageFitScale(huge), 0.001);
-  assert.equal(imageViewport.getOnlyPreviewImageMinimumScale(huge), 0.001);
-  assert.equal(imageViewport.fitOnlyPreviewImageViewport(huge).scale, 0.001);
-  assert.equal(
-    imageViewport.zoomOnlyPreviewImageViewport(
-      imageViewport.fitOnlyPreviewImageViewport(huge),
-      'out',
-      huge
-    ).scale,
-    0.001
-  );
-
-  assert.equal(
-    imageViewport.zoomOnlyPreviewImageViewport(
-      { mode: 'manual', scale: 1, offsetX: 0, offsetY: 0 },
-      'in',
-      landscape
-    ).scale,
-    1.25
-  );
-  let maximum = { mode: 'manual', scale: 8, offsetX: 0, offsetY: 0 };
-  maximum = imageViewport.zoomOnlyPreviewImageViewport(maximum, 'in', landscape);
-  assert.equal(maximum.scale, 8);
-  assert.equal(
-    imageViewport.zoomOnlyPreviewImageViewport(
-      { mode: 'manual', scale: 0.1, offsetX: 0, offsetY: 0 },
-      'out',
-      landscape
-    ).scale,
-    0.1
-  );
-  assert.deepEqual(imageViewport.resetOnlyPreviewImageViewport(landscape), {
-    mode: 'manual',
-    scale: 1,
-    offsetX: 0,
-    offsetY: 0
-  });
-
-  assert.deepEqual(
-    imageViewport.resizeOnlyPreviewImageViewport(
-      { mode: 'fit', scale: 0.4, offsetX: 20, offsetY: 20 },
-      { ...landscape, viewportWidth: 2_000, viewportHeight: 1_000 }
-    ),
-    { mode: 'fit', scale: 1, offsetX: 0, offsetY: 0 }
-  );
-  assert.deepEqual(
-    imageViewport.resizeOnlyPreviewImageViewport(
-      { mode: 'manual', scale: 1, offsetX: 200, offsetY: 80 },
-      { ...landscape, viewportWidth: 2_000 }
-    ),
-    { mode: 'manual', scale: 1, offsetX: 0, offsetY: 80 }
-  );
-  assert.deepEqual(
-    imageViewport.resizeOnlyPreviewImageViewport(
-      { mode: 'manual', scale: 1, offsetX: 500, offsetY: -500 },
-      landscape
-    ),
-    { mode: 'manual', scale: 1, offsetX: 300, offsetY: -100 }
-  );
-  assert.deepEqual(imageViewport.getOnlyPreviewImagePanBounds(landscape, 0.1), {
-    maxX: 0,
-    maxY: 0
-  });
-  assert.equal(imageViewport.getOnlyPreviewImageFitScale({ ...landscape, viewportWidth: 0 }), 1);
-
-  for (const invalid of [
-    { ...landscape, naturalWidth: 0 },
-    { ...landscape, naturalHeight: Number.NaN },
-    { ...landscape, viewportWidth: -1 }
-  ]) {
-    assert.throws(
-      () => imageViewport.getOnlyPreviewImageFitScale(invalid),
-      assertCode('INVALID_INPUT')
-    );
-  }
-  assert.throws(
-    () => imageViewport.clampOnlyPreviewImageScale(Number.NaN),
-    assertCode('INVALID_INPUT')
-  );
-});
 
 test('image session verifies the complete body, decodes off-DOM, and revokes each URL once', async () => {
   const bytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47]);
@@ -549,13 +432,15 @@ test('ImagePreview mounts only decoded content and enforces accessible fit, zoom
 
     FakeResizeObserver.instances.at(-1).emit(400, 300);
     await runtime.nextTick();
-    assert.equal(image.style.transform, 'scale(0.4)');
+    assert.equal(image.style.transform, 'rotate(0deg) scale(0.4)');
     const controls = [...root.querySelectorAll('.onlypreview-image__control')];
-    assert.equal(controls.length, 4);
+    assert.equal(controls.length, 6);
     assert.deepEqual(
       controls.map((button) => [button.getAttribute('aria-label'), button.getAttribute('title')]),
       [
         ['Fit image', 'Fit image'],
+        ['Rotate left', 'Rotate left'],
+        ['Rotate right', 'Rotate right'],
         ['Zoom out', 'Zoom out'],
         ['Zoom in', 'Zoom in'],
         ['Reset image', 'Reset image']
@@ -564,16 +449,22 @@ test('ImagePreview mounts only decoded content and enforces accessible fit, zoom
     assert.equal(controls[0].disabled, true);
     controls[2].click();
     await runtime.nextTick();
-    assert.equal(image.style.transform, 'scale(0.5)');
-    controls[3].click();
+    assert.equal(image.style.transform, 'rotate(90deg) scale(0.3)');
+    controls[1].click();
     await runtime.nextTick();
-    assert.equal(image.style.transform, 'scale(1)');
+    assert.equal(image.style.transform, 'rotate(0deg) scale(0.4)');
+    controls[4].click();
+    await runtime.nextTick();
+    assert.equal(image.style.transform, 'rotate(0deg) scale(0.5)');
+    controls[5].click();
+    await runtime.nextTick();
+    assert.equal(image.style.transform, 'rotate(0deg) scale(1)');
 
     const captured = new Set();
     viewport.setPointerCapture = (pointerId) => captured.add(pointerId);
     viewport.hasPointerCapture = (pointerId) => captured.has(pointerId);
     viewport.releasePointerCapture = (pointerId) => captured.delete(pointerId);
-    controls[2].dispatchEvent(createPointerEvent(environment.dom, 'pointerdown'));
+    controls[4].dispatchEvent(createPointerEvent(environment.dom, 'pointerdown'));
     assert.equal(captured.size, 0, 'toolbar pointerdown must not start a canvas drag');
     viewport.dispatchEvent(
       createPointerEvent(environment.dom, 'pointerdown', { clientX: 10, clientY: 10 })
@@ -595,7 +486,7 @@ test('ImagePreview mounts only decoded content and enforces accessible fit, zoom
     assert.equal(viewport.classList.contains('onlypreview-image--dragging'), false);
 
     const beforeButtonArrow = origin.style.transform;
-    controls[2].dispatchEvent(
+    controls[4].dispatchEvent(
       new environment.dom.window.KeyboardEvent('keydown', { bubbles: true, key: 'ArrowLeft' })
     );
     assert.equal(origin.style.transform, beforeButtonArrow);

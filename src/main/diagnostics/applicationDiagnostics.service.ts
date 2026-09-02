@@ -30,6 +30,7 @@ const environmentSource = (): Record<string, string | undefined> => ({
   ...process.env,
   VITE_ENV: import.meta.env.VITE_ENV,
   VITE_MODE: import.meta.env.VITE_MODE,
+  VITE_RELEASE_CHANNEL: import.meta.env.VITE_RELEASE_CHANNEL,
   VITE_BITTERLESS_CORE_URL: import.meta.env.VITE_BITTERLESS_CORE_URL
 });
 
@@ -41,6 +42,7 @@ const getDirectoryCatalog = (): ApplicationDiagnosticDirectoryEntry[] => {
     directoryEntry('userData', userData),
     directoryEntry('sessionData', app.getPath('sessionData')),
     directoryEntry('logs', log.directory),
+    directoryEntry('onlypreviewLogs', join(log.directory, 'onlypreview')),
     directoryEntry('cache', app.getPath('cache')),
     directoryEntry('crashDumps', app.getPath('crashDumps')),
     directoryEntry('temp', app.getPath('temp')),
@@ -73,7 +75,9 @@ class ApplicationDiagnosticsService {
       observedAt: Date.now(),
       runtime: {
         profile: profile.id,
+        appId: profile.appId,
         appName: profile.appName,
+        releaseChannel: profile.releaseChannel,
         viteEnv: profile.viteEnv,
         viteMode: profile.viteMode,
         packaged: app.isPackaged,

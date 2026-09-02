@@ -41,6 +41,9 @@ test('pins the official local viewer and license with a remote-free iframe-free 
   );
   assert.match(controller, /reportSurfaceReady\(reportingRevision\)/);
   assert.match(controller, /reportSurfaceError\([\s\S]*reportingRevision/);
+  assert.match(controller, /new AbortController\(\)/);
+  assert.match(controller, /mountAbortController\?\.abort\(\)/);
+  assert.match(controller, /signal: abortController\.signal/);
 
   const html = source('src/renderer/onlypreview/preview/index.html');
   assert.match(html, /frame-src 'none'/);
@@ -69,8 +72,8 @@ test('uses one typed size-policy dictionary with 10 MiB fallback and 20 MiB Draw
   const adapter = source('src/main/onlypreview/views/onlyPreviewPreviewAdapter.service.ts');
   assert.match(adapter, /descriptor\.kind === 'diagram'[\s\S]*adapterId: 'drawio-viewer'/);
   assert.match(adapter, /adapterId === 'drawio-viewer'/);
-  const region = source('src/main/onlypreview/views/onlyPreviewPreviewRegion.service.ts');
-  assert.match(region, /adapter\.adapterId === 'drawio-viewer'[\s\S]*getOnlyPreviewFileSizeLimit/);
+  const delivery = source('src/main/onlypreview/views/onlyPreviewSelectionDelivery.service.ts');
+  assert.match(delivery, /adapter\.adapterId === 'drawio-viewer'[\s\S]*getOnlyPreviewFileSizeLimit/);
 
   const registry = source('src/shared/onlypreview/onlyPreviewFind.registry.ts');
   assert.match(registry, /'drawio-viewer': \{ surface: 'vue', find: \{ mode: 'none' \} \}/);
@@ -83,8 +86,7 @@ test('lazy-loads every format SFC and loads the viewer only after bounded prefli
   for (const component of [
     'MarkdownPreview',
     'MonacoTextPreview',
-    'DocumentPreview',
-    'SheetPreview',
+    'OfficePreview',
     'DrawioPreview',
     'ImagePreview',
     'MediaPreview'

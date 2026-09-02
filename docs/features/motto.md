@@ -13,8 +13,8 @@ required.
 
 - Match Translator's compact embedded-app shell, the shared mini-app MenuBar effect, and the
   Bitterless Royal Blue system.
-- Spend visual emphasis on the reminder cards: calm white surfaces, one strong red rule paired with
-  the title, and a quieter muted-red subtitle.
+- Spend visual emphasis on the reminder cards: calm white surfaces, a strong red title, and a
+  quieter muted-red subtitle.
 - Keep management actions available but visually secondary.
 - Use shared renderer i18n and Arco controls. Use Tabler icons and shallow `motto` BEM classes.
 
@@ -25,14 +25,14 @@ required.
 | page surface    | `#F3F5FC` | quiet background around the list      |
 | card surface    | `#FFFFFF` | reminder card                         |
 | card border     | `#E2E4EB` | neutral card outline                  |
-| reminder strong | `#B42318` | card title and left rule              |
+| reminder strong | `#B42318` | card title                            |
 | reminder muted  | `#A65F59` | optional subtitle                     |
 | chrome          | `#4E5882` | MenuBar surface                       |
 | chrome line     | `#3D4666` | MenuBar bottom divider                |
 | chrome ink      | `#F6F7FC` | MenuBar identity, title, and Add icon |
 
-The title and left rule always use the same strong red. The subtitle uses only the muted red; red
-does not spread to the MenuBar, Add action, menus, modal, or page background.
+The title uses the strong red. The subtitle uses only the muted red; red does not spread to the
+MenuBar, Add action, menu, inline editor controls, or page background.
 
 ### MenuBar
 
@@ -53,11 +53,11 @@ maximize.
 │ ▤ Motto                                                 [＋] │  32px MenuBar
 ├──────────────────────────────────────────────────────────────┤
 │ ┌──────────────────────────────────────────────────────────┐ │
-│ │ Important title                                     […] │ │
+│ │ Important title                                  [⠿][…] │ │
 │ │ Supporting subtitle                                     │ │
 │ └──────────────────────────────────────────────────────────┘ │
 │ ┌──────────────────────────────────────────────────────────┐ │
-│ │ Another title                                       […] │ │
+│ │ Another title                                    [⠿][…] │ │
 │ │ Another supporting subtitle                             │ │
 │ └──────────────────────────────────────────────────────────┘ │
 │                                                              │
@@ -66,37 +66,41 @@ maximize.
 
 The MenuBar remains fixed. Its Add action is an icon-only plus button with no visible text, sized
 as the shared 27px light MenuBar control; the icon is centered horizontally and vertically inside
-the button, while localized `title` and `aria-label` text preserve its accessible name. The
-vertically stacked card region owns scrolling and keeps one column at every supported pane width.
+the button, while localized `title` and `aria-label` text preserve its accessible name. Clicking it
+adds one UI-only draft card at the end of the list and immediately focuses that card's Title editor.
+The vertically stacked card region owns scrolling and keeps one column at every supported pane
+width.
 
-## Editor Modal
+## Cards And Inline Editing
 
 ```text
-                  ┌────────────────────────────────────┐
-                  │ Add motto / Edit motto             │
-                  ├────────────────────────────────────┤
-                  │ Title                              │
-                  │ [                                  ]│
-                  │ Subtitle                           │
-                  │ [                                  ]│
-                  ├────────────────────────────────────┤
-                  │                  [Cancel] [Add/Save]│
-                  └────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│ [Title editor — focused after Add]                [⠿][…] │
+│ Add subtitle                                             │
+└──────────────────────────────────────────────────────────┘
 ```
 
-- Add opens an empty form and focuses Title.
-- Edit opens the selected card's current title and subtitle.
-- Title is required after trimming. Subtitle is optional for both Add and Edit and is stored as an
-  empty string when omitted.
-- Submit stays disabled until Title is non-empty.
-- Cancel, close, or `Esc` discards the draft.
-- Successful Add appends a card; successful Edit updates it in place.
+- Every card uses `8px` padding and has no colored left rule.
+- Title and Subtitle are separate keyboard-focusable text targets. Clicking either replaces that
+  text with its inline editor and focuses it. An empty Subtitle renders the localized Subtitle
+  placeholder so it remains directly editable.
+- In display mode, Title and Subtitle wrap naturally but are each clamped to at most two lines with
+  an ellipsis.
+- Title remains required after trimming. Subtitle remains optional and is stored as an empty string
+  when cleared.
+- `Enter` or blur commits a valid edit. `Esc` restores an existing value or discards a new draft.
+  An empty edited Title restores its previous value; an empty new Title discards the draft.
+- Add creates only a UI draft until a non-empty Title commits. A successful commit appends the new
+  item through the normal whole-array persistence path; a failed write leaves the draft active for
+  retry.
+- The Add/Edit modal is removed.
 
 ## Card Actions
 
-Each card has one top-right ellipsis button. It opens an Arco dropdown menu containing Edit and
-Delete. Edit opens the modal. Delete removes the card immediately and closes the menu; no
-confirmation dialog is added for this small local list.
+Each persisted card has a drag handle and a top-right ellipsis button. The ellipsis opens an Arco
+dropdown containing Delete only. Delete removes the card immediately and closes the menu; no
+confirmation dialog is added for this small local list. Dragging by the handle reorders cards; drag
+is disabled while an inline editor is active so text editing and reordering cannot compete.
 
 ## Persistence Contract
 
@@ -104,8 +108,10 @@ confirmation dialog is added for this small local list.
 - The stored value is one JSON array containing the complete ordered collection.
 - Each item has exactly `{ id, title, subtitle }`. `id` and `title` are non-empty strings after
   trimming, `subtitle` is a trimmed string that may be empty, and `id` is unique within the array.
-- Startup performs one whole-value read and validation. Add, edit, and delete each perform one
-  whole-array write after producing the next collection.
+- Startup performs one whole-value read and validation. Add, inline edit, delete, and reorder each
+  perform one whole-array write after producing the next collection.
+- Reorder preserves every item ID and field while changing array order only. The reactive list
+  changes only after the reordered whole array is written successfully.
 - A missing key loads the explicit empty collection.
 - Malformed or unavailable storage fails closed to an empty in-memory collection and shows a
   localized recovery alert. The invalid stored payload is not silently rewritten on load.
@@ -120,7 +126,9 @@ confirmation dialog is added for this small local list.
 | ------------- | --------------------------------------------------------------------------- |
 | empty         | centered invitation with an Add action                                      |
 | populated     | one vertical, scrollable card column                                        |
-| editing       | existing cards remain visible beneath the modal overlay                     |
+| editing       | one Title or Subtitle becomes an inline field; other cards remain visible   |
+| adding        | one unpersisted card draft appears last with its Title editor focused        |
+| dragging      | the dragged persisted card is visibly lifted; inline editing is unavailable |
 | storage error | localized alert above the card list; last safe in-memory collection remains |
 | constrained   | card text wraps, MenuBar actions remain reachable, list scrolls             |
 
@@ -128,13 +136,14 @@ confirmation dialog is added for this small local list.
 
 | Input            | Scope                  | Behavior                                        |
 | ---------------- | ---------------------- | ----------------------------------------------- |
-| click plus / Add | MenuBar / empty state  | open empty editor                               |
-| click ellipsis   | card                   | open Edit/Delete menu                           |
-| click Edit       | card menu              | open prefilled editor                           |
-| click Delete     | card menu              | persist removal immediately                     |
-| `Enter`          | single-line form input | follow normal form/modal submit behavior        |
-| `Esc`            | modal                  | close and discard draft                         |
-| `Tab`            | modal/menu             | move through controls using Arco focus behavior |
+| click plus / Add | MenuBar / empty state | append UI draft and focus its Title                 |
+| click text       | card Title/Subtitle   | replace that field with a focused inline editor     |
+| click ellipsis   | persisted card        | open the Delete menu                               |
+| click Delete     | card menu             | persist removal immediately                        |
+| drag handle      | persisted card        | persist and then display the reordered array        |
+| `Enter` / blur   | inline editor         | trim and commit; invalid Title restores/discards    |
+| `Esc`            | inline editor         | restore existing value or discard new draft         |
+| `Tab`            | card controls         | follow document order across text, drag, and menu    |
 
 ## Component Tree
 
@@ -146,9 +155,10 @@ Motto App
 ├─ storage alert (conditional)
 ├─ scrollable card list / empty state
 │  └─ motto card × N
-│     └─ ellipsis dropdown
-└─ add/edit modal
-   └─ title + subtitle form
+│     ├─ inline Title / Subtitle editors
+│     ├─ drag handle
+│     └─ Delete dropdown
+└─ pending add draft (conditional)
 ```
 
 ## Entry Points

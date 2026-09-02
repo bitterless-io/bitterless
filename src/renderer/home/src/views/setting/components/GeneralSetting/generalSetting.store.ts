@@ -4,7 +4,6 @@ import { createXpcRendererEmitter } from 'electron-xpc/renderer';
 import { settingEmitter } from '@/emitter/setting.emitter';
 import type { SearchEngineHandler } from '@preload/sqlite/handler/searchEngine.handler';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
-import { homeShellBridge } from '@renderer/common/homeShellBridge.client';
 import {
   getCurrentRendererLanguage,
   onRendererLanguageApplied,
@@ -27,21 +26,17 @@ class GeneralSettingState {
   chatMenuLoading = false;
   chatMenuSaving = false;
   loading = false;
-  loggingOut = false;
-  accountEmail = '';
   private chatMenuLoaded = false;
   private chatMenuLoadPromise: Promise<void> | null = null;
 
   async loadSettings(): Promise<void> {
     this.currentLanguage = getCurrentRendererLanguage();
 
-    const [searchEngine, , session] = await Promise.all([
+    const [searchEngine] = await Promise.all([
       searchEngineEmitter.getSearchEngine(),
-      this.loadChatMenuVisibility(),
-      homeShellBridge.getSessionSummary().catch(() => ({ email: '' })),
+      this.loadChatMenuVisibility()
     ]);
     this.currentSearchEngine = (searchEngine as SearchEngine) || 'baidu';
-    this.accountEmail = session.email;
   }
 
   async loadChatMenuVisibility(): Promise<void> {
@@ -117,20 +112,6 @@ class GeneralSettingState {
       this.loading = false;
     }
   }
-
-  async logout(): Promise<void> {
-    if (this.loggingOut) return;
-
-    this.loggingOut = true;
-    try {
-      await homeShellBridge.logout();
-    } catch (err) {
-      console.error('[GeneralSettingState] Failed to clean up after logout:', err);
-    } finally {
-      this.loggingOut = false;
-    }
-  }
-
 }
 
 export const generalSettingStore = reactive(new GeneralSettingState());

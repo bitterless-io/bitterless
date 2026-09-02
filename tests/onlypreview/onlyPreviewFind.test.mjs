@@ -293,6 +293,40 @@ test('Main keeps a query pending and dispatches it exactly once when the same se
   assert.equal(commandsFrom(broadcasts).length, 1);
 });
 
+test('a pending PDF query reaches Chromium exactly once after document readiness', () => {
+  const { service } = createFindServiceHarness();
+  const chromeContents = new FakeWebContents([73]);
+  service.bindWebContents('chrome', chromeContents, 1);
+  const loadingPdf = presentation({
+    adapterId: 'chromium-pdf',
+    status: 'loading',
+    surface: 'chrome'
+  });
+  service.reset(loadingPdf);
+  assert.equal(service.open(), true);
+  service.submit({
+    selectionRevision: 1,
+    surface: 'chrome',
+    query: 'invoice',
+    caseSensitive: false,
+    direction: 'forward',
+    findNext: true
+  });
+  assert.equal(chromeContents.findCalls.length, 0);
+
+  const readyPdf = presentation({ adapterId: 'chromium-pdf', surface: 'chrome' });
+  service.syncPresentation(readyPdf, { kind: 'complete' });
+  assert.deepEqual(chromeContents.findCalls, [
+    {
+      query: 'invoice',
+      options: { forward: true, findNext: true, matchCase: false }
+    }
+  ]);
+
+  service.syncPresentation(readyPdf, { kind: 'complete' });
+  assert.equal(chromeContents.findCalls.length, 1);
+});
+
 test('Main routes native find options and accepts only the live request, target generation, selection, and revision', () => {
   const { service } = createFindServiceHarness();
   const oldContents = new FakeWebContents([41]);

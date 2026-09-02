@@ -31,7 +31,7 @@
           :model-value="eyesOnAgentsStore.titleDraft"
           :placeholder="i18nHelper.eyesOnAgents.search.placeholder"
           :input-attrs="inputAttributes"
-          @update:model-value="eyesOnAgentsStore.setTitleDraft"
+          @update:model-value="handleTitleInput"
           @clear="handleQueryClear"
           @keydown="handleKeydown"
         >
@@ -116,8 +116,14 @@ const emptyMessage = computed(() =>
     ? i18nHelper.eyesOnAgents.search.empty
     : i18nHelper.eyesOnAgents.search.startTyping);
 
-const focusInput = async (): Promise<void> => {
+const focusInput = async (
+  lifecycleRevision = eyesOnAgentsStore.threadSearchRevision,
+): Promise<void> => {
   await nextTick();
+  if (
+    !eyesOnAgentsStore.threadSearchVisible
+    || lifecycleRevision !== eyesOnAgentsStore.threadSearchRevision
+  ) return;
   inputRef.value?.focus?.();
 };
 
@@ -133,8 +139,12 @@ const closeThreadSearch = (): void => {
   eyesOnAgentsStore.closeThreadSearch();
 };
 
+const handleTitleInput = (value: string): void => {
+  eyesOnAgentsStore.setTitleDraft(value);
+};
+
 const handleModalOpen = (): void => {
-  void focusInput();
+  void focusInput(eyesOnAgentsStore.threadSearchRevision);
   void scrollSelectedResultIntoView();
 };
 
@@ -178,6 +188,13 @@ watch(
   () => eyesOnAgentsStore.threadSearchSelectedSessionKey,
   () => {
     void scrollSelectedResultIntoView();
+  },
+);
+
+watch(
+  () => eyesOnAgentsStore.threadSearchVisible,
+  (visible) => {
+    if (visible) void focusInput(eyesOnAgentsStore.threadSearchRevision);
   },
 );
 </script>

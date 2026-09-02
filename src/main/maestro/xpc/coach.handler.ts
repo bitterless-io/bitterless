@@ -1,11 +1,17 @@
 import { XpcMainHandler } from 'electron-xpc/main'
 import { maestroWindowHelper } from '@maestro-main/windows/main/maestroWindow.controller'
 import { updateService } from '@maestro-main/update/update.service'
+import { taskRegistry } from '@maestro-main/tasks/taskRegistry.service'
+import type { MaestroTask } from '@maestro-shared/task.api'
 import type {
   AgentConversationContext,
   AgentCompactReply,
   AgentCompactRequest,
+  AgentMessageRequest,
   AgentReply,
+  AgentTurnClaimRequest,
+  AgentTurnClaimResult,
+  AgentTurnRecoverySnapshot,
   AudioScribeRequest,
   AudioScribeResult,
   AttachFileResult,
@@ -272,7 +278,19 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
     return await maestroWindowHelper.replayBrowserRequest(params)
   }
 
-  async sendAgentMessage(params: { message: string; sessionId?: string; context?: AgentConversationContext }): Promise<AgentReply> {
+  async claimAgentTurn(params: AgentTurnClaimRequest): Promise<AgentTurnClaimResult> {
+    return maestroWindowHelper.claimAgentTurn(params)
+  }
+
+  async getActiveAgentTurn(): Promise<AgentTurnRecoverySnapshot> {
+    return maestroWindowHelper.getActiveAgentTurn()
+  }
+
+  async ackAgentTurnFinished(params: { sessionId: string; turnId: string }): Promise<void> {
+    maestroWindowHelper.ackAgentTurnFinished(params)
+  }
+
+  async sendAgentMessage(params: AgentMessageRequest): Promise<AgentReply> {
     return await maestroWindowHelper.sendAgentMessage(params)
   }
 
@@ -296,7 +314,7 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
     return await maestroWindowHelper.resetDelegateConversation(params)
   }
 
-  async abortAgent(params?: { sessionId?: string }): Promise<void> {
+  async abortAgent(params: { sessionId: string; turnId: string }): Promise<void> {
     await maestroWindowHelper.abortAgent(params)
   }
 
@@ -370,6 +388,24 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
 
   async showFileInFolder(params: { path: string }): Promise<{ ok: boolean; path?: string; error?: string }> {
     return await maestroWindowHelper.showFileInFolder(params)
+  }
+
+  async fileThumbnail(params: { path: string }): Promise<{
+    ok: boolean
+    dataUrl?: string
+    width?: number
+    height?: number
+    error?: string
+  }> {
+    return await maestroWindowHelper.fileThumbnail(params)
+  }
+
+  async listTasks(): Promise<MaestroTask[]> {
+    return taskRegistry.list()
+  }
+
+  async respondTaskConfirm(params: { taskId: string; confirmId: string; confirm: boolean }): Promise<{ ok: boolean }> {
+    return taskRegistry.resolveConfirm(params)
   }
 
   async trainSkill(params: { skillId: string; guidance: string }): Promise<SkillCreateResult> {

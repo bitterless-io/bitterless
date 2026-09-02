@@ -1,5 +1,4 @@
-import { BrowserWindow, WebContentsView, app, dialog, shell } from 'electron'
-import type { MessageBoxOptions } from 'electron'
+import { BrowserWindow, WebContentsView, app, shell } from 'electron'
 import { xpcMain } from 'electron-xpc/main'
 import { join } from 'path'
 import { readFileSync } from 'fs'
@@ -18,6 +17,8 @@ import {
   type NetworkInterceptionRule
 } from '@maestro-main/capture/networkInterception'
 import type { PiToolSpec } from '@maestro-main/agent/BaseAgent'
+import { buildFileTools } from '@maestro-main/agent/tools/fileTools'
+import { buildArchiveTools } from '@maestro-main/agent/tools/archiveTools'
 import { MaestroAgent } from '@maestro-main/agent/MaestroAgent'
 import { CoachAgent } from '@maestro-main/agent/CoachAgent'
 import { DelegateAgent } from '@maestro-main/agent/DelegateAgent'
@@ -26,7 +27,6 @@ import {
   type MaestroAgentServiceState
 } from '@maestro-main/agent/maestroAgent.service'
 import {
-  broadcastAgentActivity,
   broadcastCodexDebug
 } from '@maestro-main/agent/runtime/agentBroadcast'
 import { BookingDemoService } from '@maestro-main/demo/bookingDemo.service'
@@ -39,6 +39,8 @@ import { getLogPaths } from '@maestro-main/logging/log.setup'
 import { CoachSettingsService } from '@maestro-main/settings/coachSettings.service'
 import { SkillGeneratorService } from '@maestro-main/skills/skillGenerator.service'
 import { SkillRegistryService } from '@maestro-main/skills/skillRegistry.service'
+import { taskRegistry } from '@maestro-main/tasks/taskRegistry.service'
+import { buildUnknownConfirmPayload } from '@maestro-main/drive/confirmPayload'
 import {
   SkillService,
   type SkillServiceState
@@ -74,6 +76,8 @@ import { iocHelper } from '@maestro-shared/iocHelper/ioc.helper'
 import type { LlmStoredTarget } from '@maestro-main/llm/llmModels'
 import {
   DEFAULT_COACH_START_URL,
+  MAESTRO_FORCE_PINNED_HOME_QUERY,
+  MAESTRO_FORCE_PINNED_HOME_QUERY_VALUE,
   MAESTRO_LOCAL_HOME_DISPLAY_URL,
   MAESTRO_HOME_READY_TOKEN_QUERY
 } from '@maestro-shared/coach.api'
@@ -83,7 +87,11 @@ import type {
   AgentCompactReply,
   AgentCompactRequest,
   AgentFileArtifact,
+  AgentMessageRequest,
   AgentReply,
+  AgentTurnClaimRequest,
+  AgentTurnClaimResult,
+  AgentTurnRecoverySnapshot,
   AudioScribeRequest,
   AudioScribeResult,
   AttachFileResult,
@@ -148,11 +156,19 @@ import type { SavedTab } from '@maestro-shared/tabs.api'
 import type { CaptureMode, TraceEvent } from '@maestro-shared/trace.types'
 import type { SkillRecipe } from '@maestro-main/skills/skillRecipe.types'
 import { maestroDataRoot } from '@maestro-main/data/maestroDataRoot'
+import type {
+  MaestroOpenBootTrace,
+  MaestroOpenStage
+} from '@maestro-main/diagnostics/maestroOpenDiagnostics.service'
+import {
+  fileThumbnail,
+  type ThumbnailResult
+} from '@maestro-main/files/thumbnail.service'
 
 // Initial geometry used for the very first frame, before the home renderer reports
-// the real placeholder rects (see setViewBounds). The 36px tab strip plus the unchanged
-// 48px address row total 84px; renderer measurements remain authoritative thereafter.
-const TOOLBAR_H = 84
+// the real placeholder rects (see setViewBounds). The 36px tab strip plus the compact
+// 42px address row total 78px; renderer measurements remain authoritative thereafter.
+const TOOLBAR_H = 78
 const SIDEBAR_W = 480
 
 @injectable()
@@ -227,6 +243,12 @@ class MaestroWindowController
   private llmApplied = false
   private settings: CoachSettingsService | null = null
   private demo: BookingDemoService | null = null
+  // Auth teardown may destroy this controller before the replacement Maestro is created. Keep a
+  // versioned, one-shot intent outside all window-scoped reset paths so a failed replacement boot
+  // retries on pinned Home instead of reviving a stale startup/last-active browser tab.
+  private forcePinnedHomeIntentVersion = 0
+  private activeBootForcePinnedHomeIntentVersion = 0
+  private openBootDiagnostics: MaestroOpenBootTrace | null = null
 
   get tabs(): OperationTab[] {
     return this.browserView.tabs
@@ -292,10 +314,15 @@ class MaestroWindowController
     this.tabsOpenedThisTurn = []
   }
 
-  private createHomeRendererReadyFence(): Promise<void> {
+  private createHomeRendererReadyFence(forcePinnedHome: boolean): Promise<void> {
     const token = randomUUID()
     this.homeRendererReadyToken = token
-    this.rendererQuery = { [MAESTRO_HOME_READY_TOKEN_QUERY]: token }
+    this.rendererQuery = {
+      [MAESTRO_HOME_READY_TOKEN_QUERY]: token,
+      ...(forcePinnedHome
+        ? { [MAESTRO_FORCE_PINNED_HOME_QUERY]: MAESTRO_FORCE_PINNED_HOME_QUERY_VALUE }
+        : {})
+    }
     this.homeRendererReady = new Promise<void>((resolve) => {
       this.resolveHomeRendererReady = resolve
     })
@@ -324,7 +351,58 @@ class MaestroWindowController
     return { accepted: true }
   }
 
+  async prepareForAuthShutdown(): Promise<void> {
+    this.forcePinnedHomeIntentVersion += 1
+    const pinnedHome = this.tabs.find((tab) => tab.kind === 'home' && tab.pinned)
+    try {
+      if (pinnedHome && this.activeTabId !== pinnedHome.id) {
+        await this.browserView.activateTab({ id: pinnedHome.id })
+      }
+    } catch (err) {
+      this.emit({ kind: 'error', msg: 'auth home activation: ' + (err as Error).message, ts: Date.now() })
+    }
+    // Workbench overlays the operation area. Hide it only after Home is active so teardown never
+    // reveals the previous browser tab between the Account action and window destruction.
+    try {
+      this.workbenchView.setVisible({ visible: false })
+    } catch (err) {
+      this.emit({ kind: 'error', msg: 'auth workbench hide: ' + (err as Error).message, ts: Date.now() })
+    }
+  }
+
+  markBootSuccessful(): void {
+    const intentVersion = this.activeBootForcePinnedHomeIntentVersion
+    if (intentVersion > 0 && this.forcePinnedHomeIntentVersion === intentVersion) {
+      this.forcePinnedHomeIntentVersion = 0
+    }
+    this.activeBootForcePinnedHomeIntentVersion = 0
+  }
+
+  setOpenBootDiagnostics(diagnostics: MaestroOpenBootTrace): void {
+    this.openBootDiagnostics = diagnostics
+  }
+
+  clearOpenBootDiagnostics(diagnostics: MaestroOpenBootTrace): void {
+    if (this.openBootDiagnostics === diagnostics) this.openBootDiagnostics = null
+  }
+
+  private traceOpenStage(
+    promise: Promise<void>,
+    diagnostics: MaestroOpenBootTrace | null,
+    stage: MaestroOpenStage,
+    startedAt: number | undefined
+  ): Promise<void> {
+    if (!diagnostics || startedAt === undefined) return promise
+    return promise.then(() => {
+      diagnostics.completeStage(stage, startedAt)
+    })
+  }
+
   create(): BrowserWindow {
+    const diagnostics = this.openBootDiagnostics
+    const forcePinnedHomeIntentVersion = this.forcePinnedHomeIntentVersion
+    const forcePinnedHome = forcePinnedHomeIntentVersion > 0
+    this.activeBootForcePinnedHomeIntentVersion = forcePinnedHomeIntentVersion
     this.agentService.activate()
     this.ensureServices()
     void this.agentService.loadHostToolPolicies()
@@ -336,29 +414,60 @@ class MaestroWindowController
     this.currentUrl = MAESTRO_LOCAL_HOME_DISPLAY_URL
 
     this.resetWindowScopedViews()
-    const homeMountedReady = this.createHomeRendererReadyFence()
+    const homeMountedStartedAt = diagnostics?.mark()
+    const homeMountedReady = this.createHomeRendererReadyFence(forcePinnedHome)
+    const shellStartedAt = diagnostics?.mark()
     const win = super.create()
+    const shellReady = this.traceOpenStage(
+      this.rendererReady,
+      diagnostics,
+      'shell',
+      shellStartedAt
+    )
+    const mountedReady = this.traceOpenStage(
+      homeMountedReady,
+      diagnostics,
+      'home-mount',
+      homeMountedStartedAt
+    )
 
     // First tab = bundled Bitterless Home (leftmost, non-closable, fixed title/favicon). It owns a
     // dedicated XPC-only preload and never participates in debugger/capture/replay.
     const operationView = this.browserView.createPinnedHomeTab()
-    const homeReady = Promise.all([this.rendererReady, homeMountedReady])
+    const homeReady = Promise.all([shellReady, mountedReady])
       .then(() => undefined)
       .catch((err) => {
         this.emit({ kind: 'error', msg: 'home load: ' + (err as Error).message, ts: Date.now() })
         throw err
       })
-    const workbenchReady = this.workbenchView.create()
+    const workbenchStartedAt = diagnostics?.mark()
+    const workbenchReady = this.traceOpenStage(
+      this.workbenchView.create(),
+      diagnostics,
+      'workbench',
+      workbenchStartedAt
+    )
     // Stay hidden until the local entry has painted. The white Layout placeholder covers the
     // operation area during this short load and prevents a pre-paint flash.
 
-    const controlReady = this.controlView.create()
+    const controlStartedAt = diagnostics?.mark()
+    const controlReady = this.traceOpenStage(
+      this.controlView.create(),
+      diagnostics,
+      'control',
+      controlStartedAt
+    )
 
     this.layout()
     win.on('resize', () => this.layout())
 
-    this.initialReady = this.browserView
-      .loadPinnedHomeTab()
+    const pinnedHomeStartedAt = diagnostics?.mark()
+    this.initialReady = this.traceOpenStage(
+      this.browserView.loadPinnedHomeTab(),
+      diagnostics,
+      'home-tab',
+      pinnedHomeStartedAt
+    )
       .catch((err) => {
         this.emit({ kind: 'error', msg: 'bundled Home load: ' + (err as Error).message, ts: Date.now() })
         throw err
@@ -368,9 +477,23 @@ class MaestroWindowController
           operationView.setVisible(true)
         }
       })
-      .then(() => this.browserView.openStartupTabIfNeeded())
+      .then(() => {
+        const startupTabStartedAt = diagnostics?.mark()
+        return this.traceOpenStage(
+          this.browserView.openStartupTabIfNeeded({ skipForThisBoot: forcePinnedHome }),
+          diagnostics,
+          'startup-tab',
+          startupTabStartedAt
+        )
+      })
     const operationReady = this.initialReady
-    this.initialReady = Promise.all([homeReady, controlReady, workbenchReady, operationReady]).then(() => undefined)
+    const allReadyStartedAt = diagnostics?.mark()
+    this.initialReady = this.traceOpenStage(
+      Promise.all([homeReady, controlReady, workbenchReady, operationReady]).then(() => undefined),
+      diagnostics,
+      'all-ready',
+      allReadyStartedAt
+    )
     // Pre-warm one spare view so warming a tab (new open / switching to a cold tab) is instant.
     void this.browserView.prewarmSpare()
     return win
@@ -784,6 +907,10 @@ class MaestroWindowController
     return await this.workspaceFile.showFileInFolder(params)
   }
 
+  async fileThumbnail(params: { path: string }): Promise<ThumbnailResult> {
+    return await fileThumbnail(params.path)
+  }
+
   syncWorkspaceFromContext(sessionKey: string, workspace?: WorkspaceRef): void {
     this.workspaceFile.syncWorkspaceFromContext(sessionKey, workspace)
   }
@@ -858,7 +985,19 @@ class MaestroWindowController
     return await this.skillService.replaySkill(params)
   }
 
-  async sendAgentMessage(params: { message: string; sessionId?: string; context?: AgentConversationContext }): Promise<AgentReply> {
+  claimAgentTurn(params: AgentTurnClaimRequest): AgentTurnClaimResult {
+    return this.agentService.claimAgentTurn(params)
+  }
+
+  getActiveAgentTurn(): AgentTurnRecoverySnapshot {
+    return this.agentService.getActiveAgentTurn()
+  }
+
+  ackAgentTurnFinished(params: { sessionId: string; turnId: string }): void {
+    this.agentService.ackAgentTurnFinished(params)
+  }
+
+  async sendAgentMessage(params: AgentMessageRequest): Promise<AgentReply> {
     return await this.agentService.sendAgentMessage(params)
   }
 
@@ -879,7 +1018,7 @@ class MaestroWindowController
   // Stop a chat channel's in-flight turn (the Stop button): aborts the live pi session so the
   // pending turn resolves with any partial output, then BaseAgent drops that session so aborted
   // output is not carried into later model context. No-op when idle / not yet created.
-  async abortAgent(params?: { sessionId?: string }): Promise<void> {
+  async abortAgent(params: { sessionId: string; turnId: string }): Promise<void> {
     await this.agentService.abortAgent(params)
   }
 
@@ -904,6 +1043,10 @@ class MaestroWindowController
 
   getLlmRuntimeTarget(): LlmStoredTarget {
     return this.agentService.getLlmRuntimeTarget()
+  }
+
+  hasActiveAgentTurn(): boolean {
+    return this.agentService.hasActiveAgentTurn()
   }
 
   resetLlmTurnState(): void {
@@ -981,84 +1124,8 @@ class MaestroWindowController
     const sessionKey = opts.sessionKey || 'default'
     return this.agentService.wrapHostTools('cowork', [
       this.agentService.buildHostToolCatalogTool('cowork'),
-      {
-        name: 'read_file',
-        description:
-          'Read a LOCAL file and get its content as text. Accepts an attached "@/absolute/path", any absolute path on the user’s machine, ' +
-          'or a path relative to the selected workspace (else the user’s home). ' +
-          'Supports PDF, Excel (xlsx/xlsm), Word (docx), and text/code/csv/json/markdown/html. ' +
-          'Text/code return with line numbers (use offset/limit to page through large files); ' +
-          'PDF returns page by page; Excel returns one markdown table per sheet. ' +
-          'The OS gates access: reading a protected folder (Desktop/Documents/Downloads) may trigger a macOS permission prompt — if it’s denied you’ll get an "authorize + retry" hint.',
-        params: [
-          { name: 'path', required: true, description: 'Attached @/abs/path, any absolute path, or a path relative to the workspace/home.' },
-          { name: 'offset', type: 'number', required: false, description: 'Text files only: 1-based start line (default 1).' },
-          { name: 'limit', type: 'number', required: false, description: 'Text files only: max lines to return (default 2000).' }
-        ],
-        execute: async (args) =>
-          this.toolReadFile(sessionKey, String(args.path ?? ''), {
-            offset: args.offset != null ? Number(args.offset) : undefined,
-            limit: args.limit != null ? Number(args.limit) : undefined
-          })
-      },
-      {
-        name: 'list_workspace_files',
-        description:
-          'List files/directories in a folder. The path may be ANY absolute directory on the user’s machine, or relative to the selected workspace; ' +
-          'empty means the workspace root (or the user’s home if no workspace is selected). Use this to browse the user’s directories before reading. ' +
-          'Common build/cache folders are skipped. A protected folder may trigger a macOS permission prompt; if denied you’ll get an "authorize + retry" hint.',
-        params: [
-          { name: 'path', required: false, description: 'Any absolute directory, or a path relative to the workspace/home. Empty = workspace root or home.' },
-          { name: 'max_entries', type: 'number', required: false, description: 'Max entries to return (default 120, max 300).' }
-        ],
-        execute: async (args) => this.toolListWorkspaceFiles(sessionKey, args.path ? String(args.path) : '', args.max_entries != null ? Number(args.max_entries) : undefined)
-      },
-      {
-        name: 'search_files',
-        description:
-          'Search filenames and small text/code file contents under a folder. `path` may be ANY absolute directory on the user’s machine, or relative to the workspace; ' +
-          'empty searches the workspace root (or home if no workspace). Multi-word queries match all terms. Returns relative paths and matching line previews. ' +
-          'Recursion is depth/size bounded; protected subfolders are skipped (you’ll get an authorize hint). Prefer giving a specific `path` (e.g. ~/Documents/project) over searching all of home.',
-        params: [
-          { name: 'query', required: true, description: 'Text to search for.' },
-          { name: 'path', required: false, description: 'Any absolute directory to search under, or relative to the workspace. Empty = workspace root or home.' },
-          { name: 'max_results', type: 'number', required: false, description: 'Max hits to return (default 60).' }
-        ],
-        execute: async (args) => this.toolSearchWorkspaceFiles(sessionKey, String(args.query ?? ''), args.path ? String(args.path) : '', args.max_results != null ? Number(args.max_results) : undefined)
-      },
-      {
-        name: 'write_file',
-        description:
-          'Create or update a UTF-8 text file inside the selected workspace. The path must stay under the workspace root; this tool cannot delete, rename, or move files/directories, and cannot target the workspace directory itself. ' +
-          'After writing, the file is shown to the user as a created/updated artifact.',
-        params: [
-          { name: 'path', required: true, description: 'Workspace-relative file path to create or update.' },
-          { name: 'content', required: true, description: 'Full UTF-8 file content to write.' }
-        ],
-        execute: async (args) => this.toolWriteWorkspaceFile(sessionKey, String(args.path ?? ''), String(args.content ?? ''))
-      },
-      {
-        name: 'create_artifact',
-        description:
-          'Create a generated file artifact for the user: xlsx, docx, pdf, html, md, txt, or json. ' +
-          'If a workspace is selected, relative filenames are written under that workspace (default: workspace/artifacts). ' +
-          'If no workspace is selected, files are written under the app userData artifacts directory. ' +
-          'Use this for reports, exported tables, Word documents, and printable PDFs. PDF is rendered from HTML using Electron Chromium printToPDF; Excel uses sheets/rows; Word uses title/sections/tables. ' +
-          'artifact_json is a JSON object such as {"type":"xlsx","filename":"reports/patients.xlsx","sheets":[{"name":"Patients","rows":[{"name":"Jane","phone":"..."}]}]} or {"type":"pdf","filename":"report.pdf","html":"<h1>...</h1>"}.',
-        params: [
-          { name: 'artifact_json', required: true, description: 'JSON object with type, optional filename/title, and content fields (html/text/markdown/content/sheets/sections).' }
-        ],
-        execute: async (args) => this.toolCreateArtifact(sessionKey, String(args.artifact_json ?? ''))
-      },
-      {
-        name: 'workspace_context',
-        description:
-          'Inspect or update the selected local project workspace for THIS chat. Use status to answer what workspace is active, clear to forget a moved/deleted/wrong workspace, and choose only when the user explicitly asks to select or switch workspace (it opens the native directory picker).',
-        params: [
-          { name: 'action', required: true, description: 'One of: status, clear, choose.' }
-        ],
-        execute: async (args) => this.toolWorkspaceContext(sessionKey, String(args.action ?? 'status'))
-      },
+      ...buildFileTools(this.workspaceFile, sessionKey),
+      ...buildArchiveTools(this.workspaceFile, sessionKey),
       {
         name: 'list_integration_targets',
         description:
@@ -1388,7 +1455,7 @@ class MaestroWindowController
 
   // Broadcast a live agent step so the Agent chat can render the observe→act loop.
   broadcastActivity(phase: AgentActivityStep['phase'], label: string, ok = true): void {
-    broadcastAgentActivity(phase, label, ok)
+    this.agentService.broadcastActiveAgentActivity(phase, label, ok)
   }
 
   broadcastApiActivity(
@@ -1438,17 +1505,27 @@ class MaestroWindowController
       ),
       4_000
     )
-    const options: MessageBoxOptions = {
-      type: 'question',
-      buttons: ['Allow rule', 'Deny'],
-      defaultId: 1,
-      cancelId: 1,
-      title: 'Approve Browser Interception',
-      message: `Allow ${summary}?`,
-      detail
-    }
-    const result = this.browserWindow ? await dialog.showMessageBox(this.browserWindow, options) : await dialog.showMessageBox(options)
-    const allowed = result.response === 0
+    const allowed = await taskRegistry.askOperator({
+      name: 'interception-approval',
+      title: `Allow interception rule ${summary}?`,
+      detail,
+      confirmLabel: 'Allow rule',
+      cancelLabel: 'Deny',
+      payload: buildUnknownConfirmPayload({
+        summary: `browser_intercept · ${summary}`,
+        intent: rule.note || undefined,
+        body: {
+          action: rule.action,
+          method: rule.method || '*',
+          url_contains: rule.urlContains,
+          once: rule.once,
+          status: rule.status,
+          rewrite_url: Boolean(rule.rewriteUrl),
+          rewrite_method: rule.rewriteMethod,
+          rewrite_response_body: rule.body != null
+        }
+      })
+    })
     await this.resolveHostApprovalEvent(eventId, allowed ? 'approved' : 'denied')
     this.broadcastActivity('tool', `${allowed ? 'approved' : 'denied'}: ${summary}`, allowed)
     return allowed
@@ -1625,6 +1702,7 @@ class MaestroWindowController
     super.destroy()
 
     this.initialReady = Promise.resolve()
+    this.activeBootForcePinnedHomeIntentVersion = 0
     this.workspaceFile.reset()
     this.skillGenerator = null
     this.llmApplied = false

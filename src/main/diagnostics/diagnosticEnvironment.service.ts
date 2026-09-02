@@ -4,11 +4,16 @@ import {
   type ApplicationDiagnosticEnvironmentKey
 } from '@shared/diagnostics/applicationDiagnostics.contract';
 
-const VALUE_SAFE_KEYS = new Set<ApplicationDiagnosticEnvironmentKey>(['VITE_ENV', 'VITE_MODE']);
+const VALUE_SAFE_KEYS = new Set<ApplicationDiagnosticEnvironmentKey>([
+  'VITE_ENV',
+  'VITE_MODE',
+  'VITE_RELEASE_CHANNEL'
+]);
 
 const isSafeRuntimeValue = (key: ApplicationDiagnosticEnvironmentKey, value: string): boolean =>
   (key === 'VITE_ENV' && (value === 'dev' || value === 'prod')) ||
-  (key === 'VITE_MODE' && (value === 'debug' || value === 'release'));
+  (key === 'VITE_MODE' && (value === 'debug' || value === 'release')) ||
+  (key === 'VITE_RELEASE_CHANNEL' && ['dev', 'preview', 'prod'].includes(value));
 
 const ENDPOINT_ORIGIN_KEYS = new Set<ApplicationDiagnosticEnvironmentKey>([
   'VITE_BITTERLESS_CORE_URL',

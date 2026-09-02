@@ -1,5 +1,14 @@
+import { readonly, ref } from 'vue';
+
 const TOKEN_KEY = 'bitterless-desktop-token';
 const SESSION_ID_KEY = 'bitterless-desktop-session-id';
+const authTokenPresentationRevision = ref(0);
+
+export const customerAuthPresentationRevision = readonly(authTokenPresentationRevision);
+
+const markCustomerAuthPresentationChanged = (): void => {
+  authTokenPresentationRevision.value += 1;
+};
 
 const createSessionId = (): string => {
   if (crypto.randomUUID) return crypto.randomUUID();
@@ -33,15 +42,18 @@ export const setCustomerToken = (token: string): void => {
   if (getCustomerToken() !== token) {
     localStorage.setItem(TOKEN_KEY, token);
     localStorage.setItem(SESSION_ID_KEY, createSessionId());
+    markCustomerAuthPresentationChanged();
     return;
   }
 
   if (!localStorage.getItem(SESSION_ID_KEY)) {
     localStorage.setItem(SESSION_ID_KEY, createSessionId());
+    markCustomerAuthPresentationChanged();
   }
 };
 
 export const clearCustomerToken = (): void => {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(SESSION_ID_KEY);
+  markCustomerAuthPresentationChanged();
 };

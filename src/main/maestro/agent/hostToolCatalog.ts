@@ -335,6 +335,33 @@ export const HOST_TOOL_CATALOG: HostToolCatalogEntry[] = [
     safety: 'OS-gated: reading a protected folder (macOS TCC) may prompt for permission; no writes.'
   },
   {
+    name: 'list_archive',
+    scopes: ['cowork'],
+    category: 'file',
+    risk: 'read',
+    summary: 'List an archive’s entries without unpacking it.',
+    useWhen: 'Inspect a zip, tar variant, 7z, rar, or other supported archive first.',
+    safety: 'Read-only; encrypted archives need a password, which is never put in argv.'
+  },
+  {
+    name: 'extract_archive',
+    scopes: ['cowork'],
+    category: 'file',
+    risk: 'write',
+    summary: 'Unpack an archive into the selected or per-chat default workspace.',
+    useWhen: 'The files needed for the task are inside an archive.',
+    safety: 'Source may be OS-gated anywhere; output is staged, link-audited, and installed only into a new or empty workspace folder.'
+  },
+  {
+    name: 'create_archive',
+    scopes: ['cowork'],
+    category: 'file',
+    risk: 'write',
+    summary: 'Pack files/folders into an archive inside the workspace.',
+    useWhen: 'The user wants files bundled for sharing or storage.',
+    safety: 'Output stays in the workspace; password-protected creation is refused.'
+  },
+  {
     name: 'write_file',
     scopes: ['cowork'],
     category: 'file',
@@ -351,6 +378,15 @@ export const HOST_TOOL_CATALOG: HostToolCatalogEntry[] = [
     summary: 'Generate Excel, Word, PDF, HTML, Markdown, text, or JSON file artifacts.',
     useWhen: 'When the user asks for a report/export/document/PDF/Excel/Word output.',
     safety: 'Writes under the selected workspace when present, otherwise under app userData artifacts; cannot escape the output root.'
+  },
+  {
+    name: 'open_workspace_folder',
+    scopes: ['cowork'],
+    category: 'file',
+    risk: 'write',
+    summary: 'Open the chat workspace or one of its paths in Finder/File Explorer.',
+    useWhen: 'The user asks to see the workspace or a result on disk.',
+    safety: 'Only opens an OS window; reads no content and changes no files.'
   },
   {
     name: 'list_tabs',

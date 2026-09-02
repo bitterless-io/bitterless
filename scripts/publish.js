@@ -5,15 +5,29 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
-const yaml = require('js-yaml');
 const OSS = require('ali-oss');
 const { appBuilderPath } = require('app-builder-bin');
 const { compareVersions } = require('compare-versions');
 const { notarizeDmg } = require('./notarize.js');
 const { auditDesktopPackage } = require('./package/desktopPackage.audit.cjs');
+const {
+  artifactNameMatchesVersion,
+  assertBuildIdentity,
+  assertLocalReleaseMatchesDist,
+  createVersionInfoForUpload,
+  findArtifacts,
+  findExactMacDmg,
+  findInstallerArtifact,
+  platformConfigs,
+  readDistVersionInfo,
+  releaseChannelConfigs,
+  releaseVersionCode,
+  stableDistDir,
+  updateLatestMacYml,
+  validateUpdaterArtifacts,
+} = require('./release/releaseChannel.cjs');
 
 const rootDir = path.resolve(__dirname, '..');
-const distDir = path.join(rootDir, 'dist');
 const keychainDir = process.env.BITTERLESS_KEYCHAIN_DIR || '/Users/ral/Documents/projects/overmind/areas/keychain/bitterless';
 const defaultPublishEnvPath = path.join(keychainDir, 'publish.env');
 const defaultPublicBaseUrl = 'https://assets.terncloud.com';
@@ -25,36 +39,12 @@ const OSS_MULTIPART_THRESHOLD_BYTES = 16 * 1024 * 1024;
 const OSS_MULTIPART_PART_SIZE_BYTES = 8 * 1024 * 1024;
 const OSS_MULTIPART_PARALLEL = 4;
 
-const platformConfigs = {
-  mac_arm: {
-    buildArgs: ['--mac', '--arm64'],
-    appOutputDir: 'mac-arm64',
-    artifactExtensions: ['.dmg', '.zip', '.blockmap'],
-    updaterFiles: ['latest-mac.yml'],
-    requiredUpdaterArtifactExtensions: ['.zip', '.dmg'],
-  },
-  mac_intel: {
-    buildArgs: ['--mac', '--x64'],
-    appOutputDir: 'mac',
-    artifactExtensions: ['.dmg', '.zip', '.blockmap'],
-    updaterFiles: ['latest-mac.yml'],
-    requiredUpdaterArtifactExtensions: ['.zip', '.dmg'],
-  },
-  win64: {
-    buildArgs: ['--win', '--x64'],
-    appOutputDir: 'win-unpacked',
-    artifactExtensions: ['.exe', '.blockmap'],
-    updaterFiles: ['latest.yml'],
-    requiredUpdaterArtifactExtensions: ['.exe'],
-  },
-};
-
 const usage = () => {
   console.log(`Usage:
   node scripts/publish.js --env prod --platform mac_arm [--build] [--dry-run]
 
 Options:
-  --env <dev|prod>             Release environment. Default: prod
+  --env <dev|preview|prod>     Release channel. Default: prod
   --platform <mac_arm|mac_intel|win64>
                                Target platform. Default: current host platform
   --build                      Run release env preparation, build, and electron-builder first
@@ -119,8 +109,8 @@ const parseArgs = () => {
     }
   }
 
-  if (result.env !== 'dev' && result.env !== 'prod') {
-    throw new Error('--env must be dev or prod');
+  if (!releaseChannelConfigs[result.env]) {
+    throw new Error('--env must be dev, preview, or prod');
   }
   if (!platformConfigs[result.platform]) {
     throw new Error('--platform must be mac_arm, mac_intel, or win64');
@@ -239,159 +229,29 @@ const runBuild = (options) => {
     win64: 'win',
   }[options.platform];
   if (!buildTarget) throw new Error(`Unsupported release build platform: ${options.platform}`);
-  const scriptPrefix = options.env === 'dev' ? 'build_dev' : 'build';
+  const scriptPrefix = options.env === 'dev'
+    ? 'build_dev'
+    : (options.env === 'preview' ? 'build_preview' : 'build');
   run('yarn', [`${scriptPrefix}:${buildTarget}`]);
 };
 
-const auditPackagedApplication = (platform) => {
-  const appOutputPath = path.join(distDir, platformConfigs[platform].appOutputDir);
+const auditPackagedApplication = (platform, releaseChannel) => {
+  const channelConfig = releaseChannelConfigs[releaseChannel];
+  const appOutputPath = path.join(channelConfig.distDir, platformConfigs[platform].appOutputDir);
   console.log(`[publish.js] Auditing packaged application: ${appOutputPath}`);
-  auditDesktopPackage(appOutputPath);
-};
-
-const listFiles = (dir) => {
-  if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir)
-    .map((name) => path.join(dir, name))
-    .filter((filePath) => fs.statSync(filePath).isFile());
-};
-
-const readDistVersionInfo = () => {
-  const versionInfoPath = path.join(distDir, 'version_info.json');
-  if (!fs.existsSync(versionInfoPath)) {
-    throw new Error(`version_info.json not found: ${versionInfoPath}. Run scripts/before.js or use --build.`);
+  const result = auditDesktopPackage(appOutputPath);
+  if (
+    result.packagedRuntimeProfile.profileName !== channelConfig.profileName ||
+    result.packagedRuntimeProfile.releaseChannel !== releaseChannel
+  ) {
+    throw new Error(
+      `Packaged runtime profile does not match ${releaseChannel}: ${result.packagedRuntimeProfile.profileName}/${result.packagedRuntimeProfile.releaseChannel}`,
+    );
   }
-  return JSON.parse(fs.readFileSync(versionInfoPath, 'utf-8'));
 };
 
 const readPackageRelease = () => {
   return JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf-8'));
-};
-
-const releaseVersionCode = (release) => {
-  return String(release.version_code ?? release.versionCode ?? '');
-};
-
-const assertLocalReleaseMatchesDist = (localPackage, distVersionInfo) => {
-  const packageVersion = String(localPackage.version ?? '');
-  const packageVersionCode = releaseVersionCode(localPackage);
-  const distVersion = String(distVersionInfo.version ?? '');
-  const distVersionCode = releaseVersionCode(distVersionInfo);
-  if (packageVersion !== distVersion || packageVersionCode !== distVersionCode) {
-    throw new Error(
-      `Stale dist release metadata: package ${packageVersion} (${packageVersionCode}), dist ${distVersion} (${distVersionCode}). Rebuild before publishing.`,
-    );
-  }
-};
-
-const artifactNameMatchesVersion = (name, version) => {
-  const escapedVersion = String(version).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`-${escapedVersion}(?:[.-]|$)`).test(name);
-};
-
-const updaterArtifactName = (value) => {
-  if (typeof value !== 'string') return null;
-  const name = value.trim();
-  if (
-    name.length === 0 ||
-    name !== value ||
-    name === '.' ||
-    name === '..' ||
-    /[\\/?#]/.test(name) ||
-    /^[a-z][a-z\d+.-]*:/i.test(name) ||
-    path.basename(name) !== name
-  ) {
-    return null;
-  }
-  return name;
-};
-
-const validateUpdaterArtifacts = (platform, version, artifacts) => {
-  const config = platformConfigs[platform];
-  const artifactNames = new Set(artifacts.map((filePath) => path.basename(filePath)));
-
-  for (const updaterFile of config.updaterFiles) {
-    const updaterPath = artifacts.find((filePath) => path.basename(filePath) === updaterFile);
-    if (!updaterPath) {
-      throw new Error(`Missing updater metadata in dist: ${updaterFile}`);
-    }
-
-    let metadata;
-    try {
-      metadata = yaml.load(fs.readFileSync(updaterPath, 'utf-8'));
-    } catch (error) {
-      throw new Error(`Invalid updater metadata ${updaterFile}: ${error.message}`);
-    }
-    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
-      throw new Error(`Invalid updater metadata ${updaterFile}: expected an object`);
-    }
-    if (String(metadata.version ?? '') !== String(version)) {
-      throw new Error(
-        `Updater metadata version mismatch in ${updaterFile}: expected ${version}, received ${metadata.version ?? 'missing'}`,
-      );
-    }
-    if (!Array.isArray(metadata.files) || metadata.files.length === 0) {
-      throw new Error(`Updater metadata ${updaterFile} has no files`);
-    }
-
-    const rawReferences = [metadata.path, ...metadata.files.map((file) => file?.url)];
-    const references = rawReferences.map(updaterArtifactName);
-    if (references.some((reference) => !reference)) {
-      throw new Error(
-        `Updater metadata ${updaterFile} contains an invalid artifact reference; only plain filenames are allowed`,
-      );
-    }
-
-    for (const requiredExtension of config.requiredUpdaterArtifactExtensions) {
-      if (!references.some((name) => name.toLowerCase().endsWith(requiredExtension))) {
-        throw new Error(
-          `Updater metadata ${updaterFile} is missing a ${requiredExtension} artifact reference`,
-        );
-      }
-    }
-
-    for (const reference of new Set(references)) {
-      if (!artifactNames.has(reference)) {
-        throw new Error(`Updater metadata ${updaterFile} references missing artifact: ${reference}`);
-      }
-      if (config.requiredUpdaterArtifactExtensions.some((extension) => {
-        return reference.toLowerCase().endsWith(extension);
-      })) {
-        const blockmapName = `${reference}.blockmap`;
-        if (!artifactNames.has(blockmapName)) {
-          throw new Error(
-            `Updater artifact ${reference} is missing required blockmap: ${blockmapName}`,
-          );
-        }
-      }
-    }
-  }
-};
-
-const findArtifacts = (platform, version) => {
-  if (!fs.existsSync(distDir)) {
-    throw new Error(`dist directory not found: ${distDir}. Run with --build or build first.`);
-  }
-
-  const config = platformConfigs[platform];
-  const files = listFiles(distDir);
-  const artifacts = files.filter((filePath) => {
-    const name = path.basename(filePath);
-    const ext = path.extname(name);
-    return config.updaterFiles.includes(name) || (
-      config.artifactExtensions.includes(ext) && artifactNameMatchesVersion(name, version)
-    );
-  });
-
-  const missingUpdaterFiles = config.updaterFiles.filter((name) => {
-    return !artifacts.some((filePath) => path.basename(filePath) === name);
-  });
-  if (missingUpdaterFiles.length > 0) {
-    throw new Error(`Missing updater metadata in dist: ${missingUpdaterFiles.join(', ')}`);
-  }
-
-  validateUpdaterArtifacts(platform, version, artifacts);
-  return artifacts.sort((a, b) => path.basename(a).localeCompare(path.basename(b)));
 };
 
 const loadSigningEnv = () => {
@@ -516,9 +376,9 @@ const withTemporarySigningKeychain = (callback) => {
   }
 };
 
-const getMacAppPath = (platform) => {
+const getMacAppPath = (platform, targetDistDir = stableDistDir) => {
   const dirName = platform === 'mac_intel' ? 'mac' : 'mac-arm64';
-  const appDir = path.join(distDir, dirName);
+  const appDir = path.join(targetDistDir, dirName);
   if (!fs.existsSync(appDir)) {
     throw new Error(`Mac app output directory not found: ${appDir}`);
   }
@@ -560,47 +420,10 @@ const regenerateBlockmap = (filePath) => {
   run(appBuilderPath, ['blockmap', '--input', filePath, '--output', output]);
 };
 
-const sha512Base64 = (filePath) => {
-  return crypto.createHash('sha512').update(fs.readFileSync(filePath)).digest('base64');
-};
-
-const updateLatestMacYml = (dmgPath) => {
-  const latestPath = path.join(distDir, 'latest-mac.yml');
-  if (!fs.existsSync(latestPath)) {
-    throw new Error(`latest-mac.yml not found: ${latestPath}`);
-  }
-  const latest = yaml.load(fs.readFileSync(latestPath, 'utf-8'));
-  const dmgName = path.basename(dmgPath);
-  const size = fs.statSync(dmgPath).size;
-  const sha512 = sha512Base64(dmgPath);
-  if (Array.isArray(latest.files)) {
-    for (const file of latest.files) {
-      if (file.url === dmgName) {
-        file.sha512 = sha512;
-        file.size = size;
-      }
-    }
-  }
-  if (latest.path === dmgName) {
-    latest.sha512 = sha512;
-  }
-  fs.writeFileSync(latestPath, yaml.dump(latest, { lineWidth: 120 }), 'utf-8');
-};
-
-const findExactMacDmg = (platform) => {
-  const versionInfo = readDistVersionInfo();
-  const matches = findArtifacts(platform, versionInfo.version)
-    .filter((filePath) => path.extname(filePath) === '.dmg');
-  if (matches.length !== 1) {
-    throw new Error(`Expected exactly one DMG artifact for version ${versionInfo.version}, found ${matches.length}`);
-  }
-  return matches[0];
-};
-
-const finalizeMacDmg = async (platform) => {
+const finalizeMacDmg = async (platform, targetDistDir = stableDistDir) => {
   if (platform !== 'mac_arm' && platform !== 'mac_intel') return;
-  const dmgPath = findExactMacDmg(platform);
-  const appPath = getMacAppPath(platform);
+  const dmgPath = findExactMacDmg(platform, targetDistDir);
+  const appPath = getMacAppPath(platform, targetDistDir);
   const teamIdentifier = getMacAppTeamIdentifier(appPath);
   console.log(`[publish.js] Signing DMG: ${path.basename(dmgPath)}`);
   signDmg(dmgPath, teamIdentifier);
@@ -608,22 +431,7 @@ const finalizeMacDmg = async (platform) => {
   await notarizeDmg(dmgPath);
   console.log(`[publish.js] Regenerating DMG blockmap and latest-mac.yml`);
   regenerateBlockmap(dmgPath);
-  updateLatestMacYml(dmgPath);
-};
-
-const createVersionInfoForUpload = (options) => {
-  const versionInfo = readDistVersionInfo();
-  const downloadUrl = `${options.publicBaseUrl}/${options.prefix}/${options.env}/${options.platform}`;
-  const uploadInfo = {
-    ...versionInfo,
-    downloadUrl,
-  };
-
-  const publishDir = path.join(distDir, '.publish', options.env, options.platform);
-  fs.mkdirSync(publishDir, { recursive: true });
-  const publishVersionInfoPath = path.join(publishDir, 'version_info.json');
-  fs.writeFileSync(publishVersionInfoPath, JSON.stringify(uploadInfo, null, 2) + os.EOL, 'utf-8');
-  return publishVersionInfoPath;
+  updateLatestMacYml(dmgPath, targetDistDir);
 };
 
 const contentTypeFor = (filePath) => {
@@ -737,9 +545,7 @@ const publishRelease = async (options) => {
 const assertReleaseOrder = (localPackage, remoteInfo) => {
   const localVersion = String(localPackage.version ?? '');
   const remoteVersion = String(remoteInfo.version ?? '');
-  const localVersionCode = String(
-    localPackage.version_code ?? localPackage.versionCode ?? '',
-  );
+  const localVersionCode = releaseVersionCode(localPackage);
   const remoteVersionCode = String(remoteInfo.versionCode ?? '');
 
   if (!/^\d+$/.test(localVersionCode)) {
@@ -780,13 +586,17 @@ const assertReleaseOrder = (localPackage, remoteInfo) => {
   }
 };
 
+const isMissingRemoteObject = (error) => {
+  return error?.code === 'NoSuchKey' || error?.status === 404 || error?.statusCode === 404;
+};
+
 const assertNoRemoteDowngrade = async (client, objectPrefix, localRelease = readPackageRelease()) => {
   let remoteInfo;
   try {
     const result = await client.get(`${objectPrefix}/version_info.json`);
     remoteInfo = JSON.parse(result.content.toString('utf-8'));
   } catch (error) {
-    if (error?.code === 'NoSuchKey' || error?.status === 404 || error?.statusCode === 404) {
+    if (isMissingRemoteObject(error)) {
       console.log('[publish.js] No existing remote version manifest; first publish is allowed.');
       return;
     }
@@ -796,6 +606,46 @@ const assertNoRemoteDowngrade = async (client, objectPrefix, localRelease = read
   assertReleaseOrder(localRelease, remoteInfo);
   console.log(
     `[publish.js] Version order verified: local ${localRelease.version} (${releaseVersionCode(localRelease)}), remote ${remoteInfo.version} (${remoteInfo.versionCode})`,
+  );
+};
+
+// A release identity names one binary lineage. assertNoRemoteDowngrade only compares a channel with
+// itself, so it cannot see an identity another channel already published from the shared
+// package.json counter.
+const assertNoCrossChannelIdentityReuse = async (
+  client,
+  options,
+  localRelease = readPackageRelease(),
+) => {
+  const localVersion = String(localRelease.version ?? '');
+  const localVersionCode = releaseVersionCode(localRelease);
+
+  for (const channel of Object.keys(releaseChannelConfigs)) {
+    if (channel === options.env) continue;
+    const objectKey = `${options.prefix}/${channel}/${options.platform}/version_info.json`;
+    let remoteInfo;
+    try {
+      const result = await client.get(objectKey);
+      remoteInfo = JSON.parse(result.content.toString('utf-8'));
+    } catch (error) {
+      if (isMissingRemoteObject(error)) continue;
+      throw error;
+    }
+
+    const remoteTarget = `${channel}/${options.platform}`;
+    if (String(remoteInfo.versionCode ?? '') === localVersionCode) {
+      throw new Error(
+        `Refusing cross-channel version_code reuse: ${localVersionCode} is already published as ${remoteTarget} ${remoteInfo.version ?? 'unknown'}`,
+      );
+    }
+    if (String(remoteInfo.version ?? '') === localVersion) {
+      throw new Error(
+        `Refusing cross-channel version reuse: ${localVersion} is already published as ${remoteTarget} with version_code ${remoteInfo.versionCode ?? 'unknown'}`,
+      );
+    }
+  }
+  console.log(
+    `[publish.js] Cross-channel identity verified: ${localVersion} (${localVersionCode}) is unused outside ${options.env}`,
   );
 };
 
@@ -898,6 +748,7 @@ const main = async () => {
   const publishConfig = createPublishConfig(options);
   const objectPrefix = `${options.prefix}/${options.env}/${options.platform}`;
   const packageRelease = readPackageRelease();
+  const targetDistDir = releaseChannelConfigs[options.env].distDir;
   const client = options.dryRun
     ? null
     : new OSS({
@@ -908,7 +759,10 @@ const main = async () => {
       retryMax: 3,
       timeout: OSS_REQUEST_TIMEOUT_MS,
     });
-  if (client) await assertNoRemoteDowngrade(client, objectPrefix, packageRelease);
+  if (client) {
+    await assertNoRemoteDowngrade(client, objectPrefix, packageRelease);
+    await assertNoCrossChannelIdentityReuse(client, options, packageRelease);
+  }
   if (options.preflightOnly) {
     console.log('[publish.js] Preflight complete; build, signing, and upload were skipped.');
     return;
@@ -918,17 +772,22 @@ const main = async () => {
     runBuild(options);
   }
 
-  const versionInfo = readDistVersionInfo();
-  assertLocalReleaseMatchesDist(packageRelease, versionInfo);
-  let artifacts = findArtifacts(options.platform, versionInfo.version);
-  auditPackagedApplication(options.platform);
+  const builtPackageRelease = readPackageRelease();
+  const versionInfo = readDistVersionInfo(targetDistDir);
+  assertLocalReleaseMatchesDist(builtPackageRelease, versionInfo, options.env);
+  let artifacts = findArtifacts(options.platform, versionInfo.version, targetDistDir);
+  assertBuildIdentity(options.env, options.platform, builtPackageRelease, versionInfo, artifacts);
+  auditPackagedApplication(options.platform, options.env);
 
   if (!options.dryRun) {
-    await finalizeMacDmg(options.platform);
+    await finalizeMacDmg(options.platform, targetDistDir);
   }
-  artifacts = findArtifacts(options.platform, versionInfo.version);
-  const versionInfoPath = createVersionInfoForUpload(options);
-  if (client) await assertNoRemoteDowngrade(client, objectPrefix, versionInfo);
+  artifacts = findArtifacts(options.platform, versionInfo.version, targetDistDir);
+  const versionInfoPath = createVersionInfoForUpload(options, artifacts, targetDistDir);
+  if (client) {
+    await assertNoRemoteDowngrade(client, objectPrefix, versionInfo);
+    await assertNoCrossChannelIdentityReuse(client, options, versionInfo);
+  }
 
   console.log(`[publish.js] Env file: ${options.envFile}`);
   console.log(`[publish.js] Target: oss://${publishConfig.bucket}/${objectPrefix}/`);
@@ -958,9 +817,14 @@ module.exports = {
   OSS_MULTIPART_PART_SIZE_BYTES,
   OSS_MULTIPART_THRESHOLD_BYTES,
   OSS_REQUEST_TIMEOUT_MS,
+  assertBuildIdentity,
   assertLocalReleaseMatchesDist,
+  assertNoCrossChannelIdentityReuse,
+  assertNoRemoteDowngrade,
   assertReleaseOrder,
   artifactNameMatchesVersion,
+  createVersionInfoForUpload,
+  findInstallerArtifact,
   parseDeveloperIdApplicationIdentities,
   parseUserKeychainSearchList,
   selectDeveloperIdApplicationIdentity,

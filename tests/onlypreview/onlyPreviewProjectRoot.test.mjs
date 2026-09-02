@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, renameSync, symlinkSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import {
   createRegistries,
   expectOnlyPreviewError,
   runtime,
+  registerWorkspace,
   source,
   withTempDirectory
 } from './onlyPreviewCoreTest.helper.mjs';
@@ -16,7 +17,7 @@ test('synthetic root uses a distinct workspace capability while ordinary file re
     mkdirSync(projectPath);
     const { hosts, workspaces } = createRegistries();
     const host = hosts.issue('standalone', 'content');
-    const workspace = await workspaces.createForTarget(host.hostToken, projectPath);
+    const workspace = registerWorkspace(workspaces, host.hostToken, projectPath);
 
     assert.throws(
       () =>
@@ -42,18 +43,11 @@ test('synthetic root uses a distinct workspace capability while ordinary file re
         }),
       expectOnlyPreviewError('INVALID_INPUT')
     );
-    const root = await workspaces.resolveProjectRoot(host.hostToken, workspace.workspaceId);
+    const root = workspaces.getProjectAuthorityRootRef(host.hostToken, workspace.workspaceId);
     assert.equal(root.relativePath, '');
-    assert.equal(root.nodeKind, 'directory');
-    assert.equal(root.name, 'project');
-
-    const movedProject = join(tempRoot, 'project-moved');
-    renameSync(projectPath, movedProject);
-    symlinkSync(movedProject, projectPath, 'dir');
-    await assert.rejects(
-      () => workspaces.resolveProjectRoot(host.hostToken, workspace.workspaceId),
-      expectOnlyPreviewError('PATH_OUTSIDE_WORKSPACE')
-    );
+    assert.equal(root.workspaceId, workspace.workspaceId);
+    assert.equal(root.workspaceGeneration, 1);
+    assert.equal(root.host.hostToken, host.hostToken);
   });
 });
 
@@ -70,13 +64,21 @@ test('root relative/name copies are explicit and root menu source has no delete 
   assert.deepEqual(copied, ['.', 'bitterless']);
 
   const handler = source('src/main/xpc/onlyPreview.handler.ts');
+  const nativeActions = source(
+    'src/main/onlypreview/onlyPreviewProjectNativeAction.service.ts'
+  );
   const rootMenu = handler.slice(
     handler.indexOf('async showProjectRootContextMenu('),
     handler.indexOf('async copyProjectRoot(')
   );
-  assert.match(rootMenu, /onlypreview-reveal-project-root/);
-  assert.match(rootMenu, /onlypreview-copy-project-root-relative-path/);
-  assert.doesNotMatch(rootMenu, /delete|destructive/i);
+  assert.match(rootMenu, /onlyPreviewProjectNativeActionService\.showProjectRootContextMenu/);
+  const rootMenuService = nativeActions.slice(
+    nativeActions.indexOf('async showProjectRootContextMenu('),
+    nativeActions.indexOf('async copyProjectItemFromUi(')
+  );
+  assert.match(rootMenuService, /onlypreview-reveal-project-root/);
+  assert.match(rootMenuService, /onlypreview-copy-project-root-relative-path/);
+  assert.doesNotMatch(rootMenuService, /delete|destructive/i);
 });
 
 test('Global Search close accepts only an exact host and surface mode', () => {

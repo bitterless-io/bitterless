@@ -12,7 +12,7 @@ function stripScheme(url: string): string {
 }
 
 /**
- * Controller for the MenuBar — the app's 48px top chrome. It owns the address bar.
+ * Controller for the MenuBar's compact 42px address row. It owns the address bar.
  *
  * Platform note: on macOS the window is titleBarStyle 'hiddenInset', so the native
  * traffic lights overlap the bar's top-left and we reserve a left gutter for them.

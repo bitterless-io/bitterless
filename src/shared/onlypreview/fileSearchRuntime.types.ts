@@ -5,6 +5,10 @@ import type {
   OnlyPreviewBrowseListing,
   OnlyPreviewGlobalSearchPreview,
   OnlyPreviewGlobalSearchPreviewRequest,
+  OnlyPreviewGlobalSearchOfficeReadChunkRequest,
+  OnlyPreviewGlobalSearchOfficeReadChunkResult,
+  OnlyPreviewGlobalSearchOfficeReadOpenResult,
+  OnlyPreviewGlobalSearchOfficeReadRequest,
   OnlyPreviewSearchCancelRequest,
   OnlyPreviewSearchInitializeRequest,
   OnlyPreviewSearchPrioritizeFileRequest,
@@ -27,6 +31,9 @@ export type FileSearchRuntimeMethod =
   | 'browseDirectory'
   | 'search'
   | 'preview'
+  | 'openOfficeRead'
+  | 'readOfficeChunk'
+  | 'cancelOfficeRead'
   | 'cancel'
   | 'shutdown';
 
@@ -74,6 +81,15 @@ export interface FileSearchRuntimePrivateApi {
   preview(
     params: FileSearchRuntimeRequest<OnlyPreviewGlobalSearchPreviewRequest>
   ): Promise<OnlyPreviewResult<OnlyPreviewGlobalSearchPreview>>;
+  openOfficeRead(
+    params: FileSearchRuntimeRequest<OnlyPreviewGlobalSearchOfficeReadRequest>
+  ): Promise<OnlyPreviewResult<OnlyPreviewGlobalSearchOfficeReadOpenResult>>;
+  readOfficeChunk(
+    params: FileSearchRuntimeRequest<OnlyPreviewGlobalSearchOfficeReadChunkRequest>
+  ): Promise<OnlyPreviewResult<OnlyPreviewGlobalSearchOfficeReadChunkResult>>;
+  cancelOfficeRead(
+    params: FileSearchRuntimeRequest<OnlyPreviewGlobalSearchOfficeReadRequest>
+  ): Promise<OnlyPreviewResult<void>>;
   cancel(
     params: FileSearchRuntimeRequest<OnlyPreviewSearchCancelRequest>
   ): Promise<OnlyPreviewResult<void>>;

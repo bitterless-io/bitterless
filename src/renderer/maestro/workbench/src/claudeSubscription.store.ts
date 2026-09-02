@@ -104,6 +104,24 @@ class ClaudeSubscriptionStore {
     )
   }
 
+  async captureCodexAccount(label: string): Promise<boolean> {
+    return await this.runAction('codex:capture', () =>
+      claudeSubscription.captureCodexAccount({ label: label.trim() })
+    )
+  }
+
+  async activateCodexAccount(accountId: string): Promise<boolean> {
+    return await this.runAction(`codex:activate:${accountId}`, () =>
+      claudeSubscription.activateCodexAccount({ accountId })
+    )
+  }
+
+  async removeCodexAccount(accountId: string): Promise<boolean> {
+    return await this.runAction(`codex:remove:${accountId}`, () =>
+      claudeSubscription.removeCodexAccount({ accountId })
+    )
+  }
+
   async cancelAuthorization(): Promise<boolean> {
     const flowId = this.snapshot?.authFlow?.flowId
     if (!flowId) return false

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { SUB2API_CLIENT_EFFORTS } from '../../src/shared/claudeSubscription/claudeSubscription.contract';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -425,7 +426,77 @@ test('stop fences every action, awaits a deferred logout/removal, and start reop
     assert.equal((await fixture.service.testAccount({ accountId: second.id })).ok, true);
     assert.equal(fixture.executor.calls.length, 1);
     assert.deepEqual(await fixture.service.copyCodexProfile(), { ok: true });
-    assert.deepEqual(fixture.clipboardWrites, [buildClaudeSubscriptionCodexProfile(CLAUDE_SUBSCRIPTION_DEFAULT_PORT)]);
+    // Codex reads its model list from `model_catalog_json`, never from the
+    // provider's /v1/models, so the copied snippet has to carry a path to a
+    // catalog that exists. The key must also precede the first table header, or
+    // TOML scopes it into the provider block and Codex ignores it.
+    const copied = String(fixture.clipboardWrites[0] ?? '');
+    assert.ok(
+      copied.indexOf('model_catalog_json') < copied.indexOf('[model_providers.'),
+      'model_catalog_json must appear before any table header'
+    );
+    const catalogMatch = /^model_catalog_json = "(.+)"$/mu.exec(copied);
+    assert.ok(catalogMatch, 'the snippet must reference a catalog file');
+    const catalogPath = catalogMatch[1]!;
+    assert.equal(
+      copied,
+      buildClaudeSubscriptionCodexProfile(CLAUDE_SUBSCRIPTION_DEFAULT_PORT, catalogPath)
+    );
+
+    const catalog = JSON.parse(await readFile(catalogPath, 'utf8')) as {
+      models: Array<{ slug: string; supported_reasoning_levels: Array<{ effort: string }> }>;
+    };
+    // Both subscriptions are offered through the one provider Desktop allows.
+    assert.deepEqual(
+      catalog.models.map((model) => model.slug).sort(),
+      [
+        'claude-opus',
+        'claude-sonnet',
+        'gpt-5.6-luna',
+        'gpt-5.6-sol',
+        'gpt-5.6-terra'
+      ],
+      'the catalog covers both upstreams, not just Claude'
+    );
+
+    // Every entry advertises the same client ladder. The upstreams do not share a
+    // vocabulary — pi has `minimal` and no `ultra`, the Claude CLI has neither — so
+    // the catalogue publishes the client's rungs and each request is shifted onto its
+    // upstream's ladder by rank at dispatch.
+    const effortsOf = (slug: string): string[] =>
+      catalog.models
+        .find((model) => model.slug === slug)!
+        .supported_reasoning_levels.map((level) => level.effort);
+    // Asserted as a rule rather than a copied list: an entry publishes a contiguous
+    // prefix of the client ladder, shortened only where the upstream has no top rung
+    // to back it. Duplicating the list here would only record which revision of it
+    // the test was written against.
+    const clientLadder = [...SUB2API_CLIENT_EFFORTS];
+    for (const slug of ['claude-opus', 'claude-sonnet', 'gpt-5.6-sol']) {
+      const efforts = effortsOf(slug);
+      assert.ok(efforts.length > 0, `${slug} advertises at least one level`);
+      assert.deepEqual(
+        efforts,
+        clientLadder.slice(0, efforts.length),
+        `${slug} advertises a prefix of the client ladder`
+      );
+    }
+    // Only an upstream without a top rung is allowed to be short.
+    assert.deepEqual(effortsOf('claude-opus'), clientLadder);
+    assert.deepEqual(effortsOf('gpt-5.6-sol'), clientLadder);
+
+    for (const model of catalog.models) {
+      // 0.137 rejects an entry missing either of these; 0.149 tolerates it. A
+      // single missing field discards the entire catalog.
+      for (const required of [
+        'supports_reasoning_summaries',
+        'supports_parallel_tool_calls',
+        'visibility',
+        'truncation_policy'
+      ]) {
+        assert.ok(required in model, `${model.slug} is missing ${required}`);
+      }
+    }
   } finally {
     logoutGate.resolve();
     await cleanup(fixture);
@@ -639,6 +710,7 @@ test('delayed account reads preserve typed auth-error then null publication orde
       accountId: fixture.identity.id,
       status: 'saving',
       canSubmitCode: false,
+      codeAttempt: 0,
       error: { code: 'claude_authentication', retryable: true }
     });
     await waitUntil(() => listCalls === 1, 'the error publication should begin its account read');

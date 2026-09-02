@@ -1,6 +1,7 @@
 import { createRouter, createWebHashHistory } from 'vue-router';
 import { defaultRoutes } from './defaultRoutes';
 import { authStore, customerNeedsPasswordSetup } from '@/stores/auth/auth.store';
+import { restoreCustomerSession } from '@/stores/auth/authSessionRecovery.service';
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -16,7 +17,7 @@ router.beforeEach(async (to) => {
 
   if (!authStore.current) {
     try {
-      await authStore.restoreSession();
+      await restoreCustomerSession();
     } catch {
       return { name: 'login', query: { redirect: to.fullPath } };
     }

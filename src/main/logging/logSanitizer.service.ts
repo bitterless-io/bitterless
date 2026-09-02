@@ -29,6 +29,7 @@ export const sanitizeApplicationLogData = (value: unknown): unknown => {
 
 export const sanitizeApplicationLogMessage = <T extends ApplicationLogMessage>(message: T): T => {
   const profile = sanitizeDiagnostic(message.variables?.profile, 64);
+  const channel = sanitizeDiagnostic(message.variables?.channel, 16);
   const proc = sanitizeDiagnostic(message.variables?.proc ?? message.variables?.processType, 64);
   const world = sanitizeDiagnostic(message.variables?.world, 32);
   return {
@@ -37,6 +38,7 @@ export const sanitizeApplicationLogMessage = <T extends ApplicationLogMessage>(m
     scope: message.scope ? sanitizeDiagnostic(message.scope, 64) : message.scope,
     variables: {
       profile: profile || 'unknown',
+      channel: channel || 'unknown',
       proc: proc || 'main',
       world: world || 'main'
     }
@@ -61,6 +63,7 @@ export const formatApplicationLogMessage = (message: ApplicationLogMessage): str
     ts: (safe.date ?? new Date()).toISOString(),
     level: sanitizeDiagnostic(safe.level, 16) || 'info',
     profile: sanitizeDiagnostic(variables.profile, 64) || 'unknown',
+    channel: sanitizeDiagnostic(variables.channel, 16) || 'unknown',
     proc: sanitizeDiagnostic(variables.proc, 64) || 'main',
     world: sanitizeDiagnostic(variables.world, 32) || 'main',
     scope: tagged?.scope ?? sanitizeDiagnostic(safe.scope, 64),

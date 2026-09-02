@@ -1,7 +1,7 @@
 # OnlyPreview Global Search And Result Preview
 
-Status: Accepted; tasks 035–048, 072, 073, and 076 implemented through independent review; owner
-verification pending
+Status: Accepted; tasks 035–048, 072, 073, 076, 092, and 100 implemented through independent
+review; owner verification pending
 
 ## Purpose
 
@@ -19,16 +19,17 @@ project-wide file and directory names.
 The design extends the existing OnlyPreview workbench instead of introducing a second visual
 language.
 
-| Token            | Value                 | Use                                                                         |
-| ---------------- | --------------------- | --------------------------------------------------------------------------- |
-| Canvas           | `#f6f7fa`             | global-search background                                                    |
-| Surface          | `#ffffff`             | input, result rows, preview stage                                           |
-| Royal            | `#4e5882`             | active group rail, selected row edge, primary focus                         |
-| Royal soft       | `#eceef7`             | selected/hovered structure                                                  |
-| Divider          | `#d9ddea`             | result/preview split and quiet borders                                      |
-| Ink / muted      | `#25283a` / `#6f7487` | primary and secondary copy                                                  |
-| Floating gutter  | `24px`                | transparent space between the native Search view edge and workspace surface |
-| Floating surface | `14px` radius         | one clipped search workspace with a restrained two-layer Ink shadow         |
+| Token             | Value                 | Use                                                                         |
+| ----------------- | --------------------- | --------------------------------------------------------------------------- |
+| Canvas            | `#f6f7fa`             | global-search background                                                    |
+| Surface           | `#ffffff`             | input, result rows, preview stage                                           |
+| Royal             | `#4e5882`             | active group rail, selected row edge, primary focus                         |
+| Royal soft        | `#eceef7`             | selected/hovered structure                                                  |
+| Project selection | `#d6e4ff`             | ordinary selected file or directory in the Project tree                     |
+| Divider           | `#d9ddea`             | result/preview split and quiet borders                                      |
+| Ink / muted       | `#25283a` / `#6f7487` | primary and secondary copy                                                  |
+| Floating gutter   | `24px`                | transparent space between the native Search view edge and workspace surface |
+| Floating surface  | `14px` radius         | one clipped search workspace with a restrained two-layer Ink shadow         |
 
 Typography remains the app's system UI stack. File names use 12px/650, relative directories and
 media labels use 10px/500, preview text uses the existing editor monospace stack, and group labels
@@ -38,40 +39,40 @@ without cards, badges, gradients, or decorative motion.
 
 ## Layout
 
-Global Search occupies the existing right work area through a dedicated trusted local
-`WebContentsView` child application. The Shell keeps the Project tree, toolbar, and status rail
-visible and continuously reports the real Preview content rectangle. Main gives Search that exact
-rectangle and attaches it above the active Vue/Chrome Preview; closing search detaches only Search,
-so the selected-file Preview remains loaded. The native view and its HTML canvas are transparent.
-The HTML `body` owns exactly `24px` padding on every side, leaving one opaque, rounded, shadowed
-workspace surface floating above the still-loaded Preview.
+Global Search uses a dedicated trusted local `WebContentsView` child application. Main sizes that
+native view to the complete OnlyPreview content area and separately supplies the real Preview
+rectangle as renderer-local workspace geometry. The Shell Project tree, toolbar, and status rail
+remain visible through the transparent canvas; the opaque search workspace stays at the same right
+Preview position with its existing `24px` inset, radius, shadow, and internal dimensions. Closing
+Search detaches only Search, so the selected-file Preview remains loaded.
 
 ```text
-┌──────────── PROJECT ───────────┬──────────── TRANSPARENT SEARCH VIEW ──────┐
-│ ▾ bitterless                  │ 24px transparent body gutter               │
-│   ▾ src                       │   ╭──────── floating workspace ─────────╮  │
-│     …                         │   │ Search input                         │  │
-│                               │   │ Contents scope                       │  │
-│                               │   ├──────────────────┬───────────────────┤  │
-│                               │   │ CONTENTS         │ FILES             │  │
-│                               │   │ independent      │ independent       │  │
-│                               │   ├──── draggable horizontal split ─────┤  │
-│                               │   │ PREVIEW                      Open ↗  │  │
-│                               │   ╰──── 14px radius + quiet shadow ─────╯  │
-└───────────────────────────────┴────────────────────────────────────────────┘
+┌──────────── FULL-WINDOW TRANSPARENT SEARCH VIEW ──────────────────────────┐
+│ transparent Project/menu area                                             │
+│ ┌──────── PROJECT ────────┬──── current Preview rectangle ───────────────┐ │
+│ │ visible underneath      │ 24px transparent inset                      │ │
+│ │                         │ ╭────── floating workspace ───────────────╮ │ │
+│ │                         │ │ Search / scope                          │ │ │
+│ │                         │ ├──────── CONTENTS ────┬──── FILES ──────┤ │ │
+│ │                         │ ├──────────────────────┴──────────────────┤ │ │
+│ │                         │ │ PREVIEW                         Open ↗ │ │ │
+│ │                         │ ╰── 14px radius + quiet shadow ──────────╯ │ │
+│ └─────────────────────────┴────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ```text
-Exposed Shell area:    click → fully transparent shield → close Search (click is consumed)
-24px Search gutter:    click → Search renderer close → restore opener (click is consumed)
-Preview rectangle:     transparent native Search → native Vue/Chrome Preview → shield → Shell
+Any transparent canvas: click → Search renderer close → restore opener (click is consumed)
+Workspace surface:     clicks remain inside Search
+Native z-order:        Shell < native Vue/Chrome Preview < full-window Search
 ```
 
 - Search input and scope stay fixed at the top.
 - Main sets only the Global Search `WebContentsView` background to transparent. `html`, `body`, and
-  `#app` paint no canvas; `body` owns the exact `24px` inset. The `.onlypreview-global-search`
-  workspace remains opaque, fills the inset content box, clips all internal regions to one `14px`
-  radius, and owns the shadow. Shell and Preview view backgrounds are unchanged.
+  `#app` fill the full native view and paint no canvas. The `.onlypreview-global-search` workspace is
+  absolutely placed from Main's current Preview rectangle, applies the exact `24px` inset, remains
+  opaque, clips all internal regions to one `14px` radius, and owns the shadow. Shell and Preview
+  backgrounds are unchanged.
 - The upper result region has two equal independent scroll ledgers: Contents on the left and Files
   on the right, separated by one quiet divider. DOM and linear keyboard order follow that visible
   reading order. Inside Files, all matching folders precede all matching files while each partition
@@ -79,17 +80,15 @@ Preview rectangle:     transparent native Search → native Vue/Chrome Preview �
   line only after the request settles.
 - A horizontal separator divides results from the bottom preview. Default preview height is 38% of
   the search work area, keyboard/resizable within 25–70%, and restored only for the current window.
-- While Search is active, one fully transparent Shell click shield fills the main window behind the
-  native Search child view. Native z-order keeps Search fully visible; the exposed menu, Project
-  pane, splitter, Preview toolbar, and status rail retain their normal appearance but become one
-  click target that closes Search without forwarding the click to the covered control.
-- The transparent 24px body gutter belongs to the topmost Search WebContents and therefore cannot
-  rely on the Shell shield for hit testing. Clicking that gutter explicitly performs the same
-  `mode: 'opener'` dismissal; clicks inside the rounded workspace never bubble into that action.
+- The full-window Search renderer owns outside-workspace hit testing. Clicking any transparent
+  Project/menu/splitter/Preview-gutter area explicitly performs the existing `mode: 'opener'`
+  dismissal and consumes the event; clicks inside the rounded workspace never trigger dismissal.
+  The historical Shell DOM shield from task 044 is retired rather than left as a second hit target.
 - At the 800px minimum window width, the Project pane may remain at its existing 180px minimum; the
   search workspace receives the rest. Search is a child view, never a modal or extra top-level
   window. Its native z-order invariant is `Shell < active Preview < active Global Search`; every
-  Preview attach re-raises Search while it is active. Both result columns remain visible at narrow
+  Preview attach and exact PDF document-frame-ready transition re-raises Search while it is active.
+  Both result columns remain visible at narrow
   widths through `minmax(0, 1fr)` and text ellipsis; they never stack or create page-level
   horizontal scrolling.
 - Reduced-motion mode removes chevron/selection transitions; no ambient animation is introduced.
@@ -131,6 +130,9 @@ The Project tree renders one Shell-owned synthetic root row before the loaded ro
   children without a Renderer path scan. A directory kept traversable for an ordered `!`
   re-inclusion does not force that re-included descendant orange. The synthetic root and symlinks
   are not given this marker.
+- Ordinary selected files and directories use the clearer light-blue `#d6e4ff` surface with the
+  existing Royal trailing rail. An explicit selected-hover state keeps that surface above ordinary
+  hover; focus, typography, row geometry, icons, and selection/expansion behavior remain unchanged.
 
 ## Search Result Contract
 
@@ -220,6 +222,15 @@ type OnlyPreviewGlobalSearchPreview =
     }
   | { kind: 'directory'; name: string; entries: OnlyPreviewBrowseEntry[]; truncated: boolean }
   | {
+      kind: 'office';
+      adapter: 'xlsx' | 'docx' | 'pptx';
+      name: string;
+      sourceExtension: '.xlsx' | '.xlsm' | '.docx' | '.pptx';
+      size: number;
+      modifiedAt: number;
+      readGrant: string;
+    }
+  | {
       kind: 'info';
       name: string;
       previewHint: OnlyPreviewKind;
@@ -236,8 +247,14 @@ type OnlyPreviewGlobalSearchPreview =
   renderer. HTML uses a static sanitizer: scripts, event handlers, navigation, remote or local
   resource URLs, forms, embeds, styles, and active content are removed. Search preview never
   executes HTML; opening the file normally still uses Chrome Preview.
+- XLSX/XLSM, DOCX, and PPTX use the same pinned, per-format lazy `@silurus/ooxml` session as the
+  main Preview through a Search-specific component. The `office` response is metadata-only plus one
+  opaque read grant. A Search-dedicated hidden-preload lane owns stable-identity reads and emits
+  ordered chunks capped at 512KiB; Main validates and relays one chunk at a time and never performs
+  file I/O or buffers a complete Office package. Search does not reuse the main Preview lane or its
+  current-file Find state.
 - Unknown/compound-extension files admitted by task 035 use `plain`. Known PDF/image/audio/video/
-  Office/Draw.io/unsupported files use `info` and are never read for search preview.
+  Draw.io/unsupported files use `info` and are never read for search preview.
 - Directory preview returns only direct children, sorted directory-first/naturally, with a hard cap
   of 200 and truthful `truncated`; it never recursively traverses on selection. Each direct-child
   name uses 13px semibold (`600`) typography, one pixel above the Search renderer's 12px base.
@@ -245,11 +262,16 @@ type OnlyPreviewGlobalSearchPreview =
   not reuse it. A Contents token resolves the same bounded file-head variant as a Files token for
   that text file. The pane starts at the beginning even when the query match lies after the first
   256KiB; it never accepts a renderer-supplied absolute path/offset or jumps to the match.
-- Preview fetch is latest-only. A stale result, selection, query, workspace, generation, token, or
-  component load cannot replace the current pane. Failures render one compact info/error state and
-  never clear the accepted result list.
+- Selection updates immediately and clears/disposes the prior preview. Preview dispatch uses one
+  120ms fixed-window leading-plus-trailing scheduler: the first selection runs immediately,
+  selections inside the interval replace one pending candidate, and the final candidate always
+  runs. A stale result, selection, query, workspace, generation, token, byte frame, dynamic import,
+  Worker, Viewer load/layout, or error cannot replace the current pane. Failures render one compact
+  current-result error state and never clear the accepted result list.
 - Preview components are selected with `defineAsyncComponent` by the returned variant. No preview
-  dependency is bundled into the initial Shell path unless it is already shared by the Shell.
+  dependency is bundled into the initial Shell path unless it is already shared by the Shell. Every
+  accepted preview is keyed by its revision/result token; unmount cancels the Office read and
+  disposes the Viewer/Worker before the next component can commit.
 
 ## Interaction
 
@@ -259,18 +281,17 @@ type OnlyPreviewGlobalSearchPreview =
 | type / IME                                      | immediately retire rows from the previous query, then run one 120ms latest-only global query; composition text never dispatches early           |
 | `Up` / `Down`                                   | move one row across Contents then Files and load its bounded file-content bottom preview                                                        |
 | `Left` / `Right` on group heading               | collapse/expand only that group; both begin expanded                                                                                            |
-| click or `Enter`                                | select the row and preview that file from its beginning, without changing main Preview; the row alone retains match context                     |
+| click or `Enter`                                | select and preview immediately; Office loads lazily; rapid changes coalesce to the last candidate without changing main Preview                 |
 | double-click or `Cmd/Ctrl+Enter` on file        | open it in the main Preview, close Global Search                                                                                                |
 | explicit Project-tree file/directory selection  | update the live Current directory; rerun only directory-scoped Contents                                                                         |
 | double-click or `Cmd/Ctrl+Enter` on directory   | expand its full ancestry and target, select and center-focus it in Project, then close Global Search                                            |
 | Contents scope selector                         | immediately retire the prior request/results and rerun the current non-empty query for Current directory or Project; Files remains project-wide |
 | drag/keyboard separator                         | resize result/preview split within 25–70%                                                                                                       |
-| click the protected Shell outside Search        | close Global Search, consume the click, and restore its live opener                                                                             |
-| click the transparent 24px gutter around Search | close Global Search, consume the click, and restore its live opener                                                                             |
+| click any transparent area outside the workspace | close Global Search in its own renderer, consume the click, and restore its live opener                                                         |
 | `Esc`                                           | first clear a non-empty query; second close Global Search and restore prior Preview bounds                                                      |
 
-Focus stays inside the search workspace while active. Project-tree interaction resumes after a
-scrim click closes Search; that dismissal click itself is never forwarded. Closing Search restores
+Focus stays inside the search workspace while active. Project-tree interaction resumes after an
+outside-workspace click closes Search; that dismissal click itself is never forwarded. Closing Search restores
 focus to the surface that opened it when still valid, otherwise the current Project row, otherwise
 the main Preview.
 
@@ -278,11 +299,9 @@ the main Preview.
 
 - Opening search with no workspace shows one direct Open Folder state; no request is sent.
 - Main publishes the authoritative host-scoped Search visibility state with a monotonic revision.
-  Shell renders one visually transparent DOM click shield from that event and receives a
-  current-state replay with each context report; the Search renderer also reads the state in its
-  initial context snapshot. Shell/Search reloads and late async replies therefore cannot resurrect
-  an older state. The shield adds no process, native view, visible tint, blur, animation, or
-  periodic work.
+  Shell and Search receive current-state replay with each context report, but Shell paints no DOM
+  shield. Search renderer geometry and visibility revisions fence outside-workspace dismissal;
+  Shell/Search reloads and late async replies cannot resurrect an older state.
 - A false visibility event also exits the detached warm Search renderer, cancelling its active
   request and clearing query/results before the next open. Repeated close requests republish false
   without repeating focus restoration.
@@ -326,10 +345,13 @@ the main Preview.
   ledger. Scale-dependent scans, representatives, continuation/product states, fixed-width keys,
   queue entries, and visited entries reserve before work or allocation; exhaustion fails open.
 - Search remains one-active/one-latest and time-sliced. Filename traversal never opens file bodies;
-  content reads keep the 1MiB cap; result preview adds at most one 256KiB text buffer or one
-  200-entry directory listing. Supersession releases the prior buffer/list immediately.
-- The Search child renderer stores at most 500 result rows and one preview payload. No click can create a persistent
-  collection, parallel full-file reads, or recursive directory scan.
+  content reads keep the 1MiB cap; result preview adds at most one 256KiB text buffer, one 200-entry
+  directory listing, or one bounded 25MiB Office buffer with one format Worker/Viewer. Supersession
+  releases the prior buffer/list/session immediately; Search and main Preview Office lanes are
+  independent.
+- The Search child renderer stores at most 500 result rows and one preview payload. Office adds at
+  most one bounded package buffer, Worker, and Viewer in its Search lane. No click can create a
+  persistent collection, parallel Search full-file reads, or recursive directory scan.
 - `[onlypreview-search]` diagnostics measure each process locally: Shell dispatch to first accepted
   batch/terminal, Main XPC call duration, and hidden-runtime SQLite open, count, candidate,
   reconcile, promotion, warm-snapshot availability, initial-tree-metadata wait, first
@@ -345,7 +367,8 @@ the main Preview.
 - Renderer tests: shortcut separation from `Cmd/Ctrl+F`, Project input removal, root row/keyboard/
   context actions, explicit live scope synchronization, folder-first Files order, nested directory
   reveal/focus, `folder` display type, exact punctuated-query fencing, immediate Project/Directory
-  scope reruns, group navigation, async component selection, preview race cancellation, Esc
+  scope reruns, group navigation, async component selection, Office leading/trailing coalescing,
+  stale read/import/Worker/Viewer/error rejection, unmount disposal, preview race cancellation, Esc
   restore, reduced-motion and 800px layout source contract.
 - Floating-surface tests: Search-only native transparency, transparent `html`/`body`/`#app`, exact
   body `24px` padding, one rounded/clipped/shadowed workspace, and gutter-only opener dismissal.

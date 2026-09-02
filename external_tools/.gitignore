@@ -1,0 +1,8 @@
+*
+!/.gitignore
+!/mac_arm/
+!/mac_intel/
+!/win/
+!/mac_arm/.gitkeep
+!/mac_intel/.gitkeep
+!/win/.gitkeep

@@ -3,7 +3,10 @@ import { spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { app } from 'electron'
-import { bundledMicromeetCliPath, micromeetCliCredentialFile } from '@maestro-main/cli/micromeetCli.service'
+import {
+  bundledMicromeetCliPath,
+  micromeetCliChildEnvironment
+} from '@maestro-main/cli/micromeetCli.service'
 import type {
   IntegrationMigrationRunRequest,
   IntegrationReportReadinessRequest,
@@ -103,8 +106,7 @@ const runCli = async (name: string, args: string[], params: { timeoutMs?: number
     const child = spawn(invocation.command, [...invocation.argsPrefix, ...args], {
       env: {
         ...process.env,
-        MICROMEET_CRMS_CREDENTIAL_FILE:
-          process.env.MICROMEET_CRMS_CREDENTIAL_FILE || micromeetCliCredentialFile()
+        ...micromeetCliChildEnvironment()
       },
       stdio: ['ignore', 'pipe', 'pipe']
     })

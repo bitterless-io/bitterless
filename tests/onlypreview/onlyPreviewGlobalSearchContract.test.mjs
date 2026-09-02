@@ -75,6 +75,39 @@ test('Global Search request and token-only preview request keep exact relative s
   }
 });
 
+test('Global Search Office read requests are exact and offset-bound', () => {
+  const officeRead = {
+    hostToken: request.hostToken,
+    workspaceId: request.workspaceId,
+    generation: request.generation,
+    requestId: request.requestId,
+    resultToken: 'office-result-token',
+    readGrant: 'office-read-grant'
+  };
+  assert.deepEqual(runtime.parseOnlyPreviewGlobalSearchOfficeReadRequest(officeRead), officeRead);
+  assert.deepEqual(
+    runtime.parseOnlyPreviewGlobalSearchOfficeReadChunkRequest({
+      ...officeRead,
+      offset: 512 * 1024
+    }),
+    { ...officeRead, offset: 512 * 1024 }
+  );
+  for (const invalid of [
+    { ...officeRead, readGrant: '' },
+    { ...officeRead, offset: 0 },
+    { ...officeRead, relativePath: 'private.xlsx' }
+  ]) {
+    assert.throws(
+      () => runtime.parseOnlyPreviewGlobalSearchOfficeReadRequest(invalid),
+      (error) => error?.code === 'INVALID_INPUT'
+    );
+  }
+  assert.throws(
+    () => runtime.parseOnlyPreviewGlobalSearchOfficeReadChunkRequest({ ...officeRead, offset: -1 }),
+    (error) => error?.code === 'INVALID_INPUT'
+  );
+});
+
 test('relay validators require strict independent Files and Contents sections', () => {
   const expectation = {
     workspaceId: request.workspaceId,
@@ -169,5 +202,73 @@ test('preview variants are bounded and never carry authority paths', () => {
       truncated: false
     }),
     false
+  );
+  const expectation = {
+    workspaceId: request.workspaceId,
+    generation: request.generation,
+    requestId: request.requestId,
+    resultToken: 'office-result-token',
+    readGrant: 'office-read-grant',
+    offset: 0
+  };
+  const office = {
+    kind: 'office',
+    adapter: 'xlsx',
+    name: 'book.xlsm',
+    sourceExtension: '.xlsm',
+    size: 1024,
+    modifiedAt: 1,
+    workspaceId: request.workspaceId,
+    generation: request.generation,
+    requestId: request.requestId,
+    resultToken: expectation.resultToken,
+    readGrant: expectation.readGrant
+  };
+  assert.equal(runtime.isOnlyPreviewGlobalSearchPreview(office, expectation), true);
+  assert.equal(
+    runtime.isOnlyPreviewGlobalSearchPreview({ ...office, sourceExtension: '.pptx' }, expectation),
+    false
+  );
+  assert.equal(
+    runtime.isOnlyPreviewGlobalSearchPreview({ ...office, absolutePath: '/private/book.xlsm' }),
+    false
+  );
+  const opened = {
+    workspaceId: request.workspaceId,
+    generation: request.generation,
+    requestId: request.requestId,
+    resultToken: expectation.resultToken,
+    readGrant: expectation.readGrant,
+    totalBytes: 4
+  };
+  assert.equal(runtime.isOnlyPreviewGlobalSearchOfficeReadOpenResult(opened, expectation), true);
+  assert.equal(
+    runtime.isOnlyPreviewGlobalSearchOfficeReadChunkResult(
+      {
+        ...opened,
+        totalBytes: undefined,
+        offset: 0,
+        bytes: new Uint8Array([1, 2]).buffer,
+        eof: false
+      },
+      expectation
+    ),
+    false
+  );
+  assert.equal(
+    runtime.isOnlyPreviewGlobalSearchOfficeReadChunkResult(
+      {
+        workspaceId: request.workspaceId,
+        generation: request.generation,
+        requestId: request.requestId,
+        resultToken: expectation.resultToken,
+        readGrant: expectation.readGrant,
+        offset: 0,
+        bytes: new Uint8Array([1, 2]).buffer,
+        eof: false
+      },
+      expectation
+    ),
+    true
   );
 });

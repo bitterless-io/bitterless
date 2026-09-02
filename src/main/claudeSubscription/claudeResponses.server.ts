@@ -11,6 +11,7 @@ import { redactClaudeSubscriptionSecrets } from '@shared/claudeSubscription/clau
 import { ClaudeAccountRouter } from './claudeAccount.router';
 import type { ClaudeExecutor } from './claudeCli.executor';
 import {
+  ClaudeAllAccountsExhaustedError,
   ClaudeExecutionError,
   ClaudeNoEligibleAccountError,
   ClaudeRequestAbortedError,
@@ -27,24 +28,163 @@ import {
 import {
   buildClaudeBridgePayload,
   claudeSubscriptionModelCatalog,
+  claudeUpstreamTarget,
   parseClaudeResponsesRequest,
-  resolveClaudeSubscriptionModel
+  resolveSub2ApiTarget,
+  type Sub2ApiTarget,
+  type Sub2ApiUpstreamAvailability
 } from './claudeResponses.translator';
+import { CodexRuntimeError } from '@main/codex/codexRuntime.service';
+import type { CodexResponsesUpstream } from '@main/codex/codexResponses.upstream';
+import {
+  describeSub2ApiError,
+  NO_SUB2API_LOG,
+  type Sub2ApiLogger
+} from './sub2apiLog.service';
+
+/** Codex failures that mean "this upstream cannot serve anything right now". */
+const CODEX_UPSTREAM_UNUSABLE: readonly string[] = ['not-configured', 'runtime-unavailable'];
 
 export class ClaudeResponsesRuntime {
+  readonly #codex: CodexResponsesUpstream | null;
+  readonly #log: Sub2ApiLogger;
+
   constructor(
     private readonly router: ClaudeAccountRouter,
-    private readonly executor: ClaudeExecutor
-  ) {}
+    private readonly executor: ClaudeExecutor,
+    codex: CodexResponsesUpstream | null = null,
+    log: Sub2ApiLogger = NO_SUB2API_LOG
+  ) {
+    this.#codex = codex;
+    this.#log = log;
+  }
+
+  async #describePool(): Promise<Record<string, string | number>> {
+    try {
+      const health = await this.router.health();
+      return {
+        total: health.total,
+        enabled: health.enabled,
+        eligible: health.eligible,
+        busy: health.busy,
+        cooling: health.cooling,
+        needsLogin: health.needsLogin
+      };
+    } catch {
+      return { pool: 'unreadable' };
+    }
+  }
+
+  async availability(): Promise<Sub2ApiUpstreamAvailability> {
+    const [claude, codex] = await Promise.all([
+      this.router
+        .health()
+        .then((health) => health.eligible > 0)
+        .catch(() => false),
+      this.#codex?.isAvailable().catch(() => false) ?? Promise.resolve(false)
+    ]);
+    return { claude, codex };
+  }
 
   async execute(
     request: ClaudeResponsesRequest,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    requestId = ''
   ): Promise<ClaudeCompletedResponse> {
-    const model = resolveClaudeSubscriptionModel(request.model);
     const payload = buildClaudeBridgePayload(request);
+    let target = resolveSub2ApiTarget(request);
+    // Both upstreams read images, but only Claude reads PDFs: pi's `PromptOptions`
+    // offers `images` and no document channel, so a PDF sent to the Codex upstream
+    // arrives as its marker text and nothing else — the model would answer about a
+    // document it never saw. A request carrying one is served by the upstream that can
+    // actually read it, and the response reports the model that ran.
+    if (
+      target.upstream === 'codex' &&
+      (payload.media ?? []).some((block) => block.type === 'document')
+    ) {
+      target = claudeUpstreamTarget(request);
+    }
+    this.#log({
+      level: 'info',
+      event: 'dispatch',
+      fields: {
+        id: requestId,
+        upstream: target.upstream,
+        requestedModel: request.model,
+        model: target.modelId,
+        requestedEffort: request.claudeEffort,
+        effort: target.effort,
+        tools: payload.available_tools.length,
+        unsupportedTools: payload.unsupported_codex_tool_types.join(',') || undefined
+      }
+    });
+    if (target.upstream === 'codex') {
+      const codex = this.#codex;
+      if (codex) {
+        try {
+          const result = await codex.execute(
+            { model: target.modelId, effort: target.effort, payload },
+            signal ? { signal } : {}
+          );
+          this.#log({
+            level: 'info',
+            event: 'codex-completed',
+            fields: { id: requestId, model: result.model, decision: result.decision.action }
+          });
+          return makeClaudeCompletedResponse(result.model, result.decision, normalizeClaudeUsage());
+        } catch (error) {
+          const described = describeSub2ApiError(error);
+          const code = error instanceof CodexRuntimeError ? error.code : undefined;
+          this.#log({
+            level: 'warn',
+            event: 'codex-failed',
+            fields: {
+              id: requestId,
+              model: target.modelId,
+              codexCode: code,
+              fallback: code !== undefined && CODEX_UPSTREAM_UNUSABLE.includes(code),
+              ...described
+            }
+          });
+          // Only a *missing* Codex upstream falls through to Claude. A provider error
+          // is a real failure of the model the caller chose, and hiding it behind a
+          // different model would both mislead and spend Claude quota.
+          if (
+            !(error instanceof CodexRuntimeError) ||
+            !CODEX_UPSTREAM_UNUSABLE.includes(error.code)
+          ) {
+            throw error;
+          }
+        }
+      }
+      // No Codex credential: answer from Claude rather than breaking the thread, and
+      // report the model that actually ran.
+      return await this.#executeClaude(
+        claudeUpstreamTarget(request),
+        payload,
+        request,
+        signal,
+        requestId
+      );
+    }
+    return await this.#executeClaude(target, payload, request, signal, requestId);
+  }
+
+  async #executeClaude(
+    target: Extract<Sub2ApiTarget, { upstream: 'claude' }>,
+    payload: ReturnType<typeof buildClaudeBridgePayload>,
+    request: ClaudeResponsesRequest,
+    signal?: AbortSignal,
+    requestId = ''
+  ): Promise<ClaudeCompletedResponse> {
+    const model = target.cliModel;
+    // Report what actually ran, not what was asked for — see
+    // resolveClaudeSubscriptionModelId for why a mismatch is possible.
+    const reportedModel = target.modelId;
     const excluded = new Set<ClaudeAccountId>();
     let priorUsageFailure: ClaudeUsageLimitError | undefined;
+    let exhaustedByQuota = 0;
+    let earliestReset = Number.POSITIVE_INFINITY;
     let priorAuthenticationFailure: Error | undefined;
 
     // Every iteration either returns, rethrows a non-routing error, or adds exactly
@@ -59,7 +199,21 @@ export class ClaudeResponsesRuntime {
         lease = await this.router.lease(request.prompt_cache_key, excluded);
       } catch (error) {
         if (error instanceof ClaudeNoEligibleAccountError) {
-          if (priorUsageFailure) throw priorUsageFailure;
+          // Why the pool was unusable, not just that it was. "No eligible account" has
+          // several causes needing different actions from the owner, and the message
+          // alone cannot tell a logged-out account from a cooling one.
+          this.#log({
+            level: 'warn',
+            event: 'no-eligible-account',
+            fields: { id: requestId, ...(await this.#describePool()) }
+          });
+
+          if (priorUsageFailure) {
+            throw new ClaudeAllAccountsExhaustedError(
+              Math.max(1, exhaustedByQuota),
+              earliestReset === Number.POSITIVE_INFINITY ? undefined : earliestReset
+            );
+          }
           if (priorAuthenticationFailure) throw priorAuthenticationFailure;
         }
         throw error;
@@ -74,15 +228,51 @@ export class ClaudeResponsesRuntime {
 
       try {
         const result = await this.executor.execute(
-          { model, effort: request.claudeEffort, payload, context: lease.context },
+          { model, effort: target.effort, payload, context: lease.context },
           signal ? { signal } : {}
         );
+        if (result.rateLimit) {
+          this.router.observeRateLimit(lease.accountId, {
+            status: result.rateLimit.status,
+            ...(result.rateLimit.rateLimitType ? { window: result.rateLimit.rateLimitType } : {}),
+            ...(result.rateLimit.resetsAt !== undefined
+              ? { resetsAt: result.rateLimit.resetsAt }
+              : {}),
+            ...(result.rateLimit.isUsingOverage !== undefined
+              ? { usingOverage: result.rateLimit.isUsingOverage }
+              : {}),
+            observedAt: Date.now()
+          });
+        }
+        this.#log({
+          level: 'info',
+          event: 'claude-completed',
+          fields: {
+            id: requestId,
+            model: reportedModel,
+            account: lease.accountId,
+            decision: result.decision.action
+          }
+        });
         return makeClaudeCompletedResponse(
-          request.model,
+          reportedModel,
           result.decision,
           normalizeClaudeUsage(result.rawUsage)
         );
       } catch (error) {
+        const described = describeSub2ApiError(error);
+        this.#log({
+          level: 'warn',
+          event: 'claude-failed',
+          fields: {
+            id: requestId,
+            model: reportedModel,
+            account: lease.accountId,
+            errorCode: error instanceof ClaudeSubscriptionError ? error.code : undefined,
+            routingFailure: isClaudeRoutingFailure(error),
+            ...described
+          }
+        });
         if (!isClaudeRoutingFailure(error)) {
           if (error instanceof Error) throw error;
           throw new ClaudeExecutionError();
@@ -91,6 +281,8 @@ export class ClaudeResponsesRuntime {
         excluded.add(lease.accountId);
         if (error instanceof ClaudeUsageLimitError) {
           priorUsageFailure = error;
+          exhaustedByQuota += 1;
+          if (error.resetAt !== undefined) earliestReset = Math.min(earliestReset, error.resetAt);
           try {
             await this.router.markCooldown(lease.accountId, error.resetAt);
           } catch {
@@ -109,7 +301,15 @@ export class ClaudeResponsesRuntime {
       }
     }
 
-    if (priorUsageFailure) throw priorUsageFailure;
+    // Every account was tried and every one was out of quota. Reporting the last
+    // account's own limit error here would read as "switch and continue", which is
+    // exactly what has just been exhausted — there is nothing left to switch to.
+    if (priorUsageFailure) {
+      throw new ClaudeAllAccountsExhaustedError(
+        Math.max(1, exhaustedByQuota),
+        earliestReset === Number.POSITIVE_INFINITY ? undefined : earliestReset
+      );
+    }
     if (priorAuthenticationFailure) throw priorAuthenticationFailure;
     throw new ClaudeNoEligibleAccountError();
   }
@@ -118,6 +318,7 @@ export class ClaudeResponsesRuntime {
 export interface ClaudeResponsesServerOptions {
   port?: number;
   maxBodyBytes?: number;
+  log?: Sub2ApiLogger;
 }
 
 export interface ClaudeResponsesServerAddress {
@@ -137,6 +338,8 @@ export class ClaudeResponsesServer {
   readonly #handlerPromises = new Set<Promise<void>>();
   readonly #port: number;
   readonly #maxBodyBytes: number;
+  readonly #log: Sub2ApiLogger;
+  #requestCounter = 0;
   #listening = false;
   #listenPromise: Promise<void> | null = null;
   #closingPromise: Promise<void> | null = null;
@@ -148,6 +351,7 @@ export class ClaudeResponsesServer {
   ) {
     this.#port = options.port ?? CLAUDE_SUBSCRIPTION_DEFAULT_PORT;
     this.#maxBodyBytes = options.maxBodyBytes ?? 32 * 1024 * 1024;
+    this.#log = options.log ?? NO_SUB2API_LOG;
     if (!Number.isInteger(this.#port) || this.#port < 0 || this.#port > 65_535) {
       throw new Error('Claude Responses server port is invalid.');
     }
@@ -167,7 +371,15 @@ export class ClaudeResponsesServer {
       };
       this.#activeRequests.add(active);
       const handling = this.#handle(request, response, active.controller)
-        .catch(() => {
+        .catch((error: unknown) => {
+          // Reached only when #handle's own error path threw. Without this line the
+          // cause is gone: the client is told "Claude CLI execution failed." no matter
+          // what actually happened.
+          this.#log({
+            level: 'error',
+            event: 'handler-crashed',
+            fields: describeSub2ApiError(error)
+          });
           if (!response.headersSent && !response.writableEnded && !response.destroyed) {
             respondClaudeError(response, new ClaudeExecutionError());
           }
@@ -269,18 +481,40 @@ export class ClaudeResponsesServer {
     response: ServerResponse,
     controller: AbortController
   ): Promise<void> {
-    if (request.headers.origin !== undefined) {
-      respondJson(response, 403, {
-        error: {
-          type: 'invalid_request',
-          code: 'invalid_request',
-          message: 'Browser-origin requests are not accepted.'
-        }
+    const requestId = `r${++this.#requestCounter}`;
+    const startedAt = Date.now();
+    const pathname = request.url?.split('?', 1)[0] ?? '/';
+    // Logged before any rejection. Every early return below used to answer without a
+    // trace, so a client refused here left the log looking as though it had never
+    // called at all — which is indistinguishable from a client that never called.
+    this.#log({
+      level: 'info',
+      event: 'received',
+      fields: {
+        id: requestId,
+        method: request.method ?? '(none)',
+        path: pathname,
+        origin: request.headers.origin ?? '(none)',
+        contentType: request.headers['content-type'] ?? '(none)',
+        contentLength: request.headers['content-length'] ?? '(none)',
+        userAgent: request.headers['user-agent'] ?? '(none)'
+      }
+    });
+
+    const reject = (status: number, code: string, message: string): void => {
+      this.#log({
+        level: 'warn',
+        event: 'rejected',
+        fields: { id: requestId, status, errorCode: code, path: pathname }
       });
+      respondJson(response, status, { error: { type: code, code, message } });
+    };
+
+    if (request.headers.origin !== undefined) {
+      reject(403, 'invalid_request', 'Browser-origin requests are not accepted.');
       return;
     }
 
-    const pathname = request.url?.split('?', 1)[0] ?? '/';
     if (request.method === 'GET' && pathname === '/health') {
       try {
         const accounts = await this.router.health();
@@ -297,25 +531,16 @@ export class ClaudeResponsesServer {
       return;
     }
     if (request.method === 'GET' && pathname === '/v1/models') {
-      respondJson(response, 200, claudeSubscriptionModelCatalog());
+      respondJson(response, 200, claudeSubscriptionModelCatalog(await this.runtime.availability()));
       return;
     }
     if (request.method !== 'POST' || pathname !== '/v1/responses') {
-      respondJson(response, 404, {
-        error: { type: 'not_found', message: 'Not found.' }
-      });
+      reject(404, 'not_found', 'Not found.');
       return;
     }
 
     if (!hasJsonContentType(request)) {
-      respondClaudeError(
-        response,
-        new ClaudeSubscriptionInvalidRequestError(
-          'Responses requests require Content-Type: application/json.',
-          undefined,
-          415
-        )
-      );
+      reject(415, 'invalid_request', 'Responses requests require Content-Type: application/json.');
       return;
     }
 
@@ -327,11 +552,40 @@ export class ClaudeResponsesServer {
 
     try {
       const rawBody = await readJsonBody(request, this.#maxBodyBytes, controller.signal);
+      this.#log({
+        level: 'info',
+        event: 'request',
+        fields: { id: requestId, ...describeResponsesRequestBody(rawBody) }
+      });
       const claudeRequest = parseClaudeResponsesRequest(rawBody);
-      const completed = await this.runtime.execute(claudeRequest, controller.signal);
+      const completed = await this.runtime.execute(claudeRequest, controller.signal, requestId);
       if (!response.destroyed) writeClaudeResponsesStream(response, completed);
+      this.#log({
+        level: 'info',
+        event: 'responded',
+        fields: {
+          id: requestId,
+          status: 200,
+          model: completed.model,
+          ms: Date.now() - startedAt
+        }
+      });
     } catch (error) {
-      if (response.headersSent || response.writableEnded || response.destroyed) {
+      const described = describeSub2ApiError(error);
+      const status = error instanceof ClaudeSubscriptionError ? error.statusCode : 502;
+      const streaming = response.headersSent || response.writableEnded || response.destroyed;
+      this.#log({
+        level: 'error',
+        event: streaming ? 'failed-mid-stream' : 'failed',
+        fields: {
+          id: requestId,
+          status,
+          errorCode: error instanceof ClaudeSubscriptionError ? error.code : undefined,
+          ms: Date.now() - startedAt,
+          ...described
+        }
+      });
+      if (streaming) {
         if (!response.destroyed) response.destroy();
         return;
       }
@@ -342,6 +596,69 @@ export class ClaudeResponsesServer {
     }
   }
 }
+
+/**
+ * Summarises a request body for the log without copying the transcript into it. The
+ * shape is what distinguishes a client that works from one that does not — the model,
+ * the tool set, and how much text arrived — so it is recorded before parsing, which is
+ * itself one of the things that can reject the request.
+ */
+const describeResponsesRequestBody = (body: unknown): Record<string, string | number | boolean> => {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return { bodyType: typeof body };
+  }
+  const value = body as Record<string, unknown>;
+  const input = value.input;
+  const tools = Array.isArray(value.tools) ? value.tools : [];
+  const toolTypes = new Set<string>();
+  // Names, not just a count. Which tools a client offers is what decides what it can
+  // do — whether an orchestration tool is present at all is invisible in a tally, and
+  // that is exactly the question a count cannot answer.
+  const toolNames: string[] = [];
+  for (const tool of tools) {
+    if (typeof tool !== 'object' || tool === null) continue;
+    const entry = tool as { type?: unknown; name?: unknown; tools?: unknown };
+    if (typeof entry.type === 'string') toolTypes.add(entry.type);
+    if (typeof entry.name === 'string') toolNames.push(entry.name);
+    if (Array.isArray(entry.tools)) {
+      for (const child of entry.tools) {
+        const name = (child as { name?: unknown })?.name;
+        if (typeof name === 'string') {
+          toolNames.push(`${typeof entry.name === 'string' ? entry.name : '?'}:${name}`);
+        }
+      }
+    }
+  }
+  const reasoning = value.reasoning;
+  return {
+    model: typeof value.model === 'string' ? value.model : '(missing)',
+    stream: value.stream === true,
+    effort:
+      typeof reasoning === 'object' && reasoning !== null
+        ? String((reasoning as { effort?: unknown }).effort ?? '(default)')
+        : '(default)',
+    instructionsBytes:
+      typeof value.instructions === 'string' ? Buffer.byteLength(value.instructions, 'utf8') : 0,
+    inputItems: Array.isArray(input) ? input.length : typeof input === 'string' ? 1 : 0,
+    toolNames: toolNames.length > 0 ? toolNames.join(',') : '(none)',
+    tools: tools.length,
+    toolTypes: [...toolTypes].join(',') || '(none)',
+    extraKeys: Object.keys(value)
+      .filter((key) => !KNOWN_RESPONSES_KEYS.has(key))
+      .join(',') || '(none)'
+  };
+};
+
+/** Fields Bitterless reads. Anything else is logged so an unexpected one is visible. */
+const KNOWN_RESPONSES_KEYS = new Set([
+  'model',
+  'stream',
+  'instructions',
+  'input',
+  'tools',
+  'reasoning',
+  'prompt_cache_key'
+]);
 
 const hasJsonContentType = (request: IncomingMessage): boolean => {
   const contentType = request.headers['content-type'];
@@ -442,11 +759,18 @@ const respondClaudeError = (response: ServerResponse, error: unknown): void => {
     });
     return;
   }
+  // An untyped failure used to be reported as the same fixed sentence as every other
+  // one, which is why Codex could only render "Unknown error". The real message is
+  // redacted and bounded, then included, so the client shows something actionable.
+  const described = describeSub2ApiError(error);
+  const detail = redactClaudeSubscriptionSecrets(
+    `${described.errorName}: ${described.errorMessage}`
+  ).slice(0, 500);
   respondJson(response, 502, {
     error: {
       type: 'claude_execution',
       code: 'claude_execution',
-      message: 'Claude CLI execution failed.'
+      message: `Bitterless Sub2API could not complete the request. ${detail}`
     }
   });
 };

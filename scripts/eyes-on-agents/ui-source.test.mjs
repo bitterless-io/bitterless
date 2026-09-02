@@ -594,6 +594,9 @@ test('thread cards use compact title and action rows with accessible status mark
   const component = read(
     'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCard.vue'
   );
+  const menu = read(
+    'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCardMenu.vue'
+  );
   const styles = read(
     'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCard.less'
   );
@@ -670,17 +673,17 @@ test('thread cards use compact title and action rows with accessible status mark
   assert.match(english, /workingDirectory: 'Working directory: \{path\}'/);
   assert.match(chinese, /workingDirectory: '工作目录：\{path\}'/);
 
-  const openOption = component.match(
+  const openOption = menu.match(
     /<a-doption\s+v-if="canOpenThread"[\s\S]*?<\/a-doption>/
   );
   assert.ok(openOption, 'Missing provider-named open menu item');
   assert.match(openOption[0], /:disabled="eyesOnAgentsStore\.openingSessionKeys\.has\(thread\.sessionKey\)"/);
-  assert.match(openOption[0], /@click="handleOpen"/);
-  assert.match(openOption[0], /<IconExternalLink :size="13" \/>/);
+  assert.match(openOption[0], /@click="emit\('open'\)"/);
+  assert.match(openOption[0], /<IconExternalLink :size="13" aria-hidden="true" \/>/);
   assert.match(openOption[0], /\{\{ openLabel \}\}/);
   assert.match(openOption[0], /actions\.doubleClickHint/);
   assert.match(
-    component,
+    menu,
     /const openLabel = computed\(\(\) => props\.thread\.provider === 'claude'\s*\? i18nHelper\.eyesOnAgents\.actions\.openInClaude\s*: i18nHelper\.eyesOnAgents\.actions\.openInCodex\);/,
     'the open item names the provider it will launch'
   );
@@ -691,14 +694,14 @@ test('thread cards use compact title and action rows with accessible status mark
   assert.match(chinese, /openInClaude: '在 Claude 中打开'/);
   assert.match(chinese, /doubleClickHint: '（双击）'/);
 
-  const readStateOption = component.match(
-    /<a-doption\s+class="thread-card__option"\s+:disabled="eyesOnAgentsStore\.busyAction !== null"[\s\S]*?<\/a-doption>/
+  const readStateOption = menu.match(
+    /name="eyesOnAgents__threadCardMenu__readState"[\s\S]*?<\/a-doption>/
   );
   assert.ok(readStateOption, 'Missing manual read-state menu item');
-  assert.match(readStateOption[0], /@click="handleToggleReadState"/);
+  assert.match(readStateOption[0], /@click="emit\('toggleReadState'\)"/);
   assert.match(readStateOption[0], /\{\{ readStateLabel \}\}/);
   assert.match(
-    component,
+    menu,
     /const readStateLabel = computed\(\(\) => props\.thread\.isUnread\s*\? i18nHelper\.eyesOnAgents\.actions\.markRead\s*: i18nHelper\.eyesOnAgents\.actions\.markUnread\);/,
     'the label follows the stored unread flag'
   );
@@ -749,6 +752,8 @@ test('thread cards use compact title and action rows with accessible status mark
     component,
     /:aria-label="i18nHelper\.eyesOnAgents\.actions\.more"[\s\S]*?<IconDots :size="12" \/>/
   );
+  assert.match(component, /aria-haspopup="menu"/);
+  assert.match(component, /:aria-expanded="moreMenuVisible"/);
   const optionRow = cssRule(styles, ".thread-card__option.arco-dropdown-option");
   assert.match(optionRow, /display: flex/);
   assert.match(
@@ -783,9 +788,79 @@ test('thread cards use compact title and action rows with accessible status mark
   );
 });
 
+test('thread cards share one viewport-fitted menu across More and right-click', () => {
+  const component = read(
+    'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCard.vue'
+  );
+  const menu = read(
+    'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCardMenu.vue'
+  );
+  const styles = read(
+    'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCard.less'
+  );
+  const store = read('src/renderer/eyesOnAgents/src/store/eyesOnAgents.store.ts');
+  const service = read('src/main/eyesOnAgents/eyesOnAgents.service.ts');
+  const supervisor = read('src/main/eyesOnAgents/codexAppServer.supervisor.ts');
+  const handler = read('src/main/xpc/eyesOnAgents.handler.ts');
+  const sharedTypes = read('src/shared/eyesOnAgents/eyesOnAgents.type.ts');
+  const english = read('src/renderer/common/i18n/en.ts');
+  const chinese = read('src/renderer/common/i18n/zh.ts');
+
+  assert.equal(
+    (component.match(/<ThreadCardMenu/g) ?? []).length,
+    2,
+    'More and right-click render the same menu component'
+  );
+  assert.match(
+    component,
+    /:popup-visible="contextMenuVisible"[\s\S]*trigger="contextMenu"[\s\S]*position="bottom"[\s\S]*:align-point="true"[\s\S]*:auto-fit-position="true"[\s\S]*:scroll-to-close="true"[\s\S]*popup-container="body"/
+  );
+  assert.match(
+    component,
+    /:popup-visible="moreMenuVisible"[\s\S]*trigger="click"[\s\S]*position="br"[\s\S]*popup-container="body"/
+  );
+  assert.match(
+    component,
+    /handleMoreMenuVisibleChange[\s\S]*moreMenuVisible\.value = visible;[\s\S]*if \(visible\) contextMenuVisible\.value = false;/
+  );
+  assert.match(
+    component,
+    /handleContextMenuVisibleChange[\s\S]*contextMenuVisible\.value = visible;[\s\S]*if \(visible\) moreMenuVisible\.value = false;/
+  );
+  for (const handlerName of [
+    'handleOpen',
+    'handleCopySessionPath',
+    'handleToggleReadState',
+    'handleArchive',
+  ]) {
+    assert.match(component, new RegExp(`const ${handlerName}[\\s\\S]*?closeMenus\\(\\)`));
+  }
+
+  const archiveOption = menu.match(
+    /<a-doption\s+v-if="thread\.provider === 'codex'"[\s\S]*?name="eyesOnAgents__threadCardMenu__archive"[\s\S]*?<\/a-doption>/
+  );
+  assert.ok(archiveOption, 'Archive must be a Codex-only shared-menu item');
+  assert.match(archiveOption[0], /thread-card__option--archive/);
+  assert.match(archiveOption[0], /<IconArchive :size="13" aria-hidden="true" \/>/);
+  assert.match(archiveOption[0], /@click="emit\('archive'\)"/);
+  assert.match(styles, /\.thread-card__option--archive\.arco-dropdown-option[\s\S]*border-top:/);
+  assert.match(store, /async archiveThread\(sessionKey: EyesOnAgentsSessionKey\): Promise<void>/);
+  assert.match(store, /eyesOnAgentsEmitter\.archiveThread\(\{ sessionKey \}\)/);
+  assert.match(service, /async archiveThread\(params: \{[\s\S]*sessionKey: EyesOnAgentsSessionKey;/);
+  assert.match(service, /await this\.dependencies\.appServer\.archiveThread\(threadId\)[\s\S]*repository\.setThreadArchived/);
+  assert.match(supervisor, /this\.request\(connection, 'thread\/archive', \{ threadId \}\)/);
+  assert.match(handler, /eyesOnAgentsService\.archiveThread\(parseEyesOnAgentsSessionKeyParams\(params\)\)/);
+  assert.match(sharedTypes, /archiveThread\(params: \{[\s\S]*sessionKey: EyesOnAgentsSessionKey;[\s\S]*Promise<EyesOnAgentsSnapshot>/);
+  assert.match(english, /archive: 'Archive'/);
+  assert.match(chinese, /archive: '归档'/);
+});
+
 test('Claude UI stays provider-qualified, compact, and content-boundary safe', () => {
   const card = read(
     'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCard.vue'
+  );
+  const menu = read(
+    'src/renderer/eyesOnAgents/src/components/ThreadCard/ThreadCardMenu.vue'
   );
   const panel = read(
     'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ConnectionPanel.vue'
@@ -810,7 +885,7 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
   assert.match(card, /:data-provider="thread\.provider"/);
 
   assert.match(
-    card,
+    menu,
     /<a-doption\s+v-if="thread\.canCopySessionPath"[\s\S]*actions\.copySessionPath/,
   );
   assert.match(
@@ -1079,7 +1154,12 @@ test('Focus header exposes only Search while bulk Read all stays below renderer'
   assert.match(button[0], /aria-haspopup="dialog"/);
   assert.match(button[0], /aria-controls="eyes-on-agents-thread-search-dialog"/);
   assert.match(button[0], /:aria-expanded="eyesOnAgentsStore\.threadSearchVisible"/);
-  assert.match(button[0], /@click="eyesOnAgentsStore\.openThreadSearch"/);
+  assert.match(button[0], /@click="openThreadSearch"/);
+  assert.doesNotMatch(button[0], /@click="eyesOnAgentsStore\./);
+  assert.match(
+    domain,
+    /const openThreadSearch = \(\): void => \{\s*eyesOnAgentsStore\.openThreadSearch\(\);\s*\};/,
+  );
   assert.match(button[0], /<IconSearch :size="14" aria-hidden="true"/);
   assert.match(domain, /const searchTooltip = computed\(\(\) => uaHelper\.isMac/);
   assert.doesNotMatch(domain, /<a-input|readAll|markAllRead|readableFocusThreads/);
@@ -1174,7 +1254,23 @@ test('Cmd/Ctrl+F toggles one card-result search modal contained by EyesOnAgents'
   assert.match(search, /id="eyes-on-agents-thread-search-dialog"/);
   assert.match(search, /eyesOnAgentsStore\.closeThreadSearch\(\)/);
   assert.match(search, /inputRef\.value\?\.focus\?\.\(\)/);
+  assert.match(
+    search,
+    /lifecycleRevision !== eyesOnAgentsStore\.threadSearchRevision[\s\S]*?return;[\s\S]*?inputRef\.value\?\.focus\?\.\(\)/,
+    'a stale modal lifecycle must not focus the input'
+  );
+  assert.match(
+    search,
+    /watch\([\s\S]*?eyesOnAgentsStore\.threadSearchVisible[\s\S]*?if \(visible\) void focusInput\(eyesOnAgentsStore\.threadSearchRevision\)/,
+    'shortcut and button opens share the reactive focus path'
+  );
   assert.match(search, /@clear="handleQueryClear"/);
+  assert.match(search, /@update:model-value="handleTitleInput"/);
+  assert.doesNotMatch(search, /@update:model-value="eyesOnAgentsStore\./);
+  assert.match(
+    search,
+    /const handleTitleInput = \(value: string\): void => \{\s*eyesOnAgentsStore\.setTitleDraft\(value\);\s*\};/,
+  );
   assert.match(search, /handleQueryClear[\s\S]*eyesOnAgentsStore\.clearTitleQuery\(\)/);
   assert.match(search, /role: 'combobox'/);
   assert.match(search, /'aria-activedescendant': selectedOptionId\.value/);
@@ -1257,15 +1353,22 @@ test('modal search is query-gated, token-based, reconciled, and stale-draft safe
     'the shared leading-plus-trailing throttle keeps the last keystroke authoritative'
   );
   assert.match(store, /const TITLE_QUERY_THROTTLE_MS = 120;/);
-  const commit = store.match(/  commitTitleQuery\(\): void \{[\s\S]*?\n  \}/);
+  const commit = store.match(
+    /  commitTitleQuery\(lifecycleRevision\?: number\): void \{[\s\S]*?\n  \}/
+  );
   assert.ok(commit, 'Missing throttled commit');
+  assert.match(commit[0], /!this\.threadSearchVisible/);
+  assert.match(commit[0], /lifecycleRevision !== this\.threadSearchLifecycleRevision/);
   assert.match(commit[0], /this\.titleQuery = this\.titleDraft;/);
   assert.match(commit[0], /this\.reconcileThreadSearchSelection\(\)/);
   const setDraft = store.match(/  setTitleDraft\(value: string\): void \{[\s\S]*?\n  \}/);
   assert.ok(setDraft, 'Missing draft setter');
   assert.match(setDraft[0], /if \(this\.titleDraft === value\) return;/);
   assert.match(setDraft[0], /this\.titleQueryScheduler === null/);
-  assert.match(setDraft[0], /this\.titleQueryScheduler\(\);/);
+  assert.match(
+    setDraft[0],
+    /this\.titleQueryScheduler\(this\.threadSearchLifecycleRevision\);/
+  );
   const clear = store.match(/  clearTitleQuery\(\): void \{[\s\S]*?\n  \}/);
   assert.ok(clear, 'Missing clear');
   assert.match(clear[0], /this\.titleDraft = '';/);
@@ -1274,6 +1377,10 @@ test('modal search is query-gated, token-based, reconciled, and stale-draft safe
   assert.match(store, /openThreadSearch\(\): void/);
   assert.match(store, /closeThreadSearch\(\): void/);
   assert.match(store, /toggleThreadSearch\(\): void/);
+  assert.match(
+    store,
+    /createEyesOnAgentsTitleQueryScheduler\(\(lifecycleRevision\) => \{\s*eyesOnAgentsStore\.commitTitleQuery\(lifecycleRevision\);/
+  );
   assert.match(
     store,
     /const nextIndex = \(currentIndex \+ delta \+ results\.length\) % results\.length/,

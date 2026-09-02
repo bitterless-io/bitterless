@@ -1,17 +1,14 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { open, realpath } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Readable } from 'node:stream';
 import test from 'node:test';
 import ts from 'typescript';
 
 const root = process.cwd();
-const source = (relativePath) => readFileSync(join(root, relativePath), 'utf8');
 const nodeRequire = createRequire(import.meta.url);
+const source = (relativePath) => readFileSync(join(root, relativePath), 'utf8');
 
 const loadTypeScriptModule = (relativePath, dependencies) => {
   const transpiled = ts.transpileModule(source(relativePath), {
@@ -38,13 +35,12 @@ const loadTypeScriptModule = (relativePath, dependencies) => {
     }
     return nodeRequire(specifier);
   };
-  const execute = new Function(
+  new Function(
     'require',
     'module',
     'exports',
     `${transpiled.outputText}\n//# sourceURL=${join(root, relativePath)}`
-  );
-  execute(localRequire, loaded, loaded.exports);
+  )(localRequire, loaded, loaded.exports);
   return loaded.exports;
 };
 
@@ -63,662 +59,454 @@ const normalizeRelativePath = (value) => {
     value.includes('\\') ||
     value.split('/').some((segment) => !segment || segment === '.' || segment === '..')
   ) {
-    throw new ContractError('INVALID_INPUT', 'invalid path');
+    throw new ContractError('INVALID_INPUT', 'Invalid relative path.');
   }
   return value;
 };
 
-const inertHosts = {
-  isLive: () => true,
-  onRevoke: () => () => {}
-};
-const inertWorkspaces = { onRevoke: () => () => {} };
-const sharedTypes = {
-  ONLY_PREVIEW_SCHEME: 'bitterless-preview',
-  ONLY_PREVIEW_MAX_HTML_BYTES: 16,
-  ONLY_PREVIEW_MAX_DOCUMENT_RESOURCE_BYTES: 10,
-  ONLY_PREVIEW_MAX_DOCUMENT_TOTAL_BYTES: 12
-};
 const contracts = {
   normalizeOnlyPreviewRelativePath: normalizeRelativePath,
   OnlyPreviewContractError: ContractError
 };
-/** `network` delivery hands the admitted range to Chromium instead of reading it in this process. */
-const NETWORK_DELIVERY_BYTES = Buffer.from('abcdefgh');
-const netFetchCalls = [];
-const fakeNet = {
-  // Mirrors the measured Electron behavior: `file:` fetches honour Range at the byte level but
-  // answer 200 with no range headers, so the 206 contract must be synthesized by the caller.
-  fetch: async (url, init) => {
-    netFetchCalls.push({ url, init });
-    const requestedRange = /^bytes=(\d+)-(\d+)$/.exec(init?.headers?.Range ?? '');
-    const slice = requestedRange
-      ? NETWORK_DELIVERY_BYTES.subarray(Number(requestedRange[1]), Number(requestedRange[2]) + 1)
-      : NETWORK_DELIVERY_BYTES;
-    return new Response(slice, { status: 200 });
-  }
+const sharedTypes = {
+  ONLY_PREVIEW_SCHEME: 'bitterless-preview',
+  ONLY_PREVIEW_MAX_HTML_BYTES: 1024 * 1024,
+  ONLY_PREVIEW_MAX_DOCUMENT_RESOURCE_BYTES: 25 * 1024 * 1024
 };
-const assetModule = loadTypeScriptModule('src/main/onlypreview/onlyPreviewAsset.registry.ts', {
-  electron: { net: fakeNet },
-  '@shared/onlypreview/onlyPreview.contract': contracts,
-  '@shared/onlypreview/onlyPreview.types': sharedTypes,
-  './onlyPreviewHost.registry': { onlyPreviewHostRegistry: inertHosts },
-  './onlyPreviewWorkspace.registry': { onlyPreviewWorkspaceRegistry: inertWorkspaces }
-});
+const inertHosts = {
+  require: () => ({ hostToken: 'host-token' }),
+  isLive: () => true,
+  onRevoke: () => () => {}
+};
+const inertWorkspaces = { onRevoke: () => () => {} };
 
-const createRequest = (url, method = 'GET', headers = {}) => ({
-  url,
-  method,
-  headers: new Headers(headers),
-  signal: new AbortController().signal
-});
+const toArrayBuffer = (bytes) =>
+  bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
 
-const createOpenedFile = (relativePath, bytes, createStream, identity = {}) => ({
-  host: { hostToken: 'host-token' },
-  workspace: { workspaceId: 'workspace-token', rootRealPath: '/workspace' },
-  relativePath,
-  realPath: identity.realPath ?? `/workspace/${relativePath}`,
-  size: bytes.length,
-  modifiedAt: 1,
-  modifiedTimeNanoseconds: identity.modifiedTimeNanoseconds ?? 1n,
-  deviceId: identity.deviceId ?? 1n,
-  inode: identity.inode ?? 1n,
-  fileHandle: {
-    close: async () => {},
-    stat: async () => ({
-      size: BigInt(bytes.length),
-      dev: identity.deviceId ?? 1n,
-      ino: identity.inode ?? 1n,
-      mtimeNs: identity.modifiedTimeNanoseconds ?? 1n
-    }),
-    createReadStream:
-      createStream ??
-      ((options) =>
-        Readable.from(bytes.subarray(options.start, options.end + 1), {
-          objectMode: false
-        }))
-  }
-});
-
-const createDocumentHarness = (files) => {
-  const directoryState = {
-    realPath: null,
-    deviceId: 7n,
-    inode: 13n,
-    isDirectory: true
-  };
-  const workspaces = {
-    onRevoke: () => () => {},
-    openFile: async (_hostToken, fileRef) => {
-      const factory = files.get(fileRef.relativePath);
-      if (!factory) throw new Error('missing');
-      return factory();
-    }
-  };
-  const module = loadTypeScriptModule('src/main/onlypreview/onlyPreviewDocument.registry.ts', {
-    '@shared/onlypreview/onlyPreview.contract': contracts,
-    '@shared/onlypreview/onlyPreview.types': sharedTypes,
-    'node:fs/promises': {
-      realpath: async (path) => directoryState.realPath ?? path,
-      stat: async () => ({
-        isDirectory: () => directoryState.isDirectory,
-        dev: directoryState.deviceId,
-        ino: directoryState.inode
-      })
-    },
-    './onlyPreviewAsset.registry': assetModule,
-    './onlyPreviewHost.registry': { onlyPreviewHostRegistry: inertHosts },
-    './onlyPreviewWorkspace.registry': { onlyPreviewWorkspaceRegistry: workspaces }
+const deferred = () => {
+  let resolve;
+  const promise = new Promise((resolvePromise) => {
+    resolve = resolvePromise;
   });
-  return {
-    registry: new module.OnlyPreviewDocumentRegistry(inertHosts, workspaces),
-    files,
-    directoryState
-  };
+  return { promise, resolve };
 };
 
-const createRealDocumentHarness = (workspaceRoot) => {
-  const workspaces = {
-    onRevoke: () => () => {},
-    openFile: async (_hostToken, fileRef) => {
-      const targetPath = join(workspaceRoot, ...fileRef.relativePath.split('/'));
-      const fileHandle = await open(targetPath, 'r');
-      const stats = await fileHandle.stat({ bigint: true });
+const createFrameBroker = (sources, options = {}) => {
+  const calls = { opens: [], reads: [], cancels: [], inspections: [] };
+  const sessions = new Map();
+  return {
+    calls,
+    async inspectPreviewDocumentResource(request) {
+      calls.inspections.push({ ...request });
+      const bytes = sources.get(request.requestPath);
+      if (!bytes) throw new ContractError('PATH_NOT_FOUND', 'Missing resource.');
       return {
-        host: { hostToken: 'host-token' },
-        workspace: { workspaceId: 'workspace-token', rootRealPath: workspaceRoot },
-        relativePath: fileRef.relativePath,
-        realPath: await realpath(targetPath),
-        size: Number(stats.size),
-        modifiedAt: Number(stats.mtimeMs),
-        deviceId: stats.dev,
-        inode: stats.ino,
-        modifiedTimeNanoseconds: stats.mtimeNs,
-        fileHandle
+        runtimeInstanceId: 'runtime',
+        grantId: request.grantId,
+        selectionRevision: request.selectionRevision,
+        requestPath: request.requestPath,
+        size: bytes.length
       };
+    },
+    async openPreviewRead(request) {
+      calls.opens.push(structuredClone(request));
+      await options.beforeOpen?.(request);
+      const key = request.source.kind === 'document' ? request.source.requestPath : 'selection';
+      const bytes = sources.get(key);
+      if (!bytes) throw new ContractError('PATH_NOT_FOUND', 'Missing source.');
+      if (request.method === 'GET' && bytes.length > 0) {
+        sessions.set(request.sessionId, { request, bytes, offset: request.start });
+      }
+      return {
+        runtimeInstanceId: 'runtime',
+        grantId: request.grantId,
+        selectionRevision: request.selectionRevision,
+        workspaceId: 'workspace-token',
+        relativePath: 'pages/index.html',
+        sessionId: request.sessionId,
+        method: request.method,
+        start: request.start,
+        end: request.end,
+        totalBytes: bytes.length,
+        eof: request.method === 'HEAD' || bytes.length === 0
+      };
+    },
+    async readNextPreviewChunk(request) {
+      calls.reads.push({ ...request });
+      const session = sessions.get(request.sessionId);
+      if (!session || request.offset !== session.offset) {
+        throw new ContractError('INVALID_INPUT', 'Invalid frame offset.');
+      }
+      const end = Math.min(session.request.end + 1, request.offset + (options.frameBytes ?? 2));
+      const frame = session.bytes.subarray(request.offset, end);
+      const eof = end === session.request.end + 1;
+      session.offset = end;
+      if (eof) sessions.delete(request.sessionId);
+      return {
+        runtimeInstanceId: 'runtime',
+        grantId: request.grantId,
+        selectionRevision: request.selectionRevision,
+        sessionId: request.sessionId,
+        offset: options.wrongOffset ? request.offset + 1 : request.offset,
+        bytes: toArrayBuffer(frame),
+        eof
+      };
+    },
+    async cancelPreviewRead(request) {
+      calls.cancels.push({ ...request });
+      if (request.sessionId) sessions.delete(request.sessionId);
     }
-  };
-  const module = loadTypeScriptModule('src/main/onlypreview/onlyPreviewDocument.registry.ts', {
-    '@shared/onlypreview/onlyPreview.contract': contracts,
-    '@shared/onlypreview/onlyPreview.types': sharedTypes,
-    './onlyPreviewAsset.registry': assetModule,
-    './onlyPreviewHost.registry': { onlyPreviewHostRegistry: inertHosts },
-    './onlyPreviewWorkspace.registry': { onlyPreviewWorkspaceRegistry: workspaces }
-  });
-  return {
-    registry: new module.OnlyPreviewDocumentRegistry(inertHosts, workspaces),
-    openFile: (relativePath) =>
-      workspaces.openFile('host-token', { workspaceId: 'workspace-token', relativePath })
   };
 };
 
-test('document protocol is revision scoped and rejects ambiguous paths', () => {
-  const registry = source('src/main/onlypreview/onlyPreviewDocument.registry.ts');
+const createModules = (broker) => {
+  const assetModule = loadTypeScriptModule('src/main/onlypreview/onlyPreviewAsset.registry.ts', {
+    '@main/fileSearch/fileSearchWindow.service': { fileSearchWindowService: broker },
+    '@shared/onlypreview/onlyPreview.contract': contracts,
+    '@shared/onlypreview/onlyPreview.types': sharedTypes,
+    '@shared/onlypreview/onlyPreviewPreviewReadRuntime.types': {},
+    './onlyPreviewHost.registry': { onlyPreviewHostRegistry: inertHosts },
+    './onlyPreviewWorkspace.registry': { onlyPreviewWorkspaceRegistry: inertWorkspaces }
+  });
+  const documentModule = loadTypeScriptModule(
+    'src/main/onlypreview/onlyPreviewDocument.registry.ts',
+    {
+      '@main/fileSearch/fileSearchWindow.service': { fileSearchWindowService: broker },
+      '@shared/onlypreview/onlyPreview.contract': contracts,
+      '@shared/onlypreview/onlyPreview.types': sharedTypes,
+      '@shared/onlypreview/onlyPreviewPreviewReadRuntime.types': {},
+      './onlyPreviewAsset.registry': assetModule,
+      './onlyPreviewHost.registry': { onlyPreviewHostRegistry: inertHosts },
+      './onlyPreviewWorkspace.registry': { onlyPreviewWorkspaceRegistry: inertWorkspaces }
+    }
+  );
+  return { assetModule, documentModule };
+};
 
-  assert.match(registry, /selectionRevision:\s*number/);
-  assert.match(registry, /entryDirectoryRelativePath/);
-  assert.match(registry, /decodeURIComponent/);
-  assert.match(registry, /%2f\|%5c/i);
-  assert.match(registry, /segment === '\.' \|\|\s*segment === '\.\.'/);
-  assert.match(registry, /normalizeOnlyPreviewRelativePath/);
-  assert.match(registry, /workspaces\.openFile/);
-  assert.match(registry, /revokeSelection/);
-  assert.match(registry, /activeStreams/);
+const prepared = (relativePath, size, descriptor = {}) => ({
+  runtimeInstanceId: 'runtime',
+  grantId: 'grant-token',
+  selectionRevision: 7,
+  workspaceId: 'workspace-token',
+  workspaceGeneration: 2,
+  relativePath,
+  descriptor: {
+    workspaceId: 'workspace-token',
+    relativePath,
+    name: relativePath.split('/').at(-1),
+    extension: '.bin',
+    kind: 'image',
+    mimeType: 'application/octet-stream',
+    language: '',
+    size,
+    modifiedAt: 1,
+    ...descriptor
+  }
 });
 
-test('document registry streams contained resources, budgets responses, and aborts on revoke', async () => {
-  const entryBytes = Buffer.from('hello');
-  const scriptBytes = Buffer.from('12345678');
-  const files = new Map([
-    ['pages/index.html', () => createOpenedFile('pages/index.html', entryBytes)],
-    ['pages/assets/app.js', () => createOpenedFile('pages/assets/app.js', scriptBytes)]
-  ]);
-  const { registry } = createDocumentHarness(files);
-  const entry = createOpenedFile('pages/index.html', entryBytes);
-  const entryUrl = await registry.issue(entry, 4);
+const createRequest = (url, method = 'GET', headers = {}, controller = new AbortController()) =>
+  new Request(url, { method, headers, signal: controller.signal });
 
+test('Main asset/document routers are path-free framed brokers with no filesystem fallback', () => {
+  for (const relativePath of [
+    'src/main/onlypreview/onlyPreviewAsset.registry.ts',
+    'src/main/onlypreview/onlyPreviewDocument.registry.ts'
+  ]) {
+    const code = source(relativePath);
+    assert.doesNotMatch(code, /node:fs|node:fs\/promises|createReadStream|fileHandle|net\.fetch/);
+    assert.match(code, /cancelPreviewRead/);
+  }
+  const assets = source('src/main/onlypreview/onlyPreviewAsset.registry.ts');
+  assert.match(assets, /openPreviewRead/);
+  assert.match(assets, /readNextPreviewChunk/);
+  const documents = source('src/main/onlypreview/onlyPreviewDocument.registry.ts');
+  assert.match(documents, /inspectPreviewDocumentResource/);
+  assert.match(documents, /createOnlyPreviewReadResponse/);
+  assert.match(documents, /activeSessions/);
+  assert.doesNotMatch(documents, /realPath|deviceId|inode|resourceIdentities/);
+});
+
+test('framed response preserves GET, HEAD, Range and concurrent session semantics', async () => {
+  const bytes = Buffer.from('abcdefgh');
+  const broker = createFrameBroker(new Map([['selection', bytes]]));
+  const { assetModule } = createModules(broker);
+  const base = {
+    grantId: 'grant-token',
+    selectionRevision: 7,
+    source: { kind: 'selection' },
+    fileSize: bytes.length,
+    mimeType: 'application/pdf',
+    maxBytes: bytes.length
+  };
+
+  const [first, second] = await Promise.all([
+    assetModule.createOnlyPreviewReadResponse({
+      ...base,
+      request: createRequest('bitterless-preview://asset/a/file.pdf', 'GET', {
+        Range: 'bytes=0-3'
+      })
+    }),
+    assetModule.createOnlyPreviewReadResponse({
+      ...base,
+      request: createRequest('bitterless-preview://asset/b/file.pdf', 'GET', {
+        Range: 'bytes=4-7'
+      })
+    })
+  ]);
+  assert.equal(first.status, 206);
+  assert.equal(first.headers.get('content-range'), 'bytes 0-3/8');
+  assert.equal(second.status, 206);
+  const [firstBytes, secondBytes] = await Promise.all([first.text(), second.text()]);
+  assert.equal(firstBytes, 'abcd');
+  assert.equal(secondBytes, 'efgh');
+  assert.equal(new Set(broker.calls.reads.map((call) => call.sessionId)).size, 2);
+
+  const head = await assetModule.createOnlyPreviewReadResponse({
+    ...base,
+    request: createRequest('bitterless-preview://asset/a/file.pdf', 'HEAD')
+  });
+  assert.equal(head.status, 200);
+  assert.equal(await head.text(), '');
+  assert.equal(broker.calls.opens.at(-1).method, 'HEAD');
+  const invalid = await assetModule.createOnlyPreviewReadResponse({
+    ...base,
+    request: createRequest('bitterless-preview://asset/a/file.pdf', 'GET', {
+      Range: 'bytes=99-100'
+    })
+  });
+  assert.equal(invalid.status, 416);
+});
+
+test('asset registry issues opaque PDF/media URLs and revokes exact active frame sessions', async () => {
+  const bytes = Buffer.from('pdf-bytes');
+  const broker = createFrameBroker(new Map([['selection', bytes]]), { frameBytes: 3 });
+  const { assetModule } = createModules(broker);
+  const registry = new assetModule.OnlyPreviewAssetRegistry(inertHosts, inertWorkspaces);
+  const selection = prepared('papers/report.pdf', bytes.length, {
+    extension: '.pdf',
+    kind: 'pdf',
+    mimeType: 'application/pdf'
+  });
+  const url = registry.issue('host-token', selection, 'application/pdf', {
+    selectionRevision: 7,
+    maxBytes: bytes.length,
+    lifetime: 'selection'
+  });
+  const response = await registry.respond(createRequest(url, 'GET', { Range: 'bytes=1-6' }));
+  assert.equal(response.status, 206);
+  assert.equal(await response.text(), 'df-byt');
+  assert.ok(broker.calls.reads.length >= 2);
+
+  const pending = await registry.respond(createRequest(url));
+  const reader = pending.body.getReader();
+  await reader.read();
+  registry.revokeSelection('host-token', 7);
+  assert.equal(broker.calls.cancels.at(-1).grantId, 'grant-token');
+  assert.equal(typeof broker.calls.cancels.at(-1).sessionId, 'string');
+  assert.equal((await registry.respond(createRequest(url))).status, 404);
+});
+
+test('abort during a deferred frame open cancels and cleans the exact pending session', async () => {
+  const bytes = Buffer.from('pending-bytes');
+  const started = deferred();
+  const release = deferred();
+  const broker = createFrameBroker(new Map([['selection', bytes]]), {
+    beforeOpen: async (request) => {
+      started.resolve(request);
+      await release.promise;
+    }
+  });
+  const { assetModule } = createModules(broker);
+  const controller = new AbortController();
+  const activeSessions = new Set();
+  const responsePromise = assetModule.createOnlyPreviewReadResponse({
+    request: createRequest('bitterless-preview://asset/a/pending.bin', 'GET', {}, controller),
+    grantId: 'grant-token',
+    selectionRevision: 7,
+    source: { kind: 'selection' },
+    fileSize: bytes.length,
+    mimeType: 'application/octet-stream',
+    maxBytes: bytes.length,
+    onSession: (sessionId) => activeSessions.add(sessionId),
+    onSessionClosed: (sessionId) => activeSessions.delete(sessionId),
+    isSessionLive: (sessionId) => activeSessions.has(sessionId)
+  });
+  const openRequest = await started.promise;
+  assert.equal(activeSessions.has(openRequest.sessionId), true);
+
+  controller.abort();
+  assert.deepEqual(broker.calls.cancels.at(-1), {
+    grantId: 'grant-token',
+    selectionRevision: 7,
+    sessionId: openRequest.sessionId
+  });
+  assert.equal(activeSessions.size, 0);
+
+  release.resolve();
+  await assert.rejects(responsePromise, /cancelled/i);
+  assert.equal(activeSessions.size, 0);
+  assert.ok(broker.calls.cancels.every((request) => request.sessionId === openRequest.sessionId));
+});
+
+test('asset and document token revocation fence deferred opens and cancel their exact sessions', async () => {
+  const scenarios = [
+    {
+      sourceKey: 'selection',
+      create: (modules, broker, bytes) => {
+        const registry = new modules.assetModule.OnlyPreviewAssetRegistry(
+          inertHosts,
+          inertWorkspaces
+        );
+        const url = registry.issue(
+          'host-token',
+          prepared('papers/pending.pdf', bytes.length, {
+            extension: '.pdf',
+            kind: 'pdf',
+            mimeType: 'application/pdf'
+          }),
+          'application/pdf',
+          { selectionRevision: 7, maxBytes: bytes.length, lifetime: 'selection' }
+        );
+        return { registry, url, broker };
+      }
+    },
+    {
+      sourceKey: 'index.html',
+      create: (modules, broker, bytes) => {
+        const registry = new modules.documentModule.OnlyPreviewDocumentRegistry(
+          inertHosts,
+          inertWorkspaces
+        );
+        const url = registry.issue(
+          'host-token',
+          prepared('pages/index.html', bytes.length, {
+            extension: '.html',
+            kind: 'text',
+            mimeType: 'text/html'
+          }),
+          7
+        );
+        return { registry, url, broker };
+      }
+    }
+  ];
+
+  for (const scenario of scenarios) {
+    const bytes = Buffer.from('pending-token-bytes');
+    const started = deferred();
+    const release = deferred();
+    const broker = createFrameBroker(new Map([[scenario.sourceKey, bytes]]), {
+      beforeOpen: async (request) => {
+        started.resolve(request);
+        await release.promise;
+      }
+    });
+    const modules = createModules(broker);
+    const { registry, url } = scenario.create(modules, broker, bytes);
+    const responsePromise = registry.respond(createRequest(url));
+    const openRequest = await started.promise;
+
+    registry.revokeSelection('host-token', 7);
+    assert.deepEqual(broker.calls.cancels.at(-1), {
+      grantId: 'grant-token',
+      selectionRevision: 7,
+      sessionId: openRequest.sessionId
+    });
+
+    release.resolve();
+    assert.equal((await responsePromise).status, 404);
+    assert.ok(broker.calls.cancels.every((request) => request.sessionId === openRequest.sessionId));
+    assert.equal((await registry.respond(createRequest(url))).status, 404);
+  }
+});
+
+test('HTML router validates paths, preserves CSP, and uses transient resource frame sessions', async () => {
+  const entry = Buffer.from('<script src="app.js"></script>');
+  const script = Buffer.from('ok()');
+  const broker = createFrameBroker(
+    new Map([
+      ['index.html', entry],
+      ['app.js', script]
+    ])
+  );
+  const { documentModule } = createModules(broker);
+  const registry = new documentModule.OnlyPreviewDocumentRegistry(inertHosts, inertWorkspaces);
+  const selection = prepared('pages/index.html', entry.length, {
+    extension: '.html',
+    kind: 'text',
+    mimeType: 'text/html'
+  });
+  const entryUrl = registry.issue('host-token', selection, 7);
   const entryResponse = await registry.respond(createRequest(entryUrl));
   assert.equal(entryResponse.status, 200);
-  assert.equal(entryResponse.headers.get('access-control-allow-origin'), null);
-  assert.equal(entryResponse.headers.get('x-dns-prefetch-control'), 'off');
   assert.match(entryResponse.headers.get('content-security-policy') ?? '', /connect-src 'none'/);
-  assert.match(entryResponse.headers.get('content-security-policy') ?? '', /webrtc 'block'/);
-  assert.match(
-    entryResponse.headers.get('content-security-policy') ?? '',
-    /script-src 'self' 'unsafe-inline'/
+  assert.equal(await entryResponse.text(), entry.toString());
+  const scriptResponse = await registry.respond(
+    createRequest(entryUrl.replace('/index.html', '/app.js'))
   );
-  assert.equal(await entryResponse.text(), 'hello');
-
-  const scriptUrl = entryUrl.replace('/index.html', '/assets/app.js');
-  const budgetResponse = await registry.respond(createRequest(scriptUrl));
-  assert.equal(budgetResponse.status, 429, '5 + 8 accepted bytes exceeds the 12-byte harness cap');
-
-  const traversal = await registry.respond(
-    createRequest(entryUrl.replace('/index.html', '/%2e%2e/secret.js'))
-  );
-  assert.equal(traversal.status, 404);
-  const encodedSeparator = await registry.respond(
-    createRequest(entryUrl.replace('/index.html', '/assets%2Fapp.js'))
-  );
-  assert.equal(encodedSeparator.status, 404);
-
-  let activeStream;
-  files.set('pages/index.html', () =>
-    createOpenedFile('pages/index.html', entryBytes, () => {
-      activeStream = new Readable({ read: () => undefined });
-      return activeStream;
-    })
-  );
-  const secondRegistry = createDocumentHarness(files).registry;
-  const secondUrl = await secondRegistry.issue(entry, 9);
-  const streamingResponse = await secondRegistry.respond(createRequest(secondUrl));
-  assert.equal(streamingResponse.status, 200);
-  assert.equal(activeStream.destroyed, false);
-  const bodyRead = streamingResponse.text();
-  secondRegistry.revokeSelection('host-token', 9);
-  assert.equal(activeStream.destroyed, true, 'revocation destroys the active file stream');
-  await assert.rejects(bodyRead, 'revocation also terminates the consumer-facing response body');
-  assert.equal((await secondRegistry.respond(createRequest(secondUrl))).status, 404);
-});
-
-test('document registry rejects same-size identity replacement and over-limit relative assets', async () => {
-  const originalEntry = Buffer.from('hello');
-  const files = new Map([
-    [
-      'index.html',
-      () => createOpenedFile('index.html', originalEntry, undefined, { deviceId: 1n, inode: 8n })
-    ],
-    ['large.js', () => createOpenedFile('large.js', Buffer.alloc(11))]
-  ]);
-  const { registry } = createDocumentHarness(files);
-  const entry = createOpenedFile('index.html', originalEntry, undefined, {
-    deviceId: 1n,
-    inode: 7n
-  });
-  const entryUrl = await registry.issue(entry, 2);
-  assert.equal((await registry.respond(createRequest(entryUrl))).status, 409);
-
-  files.set('index.html', () =>
-    createOpenedFile('index.html', originalEntry, undefined, { deviceId: 1n, inode: 7n })
-  );
-  const replacementEntry = createOpenedFile('index.html', originalEntry, undefined, {
-    deviceId: 1n,
-    inode: 7n
-  });
-  const replacementUrl = await registry.issue(replacementEntry, 3);
-  const largeUrl = replacementUrl.replace('/index.html', '/large.js');
-  assert.equal((await registry.respond(createRequest(largeUrl))).status, 413);
-});
-
-test('document registry revokes the token when the entry is replaced before a resource request', async () => {
-  const entryBytes = Buffer.from('html');
-  const files = new Map([
-    [
-      'pages/index.html',
-      () => createOpenedFile('pages/index.html', entryBytes, undefined, { inode: 21n })
-    ],
-    [
-      'pages/new.js',
-      () => createOpenedFile('pages/new.js', Buffer.from('new'), undefined, { inode: 22n })
-    ]
-  ]);
-  const { registry } = createDocumentHarness(files);
-  const entry = createOpenedFile('pages/index.html', entryBytes, undefined, { inode: 21n });
-  const entryUrl = await registry.issue(entry, 3);
-  const resourceUrl = entryUrl.replace('/index.html', '/new.js');
-
-  files.set('pages/index.html', () =>
-    createOpenedFile('pages/index.html', entryBytes, undefined, { inode: 99n })
-  );
-  assert.equal((await registry.respond(createRequest(resourceUrl))).status, 409);
-  assert.equal((await registry.respond(createRequest(resourceUrl))).status, 404);
-});
-
-test('document registry pins relative resource identity and canonical entry directory', async () => {
-  const entryBytes = Buffer.from('html');
-  const resourceBytes = Buffer.from('js');
-  const files = new Map([
-    [
-      'pages/index.html',
-      () => createOpenedFile('pages/index.html', entryBytes, undefined, { inode: 10n })
-    ],
-    [
-      'pages/app.js',
-      () => createOpenedFile('pages/app.js', resourceBytes, undefined, { inode: 11n })
-    ],
-    [
-      'pages/file-link.js',
-      () =>
-        createOpenedFile('pages/file-link.js', resourceBytes, undefined, {
-          inode: 12n,
-          realPath: '/workspace/private.js'
-        })
-    ],
-    [
-      'pages/dir-link/app.js',
-      () =>
-        createOpenedFile('pages/dir-link/app.js', resourceBytes, undefined, {
-          inode: 13n,
-          realPath: '/workspace/private/app.js'
-        })
-    ]
-  ]);
-  const { registry } = createDocumentHarness(files);
-  const entry = createOpenedFile('pages/index.html', entryBytes, undefined, { inode: 10n });
-  const entryUrl = await registry.issue(entry, 7);
-  const resourceUrl = entryUrl.replace('/index.html', '/app.js');
-  assert.equal((await registry.respond(createRequest(resourceUrl))).status, 200);
-
-  files.set('pages/app.js', () =>
-    createOpenedFile('pages/app.js', resourceBytes, undefined, { inode: 99n })
-  );
-  assert.equal((await registry.respond(createRequest(resourceUrl))).status, 409);
-  files.set('pages/app.js', () =>
-    createOpenedFile('pages/app.js', resourceBytes, undefined, {
-      inode: 11n,
-      realPath: '/workspace/pages/repointed.js'
-    })
-  );
-  assert.equal((await registry.respond(createRequest(resourceUrl))).status, 409);
-  assert.equal(
-    (await registry.respond(createRequest(entryUrl.replace('/index.html', '/file-link.js'))))
-      .status,
-    404
-  );
-  assert.equal(
-    (await registry.respond(createRequest(entryUrl.replace('/index.html', '/dir-link/app.js'))))
-      .status,
-    404
-  );
-});
-
-test('document registry rejects a same-path entry-directory replacement before a new resource opens', async () => {
-  const workspaceRoot = mkdtempSync(join(tmpdir(), 'onlypreview-document-directory-'));
-  const pagesPath = join(workspaceRoot, 'pages');
-  const retiredPagesPath = join(workspaceRoot, 'retired-pages');
-  mkdirSync(pagesPath);
-  writeFileSync(join(pagesPath, 'index.html'), 'html');
-  writeFileSync(join(pagesPath, 'app.js'), 'old');
-  const { registry, openFile } = createRealDocumentHarness(await realpath(workspaceRoot));
-
-  try {
-    const entry = await openFile('pages/index.html');
-    const entryUrl = await registry.issue(entry, 8);
-    await entry.fileHandle.close();
-
-    renameSync(pagesPath, retiredPagesPath);
-    mkdirSync(pagesPath);
-    writeFileSync(join(pagesPath, 'index.html'), 'html');
-    writeFileSync(join(pagesPath, 'new.js'), 'new');
-
-    const response = await registry.respond(
-      createRequest(entryUrl.replace('/index.html', '/new.js'))
-    );
-    assert.equal(response.status, 409);
-  } finally {
-    registry.clear();
-    rmSync(workspaceRoot, { recursive: true, force: true });
-  }
-});
-
-test('document resource streams reject real growth and same-size path replacement', async () => {
-  for (const mutate of [
-    (resourcePath) => writeFileSync(resourcePath, 'abcdef'),
-    (resourcePath, replacementPath) => {
-      writeFileSync(replacementPath, 'xyz');
-      renameSync(replacementPath, resourcePath);
-    }
-  ]) {
-    const workspaceRoot = mkdtempSync(join(tmpdir(), 'onlypreview-document-stream-'));
-    const pagesPath = join(workspaceRoot, 'pages');
-    const resourcePath = join(pagesPath, 'app.js');
-    const replacementPath = join(pagesPath, 'replacement.js');
-    mkdirSync(pagesPath);
-    writeFileSync(join(pagesPath, 'index.html'), 'html');
-    writeFileSync(resourcePath, 'abc');
-    const { registry, openFile } = createRealDocumentHarness(await realpath(workspaceRoot));
-
-    try {
-      const entry = await openFile('pages/index.html');
-      const entryUrl = await registry.issue(entry, 11);
-      await entry.fileHandle.close();
-      const response = await registry.respond(
-        createRequest(entryUrl.replace('/index.html', '/app.js'))
-      );
-      assert.equal(response.status, 200);
-      mutate(resourcePath, replacementPath);
-      await assert.rejects(response.arrayBuffer());
-    } finally {
-      registry.clear();
-      rmSync(workspaceRoot, { recursive: true, force: true });
-    }
-  }
-});
-
-test('bounded response rejects a stream that grows beyond its admitted stat', async () => {
-  let sourceStream;
-  const response = await assetModule.createOnlyPreviewFileResponse({
-    request: createRequest('bitterless-preview://asset/token/file.bin'),
-    fileHandle: {
-      close: async () => {},
-      createReadStream: () => {
-        sourceStream = Readable.from(Buffer.from('grow'), { objectMode: false });
-        return sourceStream;
-      }
-    },
-    fileSize: 3,
-    mimeType: 'application/octet-stream',
-    maxBytes: 3
-  });
-  assert.equal(response.status, 200);
-  await assert.rejects(response.arrayBuffer());
-  assert.equal(sourceStream.destroyed, true);
-});
-
-test('asset registry rejects real file growth and same-size path replacement during streaming', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'onlypreview-stream-identity-'));
-  const targetPath = join(directory, 'preview.pdf');
-  const replacementPath = join(directory, 'replacement.pdf');
-  const hosts = {
-    isLive: () => true,
-    onRevoke: () => () => {}
-  };
-  const openCurrent = async () => {
-    const fileHandle = await open(targetPath, 'r');
-    const stats = await fileHandle.stat({ bigint: true });
-    return {
-      host: { hostToken: 'host-token' },
-      workspace: { workspaceId: 'workspace-token' },
-      relativePath: 'preview.pdf',
-      realPath: await realpath(targetPath),
-      size: Number(stats.size),
-      modifiedAt: Number(stats.mtimeMs),
-      deviceId: stats.dev,
-      inode: stats.ino,
-      modifiedTimeNanoseconds: stats.mtimeNs,
-      fileHandle
-    };
-  };
-  const workspaces = {
-    onRevoke: () => () => {},
-    openFile: async () => openCurrent()
-  };
-
-  try {
-    for (const mutate of [
-      () => writeFileSync(targetPath, 'abcdef'),
-      () => {
-        writeFileSync(replacementPath, 'xyz');
-        renameSync(replacementPath, targetPath);
-      }
-    ]) {
-      writeFileSync(targetPath, 'abc');
-      const issued = await openCurrent();
-      const registry = new assetModule.OnlyPreviewAssetRegistry(hosts, workspaces);
-      const assetUrl = registry.issue(issued, 'application/pdf', {
-        selectionRevision: 1,
-        maxBytes: 16
-      });
-      await issued.fileHandle.close();
-
-      const head = await registry.respond(createRequest(assetUrl, 'HEAD'));
-      assert.equal(head.status, 200);
-      assert.equal(head.headers.get('access-control-allow-origin'), '*');
-      assert.equal(head.headers.get('access-control-expose-headers'), 'Accept-Ranges');
-      const range = await registry.respond(createRequest(assetUrl, 'GET', { Range: 'bytes=0-1' }));
-      assert.equal(range.status, 206);
-      assert.equal(range.headers.get('access-control-allow-origin'), '*');
-      assert.equal(Buffer.from(await range.arrayBuffer()).toString(), 'ab');
-      const unsatisfiable = await registry.respond(
-        createRequest(assetUrl, 'GET', { Range: 'bytes=9-10' })
-      );
-      assert.equal(unsatisfiable.status, 416);
-      assert.equal(unsatisfiable.headers.get('access-control-allow-origin'), '*');
-      const options = await registry.respond(createRequest(assetUrl, 'OPTIONS'));
-      assert.equal(options.status, 405);
-      assert.equal(options.headers.get('access-control-allow-origin'), null);
-
-      const response = await registry.respond(createRequest(assetUrl));
-      assert.equal(response.status, 200);
-      assert.equal(response.headers.get('access-control-allow-origin'), '*');
-      mutate();
-      await assert.rejects(response.arrayBuffer());
-      registry.clear();
-    }
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-test('selection-lifetime media assets survive the legacy TTL until explicit selection revoke', async () => {
-  const bytes = Buffer.from('media-bytes');
-  const hosts = {
-    isLive: () => true,
-    onRevoke: () => () => {}
-  };
-  const workspaces = {
-    onRevoke: () => () => {},
-    openFile: async () => createOpenedFile('fixture.mp4', bytes)
-  };
-  const registry = new assetModule.OnlyPreviewAssetRegistry(hosts, workspaces);
-  const originalNow = Date.now;
-  let now = 1_700_000_000_000;
-  Date.now = () => now;
-  try {
-    const ttlUrl = registry.issue(createOpenedFile('fixture.mp4', bytes), 'video/mp4', {
-      selectionRevision: 1,
-      maxBytes: bytes.length
-    });
-    const selectionUrl = registry.issue(createOpenedFile('fixture.mp4', bytes), 'video/mp4', {
-      selectionRevision: 2,
-      maxBytes: bytes.length,
-      lifetime: 'selection'
-    });
-    now += assetModule.ONLY_PREVIEW_ASSET_TOKEN_TTL_MS + 1;
-
-    assert.equal((await registry.respond(createRequest(ttlUrl, 'HEAD'))).status, 404);
-    const head = await registry.respond(createRequest(selectionUrl, 'HEAD'));
-    assert.equal(head.status, 200);
-    assert.equal(head.headers.get('accept-ranges'), 'bytes');
-    const range = await registry.respond(
-      createRequest(selectionUrl, 'GET', { Range: 'bytes=6-10' })
-    );
-    assert.equal(range.status, 206);
-    assert.equal(Buffer.from(await range.arrayBuffer()).toString(), 'bytes');
-
-    registry.revokeSelection('host-token', 2);
-    assert.equal((await registry.respond(createRequest(selectionUrl, 'HEAD'))).status, 404);
-  } finally {
-    Date.now = originalNow;
-    registry.clear();
-  }
-});
-
-test('network delivery serves the PDF from Chromium and synthesizes its range contract', async () => {
-  netFetchCalls.length = 0;
-  let openedHandles = 0;
-  let closedHandles = 0;
-  const opened = {
-    host: { hostToken: 'host-token' },
-    workspace: { workspaceId: 'workspace-token', rootRealPath: '/workspace' },
-    relativePath: 'papers/report.pdf',
-    realPath: '/workspace/papers/report.pdf',
-    size: NETWORK_DELIVERY_BYTES.length,
-    modifiedAt: 1,
-    modifiedTimeNanoseconds: 1n,
-    deviceId: 1n,
-    inode: 1n,
-    fileHandle: {
-      close: async () => {
-        closedHandles += 1;
-      },
-      createReadStream: () => {
-        throw new Error('network delivery must never read the file in this process');
-      }
-    }
-  };
-  const hosts = { isLive: () => true, onRevoke: () => () => {} };
-  const workspaces = {
-    onRevoke: () => () => {},
-    openFile: async () => {
-      openedHandles += 1;
-      return opened;
-    }
-  };
-  const registry = new assetModule.OnlyPreviewAssetRegistry(hosts, workspaces);
-  const assetUrl = registry.issue(opened, 'application/pdf', {
-    selectionRevision: 1,
-    maxBytes: NETWORK_DELIVERY_BYTES.length,
-    delivery: 'network'
-  });
-
-  const full = await registry.respond(createRequest(assetUrl));
-  assert.equal(full.status, 200);
-  assert.equal(full.headers.get('content-type'), 'application/pdf');
-  assert.equal(full.headers.get('content-length'), String(NETWORK_DELIVERY_BYTES.length));
-  assert.equal(full.headers.get('accept-ranges'), 'bytes');
-  assert.equal(full.headers.get('cache-control'), 'no-store');
-  assert.equal(full.headers.get('content-range'), null);
-  assert.equal(Buffer.from(await full.arrayBuffer()).toString(), 'abcdefgh');
-
-  const ranged = await registry.respond(createRequest(assetUrl, 'GET', { Range: 'bytes=2-4' }));
-  assert.equal(ranged.status, 206);
-  assert.equal(ranged.headers.get('content-range'), `bytes 2-4/${NETWORK_DELIVERY_BYTES.length}`);
-  assert.equal(ranged.headers.get('content-length'), '3');
-  assert.equal(Buffer.from(await ranged.arrayBuffer()).toString(), 'cde');
-
-  const head = await registry.respond(createRequest(assetUrl, 'HEAD'));
-  assert.equal(head.status, 200);
-  assert.equal(head.headers.get('content-length'), String(NETWORK_DELIVERY_BYTES.length));
-  const unsatisfiable = await registry.respond(
-    createRequest(assetUrl, 'GET', { Range: 'bytes=99-120' })
-  );
-  assert.equal(unsatisfiable.status, 416);
-  const rejectedMethod = await registry.respond(createRequest(assetUrl, 'OPTIONS'));
-  assert.equal(rejectedMethod.status, 405);
-
-  // Chromium read the file; the identity handle was still opened and closed for every request.
+  assert.equal(scriptResponse.status, 200);
+  assert.equal(await scriptResponse.text(), 'ok()');
   assert.deepEqual(
-    netFetchCalls.map(({ url, init }) => [
-      url,
-      init.headers.Range,
-      init.bypassCustomProtocolHandlers
-    ]),
+    broker.calls.inspections.map((call) => call.requestPath),
+    ['index.html', 'app.js']
+  );
+  assert.deepEqual(
+    broker.calls.opens.map((call) => call.source),
     [
-      ['file:///workspace/papers/report.pdf', 'bytes=0-7', true],
-      ['file:///workspace/papers/report.pdf', 'bytes=2-4', true]
+      { kind: 'document', requestPath: 'index.html' },
+      { kind: 'document', requestPath: 'app.js' }
     ]
   );
-  assert.equal(openedHandles, 5);
-  assert.equal(closedHandles, 5);
-
-  registry.revokeSelection('host-token', 1);
-  assert.equal((await registry.respond(createRequest(assetUrl))).status, 404);
-  assert.equal(netFetchCalls.length, 2);
-});
-
-test('stream delivery stays the default and keeps the byte-counting guard', () => {
-  const assets = source('src/main/onlypreview/onlyPreviewAsset.registry.ts');
-  const region = source('src/main/onlypreview/views/onlyPreviewPreviewRegion.service.ts');
-
-  assert.match(assets, /delivery: options\.delivery \?\? 'stream'/);
-  assert.match(assets, /pipeline\(nodeStream, boundedStream/);
-  assert.match(assets, /bypassCustomProtocolHandlers: true/);
-  // Only the raw Chromium PDF adapter opts out of in-process reading; the Vue adapters keep their
-  // ceilings, which are load-bearing for OOXML and image/media admission.
-  const pdfIssue = region.slice(
-    region.indexOf("adapter.adapterId === 'chromium-pdf'"),
-    region.indexOf("adapter.adapterId === 'ooxml-xlsx'")
+  assert.equal(
+    (await registry.respond(createRequest(entryUrl.replace('/index.html', '/%2e%2e/secret.js'))))
+      .status,
+    404
   );
-  assert.match(pdfIssue, /delivery: 'network'/);
-  assert.doesNotMatch(
-    region.slice(region.indexOf("adapter.adapterId === 'ooxml-xlsx'")),
-    /delivery: 'network'/
+  assert.equal(
+    (await registry.respond(createRequest(entryUrl.replace('/index.html', '/app%2F.js')))).status,
+    404
   );
 });
 
-test('document and PDF byte ceilings are enforced at issue and response time', () => {
+test('frame broker failure terminates only its response and scopes cancellation to that session', async () => {
+  const bytes = Buffer.from('abcd');
+  const broker = createFrameBroker(new Map([['selection', bytes]]));
+  broker.readNextPreviewChunk = async (request) => {
+    broker.calls.reads.push({ ...request });
+    throw new ContractError('PROTOCOL_ERROR', 'Invalid Preview Read frame.');
+  };
+  const { assetModule } = createModules(broker);
+  const response = await assetModule.createOnlyPreviewReadResponse({
+    request: createRequest('bitterless-preview://asset/a/file.bin'),
+    grantId: 'grant-token',
+    selectionRevision: 7,
+    source: { kind: 'selection' },
+    fileSize: bytes.length,
+    mimeType: 'application/octet-stream',
+    maxBytes: bytes.length
+  });
+  await assert.rejects(response.arrayBuffer());
+  assert.equal(broker.calls.cancels.length, 1);
+  assert.equal(broker.calls.cancels[0].grantId, 'grant-token');
+  assert.equal(broker.calls.cancels[0].sessionId, broker.calls.opens[0].sessionId);
+});
+
+test('document and PDF ceilings remain centralized while hidden reader owns HTML budget', () => {
   const types = source('src/shared/onlypreview/onlyPreview.types.ts');
-  const registry = source('src/main/onlypreview/onlyPreviewDocument.registry.ts');
-  const assets = source('src/main/onlypreview/onlyPreviewAsset.registry.ts');
-
+  const reader = source('src/preload/fileSearch/fileSearchPreviewReader.service.ts');
+  const document = source('src/main/onlypreview/onlyPreviewDocument.registry.ts');
   assert.match(types, /'html-page': 1024 \* 1024/);
   assert.match(types, /'chromium-pdf': 100 \* 1024 \* 1024/);
   assert.match(types, /ONLY_PREVIEW_MAX_DOCUMENT_RESOURCE_BYTES = 25 \* 1024 \* 1024/);
   assert.match(types, /ONLY_PREVIEW_MAX_DOCUMENT_TOTAL_BYTES = 100 \* 1024 \* 1024/);
-  assert.match(registry, /file\.size > ONLY_PREVIEW_MAX_HTML_BYTES/);
-  assert.match(registry, /opened\.size > byteLimit/);
-  assert.match(registry, /acceptedResponseBytes/);
-  assert.match(registry, /ONLY_PREVIEW_MAX_DOCUMENT_TOTAL_BYTES/);
-  assert.match(assets, /file\.size > asset\.maxBytes/);
-  assert.match(assets, /expectedSize/);
-  assert.match(assets, /expectedDeviceId/);
-  assert.match(assets, /expectedRealPath/);
-  assert.match(registry, /expectedEntryRealPath/);
-  assert.match(assets, /pipeline\(nodeStream, boundedStream/);
+  assert.match(reader, /acceptedDocumentBytes \+= acceptedBytes/);
+  assert.match(reader, /intentionally non-refundable/);
+  assert.match(reader, /ONLY_PREVIEW_MAX_DOCUMENT_RESOURCE_IDENTITIES/);
+  assert.match(document, /ONLY_PREVIEW_MAX_HTML_BYTES/);
+  assert.match(document, /ONLY_PREVIEW_MAX_DOCUMENT_RESOURCE_BYTES/);
 });
 
-test('a superseded session protocol install cannot unhandle the current one', () => {
+test('session protocol keeps document routing scoped to the active Chrome token', () => {
   const protocolModule = loadTypeScriptModule(
     'src/main/onlypreview/onlyPreviewProtocol.service.ts',
     {
@@ -742,36 +530,11 @@ test('a superseded session protocol install cannot unhandle the current one', ()
       isProtocolHandled: () => handled.length > 0 && !handled.at(-1).unhandled
     }
   };
-  const url = (token) => `bitterless-preview://asset/${token.repeat(64)}/paper.pdf`;
-
+  const url = (token) => `bitterless-preview://document/${token.repeat(64)}/index.html`;
   const firstCleanup = protocolModule.installOnlyPreviewSessionProtocol(targetSession, url('a'));
   const secondCleanup = protocolModule.installOnlyPreviewSessionProtocol(targetSession, url('b'));
-  const installsBefore = handled.filter((entry) => entry.scheme).length;
-
-  // The shared Chrome session outlives one selection, so the stale cleanup must be inert.
   firstCleanup();
   assert.equal(handled.filter((entry) => entry.unhandled).length, 1);
-  assert.equal(handled.filter((entry) => entry.scheme).length, installsBefore);
-
   secondCleanup();
   assert.equal(handled.filter((entry) => entry.unhandled).length, 2);
-});
-
-test('default protocol excludes documents while Chrome memory sessions scope one token', () => {
-  const protocol = source('src/main/onlypreview/onlyPreviewProtocol.service.ts');
-
-  assert.match(protocol, /installOnlyPreviewSessionProtocol/);
-  const defaultHandler = protocol.slice(
-    protocol.indexOf('respondToDefaultOnlyPreviewProtocol'),
-    protocol.indexOf('export const registerOnlyPreviewScheme')
-  );
-  assert.doesNotMatch(defaultHandler, /onlyPreviewDocumentRegistry\.respond/);
-  assert.match(protocol, /targetSession\.protocol\.handle/);
-  assert.match(protocol, /onlyPreviewDocumentRegistry\.respond/);
-  assert.match(protocol, /target\.token !== scope\.token/);
-  assert.match(protocol, /targetSession\.protocol\.unhandle/);
-  const documentRegistry = source('src/main/onlypreview/onlyPreviewDocument.registry.ts');
-  for (const extension of ['aac', 'flac', 'mov', 'm4v', 'otf', 'cjs']) {
-    assert.match(documentRegistry, new RegExp(`'\\.${extension}'`));
-  }
 });

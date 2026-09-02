@@ -1,6 +1,6 @@
 # FEATURE · Maestro 回合内 steering(AI 回话时人可以继续发)
 
-- **Status:** 🚧 契约已定(2026-08-28),实现未开始。
+- **Status:** ✅ 已实现，待 Ral 运行时/E2E 验收（2026-08-31）。
 - **Design owner:** Ral, 2026-08-28。
 - **性质:上游 backport,不是新设计。** maestro 是 `projects/micromeet-cowork` 的 vendored fork
   (`docs/features/maestro.md:5-7`,基线 commit `689832d`,2026-07-14)。本 feature 把上游
@@ -12,6 +12,19 @@
   `src/main/maestro/agent/BaseAgent.ts` · 新建 `src/main/maestro/agent/steering/` ·
   `src/renderer/maestro/control/src/{ChatPanel.vue,store/message.store.ts}` ·
   `src/shared/maestro/coach.api.ts` · `scripts/maestro/`
+
+## 当前交付
+
+Steering 已作为 [Cowork chat core 089](../plan/tasks/maestro-cowork-chat-core-089.md) 的 Turn
+垂直切片落地，而不是按本文最早的散字段方案单独接线。Main 原子持有全局 root Turn，root 与
+steering 使用显式 intent、Turn id 和 generation；renderer 重建可恢复 active/finished Turn，Stop
+有界，旧回调不能污染新 Turn。Control、Workbench 和 Main 同时锁定活跃 Turn 的 LLM target。
+
+[独立 review](../plan/reviews/maestro-cowork-chat-core-089-1.md) 已通过，当前无未解决 P0-P2。
+按 Ral 要求未运行 tests、typecheck、lint、build、Electron/E2E、应用脚本或网络验证。
+
+> 以下内容是 2026-08-28 的迁移前推导，保留作决策历史。凡是“没有 Turn”“尚未接线”或具体
+> 文件/守卫数量等描述均已被 089 当前实现取代；交付事实以 089 任务卡和 review 为准。
 
 ---
 

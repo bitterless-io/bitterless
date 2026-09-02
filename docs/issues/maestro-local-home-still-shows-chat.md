@@ -26,10 +26,12 @@ navigation that Ral expects to use for Mini Apps, Connectors, and Settings.
 - Reuse the existing Home Mini Apps, Connector, Settings, 56px rail, icons, selected state, and
   content styles. Mini Apps is the deterministic default route. The local Settings route remains
   available internally, but its left-rail footer button is hidden.
-- Register only `mini-app` and `setting` as content routes in a local no-auth router. Connector is a
-  third rail action that opens the existing Workbench Connector pane. Do not import the normal Home
-  router, Login, Chat, MessageSearch, Home MenuBar, update/proxy polling, Todo/session subscribers,
-  or the Chat-visibility menu store.
+- Register only `mini-app` and `setting` as authenticated workspace routes. Connector is a third rail
+  action that opens the existing Workbench Connector pane. The follow-up
+  [fixed-Home auth gate](maestro-local-home-login-missing.md) reuses the original Login surface
+  through the bounded hidden-Home bridge; it still must not import the normal Home router or
+  `authStore`, nor mount Chat, MessageSearch, Home MenuBar, update/proxy polling, Todo/session
+  subscribers, or the Chat-visibility menu store.
 - The Mini Apps Todo action delegates to the hidden authenticated Home shell through
   `HomeShellBridgeHandler`; the local renderer must not instantiate `authStore` or copy customer
   credentials into the Maestro partition.
@@ -44,15 +46,19 @@ navigation that Ral expects to use for Mini Apps, Connectors, and Settings.
 
 ## Acceptance
 
-- Opening or recreating Maestro shows Mini Apps inside the fixed Home tab, never Chat or New Chat.
+- Opening or recreating authenticated Maestro shows Mini Apps inside the fixed Home tab, never Chat
+  or New Chat. A signed-out fixed Home shows Login instead.
 - The left rail contains only Mini Apps and Connector. The local Settings route remains registered
   without a visible rail entry; Connector opens the existing Workbench pane.
 - The pinned Home tab favicon and the blank New-tab splash use the Bitterless application icon,
   not Maestro's blue `M` logo. The generic icon for arbitrary web tabs is unchanged.
-- Source inspection proves the local entry has no Chat, MessageSearch, Home router/auth/login, or
-  duplicate connector-preload import.
+- Source inspection proves the local entry has no Chat, MessageSearch, normal Home router/auth
+  authority, copied credential storage, or duplicate connector-preload import. A shared Login
+  presentation is allowed only through the token-free Home-shell bridge.
 - Ral verifies Mini App open actions, the Workbench Connector pane, Settings operations, and layout
   in the real Electron window.
 
 Implementation task: [maestro-local-home-navigation-007](../plan/tasks/maestro-local-home-navigation-007.md).
 Brand/menu follow-up: [maestro-local-home-branding-008](../plan/tasks/maestro-local-home-branding-008.md).
+Authentication follow-up:
+[maestro-local-home-auth-gate-096](../plan/tasks/maestro-local-home-auth-gate-096.md).

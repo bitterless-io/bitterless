@@ -369,11 +369,15 @@ export const buildAgentTurnPrompt = (params: {
   const workspaceContext = workspace?.path
     ? [
         `Selected workspace: ${workspace.path}`,
-        'Use workspace tools for project files: workspace_context, list_workspace_files, search_files, read_file, write_file, create_artifact.',
+        'Use workspace tools for project files: workspace_context, list_workspace_files, search_files, read_file, write_file, create_artifact, open_workspace_folder, list_archive, extract_archive, create_archive.',
         'You may create/update files and generated artifacts inside this workspace. Do not delete, rename, move, or target the workspace directory itself.',
+        'Folders are listed/searched before individual files are read. Archives are listed or extracted into a new or empty folder rather than passed to read_file; extraction refuses links/special entries and password-protected archive creation is refused.',
         'If a workspace tool reports workspace-not-found / workspace-not-directory, the app clears the stale reference; ask the user to choose the new location.'
       ].join('\n')
-    : 'No workspace selected. create_artifact writes generated files to the app userData artifacts directory.'
+    : [
+        'No workspace selected. create_artifact writes generated files to the app userData artifacts directory.',
+        'extract_archive, create_archive, and open_workspace_folder use this chat’s safe default workspace; do not ask the user to select one for those operations.'
+      ].join('\n')
   const memoryBlock = params.includeConversationMemory
     ? [
         'Conversation memory restored for this agent session:',

@@ -25,7 +25,13 @@ const miniApps = computed(() =>
     async () => await maestroWindowEmitter.openMaestroWindow(),
     async () => await coinWindowEmitter.openCoinWindow(),
     async () => await eyesOnAgentsWindowEmitter.openEyesOnAgentsWindow(),
-    async () => await omniWindowEmitter.openOmniWindow(),
+    async () => {
+      const result = await omniWindowEmitter.openOmniWindow()
+      if (!result?.opened) throw new Error('Omni Browser did not become ready')
+      Message.success(
+        i18nHelper.miniApp.opened.replace('{name}', i18nHelper.miniApp.omniBrowser.name),
+      )
+    },
     async () => unwrapOnlyPreviewResult(await onlyPreviewEmitter.openOnlyPreviewWindow()),
     async () => await submodulesWindowEmitter.openSubmodulesWindow(),
     i18nHelper,

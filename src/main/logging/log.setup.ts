@@ -66,6 +66,7 @@ export const initializeApplicationLogging = (profile: ApplicationRuntimeProfile)
   initializedProfile = profile;
 
   log.variables.profile = profile.id;
+  log.variables.channel = profile.releaseChannel;
   log.variables.proc = 'main';
   log.variables.world = 'main';
   log.transports.file.format = ({ message }) => formatApplicationLogMessage(message);
@@ -85,7 +86,9 @@ export const initializeApplicationLogging = (profile: ApplicationRuntimeProfile)
     spyFirstPartyRenderer(contents);
   });
 
-  console.info(`[diagnostics] logging initialized profile=${profile.id} mode=${profile.viteMode}`);
+  console.info(
+    `[diagnostics] logging initialized profile=${profile.id} channel=${profile.releaseChannel} mode=${profile.viteMode}`
+  );
 };
 
 export const getApplicationLogPaths = (): {

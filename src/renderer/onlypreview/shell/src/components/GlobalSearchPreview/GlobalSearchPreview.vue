@@ -6,7 +6,8 @@
       class="onlypreview-search-preview__state"
       role="status"
     >
-      {{ onlyPreviewI18n.globalSearch.previewPending }}
+      <span>{{ onlyPreviewI18n.globalSearch.previewPending }}</span>
+      <strong v-if="previewSelectionName">{{ previewSelectionName }}</strong>
     </div>
     <div
       v-else-if="onlyPreviewGlobalSearchStore.previewError"
@@ -19,7 +20,8 @@
     <component
       :is="previewComponent"
       v-else-if="previewComponent && onlyPreviewGlobalSearchStore.preview"
-      :preview="onlyPreviewGlobalSearchStore.preview"
+      :key="previewComponentKey"
+      v-bind="previewProps"
     />
     <div v-else class="onlypreview-search-preview__state">
       {{ onlyPreviewI18n.globalSearch.previewEmpty }}
@@ -37,8 +39,31 @@ const previewComponents: Record<string, Component> = {
   markdown: defineAsyncComponent(() => import('./RichSearchPreview.vue')),
   'html-static': defineAsyncComponent(() => import('./RichSearchPreview.vue')),
   directory: defineAsyncComponent(() => import('./DirectorySearchPreview.vue')),
+  office: defineAsyncComponent(() => import('./OfficeSearchPreview.vue')),
   info: defineAsyncComponent(() => import('./InfoSearchPreview.vue'))
 };
+
+const previewSelectionName = computed(() => {
+  const result = onlyPreviewGlobalSearchStore.selectedResult;
+  return result?.section === 'files' ? result.name : result?.fileName || '';
+});
+
+const previewComponentKey = computed(() => {
+  const preview = onlyPreviewGlobalSearchStore.preview;
+  const identity = preview?.kind === 'office' ? preview.resultToken : preview?.name || 'empty';
+  return `${onlyPreviewGlobalSearchStore.previewComponentRevision}:${identity}`;
+});
+
+const previewProps = computed(() => {
+  const preview = onlyPreviewGlobalSearchStore.preview;
+  if (!preview) return {};
+  return preview.kind === 'office'
+    ? {
+        preview,
+        previewRevision: onlyPreviewGlobalSearchStore.previewComponentRevision
+      }
+    : { preview };
+});
 
 const previewComponent = computed(() => {
   const preview = onlyPreviewGlobalSearchStore.preview;

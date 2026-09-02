@@ -2,9 +2,12 @@ import type { CaptureMode, TraceEvent } from './trace.types'
 import type { SavedTab } from './tabs.api'
 import type { CaptureRule } from './captureFilter.api'
 import type { InjectBtnEntry } from './injectBtn.api'
+import type { MaestroTask } from './task.api'
 
 export const DEFAULT_COACH_START_URL = 'https://example.com'
 export const MAESTRO_HOME_READY_TOKEN_QUERY = 'maestroReadyToken'
+export const MAESTRO_FORCE_PINNED_HOME_QUERY = 'maestroForcePinnedHome'
+export const MAESTRO_FORCE_PINNED_HOME_QUERY_VALUE = '1'
 export const MAESTRO_LOCAL_HOME_DISPLAY_URL = 'bitterless://home'
 export const MAESTRO_AI_CRMS_LOGIN_DISPLAY_URL = 'bitterless://ai-crms-login'
 
@@ -79,7 +82,10 @@ export interface CoachXpcContract {
   clearCaptureRecordEdits(): Promise<{ ok: boolean }>
   exportRecording(params: { startedAt: number; records: IngestRecord[]; format?: CaptureExportFormat }): Promise<ExportRecordingResult>
   replayBrowserRequest(params: BrowserRequestReplayRequest): Promise<BrowserRequestReplayResult>
-  sendAgentMessage(params: { message: string; sessionId?: string; context?: AgentConversationContext }): Promise<AgentReply>
+  claimAgentTurn(params: AgentTurnClaimRequest): Promise<AgentTurnClaimResult>
+  getActiveAgentTurn(): Promise<AgentTurnRecoverySnapshot>
+  ackAgentTurnFinished(params: { sessionId: string; turnId: string }): Promise<void>
+  sendAgentMessage(params: AgentMessageRequest): Promise<AgentReply>
   compactConversation(params: AgentCompactRequest): Promise<AgentCompactReply>
   // `files` (md only, parsed to text in the renderer) are folded into the trainer turn as
   // reference/source material; they also render as a separate `type:'files'` user bubble.
@@ -91,9 +97,11 @@ export interface CoachXpcContract {
   // Stop the in-flight turn for a chat channel (the Stop button): aborts the live pi session so
   // the pending turn resolves. The agent session is then dropped so aborted output is not carried
   // into later model context.
-  abortAgent(params?: { sessionId?: string }): Promise<void>
+  abortAgent(params: { sessionId: string; turnId: string }): Promise<void>
   abortTrainer(params?: { sessionId?: string }): Promise<void>
   abortDelegate(params?: { sessionId?: string }): Promise<void>
+  listTasks(): Promise<MaestroTask[]>
+  respondTaskConfirm(params: { taskId: string; confirmId: string; confirm: boolean }): Promise<{ ok: boolean }>
   // Ingest the CURRENT, non-deleted records (each carrying its source event + the
   // operator `spec`) plus the overall workflow description into a skill. The renderer
   // is the source of truth here — NOT the main process's raw trace buffer.
@@ -121,6 +129,13 @@ export interface CoachXpcContract {
   getFileStatuses(params: { paths: string[] }): Promise<FileStatusResult[]>
   openFile(params: { path: string }): Promise<{ ok: boolean; path?: string; error?: string }>
   showFileInFolder(params: { path: string }): Promise<{ ok: boolean; path?: string; error?: string }>
+  fileThumbnail(params: { path: string }): Promise<{
+    ok: boolean
+    dataUrl?: string
+    width?: number
+    height?: number
+    error?: string
+  }>
   deleteSkill(params: { skillId: string }): Promise<DeleteSkillResult>
   replaySkill(params: { skillId: string; variables: Record<string, string> }): Promise<ReplayResult>
   getLlmConfig(): Promise<LlmConfig>
@@ -238,7 +253,7 @@ export type WorkbenchPane =
   | 'injections'
   | 'tools'
   | 'models'
-  | 'configuration'
+  | 'sub2api'
   | 'apps'
   | 'connectors'
   | 'settings'
@@ -840,6 +855,7 @@ export interface AttachFileResult {
   name?: string
   path?: string
   size?: number
+  isDirectory?: boolean
   error?: string
 }
 
@@ -901,16 +917,23 @@ export interface AgentActivityStep {
   label: string
   ok: boolean
   ts: number
+  sessionId?: string
+  turnId?: string
+  generation?: number
 }
 
 export interface AgentStreamDelta {
   sessionId: string
+  turnId?: string
+  generation?: number
   delta: string
   ts: number
 }
 
 export interface AgentThinkingState {
   sessionId: string
+  turnId?: string
+  generation?: number
   active: boolean
   ts: number
 }
@@ -951,6 +974,40 @@ export interface AgentConversationContext {
   workspace?: WorkspaceRef
 }
 
+export type AgentMessageIntent = 'root' | 'steering'
+
+export interface AgentTurnSnapshot {
+  sessionId: string
+  operationTabId?: string
+  turnId: string
+  generation: number
+  rootText: string
+  startedAt: number
+  state: 'reserved' | 'running' | 'aborting'
+}
+
+export interface AgentTurnClaimRequest {
+  sessionId: string
+  operationTabId?: string
+  turnId: string
+  rootText: string
+  startedAt: number
+}
+
+export interface AgentTurnClaimResult {
+  ok: boolean
+  turn: AgentTurnSnapshot
+  reason?: 'busy-here' | 'busy-elsewhere'
+}
+
+export interface AgentMessageRequest {
+  message: string
+  sessionId: string
+  turnId: string
+  intent: AgentMessageIntent
+  context?: AgentConversationContext
+}
+
 export interface AgentCompactMessage {
   role: 'human' | 'ai'
   content: string
@@ -981,6 +1038,40 @@ export interface AgentReply {
   replay?: ReplayResult
   files?: AgentFileArtifact[]
   error?: string
+  retryExhausted?: { attempt: number; max: number }
+  authoredByModel?: boolean
+  mergedIntoTurn?: boolean
+}
+
+export const MODEL_RETRY_CHANNEL = 'coach/model-retry'
+export const AGENT_TURN_CHANNEL = 'coach/agent-turn'
+
+export interface ModelRetryProgress {
+  sessionId: string
+  turnId: string
+  generation: number
+  attempt: number
+  max: number
+  recovered?: boolean
+}
+
+export interface AgentTurnUpdate {
+  revision: number
+  turn: AgentTurnSnapshot | null
+  finished?: AgentTurnFinished
+}
+
+export interface AgentTurnFinished {
+  turn: AgentTurnSnapshot
+  reason: 'completed' | 'stopped' | 'reservation-expired'
+  reply?: AgentReply
+}
+
+/** Active owner plus unacknowledged finishes, replayable after a renderer reload. */
+export interface AgentTurnRecoverySnapshot {
+  revision: number
+  turn: AgentTurnSnapshot | null
+  finished: AgentTurnFinished[]
 }
 
 export interface WorkspaceRef {
@@ -1008,6 +1099,7 @@ export interface FileStatusResult {
   path: string
   exists: boolean
   isFile: boolean
+  isDirectory: boolean
   size?: number
   error?: string
 }

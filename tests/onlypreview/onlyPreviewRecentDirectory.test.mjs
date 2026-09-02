@@ -113,7 +113,26 @@ class MemorySettingStorage {
 const createService = (storage) => {
   const hosts = new runtime.OnlyPreviewHostRegistry();
   const workspaces = new runtime.OnlyPreviewWorkspaceRegistry(hosts);
-  const service = new runtime.OnlyPreviewRecentDirectoryService(hosts, workspaces, storage);
+  const authority = new runtime.FileSearchProjectAuthority();
+  const runtimeInstanceId = '123e4567-e89b-42d3-a456-426614174000';
+  const service = new runtime.OnlyPreviewRecentDirectoryService(
+    hosts,
+    workspaces,
+    storage,
+    runtime.inspectOnlyPreviewProjectTarget,
+    async (hostToken, workspace) => {
+      const binding = await authority.bindWorkspace(
+        runtimeInstanceId,
+        workspace.workspaceId,
+        workspace.displayPath
+      );
+      workspaces.bindProjectAuthority(
+        hostToken,
+        workspace.workspaceId,
+        binding.workspaceGeneration
+      );
+    }
+  );
   return { hosts, workspaces, service };
 };
 
@@ -212,6 +231,70 @@ test('explicit open resolves while a ready storage read remains deferred', async
   });
 });
 
+test('a validated workspace stays unrestorable until every runtime binding is ready', async () => {
+  await withTempDirectory('onlypreview-recent-atomic-bind-', async (root) => {
+    const hosts = new runtime.OnlyPreviewHostRegistry();
+    const workspaces = new runtime.OnlyPreviewWorkspaceRegistry(hosts);
+    let releaseBinding;
+    const bindingGate = new Promise((resolveBinding) => {
+      releaseBinding = resolveBinding;
+    });
+    let signalBindingStarted;
+    const bindingStarted = new Promise((resolveStarted) => {
+      signalBindingStarted = resolveStarted;
+    });
+    const service = new runtime.OnlyPreviewRecentDirectoryService(
+      hosts,
+      workspaces,
+      new MemorySettingStorage(),
+      runtime.inspectOnlyPreviewProjectTarget,
+      async (hostToken, workspace) => {
+        signalBindingStarted?.();
+        signalBindingStarted = null;
+        await bindingGate;
+        workspaces.bindProjectAuthority(hostToken, workspace.workspaceId, 17);
+      }
+    );
+    const host = hosts.issue('standalone', 'content');
+    const generation = service.beginExplicitTarget(host.hostToken);
+    const opening = service.openExplicitTarget(host.hostToken, root, generation);
+
+    await bindingStarted;
+    assert.equal(workspaces.restore(host.hostToken), null);
+
+    releaseBinding();
+    const workspace = await opening;
+    assert.equal(workspaces.restore(host.hostToken)?.workspaceId, workspace?.workspaceId);
+  });
+});
+
+test('a failed runtime binding revokes the pending Main workspace', async () => {
+  await withTempDirectory('onlypreview-recent-failed-bind-', async (root) => {
+    const hosts = new runtime.OnlyPreviewHostRegistry();
+    const workspaces = new runtime.OnlyPreviewWorkspaceRegistry(hosts);
+    let pendingWorkspaceId = '';
+    const service = new runtime.OnlyPreviewRecentDirectoryService(
+      hosts,
+      workspaces,
+      new MemorySettingStorage(),
+      runtime.inspectOnlyPreviewProjectTarget,
+      async (_hostToken, workspace) => {
+        pendingWorkspaceId = workspace.workspaceId;
+        throw new Error('Office bind rejected');
+      }
+    );
+    const host = hosts.issue('standalone', 'content');
+    const generation = service.beginExplicitTarget(host.hostToken);
+
+    await assert.rejects(() => service.openExplicitTarget(host.hostToken, root, generation));
+    assert.equal(workspaces.restore(host.hostToken), null);
+    assert.throws(
+      () => workspaces.requireWorkspace(host.hostToken, pendingWorkspaceId),
+      (error) => error?.code === 'WORKSPACE_NOT_FOUND'
+    );
+  });
+});
+
 test('pre-ready explicit opens retain and flush only the latest canonical directory', async () => {
   await withTempDirectory('onlypreview-recent-latest-', async (root) => {
     const first = join(root, 'first');
@@ -287,7 +370,7 @@ test('a stale explicit mutation cannot remain visible or overwrite the newer tar
     const storage = new MemorySettingStorage();
     const { hosts, workspaces, service } = createService(storage);
     const host = hosts.issue('standalone', 'content');
-    const originalCreate = workspaces.createForTarget.bind(workspaces);
+    const originalInspect = service.inspectTarget;
     let releaseFirst;
     const firstGate = new Promise((resolveGate) => {
       releaseFirst = resolveGate;
@@ -296,13 +379,13 @@ test('a stale explicit mutation cannot remain visible or overwrite the newer tar
     const firstCreatedSignal = new Promise((resolveCreated) => {
       firstCreated = resolveCreated;
     });
-    workspaces.createForTarget = async (...args) => {
-      const workspace = await originalCreate(...args);
-      if (args[1] === first) {
+    service.inspectTarget = async (target) => {
+      const inspected = await originalInspect(target);
+      if (target === first) {
         firstCreated();
         await firstGate;
       }
-      return workspace;
+      return inspected;
     };
 
     const firstGeneration = service.beginExplicitTarget(host.hostToken);
@@ -330,13 +413,13 @@ test('a stale explicit mutation cannot remain visible or overwrite the newer tar
 test('Shell and Preview restoration share one host flight and mint one fresh workspace', async () => {
   await withTempDirectory('onlypreview-recent-flight-', async (root) => {
     const storage = new MemorySettingStorage({ version: 1, directoryPath: root });
-    const { hosts, workspaces, service } = createService(storage);
+    const { hosts, service } = createService(storage);
     const host = hosts.issue('standalone', 'content');
-    const originalCreate = workspaces.createForTarget.bind(workspaces);
+    const originalInspect = service.inspectTarget;
     let createCount = 0;
-    workspaces.createForTarget = async (...args) => {
+    service.inspectTarget = async (...args) => {
       createCount += 1;
-      return await originalCreate(...args);
+      return await originalInspect(...args);
     };
     service.markStorageReady();
 
@@ -473,9 +556,9 @@ test('host revoke during validation does not clear still-valid persisted history
   await withTempDirectory('onlypreview-recent-revoke-', async (root) => {
     const canonicalRoot = realpathSync(root);
     const storage = new MemorySettingStorage({ version: 1, directoryPath: canonicalRoot });
-    const { hosts, workspaces, service } = createService(storage);
+    const { hosts, service } = createService(storage);
     const host = hosts.issue('standalone', 'content');
-    const originalCreate = workspaces.createForTarget.bind(workspaces);
+    const originalInspect = service.inspectTarget;
     let releaseCreate;
     const createGate = new Promise((resolveGate) => {
       releaseCreate = resolveGate;
@@ -484,10 +567,10 @@ test('host revoke during validation does not clear still-valid persisted history
     const enteredCreateSignal = new Promise((resolveEntered) => {
       enteredCreate = resolveEntered;
     });
-    workspaces.createForTarget = async (...args) => {
+    service.inspectTarget = async (...args) => {
       enteredCreate();
       await createGate;
-      return await originalCreate(...args);
+      return await originalInspect(...args);
     };
     service.markStorageReady();
     const restore = service.restoreWorkspace(host.hostToken);

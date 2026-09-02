@@ -48,6 +48,7 @@ import {
   settleOnlyPreviewSearchProgress,
   type OnlyPreviewSearchProgressState
 } from './onlyPreviewSearchProgress.service';
+import { resolveOnlyPreviewProjectionCommit } from './onlyPreviewProjectionCommit.service';
 import { subscribeOnlyPreviewShellEvents } from './onlyPreviewShellEvents.service';
 import { onlyPreviewFindStore } from './onlyPreviewFind.store';
 import {
@@ -62,15 +63,17 @@ import {
   resolveOnlyPreviewTreeFocusPath,
   type OnlyPreviewTreeNavigationKey
 } from './onlyPreviewTree.service';
+import { onlyPreviewProjectWidthPersistence as projectWidthPersistence } from './onlyPreviewProjectWidthPersistence.service';
+import { OnlyPreviewDeferredIndexService } from './onlyPreviewDeferredIndex.service';
 
 const errorMessage = (error: unknown): string =>
   error instanceof OnlyPreviewContractError
     ? getOnlyPreviewErrorMessage(error.code)
     : onlyPreviewI18n.errors.OPERATION_FAILED;
 export class OnlyPreviewShellStore {
-  private readonly diagnostics: OnlyPreviewSearchDiagnostics;
-  constructor(diagnostics = createOnlyPreviewSearchDiagnostics()) {
-    this.diagnostics = diagnostics;
+  private readonly deferredIndex: OnlyPreviewDeferredIndexService;
+  constructor(private readonly diagnostics: OnlyPreviewSearchDiagnostics = createOnlyPreviewSearchDiagnostics()) {
+    this.deferredIndex = new OnlyPreviewDeferredIndexService(diagnostics);
   }
   workspace: OnlyPreviewWorkspace | null = null;
   index: OnlyPreviewIndex | null = null;
@@ -82,7 +85,7 @@ export class OnlyPreviewShellStore {
   previewActionError = '';
   focusedRelativePath = '';
   expandedPaths = new Set<string>();
-  projectWidth = 264;
+  projectWidth = projectWidthPersistence.restore(window.innerWidth);
   indexLoading = false;
   targetLoading = false;
   errorMessage = '';
@@ -147,7 +150,7 @@ export class OnlyPreviewShellStore {
       }
       await Promise.all([
         this.refreshSettings(),
-        this.restoreWorkspace(),
+        this.restoreWorkspace(true),
         this.syncPreviewPresentation(),
         onlyPreviewFindStore.initialize()
       ]);
@@ -179,7 +182,7 @@ export class OnlyPreviewShellStore {
   }
   async refresh(): Promise<void> {
     if (!this.workspace) return;
-    await this.refreshIndex();
+    await (this.deferredIndex.cancel() ? this.initializeIndex() : this.refreshIndex());
   }
   dismissError(): void {
     this.errorMessage = '';
@@ -310,8 +313,7 @@ export class OnlyPreviewShellStore {
     void this.loadDirectory(relativePath);
   }
   setProjectWidth(value: number): void {
-    const maxWidth = Math.max(180, Math.min(480, window.innerWidth - 320));
-    this.projectWidth = Math.round(Math.min(maxWidth, Math.max(180, value)));
+    this.projectWidth = projectWidthPersistence.update(value, window.innerWidth);
   }
   async reportPreviewBounds(bounds: OnlyPreviewBounds): Promise<void> {
     if (!onlyPreviewEnv.hostToken) return;
@@ -355,9 +357,7 @@ export class OnlyPreviewShellStore {
       },
       characterCountReady: (revision) => this.characterCountGate.acceptReady(revision),
       previewPresentation: () => void this.syncPreviewPresentation(),
-      refresh: () => {
-        void this.refreshIndex();
-      },
+      refresh: () => void this.refresh(),
       browseListing: (listing) => this.applyBrowseListing(listing),
       searchProgress: (progress) => this.applySearchProgress(progress),
       searchSnapshot: (snapshot) => void this.applySearchSnapshot(snapshot),
@@ -423,7 +423,7 @@ export class OnlyPreviewShellStore {
     if (!hostToken || !workspace || !relativePath) return null;
     return { hostToken, workspaceId: workspace.workspaceId, relativePath };
   }
-  private async restoreWorkspace(): Promise<void> {
+  private async restoreWorkspace(deferInitialIndex = false): Promise<void> {
     const hostToken = onlyPreviewEnv.hostToken;
     if (!hostToken) return;
     this.selectedCharacterCount = 0;
@@ -434,6 +434,7 @@ export class OnlyPreviewShellStore {
       );
       if (generation !== this.restoreGeneration) return;
       if (!workspace) {
+        this.deferredIndex.cancel();
         this.workspaceGeneration += 1;
         this.selectionGeneration += 1;
         this.searchWorkspaceGeneration += 1;
@@ -448,13 +449,12 @@ export class OnlyPreviewShellStore {
         this.reportGlobalSearchContext();
         return;
       }
-      await this.applyWorkspace(workspace);
+      await this.applyWorkspace(workspace, deferInitialIndex);
     } catch (error) {
       if (generation === this.restoreGeneration) this.errorMessage = errorMessage(error);
     }
   }
-
-  private async applyWorkspace(workspace: OnlyPreviewWorkspace): Promise<void> {
+  private async applyWorkspace(workspace: OnlyPreviewWorkspace, deferInitialIndex = false): Promise<void> {
     const generation = ++this.workspaceGeneration;
     this.selectionGeneration += 1;
     this.searchWorkspaceGeneration += 1;
@@ -468,7 +468,7 @@ export class OnlyPreviewShellStore {
     this.focusedRelativePath = this.selectedRelativePath;
     this.expandSelectedParents();
     this.reportGlobalSearchContext();
-    await this.initializeIndex();
+    await this.deferredIndex.run(deferInitialIndex, () => generation === this.workspaceGeneration, () => this.initializeIndex());
     if (
       generation !== this.workspaceGeneration ||
       workspace.workspaceId !== this.workspace?.workspaceId
@@ -580,12 +580,9 @@ export class OnlyPreviewShellStore {
     if (!context) return false;
     const result = this.browseProjection.applyListing(listing, context, this.expandedPaths);
     this.commitBrowseProjectionResult(result, context);
-    if (listing.relativePath === '' && this.selectedRelativePath) {
-      void this.loadSelectedParentListings();
-    }
-    if (listing.relativePath === '') {
-      this.reportGlobalSearchContext();
-    }
+    if (listing.relativePath !== '') return result.loaded;
+    if (this.selectedRelativePath) void this.loadSelectedParentListings();
+    this.reportGlobalSearchContext();
     return result.loaded;
   }
 
@@ -626,21 +623,28 @@ export class OnlyPreviewShellStore {
     result: OnlyPreviewBrowseProjectionResult,
     context: OnlyPreviewBrowseProjectionContext
   ): boolean {
-    if (
-      result.error &&
-      context.workspaceId === this.workspace?.workspaceId &&
-      context.generation === this.searchWorkspaceGeneration
-    ) {
-      this.errorMessage = errorMessage(result.error);
-    }
+    const commit = resolveOnlyPreviewProjectionCommit({ result, index: this.index,
+      current: context.workspaceId === this.workspace?.workspaceId &&
+        context.generation === this.searchWorkspaceGeneration,
+      treeSelectedRelativePath: this.treeSelectedRelativePath, readRows: () => this.visibleRows });
+    if (commit.errorMessage) this.errorMessage = commit.errorMessage;
     if (!result.changed) return result.loaded;
     this.index = result.index;
     if (result.rootReplaced) {
       this.expandedPaths.add('');
       this.expandSelectedParents();
     }
-    this.reportGlobalSearchContext();
+    if (commit.inheritedSelection === null) this.reportGlobalSearchContext();
+    else this.centerTreeRow(commit.inheritedSelection);
     return result.loaded;
+  }
+
+  private centerTreeRow(relativePath: string): void {
+    this.treeSelectedRelativePath = relativePath;
+    this.focusedRelativePath = relativePath;
+    this.centerProjectRelativePath = relativePath;
+    this.centerProjectRevision += 1;
+    this.reportGlobalSearchContext();
   }
 
   private clearBrowseProjection(): void {
@@ -681,13 +685,7 @@ export class OnlyPreviewShellStore {
       applyResult: (result) => {
         if (browseContext) this.commitBrowseProjectionResult(result, browseContext);
       },
-      onRevealed: (relativePath) => {
-        this.treeSelectedRelativePath = relativePath;
-        this.focusedRelativePath = relativePath;
-        this.centerProjectRelativePath = relativePath;
-        this.centerProjectRevision += 1;
-        this.reportGlobalSearchContext();
-      }
+      onRevealed: (relativePath) => this.centerTreeRow(relativePath)
     });
   }
 

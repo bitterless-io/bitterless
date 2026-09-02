@@ -90,6 +90,7 @@ export class OnlyPreviewSearchEngine {
     onProgress,
     onSnapshot,
     onWatchCommit,
+    prepareOfficePreview,
     readWorkspaceFile = readSingleWorkspaceFile,
     diagnostics = createOnlyPreviewSearchDiagnostics()
   } = {}) {
@@ -97,6 +98,7 @@ export class OnlyPreviewSearchEngine {
     this.onProgress = onProgress;
     this.onSnapshot = onSnapshot;
     this.onWatchCommit = onWatchCommit;
+    this.prepareOfficePreview = prepareOfficePreview;
     this.diagnostics = diagnostics;
     this.selectedFilePriority = createOnlyPreviewSelectedFilePriorityLane({
       readWorkspaceFile,
@@ -580,10 +582,9 @@ export class OnlyPreviewSearchEngine {
     try {
       this.selectedFilePriority.revoke();
       this.state = configChanged ? 'building' : 'reconciling';
-      this.browseIndex.reset();
       const buildRevision = ++this.buildRevision;
       const buildEpoch = ++this.buildEpoch;
-      await this.emitRootBrowseListing();
+      await this.emitOpenBrowseListings();
       this.emitBuildProgress({ buildRevision, phase: 'counting' });
       await this.emitSnapshot();
       const total = await countWorkspaceSearchEntries({
@@ -617,8 +618,7 @@ export class OnlyPreviewSearchEngine {
         this.searchPolicy = previousSearchPolicy;
         this.browseIndex.setSearchPolicy(previousSearchPolicy);
         this.identity = previousIdentity;
-        this.browseIndex.reset();
-        await this.emitRootBrowseListing().catch(() => undefined);
+        await this.emitOpenBrowseListings().catch(() => undefined);
       }
       this.state = 'ready';
       await this.emitSnapshot().catch(() => undefined);
@@ -677,12 +677,24 @@ export class OnlyPreviewSearchEngine {
       requestId,
       resultToken
     });
-    return await previewOnlyPreviewGlobalSearchResult({
+    const preview = await previewOnlyPreviewGlobalSearchResult({
       authority,
       rootPath: this.rootPath,
       searchPolicy: authority.searchPolicy ?? this.activeSearchPolicy ?? this.searchPolicy,
       isCancelled
     });
+    if (preview.kind !== 'info' || typeof this.prepareOfficePreview !== 'function') return preview;
+    return (
+      (await this.prepareOfficePreview({
+        authority,
+        preview,
+        workspaceId,
+        generation,
+        requestId,
+        resultToken,
+        isCancelled
+      })) ?? preview
+    );
   }
 
   async applyWatchChangesInternal(change) {
@@ -760,6 +772,36 @@ export class OnlyPreviewSearchEngine {
       // The matching initialize response can still establish the search workspace.
     }
     return listing;
+  }
+
+  async emitOpenBrowseListings() {
+    const rootListing = await this.emitRootBrowseListing();
+    if (!rootListing || !this.browseIndex) return rootListing;
+    // A rebuild keeps every capability, so the directories the Shell already has open must be
+    // republished here; otherwise they would keep their pre-rebuild entries until the next
+    // bounded watch event named one of their children.
+    const openPaths = this.browseIndex
+      .listedDirectoryPaths()
+      .filter((relativePath) => relativePath !== '')
+      .sort(
+        (left, right) =>
+          left.split('/').length - right.split('/').length || left.localeCompare(right, 'und')
+      );
+    for (const relativePath of openPaths) {
+      const directoryToken = this.browseIndex.directoryTokenForListedPath(relativePath);
+      if (!directoryToken) continue;
+      try {
+        const listing = await this.browseIndex.list({
+          workspaceId: this.workspaceId,
+          generation: this.generation,
+          directoryToken
+        });
+        this.onBrowseListing?.(listing);
+      } catch {
+        // A directory removed during the rebuild is already represented by its parent's listing.
+      }
+    }
+    return rootListing;
   }
 
   async shutdown() {

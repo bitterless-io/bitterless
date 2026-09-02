@@ -125,7 +125,13 @@ test('search bootstrap remains Main-private and host/workspace bound', async () 
   try {
     const host = hosts.issue('standalone', 'content');
     const capability = bootstraps.issue(host.hostToken);
-    const workspace = await workspaces.createForTarget(host.hostToken, workspaceRoot);
+    const rootRealPath = realpathSync(workspaceRoot);
+    const workspace = workspaces.registerValidatedTarget(host.hostToken, {
+      rootRealPath,
+      displayPath: rootRealPath,
+      rootName: 'search-workspace'
+    });
+    workspaces.bindProjectAuthority(host.hostToken, workspace.workspaceId, 1);
     const bootstrap = bootstraps.resolve(capability.searchToken, workspace.workspaceId, userData);
     assert.deepEqual(Object.keys(bootstrap).sort(), ['databasePath', 'rootPath', 'workspaceId']);
     assert.equal(bootstrap.rootPath, realpathSync(workspaceRoot));
@@ -152,6 +158,9 @@ test('hidden file-search owner uses exact lifecycle fencing and one terminal fai
 test('official graph owns search in top-level hidden preload over capability-bound XPC', () => {
   const windowHelper = source('src/main/windows/onlyPreviewWindow.helper.ts');
   const fileSearchWindow = source('src/main/fileSearch/fileSearchWindow.service.ts');
+  const projectAuthorityResponse = source(
+    'src/main/fileSearch/fileSearchProjectAuthorityResponse.service.ts'
+  );
   const relay = source('src/main/fileSearch/fileSearchRuntimeRelay.service.ts');
   const globalResultValidator = source('src/main/fileSearch/fileSearchGlobalResult.validator.ts');
   const eventHandler = source('src/main/fileSearch/fileSearchRuntimeEvent.handler.ts');
@@ -204,7 +213,24 @@ test('official graph owns search in top-level hidden preload over capability-bou
     /createXpcMainEmitter<FileSearchRuntimePrivateApi>\([\s\S]*fileSearchRuntimeHandlerName\(capability\)/
   );
   assert.match(fileSearchWindow, /registerFileSearchRuntimeEventHandler\(capability\)/);
-  assert.doesNotMatch(fileSearchWindow, /rootPath|databasePath|searchToken/);
+  assert.doesNotMatch(fileSearchWindow, /databasePath|searchToken/);
+  assert.match(fileSearchWindow, /--file-search-project-authority-capability=/);
+  assert.match(
+    fileSearchWindow,
+    /createXpcMainEmitter<OnlyPreviewFileAuthorityRuntimePrivateApi>/
+  );
+  assert.match(fileSearchWindow, /unwrapOnlyPreviewProjectAuthorityResponse\(result\)/);
+  assert.match(
+    fileSearchWindow,
+    /error instanceof OnlyPreviewProjectAuthorityProtocolError[\s\S]*rejectProjectProtocol/
+  );
+  assert.match(
+    fileSearchWindow,
+    /cancelProjectDelete[\s\S]*value !== undefined[\s\S]*rejectProjectProtocol/
+  );
+  assert.match(projectAuthorityResponse, /hasExactKeys\(value, \['ok', 'value'\]\)/);
+  assert.match(projectAuthorityResponse, /PROJECT_AUTHORITY_ERROR_CODES/);
+  assert.match(projectAuthorityResponse, /isBoundedPathFreeMessage/);
 
   assert.match(runtimePreload, /extends XpcPreloadHandler/);
   assert.match(runtimePreload, /createXpcPreloadEmitter<FileSearchRuntimeEventApi>/);

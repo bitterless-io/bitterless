@@ -33,8 +33,7 @@ class ChannelStoreState {
   async startNewMaestroSession(sessionId: string): Promise<boolean> {
     if (this.activeSource === 'connector') return false
     if (this.maestroSessionByTabId[this.currentOperationTabId] !== sessionId) return false
-    const current = messageStore.getSession(sessionId)
-    if (current?.busy) return false
+    if (messageStore.turnService.activeTurn()) return false
     // New chat does NOT archive the old session — it stays sendable and available in the
     // history drawer; we only drop it when it's an empty draft. (Real archive comes later.)
     await messageStore.discardIfEmpty(sessionId)
@@ -48,7 +47,7 @@ class ChannelStoreState {
     this.activeSource = 'cowork'
     const currentId = this.maestroSessionByTabId[this.currentOperationTabId]
     const current = currentId ? messageStore.getSession(currentId) : undefined
-    if (current?.busy) return undefined
+    if (messageStore.turnService.activeTurn()) return undefined
     if (current && !current.archivedAt) await messageStore.archive(current.id)
 
     const session = messageStore.createSession({ title, intent: 'chat', operationTabId: this.currentOperationTabId })

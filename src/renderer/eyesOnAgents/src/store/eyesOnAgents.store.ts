@@ -49,6 +49,7 @@ const sortThreads = (threads: EyesOnAgentsThread[]): EyesOnAgentsThread[] =>
 const THREAD_TITLE_SEPARATOR_PATTERN = /[\s\-_.\/\\:|]+/u;
 const MAX_ACTION_ERROR_LENGTH = 300;
 const TITLE_QUERY_THROTTLE_MS = 120;
+type TitleQueryScheduler = (lifecycleRevision: number) => void;
 
 const tokenizeThreadTitle = (value: string): string[] =>
   value
@@ -97,7 +98,8 @@ class EyesOnAgentsState {
   titleQuery = '';
   threadSearchVisible = false;
   threadSearchSelectedSessionKey: EyesOnAgentsSessionKey | null = null;
-  private titleQueryScheduler: (() => void) | null = null;
+  private titleQueryScheduler: TitleQueryScheduler | null = null;
+  private threadSearchLifecycleRevision = 0;
   private reloadRequested = false;
   private snapshotPromise: Promise<void> | null = null;
   private activationPromise: Promise<void> | null = null;
@@ -130,6 +132,10 @@ class EyesOnAgentsState {
     return tokenizeThreadTitle(this.titleQuery).length > 0;
   }
 
+  get threadSearchRevision(): number {
+    return this.threadSearchLifecycleRevision;
+  }
+
   initialize(): void {
     if (this.subscribed) return;
     this.subscribed = true;
@@ -151,7 +157,7 @@ class EyesOnAgentsState {
     this.refreshTimer = null;
   }
 
-  configureTitleQueryScheduler(scheduler: (() => void) | null): void {
+  configureTitleQueryScheduler(scheduler: TitleQueryScheduler | null): void {
     this.titleQueryScheduler = scheduler;
   }
 
@@ -162,12 +168,19 @@ class EyesOnAgentsState {
       this.commitTitleQuery();
       return;
     }
-    this.titleQueryScheduler();
+    this.titleQueryScheduler(this.threadSearchLifecycleRevision);
   }
 
   // Reads the current draft instead of a captured value, so a trailing run always
   // publishes the newest input and no earlier keystroke can land after it.
-  commitTitleQuery(): void {
+  commitTitleQuery(lifecycleRevision?: number): void {
+    if (
+      lifecycleRevision !== undefined
+      && (
+        !this.threadSearchVisible
+        || lifecycleRevision !== this.threadSearchLifecycleRevision
+      )
+    ) return;
     if (this.titleQuery !== this.titleDraft) this.titleQuery = this.titleDraft;
     this.reconcileThreadSearchSelection();
   }
@@ -180,6 +193,7 @@ class EyesOnAgentsState {
 
   openThreadSearch(): void {
     if (this.threadSearchVisible) return;
+    this.threadSearchLifecycleRevision += 1;
     this.titleDraft = '';
     this.titleQuery = '';
     this.threadSearchSelectedSessionKey = null;
@@ -187,6 +201,7 @@ class EyesOnAgentsState {
   }
 
   closeThreadSearch(): void {
+    this.threadSearchLifecycleRevision += 1;
     this.threadSearchVisible = false;
     this.titleDraft = '';
     this.titleQuery = '';
@@ -368,11 +383,21 @@ class EyesOnAgentsState {
     const thread = this.threads.find((item) => item.sessionKey === sessionKey);
     if (!thread || (thread.provider === 'claude' && thread.desktopSessionId === null)) return;
     if (this.openingSessionKeys.has(sessionKey)) return;
+    const threadSearchRevision = this.threadSearchVisible
+      ? this.threadSearchLifecycleRevision
+      : null;
     this.openingSessionKeys = new Set(this.openingSessionKeys).add(sessionKey);
     this.actionError = null;
     try {
       const result = await eyesOnAgentsEmitter.openThread({ sessionKey });
       this.applySnapshot(result.snapshot);
+      if (
+        threadSearchRevision !== null
+        && this.threadSearchVisible
+        && this.threadSearchLifecycleRevision === threadSearchRevision
+      ) {
+        this.closeThreadSearch();
+      }
     } catch (error) {
       this.actionError = this.errorMessage(error);
       throw error;
@@ -407,6 +432,14 @@ class EyesOnAgentsState {
     if (!thread?.canCopySessionPath) return;
     await this.runCommandAction('session-path-copy', () =>
       eyesOnAgentsEmitter.copySessionPath({ sessionKey }),
+    );
+  }
+
+  async archiveThread(sessionKey: EyesOnAgentsSessionKey): Promise<void> {
+    const thread = this.threads.find((item) => item.sessionKey === sessionKey);
+    if (!thread || thread.provider !== 'codex') return;
+    await this.runSnapshotAction(`thread-archive:${sessionKey}`, () =>
+      eyesOnAgentsEmitter.archiveThread({ sessionKey }),
     );
   }
 
@@ -552,11 +585,13 @@ class EyesOnAgentsState {
 
 export const eyesOnAgentsStore = reactive(new EyesOnAgentsState());
 
-export const createEyesOnAgentsTitleQueryScheduler = (run: () => void): (() => void) =>
+export const createEyesOnAgentsTitleQueryScheduler = (
+  run: TitleQueryScheduler,
+): TitleQueryScheduler =>
   useThrottleFn(run, TITLE_QUERY_THROTTLE_MS, true, true);
 
 eyesOnAgentsStore.configureTitleQueryScheduler(
-  createEyesOnAgentsTitleQueryScheduler(() => {
-    eyesOnAgentsStore.commitTitleQuery();
+  createEyesOnAgentsTitleQueryScheduler((lifecycleRevision) => {
+    eyesOnAgentsStore.commitTitleQuery(lifecycleRevision);
   }),
 );

@@ -1,5 +1,5 @@
 import { app, BaseWindow, WebContentsView, screen, session, shell } from 'electron';
-import type { Session } from 'electron';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { pathToFileURL } from 'url';
@@ -37,6 +37,10 @@ import {
   windowStateService,
   type WindowStateController,
 } from './windowState.service';
+import {
+  OmniGenerationReadyCollector,
+  OmniOpenCoordinator,
+} from './omniOpenCoordinator.service';
 import { OMNI_MINI_APP_RUNTIME } from './omniMiniAppRuntime.service';
 
 const LAYOUT_KEY = 'omni_layout';
@@ -103,54 +107,6 @@ const resolveOmniBrowserProfile = (url: string): OmniBrowserProfile | null => {
   return isGoogleProfile ? 'google' : 'default';
 };
 
-// Sessions that already carry the client-hint shim. onBeforeSendHeaders allows ONE listener per
-// session, so re-registering would silently replace the previous one.
-const clientHintShimmedPartitions = new Set<string>();
-
-/**
- * Give an omni browser session the UA client hints a Chrome would send.
- *
- * Electron sends **none at all** — a dumped main-frame navigation carries only Accept*,
- * Sec-Fetch-*, Upgrade-Insecure-Requests and User-Agent — so these are CREATED, not extended.
- * Measured 2026-07-29 against web.whatsapp.com with a raw control in the same run
- * (areas/agent-runtime/anti-bot/solutions.md #4): its "works with Google Chrome 100+" card is
- * decided server-side, and creating `Sec-CH-UA` with a `Google Chrome` brand is what turns it into
- * the QR login page. An append-only version was a silent no-op and stayed blocked.
- *
- * Versions are the engine's real ones; the single unearned claim is the brand name. The UA string
- * is left alone here (the google profile rewrites it separately, for a different reason).
- *
- * ⚠ This makes the headers disagree with JS `navigator.userAgentData` (still Chromium, no Google
- * Chrome) — the cross-checkable contradiction that measured as FAILING Cloudflare Turnstile in
- * solutions.md #2.2. Applied to both omni browser partitions by owner decision; if a Turnstile site
- * regresses, this shim is the first thing to remove.
- */
-const installChromeClientHintShim = (browserSession: Session, partition: string): void => {
-  if (clientHintShimmedPartitions.has(partition)) return;
-  clientHintShimmedPartitions.add(partition);
-  const major = (process.versions.chrome || '').split('.')[0];
-  if (!major) return;
-  const platform =
-    process.platform === 'darwin' ? 'macOS' : process.platform === 'win32' ? 'Windows' : 'Linux';
-  const brands = `"Not(A:Brand";v="8", "Chromium";v="${major}", "Google Chrome";v="${major}"`;
-  browserSession.webRequest.onBeforeSendHeaders((details, callback) => {
-    const headers = { ...details.requestHeaders };
-    const existing = Object.keys(headers).find((name) => name.toLowerCase() === 'sec-ch-ua');
-    // If a future Electron starts sending hints itself, extend them instead of fighting it.
-    if (existing) {
-      const value = String(headers[existing] ?? '');
-      if (value && !/"Google Chrome"/i.test(value)) {
-        headers[existing] = `${value}, "Google Chrome";v="${major}"`;
-      }
-    } else {
-      headers['Sec-CH-UA'] = brands;
-      headers['Sec-CH-UA-Mobile'] = '?0';
-      headers['Sec-CH-UA-Platform'] = `"${platform}"`;
-    }
-    callback({ requestHeaders: headers });
-  });
-};
-
 interface OmniMiniAppRendererTarget {
   filePath: string | null;
   url: string;
@@ -202,6 +158,31 @@ interface CellViewPair {
   lastUrl: string;
 }
 
+type OmniViewLoadResult =
+  | { ok: true }
+  | { ok: false; error: Error };
+
+export type OmniRendererReadyRole = 'window' | 'browser-cell';
+
+export interface OmniRendererMountedReadyParams {
+  token: string;
+  generation: number;
+  role: OmniRendererReadyRole;
+  cellId: string | null;
+}
+
+export interface OmniRendererMountedReadyResult {
+  accepted: boolean;
+}
+
+interface OmniRendererReadyFence extends OmniRendererMountedReadyParams {
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (error: Error) => void;
+  settled: boolean;
+  view: WebContentsView | null;
+}
+
 export class OmniWindowHelper {
   baseWindow: BaseWindow | null = null;
   private menubarView: WebContentsView | null = null;
@@ -216,15 +197,60 @@ export class OmniWindowHelper {
   private _throttledApplyLayoutFn: (() => void) | null = null;
   private _throttledSaveLayoutToDaoFn: (() => void) | null = null;
   private readonly layoutCommitQueue = new OmniLayoutCommitQueue();
-  private creationPromise: Promise<BaseWindow> | null = null;
-  private _creationGeneration = 0;
+  private readonly viewLoadResults = new WeakMap<WebContentsView, Promise<OmniViewLoadResult>>();
+  private readonly rendererReadyFences = new Map<string, OmniRendererReadyFence>();
+  private readonly initialRendererReadyCollector = new OmniGenerationReadyCollector();
+  private readonly deferredInitialContent = new Map<number, Array<() => void>>();
   private _loadSemaphore = new Semaphore(3);
   private _abortTokens = new Set<{ abort: () => void }>();
   private windowStateController: WindowStateController | null = null;
-
-  get isCreating(): boolean {
-    return this.creationPromise !== null;
-  }
+  private readonly openStartedAt = new Map<number, number>();
+  private readonly openCoordinator = new OmniOpenCoordinator<BaseWindow>({
+    getReady: () => {
+      const window = this.baseWindow;
+      return window && !window.isDestroyed() ? window : null;
+    },
+    create: (generation) => {
+      this.cleanupAllViews();
+      const startedAt = Date.now();
+      this.openStartedAt.set(generation, startedAt);
+      console.log('[OmniWindowHelper] open started, generation:', generation);
+      return this.createWindow(generation);
+    },
+    present: (window, generation) => {
+      this.assertCreationActive(generation, window);
+      this.show();
+      this.assertCreationActive(generation, window);
+      this.startDeferredInitialContent(generation);
+      const startedAt = this.openStartedAt.get(generation);
+      if (startedAt === undefined) {
+        console.log('[OmniWindowHelper] ready window exists, focused');
+      } else {
+        console.log(
+          '[OmniWindowHelper] open ready and shown, generation:',
+          generation,
+          'elapsedMs:',
+          Date.now() - startedAt,
+        );
+        this.openStartedAt.delete(generation);
+      }
+    },
+    cleanupIncomplete: (generation, error) => {
+      const startedAt = this.openStartedAt.get(generation);
+      console.error(
+        '[OmniWindowHelper] open failed, generation:',
+        generation,
+        'elapsedMs:',
+        startedAt === undefined ? null : Date.now() - startedAt,
+        error,
+      );
+      this.openStartedAt.delete(generation);
+      this.cleanupAllViews();
+    },
+    onInvalidate: (generation) => {
+      this.openStartedAt.delete(generation);
+    },
+  });
 
   /** Whether any surviving cell currently renders this mini app, regardless of which one asks. */
   hasLiveMiniApp(miniAppId: OmniMiniAppId): boolean {
@@ -306,6 +332,10 @@ export class OmniWindowHelper {
   }
 
   private cleanupAllViews(): void {
+    this.rejectRendererReadyFences(new Error('[OmniWindowHelper] Renderer readiness cancelled'));
+    this.initialRendererReadyCollector.invalidate();
+    this.deferredInitialContent.clear();
+
     // Abort all pending loadURL acquire() calls and flush the semaphore queue
     for (const token of this._abortTokens) token.abort();
     this._abortTokens.clear();
@@ -336,12 +366,14 @@ export class OmniWindowHelper {
     this.currentLayout = [];
     this.currentLayoutTree = null;
 
-    if (this.baseWindow && !this.baseWindow.isDestroyed()) {
-      this.windowStateController?.flushAndDispose();
-      this.baseWindow.destroy();
-    }
+    const windowToDestroy = this.baseWindow;
+    const stateController = this.windowStateController;
     this.baseWindow = null;
     this.windowStateController = null;
+    if (windowToDestroy && !windowToDestroy.isDestroyed()) {
+      stateController?.flushAndDispose();
+      windowToDestroy.destroy();
+    }
 
     // Clear ServiceWorkers so a stuck SW from either browser session doesn't survive into the next open
     for (const partition of OMNI_BROWSER_PARTITIONS) {
@@ -349,6 +381,113 @@ export class OmniWindowHelper {
         .clearStorageData({ storages: ['serviceworkers'] })
         .catch((err) => console.warn(`[OmniWindowHelper] Failed to clear SW for ${partition}:`, err));
     }
+  }
+
+  private createRendererReadyFence(params: {
+    generation: number;
+    role: OmniRendererReadyRole;
+    cellId: string | null;
+  }): OmniRendererReadyFence {
+    const token = randomUUID();
+    let resolve!: () => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<void>((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise;
+      reject = rejectPromise;
+    });
+    // A synchronous constructor failure can invalidate the fence before createWindow reaches
+    // Promise.all. Mark it handled while preserving its rejection for the eventual await.
+    void promise.catch(() => {});
+    const fence: OmniRendererReadyFence = {
+      ...params,
+      token,
+      promise,
+      resolve,
+      reject,
+      settled: false,
+      view: null,
+    };
+    this.rendererReadyFences.set(token, fence);
+    return fence;
+  }
+
+  private getRendererReadyArguments(fence: OmniRendererReadyFence): string[] {
+    return [
+      `--omni-ready-token=${encodeURIComponent(fence.token)}`,
+      `--omni-ready-generation=${fence.generation}`,
+      `--omni-ready-role=${fence.role}`,
+    ];
+  }
+
+  private rejectRendererReadyFence(fence: OmniRendererReadyFence, error: Error): void {
+    if (fence.settled) return;
+    fence.settled = true;
+    this.rendererReadyFences.delete(fence.token);
+    if (fence.view && this.isWebContentsAlive(fence.view.webContents)) {
+      fence.view.webContents.setBackgroundThrottling(true);
+    }
+    fence.reject(error);
+  }
+
+  private rejectRendererReadyFences(error: Error): void {
+    for (const fence of this.rendererReadyFences.values()) {
+      if (fence.settled) continue;
+      fence.settled = true;
+      if (fence.view && this.isWebContentsAlive(fence.view.webContents)) {
+        fence.view.webContents.setBackgroundThrottling(true);
+      }
+      fence.reject(error);
+    }
+    this.rendererReadyFences.clear();
+  }
+
+  private bindRendererReadyFenceView(fence: OmniRendererReadyFence, view: WebContentsView): void {
+    fence.view = view;
+    const rejectCurrent = (): void => {
+      if (fence.view !== view || fence.settled) return;
+      this.rejectRendererReadyFence(fence, new Error('[OmniWindowHelper] Local renderer failed'));
+    };
+    view.webContents.once('did-fail-load', rejectCurrent);
+    view.webContents.once('unresponsive', rejectCurrent);
+    view.webContents.once('render-process-gone', rejectCurrent);
+  }
+
+  markRendererMountedReady(
+    params: OmniRendererMountedReadyParams,
+  ): OmniRendererMountedReadyResult {
+    const fence = typeof params?.token === 'string'
+      ? this.rendererReadyFences.get(params.token)
+      : null;
+    if (
+      !fence ||
+      fence.settled ||
+      !Number.isSafeInteger(params.generation) ||
+      params.generation !== fence.generation ||
+      params.role !== fence.role ||
+      params.cellId !== fence.cellId ||
+      !this.isCreationActive(fence.generation) ||
+      !fence.view ||
+      !this.isWebContentsAlive(fence.view.webContents) ||
+      (fence.role === 'window' && this.menubarView !== fence.view) ||
+      (fence.role === 'browser-cell' && !this.currentLayout.some((cell) =>
+        cell.id === fence.cellId && cell.contentMode === 'browser'
+      ))
+    ) {
+      return { accepted: false };
+    }
+    fence.settled = true;
+    this.rendererReadyFences.delete(fence.token);
+    fence.view.webContents.setBackgroundThrottling(true);
+    fence.resolve();
+    console.log(
+      '[OmniWindowHelper] renderer mounted, generation:',
+      fence.generation,
+      'role:',
+      fence.role,
+      'cellId:',
+      fence.cellId,
+    );
+    return { accepted: true };
   }
 
   private async loadWindowLayout(): Promise<WindowLayout | null> {
@@ -364,26 +503,8 @@ export class OmniWindowHelper {
     }
   }
 
-  async create(): Promise<BaseWindow> {
-    const current = this.baseWindow;
-    if (current && !current.isDestroyed()) return current;
-    if (this.creationPromise) return await this.creationPromise;
-
-    this.cleanupAllViews();
-    const creationGeneration = ++this._creationGeneration;
-    const pending = this.createWindow(creationGeneration);
-    this.creationPromise = pending;
-    try {
-      return await pending;
-    } catch (error) {
-      if (this._creationGeneration === creationGeneration) {
-        this._creationGeneration += 1;
-        this.cleanupAllViews();
-      }
-      throw error;
-    } finally {
-      if (this.creationPromise === pending) this.creationPromise = null;
-    }
+  create(): Promise<BaseWindow> {
+    return this.openCoordinator.open();
   }
 
   private async createWindow(creationGeneration: number): Promise<BaseWindow> {
@@ -428,24 +549,34 @@ export class OmniWindowHelper {
     this.windowStateController = stateController;
     console.log('[OmniWindowHelper] BaseWindow created');
 
-    // Create top menubar view
-    const menubarView = this.createWebContentsView('omniWindow');
+    // Create top menubar view. Loading its HTML is not enough: the renderer explicitly reports
+    // after language initialization, dynamic import, Vue mount, and nextTick.
+    const topRendererReady = this.createRendererReadyFence({
+      generation: creationGeneration,
+      role: 'window',
+      cellId: null,
+    });
+    const menubarView = this.createWebContentsView(
+      'omniWindow',
+      this.getRendererReadyArguments(topRendererReady),
+      true,
+    );
+    this.bindRendererReadyFenceView(topRendererReady, menubarView);
     this.menubarView = menubarView;
     createdWindow.contentView.addChildView(menubarView);
     console.log('[OmniWindowHelper] menubarView added');
 
     // BaseWindow does not emit 'ready-to-show' (that is a BrowserWindow event).
-    // Show the window once the menubar webContents finishes loading instead.
+    // The complete initial browser chrome gate below owns the first show.
     menubarView.webContents.on('did-finish-load', () => {
       if (!this.isCreationActive(creationGeneration, createdWindow)) return;
-      console.log('[OmniWindowHelper] menubar did-finish-load, showing window');
-      stateController.show();
+      console.log('[OmniWindowHelper] top menubar did-finish-load');
     });
 
     createdWindow.on('closed' as any, () => {
       console.log('[OmniWindowHelper] baseWindow closed, cleaning up');
       if (this.baseWindow === createdWindow) {
-        this._creationGeneration += 1;
+        this.openCoordinator.invalidate();
         this.cleanupAllViews();
       }
     });
@@ -459,29 +590,6 @@ export class OmniWindowHelper {
 
     this.updateMenubarBounds();
     this.updateControlBounds();
-
-    // Create controlView singleton (reuse across window open/close cycles)
-    if (!this.controlView || !this.isWebContentsAlive(this.controlView.webContents)) {
-      this.controlView = this.createWebContentsView('omniControl');
-      this.controlView.setBackgroundColor('#00000000');
-      this.controlView.webContents.on('did-finish-load', () => {
-        this.replayControlState();
-      });
-      this.controlView.webContents.on('before-input-event', (event, input) => {
-        if (input.type !== 'keyDown' || input.key !== 'Escape') return;
-        event.preventDefault();
-        this.setControlVisible(false);
-      });
-      console.log('[OmniWindowHelper] controlView singleton created');
-    }
-    // Set proper bounds even when hidden — prevents splitpanes layout thrashing in a 0×0 container
-    const [cvWidth, cvHeight] = createdWindow.getContentSize();
-    this.controlView.setBounds({
-      x: 0,
-      y: MENUBAR_HEIGHT,
-      width: cvWidth,
-      height: Math.max(cvHeight - MENUBAR_HEIGHT, 0),
-    });
 
     const shouldOpenDevTools =
       process.env.BITTERLESS_E2E !== '1' && import.meta.env.VITE_MODE === 'debug';
@@ -512,11 +620,55 @@ export class OmniWindowHelper {
       });
     }
 
-    // Restore saved cell layout so cells appear immediately on window open
-    await this.restoreSavedLayout(creationGeneration);
+    // Restore saved cell layout so cells appear immediately on window open. Only browser chrome
+    // created during this initial restore participates in the cold-open readiness gate.
+    const initialRendererReadyBatch = this.initialRendererReadyCollector.begin(
+      creationGeneration,
+    );
+    this.deferredInitialContent.set(creationGeneration, []);
+    try {
+      await this.restoreSavedLayout(creationGeneration);
+    } finally {
+      this.initialRendererReadyCollector.finish(initialRendererReadyBatch);
+    }
+    this.assertCreationActive(creationGeneration, createdWindow);
+    const initialBrowserRendererReady = initialRendererReadyBatch.promises;
+
+    const initialBrowserMenubars = this.currentLayout
+      .filter((cell) => cell.contentMode === 'browser')
+      .map((layoutCell) => {
+        const cell = this.cells.find((candidate) => candidate.id === layoutCell.id);
+        if (!cell?.menubar) {
+          throw new Error(
+            `[OmniWindowHelper] Initial browser chrome is missing for cell ${layoutCell.id}`,
+          );
+        }
+        return this.requireViewLoad(cell.menubar, `browser cell ${layoutCell.id}`);
+      });
+    console.log(
+      '[OmniWindowHelper] waiting for initial mounted chrome, browser cells:',
+      initialBrowserMenubars.length,
+    );
+    await Promise.all([
+      this.requireViewLoad(menubarView, 'top menubar'),
+      ...initialBrowserMenubars,
+      topRendererReady.promise,
+      ...initialBrowserRendererReady,
+    ]);
     this.assertCreationActive(creationGeneration, createdWindow);
 
     return createdWindow;
+  }
+
+  private async requireViewLoad(view: WebContentsView, label: string): Promise<void> {
+    const resultPromise = this.viewLoadResults.get(view);
+    if (!resultPromise) {
+      throw new Error(`[OmniWindowHelper] No load readiness exists for ${label}`);
+    }
+    const result = await resultPromise;
+    if (!result.ok) {
+      throw new Error(`[OmniWindowHelper] ${label} failed to load: ${result.error.message}`);
+    }
   }
 
   private setControlVisible(visible: boolean): void {
@@ -541,7 +693,35 @@ export class OmniWindowHelper {
   }
 
   toggleControl(): void {
+    if (!this.controlView || !this.isWebContentsAlive(this.controlView.webContents)) {
+      this.createControlView();
+    }
     this.setControlVisible(!this.controlVisible);
+  }
+
+  private createControlView(): void {
+    this.controlView = this.createWebContentsView('omniControl');
+    this.controlView.setBackgroundColor('#00000000');
+    this.controlView.webContents.on('did-finish-load', () => this.replayControlState());
+    this.controlView.webContents.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown' || input.key !== 'Escape') return;
+      event.preventDefault();
+      this.setControlVisible(false);
+    });
+    this.updateControlBounds();
+  }
+
+  private startDeferredInitialContent(generation: number): void {
+    if (!this.openCoordinator.isCurrent(generation)) return;
+    const tasks = this.deferredInitialContent.get(generation) ?? [];
+    this.deferredInitialContent.delete(generation);
+    queueMicrotask(() => {
+      if (!this.openCoordinator.isCurrent(generation)) return;
+      for (const task of tasks) task();
+      if (!this.controlView || !this.isWebContentsAlive(this.controlView.webContents)) {
+        this.createControlView();
+      }
+    });
   }
 
   getLayoutConfig(): OmniLayoutConfig | null {
@@ -663,8 +843,7 @@ export class OmniWindowHelper {
   }
 
   destroy(): void {
-    this._creationGeneration += 1;
-    this.creationPromise = null;
+    this.openCoordinator.invalidate();
     this.cleanupAllViews();
     // Destroy the singleton controlView only on full destroy (app quit)
     this.closeWebContentsView(this.controlView);
@@ -677,18 +856,15 @@ export class OmniWindowHelper {
   ): WebContentsView {
     const partition = profile === 'google' ? OMNI_GOOGLE_PARTITION : OMNI_PARTITION;
     const browserSession = session.fromPartition(partition);
-    // Must be installed before the cell's first request (see the shim's note).
-    installChromeClientHintShim(browserSession, partition);
-
-    // No setUserAgent in either profile (owner decision 2026-07-29): the UA string stays exactly
-    // what Electron sends, and identity is expressed only by the added UA-CH brand above. The
-    // google profile now differs from the default one solely in its cookie jar.
+    // Both profiles keep Electron's native network and JavaScript identity. The Google profile
+    // remains separate solely to preserve its existing cookie jar.
     return new WebContentsView({
       webPreferences: {
         preload: join(__dirname, '../preload/omniCellContent.js'),
         sandbox: false,
         contextIsolation: true,
         nodeIntegration: false,
+        backgroundThrottling: true,
         session: browserSession,
         additionalArguments: createOmniCellActiveFrameArguments(cellId, 'browser-content'),
       },
@@ -708,6 +884,7 @@ export class OmniWindowHelper {
         webSecurity: true,
         webviewTag: false,
         allowRunningInsecureContent: false,
+        backgroundThrottling: true,
         additionalArguments: [
           '--mode=omni',
           ...createOmniCellActiveFrameArguments(cellId, 'miniapp-content'),
@@ -866,6 +1043,19 @@ export class OmniWindowHelper {
     if (!this.baseWindow) return;
 
     const { id, url, contentMode, miniAppId } = layoutCell;
+    const initialRendererReadyBatch = this.initialRendererReadyCollector.active;
+    const rendererReadyFence = contentMode === 'browser' &&
+      initialRendererReadyBatch !== null &&
+      this.isCreationActive(initialRendererReadyBatch.generation)
+      ? this.createRendererReadyFence({
+          generation: initialRendererReadyBatch.generation,
+          role: 'browser-cell',
+          cellId: id,
+        })
+      : null;
+    if (rendererReadyFence && initialRendererReadyBatch) {
+      initialRendererReadyBatch.promises.push(rendererReadyFence.promise);
+    }
     const displayUrl = getCellDisplayUrl(layoutCell);
     const browserProfile = contentMode === 'browser'
       ? resolveOmniBrowserProfile(url) ?? 'default'
@@ -895,13 +1085,21 @@ export class OmniWindowHelper {
           `--initialUrl=${displayUrl}`,
           `--contentMode=${contentMode}`,
           ...createOmniCellActiveFrameArguments(id, 'browser-menubar'),
-        ])
+          ...(rendererReadyFence ? this.getRendererReadyArguments(rendererReadyFence) : []),
+        ], true)
         : null;
       if (menubar) {
+        if (rendererReadyFence) this.bindRendererReadyFenceView(rendererReadyFence, menubar);
         this.bindCellActiveFrameLifecycle(id, menubar);
         this.baseWindow.contentView.addChildView(menubar);
       }
     } catch (error) {
+      if (rendererReadyFence) {
+        this.rejectRendererReadyFence(
+          rendererReadyFence,
+          error instanceof Error ? error : new Error(String(error)),
+        );
+      }
       this.disposeWebContentsView(menubar);
       this.clearActiveCellIfMatching(id);
       console.error(`[OmniWindowHelper] Cell ${id} browser chrome creation failed:`, error);
@@ -914,6 +1112,12 @@ export class OmniWindowHelper {
         ? this.createBrowserCellContentView(browserProfile!, id)
         : this.createMiniAppCellContentView(miniAppRuntime!, id);
     } catch (error) {
+      if (rendererReadyFence) {
+        this.rejectRendererReadyFence(
+          rendererReadyFence,
+          error instanceof Error ? error : new Error(String(error)),
+        );
+      }
       this.disposeWebContentsView(menubar);
       this.reportMiniAppLoadFailure({
         cellId: id,
@@ -927,6 +1131,12 @@ export class OmniWindowHelper {
     try {
       this.baseWindow.contentView.addChildView(content);
     } catch (error) {
+      if (rendererReadyFence) {
+        this.rejectRendererReadyFence(
+          rendererReadyFence,
+          error instanceof Error ? error : new Error(String(error)),
+        );
+      }
       this.disposeWebContentsView(menubar);
       this.disposeWebContentsView(content);
       this.reportMiniAppLoadFailure({
@@ -993,6 +1203,7 @@ export class OmniWindowHelper {
     this.cells.push(cell);
     this.applyActiveCellFrameState();
 
+    const startContent = (): void => {
     if (contentMode === 'miniapp' && miniAppRuntime) {
       this.loadMiniAppCellContent(content, {
         cellId: id,
@@ -1030,6 +1241,12 @@ export class OmniWindowHelper {
         });
       });
     }
+    };
+    const deferred = initialRendererReadyBatch
+      ? this.deferredInitialContent.get(initialRendererReadyBatch.generation)
+      : null;
+    if (deferred) deferred.push(startContent);
+    else startContent();
 
     // Ensure control overlay stays on top
     if (this.controlVisible && this.controlView) {
@@ -1262,7 +1479,7 @@ export class OmniWindowHelper {
   private async restoreSavedLayout(creationGeneration: number): Promise<void> {
     try {
       const persistedValue = await settingEmitter.get<unknown>({ key: LAYOUT_KEY });
-      if (this._creationGeneration !== creationGeneration) return;
+      if (!this.isCreationActive(creationGeneration)) return;
       if (persistedValue === null || persistedValue === undefined) {
         this.restoreDefaultBrowserLayout();
         this.setLayoutRecoveryState(false);
@@ -1275,7 +1492,7 @@ export class OmniWindowHelper {
       console.log('[OmniWindowHelper] Restored saved layout with', leaves.length, 'cells');
     } catch (err) {
       console.error('[OmniWindowHelper] Failed to restore saved layout:', err);
-      if (this._creationGeneration !== creationGeneration) return;
+      if (!this.isCreationActive(creationGeneration)) return;
       this.restoreDefaultBrowserLayout();
       this.setLayoutRecoveryState(true);
     }
@@ -1290,7 +1507,7 @@ export class OmniWindowHelper {
     creationGeneration: number,
     createdWindow?: BaseWindow,
   ): boolean {
-    return this._creationGeneration === creationGeneration &&
+    return this.openCoordinator.isCurrent(creationGeneration) &&
       (!createdWindow || (
         this.baseWindow === createdWindow &&
         !createdWindow.isDestroyed()
@@ -1394,6 +1611,7 @@ export class OmniWindowHelper {
   private createWebContentsView(
     rendererName: string,
     additionalArguments: string[] = [],
+    startupUnthrottled = false,
   ): WebContentsView {
     const view = new WebContentsView({
       webPreferences: {
@@ -1401,17 +1619,33 @@ export class OmniWindowHelper {
         sandbox: false,
         contextIsolation: true,
         nodeIntegration: false,
+        backgroundThrottling: !startupUnthrottled,
         additionalArguments,
       },
     });
 
     const rendererPath = `omni/${rendererName}/index.html`;
 
-    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-      view.webContents.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/${rendererPath}`);
-    } else {
-      view.webContents.loadFile(join(__dirname, `../renderer/${rendererPath}`));
+    let loadPromise: Promise<void>;
+    try {
+      loadPromise = is.dev && process.env['ELECTRON_RENDERER_URL']
+        ? view.webContents.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/${rendererPath}`)
+        : view.webContents.loadFile(join(__dirname, `../renderer/${rendererPath}`));
+    } catch (error) {
+      const normalized = error instanceof Error ? error : new Error(String(error));
+      this.viewLoadResults.set(view, Promise.resolve({ ok: false, error: normalized }));
+      return view;
     }
+    this.viewLoadResults.set(
+      view,
+      loadPromise.then<OmniViewLoadResult, OmniViewLoadResult>(
+        () => ({ ok: true }),
+        (error) => ({
+          ok: false,
+          error: error instanceof Error ? error : new Error(String(error)),
+        }),
+      ),
+    );
 
     return view;
   }

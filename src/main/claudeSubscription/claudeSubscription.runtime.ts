@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { app, clipboard } from 'electron';
+import log from 'electron-log/main';
 import { xpcMain } from 'electron-xpc/main';
 import type {
   ClaudeSubscriptionActionResult,
@@ -10,6 +11,10 @@ import type {
 } from '@shared/claudeSubscription/claudeSubscription.contract';
 import { CLAUDE_SUBSCRIPTION_SNAPSHOT_CHANGED_EVENT } from '@shared/claudeSubscription/claudeSubscription.contract';
 import { resolveClaudeExecutable } from '@main/eyesOnAgents/claudeExecutable.resolver';
+import { codexAuthPath, codexModelsPath, codexSettingsPath } from '@main/codex/codexPaths';
+import { ensureCodexProxyDispatcher } from '@main/codex/codexProxy.service';
+import type { CodexRuntimePiModule } from '@main/codex/codexRuntime.service';
+import { PiCodexResponsesUpstream } from '@main/codex/codexResponses.upstream';
 import { ClaudeAccountRepository } from './claudeAccount.repository';
 import { ClaudeAccountRouter } from './claudeAccount.router';
 import { ElectronClaudeAuthBrowserFactory } from './claudeAuth.browser';
@@ -23,6 +28,9 @@ import {
   type ClaudeExecutor
 } from './claudeCli.executor';
 import { ClaudeResponsesRuntime, ClaudeResponsesServer } from './claudeResponses.server';
+import { ClaudeCliUsageProbe } from './claudeUsage.probe';
+import { CodexAccountRepository } from './codexAccount.repository';
+import { formatSub2ApiLogEntry, type Sub2ApiLogger } from './sub2apiLog.service';
 import { ClaudeExecutionError } from './claudeSubscription.errors';
 import { ClaudeSubscriptionService } from './claudeSubscription.service';
 
@@ -33,6 +41,21 @@ class UnavailableClaudeExecutor implements ClaudeExecutor {
 }
 
 export type ClaudeSubscriptionServiceFactory = () => Promise<ClaudeSubscriptionService>;
+
+/**
+ * Writes endpoint activity to the application log. Failures here are swallowed: a
+ * logging problem must never turn into a failed request.
+ */
+const sub2apiLog: Sub2ApiLogger = (entry) => {
+  try {
+    const line = formatSub2ApiLogEntry(entry);
+    if (entry.level === 'error') log.error(line);
+    else if (entry.level === 'warn') log.warn(line);
+    else log.info(line);
+  } catch {
+    // Diagnostics are best effort.
+  }
+};
 
 const createDefaultClaudeSubscriptionService = async (): Promise<ClaudeSubscriptionService> => {
   const resolvedExecutable = resolveClaudeExecutable({
@@ -71,13 +94,40 @@ const createDefaultClaudeSubscriptionService = async (): Promise<ClaudeSubscript
   const authCli = claudeExecutable
     ? new ClaudeCliAccountAuth({ claudeExecutable, spawnProcess })
     : null;
-  const responsesRuntime = new ClaudeResponsesRuntime(router, executor);
+  const usageProbe = claudeExecutable
+    ? new ClaudeCliUsageProbe({ claudeExecutable, spawnProcess })
+    : null;
+  const codexAccounts = new CodexAccountRepository({
+    rootDirectory: path.join(app.getPath('userData'), 'claude-subscription'),
+    liveAuthPath: () => codexAuthPath(app.getPath('userData'))
+  });
+  // The same pi module, auth file and model catalogue Translator already uses — this
+  // endpoint borrows the Codex subscription rather than owning a second credential.
+  await codexAccounts.load().catch(() => undefined);
+  const codexUpstream = new PiCodexResponsesUpstream({
+    // Reads the **active capture** when one exists, so switching accounts in the panel
+    // changes what the endpoint uses immediately, without disturbing Translator — it
+    // keeps reading the live file the login flow writes.
+    authPath: () => codexAccounts.activeAuthPathSync(),
+    modelsPath: () => codexModelsPath(app.getPath('userData')),
+    loadPiModule: async (): Promise<CodexRuntimePiModule> => {
+      await ensureCodexProxyDispatcher(codexSettingsPath(app.getPath('userData')));
+      return (await import('@earendil-works/pi-coding-agent')) as unknown as CodexRuntimePiModule;
+    }
+  });
+  const responsesRuntime = new ClaudeResponsesRuntime(
+    router,
+    executor,
+    codexUpstream,
+    sub2apiLog
+  );
   // Initialize first: the server takes its port at construction, and the configured
   // port is only readable once the settings file has been loaded. A port change
   // therefore takes effect on the next start, never mid-flight.
   await repository.initialize().catch(() => undefined);
   const server = new ClaudeResponsesServer(router, responsesRuntime, {
-    port: repository.serverPort()
+    port: repository.serverPort(),
+    log: sub2apiLog
   });
   const browserFactory = new ElectronClaudeAuthBrowserFactory();
 
@@ -98,6 +148,9 @@ const createDefaultClaudeSubscriptionService = async (): Promise<ClaudeSubscript
     authorization,
     authCli,
     browserFactory,
+    codexUpstream,
+    usageProbe,
+    codexAccounts,
     writeClipboard: (text) => clipboard.writeText(text),
     broadcastSnapshot: (snapshot) =>
       xpcMain.broadcast(CLAUDE_SUBSCRIPTION_SNAPSHOT_CHANGED_EVENT, snapshot)
@@ -187,6 +240,18 @@ export class ClaudeSubscriptionMainRuntime {
 
   async copyCodexProfile(): Promise<ClaudeSubscriptionCopyResult> {
     return await (await this.#service()).copyCodexProfile();
+  }
+
+  async captureCodexAccount(label: string): Promise<ClaudeSubscriptionActionResult> {
+    return await (await this.#service()).captureCodexAccount(label);
+  }
+
+  async activateCodexAccount(accountId: string): Promise<ClaudeSubscriptionActionResult> {
+    return await (await this.#service()).activateCodexAccount(accountId);
+  }
+
+  async removeCodexAccount(accountId: string): Promise<ClaudeSubscriptionActionResult> {
+    return await (await this.#service()).removeCodexAccount(accountId);
   }
 
   async #stopInternal(): Promise<void> {

@@ -44,10 +44,23 @@ const createValidSnapshot = () => ({
     accountId: ACCOUNT_ID,
     status: 'awaiting_code',
     canSubmitCode: true,
+    codeAttempt: 1,
     error: {
       code: 'authorization_output_invalid',
       retryable: true
     }
+  },
+  codexUpstream: {
+    connected: true,
+    models: ['gpt-5.5'],
+    accounts: [
+      {
+        id: 'c0de0000-0000-4000-8000-000000000001',
+        label: 'Work ChatGPT',
+        active: true,
+        createdAt: '2026-08-31T09:00:00.000Z'
+      }
+    ]
   }
 });
 

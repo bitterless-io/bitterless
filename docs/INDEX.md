@@ -10,6 +10,23 @@ design document.
   live updates for every first-party renderer, and correct locale before recreated windows mount.
 - [Maestro sub-application](features/maestro.md) - the Bitterless Mini App migrated from the
   Micromeet Cowork runtime.
+- [Maestro Control chat behind Cowork](issues/maestro-control-chat-behind-cowork.md) - implemented;
+  owner verification pending: migrated the current Turn/status/task and attachment/file-reading
+  chat vertical slices from Cowork `67b056b` while preserving Maestro providers, i18n, replay,
+  local Home, and Royal Blue/BEM UI; core [review 1](plan/reviews/maestro-cowork-chat-core-089-1.md)
+  and files [review 1](plan/reviews/maestro-cowork-chat-files-090-1.md) passed.
+- [Maestro SQLite build older than migration](issues/maestro-sqlite-build-version-behind-migration.md) -
+  implemented; owner verification pending: advanced the canonical build after migration
+  `260831200000`, retained history and the fail-closed guard, and passed the complete migration
+  matrix plus [review 1](plan/reviews/maestro-sqlite-build-version-093-1.md).
+- [Maestro external tools packaged inside ASAR](issues/maestro-tools-packaged-inside-asar.md) -
+  implemented; owner initialization/package verification pending: initialize Bun, ripgrep, fd,
+  Ouch, and AnyDoc once for macOS ARM, macOS Intel, and Windows, then stage one validated target
+  offline into `Resources/maestro-tools` without ASAR cache duplication;
+  [review 1](plan/reviews/maestro-external-tools-094-1.md) passed.
+- [Unused youtube-dl-exec blocks dependency installation](issues/youtube-dl-exec-postinstall-rate-limit.md) -
+  fixed: removed the unused helper and its unauthenticated GitHub Releases postinstall from the
+  dependency graph; [review 1](plan/reviews/desktop-youtube-dl-removal-003-1.md) passed.
 - [Maestro main-window IoC split](features/maestro-window-ioc.md) - controller plus native-view
   services with unchanged XPC and runtime behavior.
 - [Maestro startup host flash and MenuBar](issues/maestro-startup-host-flash-and-menubar.md) -
@@ -18,6 +35,20 @@ design document.
 - [Maestro Cowork MenuBar control parity](issues/maestro-cowork-menubar-controls-outdated.md) -
   implemented; owner verification pending: compact 36px chrome, current controls, and a bundled
   local Home fixed tab.
+- [Maestro MenuBar tab inset](issues/maestro-menubar-tabs-not-inset.md) - implemented; owner
+  verification pending: center four-corner rounded tabs inside the existing 36px strip and move
+  macOS traffic lights down 1px; [review 1](plan/reviews/maestro-menubar-tab-inset-077-1.md) passed.
+- [Maestro tab icon actions](issues/maestro-tab-icon-actions-not-iconbtn.md) - implemented; owner
+  verification pending: render the tab close and New-tab controls through the shared `IconBtn`
+  with centered Tabler SVG glyphs; [review 1](plan/reviews/maestro-tab-iconbtn-controls-078-1.md)
+  passed.
+- [Maestro compact address row](issues/maestro-address-row-too-tall.md) - implemented; owner
+  verification pending: reduce the address row to 42px, align navigation and address at 28px, and
+  keep Main's first-frame native-view offset synchronized at 78px;
+  [review 1](plan/reviews/maestro-address-row-compact-082-1.md) passed.
+- [Maestro Control entries and Arco theme](issues/maestro-control-connector-demo-and-arco-blue.md) -
+  implemented; owner verification pending: retire the empty Control Connector and visible Demo
+  entries while restoring the canonical Royal Blue theme for Maestro Arco Buttons.
 - [Maestro per-tab page loading](issues/maestro-global-page-load-progress.md) - implemented;
   owner verification pending:
   replace the global simulated progress bar with favicon-slot loading icons and a 30-second
@@ -26,6 +57,18 @@ design document.
   owner verification pending: replace the duplicate Chat surface with Mini Apps and Connector on
   the familiar 56px rail, hide its Settings button, use Bitterless artwork for Home/New-tab
   branding, and keep fixed-Home DevTools available in debug runtimes.
+- [Maestro fixed Home Login gate](issues/maestro-local-home-login-missing.md) - implemented; owner
+  verification pending: retain Maestro as the only visible primary, reuse the original Login
+  experience before Mini Apps, and keep the hidden Home renderer as the sole token/auth authority;
+  [review 1](plan/reviews/maestro-local-home-auth-gate-096-1.md) passed.
+- [Maestro Workbench Account tab](issues/maestro-workbench-account-tab-missing.md) - implemented;
+  owner verification pending: moved identity/logout from General into Settings → Account and made
+  logout close Workbench and deterministically reveal pinned Home on Login;
+  [review 1](plan/reviews/maestro-workbench-account-logout-097-1.md) passed.
+- [Mini Apps card action alignment](issues/miniapp-card-action-alignment.md) - implemented; owner
+  verification pending: keep every fixed-Home card at `320 × 184px`, clamp descriptions to three
+  lines, and pin Open actions to one bottom baseline; [review 1](plan/reviews/miniapp-card-layout-003-1.md)
+  passed.
 - [Maestro Cmd+Q reveals hidden Home](issues/maestro-quit-reveals-hidden-home.md) - implemented;
   owner verification pending: resolve dialog ownership across visible BaseWindows and never parent
   quit confirmation to the hidden legacy Home runtime; [review 1](plan/reviews/maestro-quit-dialog-parent-009-1.md)
@@ -33,11 +76,79 @@ design document.
 - [Maestro hot reload reveals legacy Home](issues/maestro-hot-reload-reveals-legacy-home.md) -
   implemented; owner verification pending: Maestro is the sole visible primary across startup,
   HMR, activation, logout, and invalidation; legacy Home is a hidden-only compatibility runtime.
+- [Maestro window reopen performs a full cold boot](issues/maestro-window-reopen-cold-boot.md) -
+  implemented; owner packaged verification pending: normal native close hides the live runtime,
+  while correlated Main stages distinguish reuse, joined boot, cold boot, renderer readiness, and
+  final show; [review 1](plan/reviews/maestro-open-diagnostics-113-1.md) passed.
 - [OnlyPreview sub-application](features/onlypreview.md) - capability-scoped local indexing,
   standalone-only multi-view preview, EyesOnAgents-style MenuBar, settings, and OS file-open routing.
+- [OnlyPreview Main filesystem I/O](issues/onlypreview-main-filesystem-io.md) - implemented; owner
+  runtime verification pending: potentially large project-content traversal, mutation, open and
+  byte delivery now stay inside trusted renderer preloads while Main retains bounded configuration
+  and operational persistence; [Task 087 review 1](plan/reviews/onlypreview-main-fs-boundary-audit-087-1.md)
+  passed.
 - [OnlyPreview indexing benchmark](features/onlypreview-indexing-benchmark.md) - `tests/indexing/`
   measures open directory -> first Global Search over a deterministic corpus, in process and without
   Electron, and guards the machine-independent invariants under `node --test`.
+- [OnlyPreview XLSX compatibility gaps](issues/onlypreview-xlsx-compatibility-gaps.md) - fixed in
+  source; owner verification pending: replace arbitrary-byte benchmark XLSX fixtures and recover
+  one bounded empty-sheet producer form through a Worker-normalized, single-load OOXML path;
+  [review 1](plan/reviews/onlypreview-xlsx-compatibility-repair-088-1.md) passed.
+- [OnlyPreview Project selection is too muted](issues/onlypreview-project-selection-blue-too-muted.md) -
+  implemented; owner verification pending: replace the ordinary Project tree's grey-blue selected
+  surface with a clearer light blue while preserving hover, focus, and Search-excluded orange
+  semantics; [review 1](plan/reviews/onlypreview-project-selection-blue-091-1.md) passed.
+- [OnlyPreview Global Search Office preview switching](issues/onlypreview-global-search-office-preview-switching.md) -
+  implemented; owner verification pending: render XLSX/XLSM, DOCX, and PPTX in the bottom Search
+  pane through an independent bounded preload lane, coalesce rapid selection to one latest-only
+  Viewer session, and fail closed on stale/read-error resources;
+  [review 1](plan/reviews/onlypreview-global-search-office-preview-092-1.md) passed.
+- [OnlyPreview rejects a valid Draw.io file while its mount is not visible](issues/onlypreview-drawio-deferred-viewer-ready.md) -
+  fixed in source; owner verification pending: preserve the local iframe-free viewer while waiting
+  through a bounded cancellable pre-vendor visibility gate instead of treating a zero-width
+  ContentView transition as a parse failure; [review 1](plan/reviews/onlypreview-drawio-deferred-viewer-ready-099-1.md)
+  passed.
+- [OnlyPreview PDF Search overlay and Find readiness](issues/onlypreview-pdf-search-overlay-and-find-readiness.md) -
+  fixed in source; owner verification pending: full-window transparent native Search overlay,
+  exact PDF document-frame readiness, topmost re-raise, and queued Chromium Find dispatch;
+  [review 1](plan/reviews/onlypreview-pdf-search-overlay-find-100-1.md) passed.
+- [OnlyPreview image rotation and media playback](issues/onlypreview-image-rotation-and-media-playback.md) -
+  fixed in source; owner verification pending: keep native audio/video controls and add
+  non-destructive quarter-turn image rotation with rotated fit/pan bounds;
+  [review 1](plan/reviews/onlypreview-image-rotation-media-regression-101-1.md) passed.
+- [OnlyPreview external file open replaces the current Project](issues/onlypreview-external-file-replaces-project.md) -
+  implemented; owner verification pending: keep the visible Project while an explicit file outside
+  it opens through an exact single-file Preview authority with no selected Project row; shared FIFO
+  and revoke fencing passed [review 1](plan/reviews/onlypreview-external-file-preview-098-1.md).
+- [OnlyPreview Project width is not persisted](issues/onlypreview-project-width-not-persisted.md) -
+  implemented; owner verification pending: restore the renderer-local Project directory width,
+  throttle drag persistence, and flush the final value on pointer and real page teardown;
+  [review 1](plan/reviews/onlypreview-project-width-persistence-102-1.md) passed.
+- [OnlyPreview action failures leave no diagnostic record](issues/onlypreview-operation-failure-has-no-log.md) -
+  fixed; owner verification pending: name every Main API operation and record its sanitized cause in
+  a dedicated per-profile `onlypreview/onlypreview.log`, so a generic
+  `OnlyPreview could not complete this action.` is triageable instead of evidence-free.
+- [OnlyPreview open latency is not fully traceable](issues/onlypreview-open-latency-is-not-traceable.md) -
+  implemented; Preview rebuild and owner runtime verification pending: repaired correlated
+  privacy-safe lifecycle/target traces, kept the Shell runnable through hidden startup, and moved
+  restored-Project indexing behind a cancellable 750ms grace so first-visible/interactive no longer
+  waits for reconciliation; [review 4](plan/reviews/onlypreview-open-diagnostics-114-4.md) passed.
+- [OnlyPreview holds a rendered document behind full pagination](issues/onlypreview-docx-waits-for-full-pagination.md) -
+  fixed; owner verification pending: present DOCX/PPTX at the first laid-out unit and keep the
+  remaining pagination behind the visible preview, with the full-document barrier retained as the
+  fallback that still guards the empty check.
+- [Markdown preview shows front matter instead of starting at the body](issues/onlypreview-markdown-front-matter-renders-as-heading.md) -
+  fixed in source; owner verification pending: strip valid leading YAML front matter before
+  Markdown compilation and render only the body, with no metadata card or replacement UI.
+- [OnlyPreview Preview-channel skill mounting is not obvious](issues/onlypreview-preview-channel-skill-mount-guide.md) -
+  implemented; owner verification pending: the existing Guide identifies the `bitterless-preview`
+  MCP alias and bundled complete skill in one localized sentence, then makes a later Production
+  Guide the direct overwrite path back to production `bitterless`.
+- [OnlyPreview loses Project position and rerenders an unchanged Preview on a file update](issues/onlypreview-watch-update-resets-project-and-preview.md) -
+  implemented; owner verification pending: browse capabilities survive a reconcile and every open
+  directory is republished, so the tree keeps its selection/expansion/scroll; the Preview rebuilds
+  only when the selected file's own metadata moved, and a deleted selection hands the tree row to
+  its neighbour.
 - [BL Trench INDEX](features/trench-index.md) - target CAs, GMGN profit Top 100, central wallet
   registry, hidden encrypted SQLite, and one global INDEX.
 - [BL Trench INDEX layout](features/trench-index-layout.md) - count-free INDEX navigation, Add CA,
@@ -66,6 +177,9 @@ design document.
 - [Todo Domain board layout](features/todo-layout.md) - menu-bar Domain creation, wrapping
   300–480px Focus/Domain columns capped at 80vh, and a detail panel that overlays with panel-width
   horizontal reveal instead of squeezing the board.
+- [Preview reports a missing sign-in as a local data runtime failure](issues/preview-channel-todo-reports-runtime-failure.md) -
+  fixed; owner verification pending: an install with no eligible customer session now asks for a
+  sign-in instead of blaming local SQLite, on the board, its write path, and the home placeholder.
 - [EyesOnAgents Focus-only board](features/eyes-on-agents-focus-board.md) - one full-width Focus
   column listing every visible thread, retired Domain and Project UI, and a keyboard-first search modal.
 - [EyesOnAgents Project filter](features/eyes-on-agents-project-filter.md) - Git-worktree-derived
@@ -87,6 +201,11 @@ design document.
 - [Omni browser and mini-app cells](features/omni-miniapp-cells.md) - persistent per-cell browser
   or local Todo/EyesOnAgents/Translator/Motto/Trench/Submodules operation views with development and
   packaged runtime mapping.
+- [Omni Open returns before the browser is ready](issues/omni-open-readiness-and-double-navigation.md) -
+  in progress after Preview 0.0.86 evidence: join concurrent Open calls through
+  post-mount initial-view readiness, keep card loading until feedback, and dispatch one Enter
+  navigation; add lifecycle and pending-stage logs for the observed 30-second timeout and 89.5-second
+  Control renderer delay.
 - [Shared model providers](features/model-provider.md) - SQLite-backed Codex configuration,
   cross-renderer XPC status, login synchronization, and persisted credential invalidation.
 - [Claude subscription accounts](features/claude-subscription-accounts.md) - Main-owned local
@@ -111,8 +230,8 @@ design document.
 - [Submodules window DevTools and 480px minimum](issues/submodules-window-devtools-and-min-width.md) -
   fixed; owner verification pending: debug DevTools opens after show/focus instead of behind the
   window, and the window narrows to 480px with the restore path honoring it.
-- [Motto mini app](features/motto.md) - local title/subtitle reminder cards inside Omni with
-  whole-array Web Storage persistence.
+- [Motto mini app](features/motto.md) - directly editable, persistently ordered title/subtitle
+  reminder cards inside Omni with whole-array Web Storage persistence.
 - [Chat entry visibility](features/chat-entry-visibility.md) - production-default hidden Chat menu
   with a persisted General override and Mini Apps production landing.
 - [SQLite migration release gate](features/sqlite-migration-release-gate.md) - strict multi-version
@@ -140,9 +259,35 @@ design document.
   macOS bundle icon generation, and bundle-only Dock rendering without a runtime override.
 - [Desktop automatic updates](features/desktop-auto-update.md) - one non-overlapping main-process
   poll, retryable metadata disagreement, and compact Home, Maestro, and Omni update actions.
+- [Desktop release channels](features/desktop-release-channels.md) - Stable and Preview share the
+  production API while keeping package identity, local persistence, artwork, updater feeds, and
+  published artifacts strictly separate.
+- [Development package metadata blocks Stable publication](issues/stable-publish-dev-dist-contamination.md) -
+  implemented; owner release verification pending: Development release artifacts now use
+  `dist/dev/` and can no longer replace Stable's `dist/version_info.json` with `channel: dev`.
+- [Preview publication missing release-version helper](issues/preview-publish-version-log-helper-missing.md) -
+  implemented; owner publication completion pending: restored the valid-existing-remote preflight
+  branch without a task-owned bump or release mutation; a later operator retry advanced to
+  `0.0.81 / 260901100557` and entered the build; [review 1](plan/reviews/release-preview-version-log-008-1.md)
+  passed.
+- [Stable and Preview can publish the same release identity](issues/cross-channel-release-version-identity-collision.md) -
+  implemented; owner release verification pending: publication now refuses a `version` or
+  `version_code` another channel already published, and one canonical cut is reused across every
+  platform; macOS ARM Preview auto-cuts while `yarn release:cut` remains the explicit alternative.
+- [Preview macOS ARM publish does not cut a new version](issues/preview-mac-arm-publish-does-not-cut-version.md) -
+  fixed in source; owner publication verification pending: the ordinary macOS ARM Preview command
+  is the single one-step cut/build/publish entry while Intel and Windows reuse its identity;
+  [review 1](plan/reviews/release-preview-mac-arm-auto-cut-115-1.md) passed.
+- [Packaged app-update.yml points at a placeholder host](issues/packaged-update-feed-url-placeholder.md) -
+  implemented; owner package verification pending: `afterPack` writes the exact channel/platform
+  updater directory from the mapping shared with the runtime, and the package audit rejects a
+  placeholder, cross-channel, or cross-platform feed before signing.
 
 ## Guides
 
+- [Maestro CLI executable installation](guides/maestro-cli-executable-installation.md) - pinned
+  three-platform external-tool initialization, offline package staging, resource layout, upgrades,
+  integrity checks, and recovery.
 - [Coin data source preparation](guides/coin-data-sources.md) - owner resources, GMGN setup,
   wallet cohorts, credential boundary, and production readiness gates.
 - [GMGN CLI setup](guides/gmgn-cli.md) - Yarn installation, personal API key, read-only probes,
@@ -161,7 +306,16 @@ design document.
 - [A restarted working thread stays pinned with no visible reason](issues/eyes-on-agents-restart-unknown-pinned.md) - diagnosed; repair pending owner choice:
   after a restart the row is `unknown` + unread, which promotes it to the unread tier while neither the spinner nor the dot renders for it.
 - [EyesOnAgents global title search](issues/eyes-on-agents-global-title-search.md) - restored as a
-  keyboard-selected modal whose results reuse the complete normal thread card.
+  keyboard-selected modal whose results reuse the complete normal thread card; shortcut/button
+  opening focuses the input, and every close path clears transient state without stale callback
+  revival; [review 072-1](plan/reviews/eyes-on-agents-search-shortcut-focus-reset-072-1.md) passed.
+- [EyesOnAgents search input loses its store receiver](issues/eyes-on-agents-search-input-unbound-store-method.md) -
+  fixed; owner verification pending: receiver-safe component wrappers and mounted Arco interaction
+  coverage prevent the first-keystroke crash and the same Focus Search-button failure.
+- [EyesOnAgents card context menu and Codex archive](issues/eyes-on-agents-card-context-menu-archive.md) -
+  implemented; owner verification pending: right-click opens and repositions the complete shared
+  card menu at the pointer with viewport fitting, while Codex cards expose provider-authoritative
+  Archive; [review 1](plan/reviews/eyes-on-agents-card-context-menu-archive-071-1.md) passed.
 
 ## Design system
 
@@ -169,7 +323,7 @@ design document.
 - [Color system](design/colors.md) - Royal Blue theme, accent-orange provenance, menu states, and
   the Maestro icon contract.
 - [Customer authentication](design/customer-authentication.md) - account lifecycle, deterministic
-  login transition, password recovery, General account/logout controls, and login/home visual
+  login transition, password recovery, Settings Account/logout controls, and login/home visual
   contract.
 - [OnlyPreview dual preview views and find ownership](design/onlypreview-preview-merge-find.md) -
   Shell-hosted Preview toolbar plus mutually exclusive `chromePreviewView` / `vuePreviewView`,
@@ -182,6 +336,10 @@ design document.
   implemented unification of XLSX/XLSM, DOCX, and PPTX on pinned, per-format lazy
   `@silurus/ooxml` viewers with bounded worker-mode rendering and complete model-backed
   search/highlight.
+- [OnlyPreview OOXML Viewer runtime failure](issues/onlypreview-ooxml-viewer-runtime-failure.md) -
+  fixed in source; owner verification pending: XLSX/XLSM, DOCX, and PPTX use the sandboxed pinned
+  OOXML Viewer path with preload-owned reads, Find/highlight, and phase-specific diagnostics;
+  [review 1](plan/reviews/onlypreview-ooxml-viewer-runtime-repair-081-1.md) passed.
 - [OnlyPreview unsupported default-app action](plan/tasks/onlypreview-unsupported-default-app-078.md) -
   implemented in-page, capability-scoped recovery for every file-backed metadata failure state
   while Main remains the sole owner of real-path resolution and system opening.
@@ -319,8 +477,9 @@ earlier review rounds were remediated; Ral's runtime/visual verification remains
   open: no surface names which ChatGPT account Bitterless is signed into, so a Bitterless-vs-CLI
   account difference is invisible.
 - [Omni remote-browser identity profiles](issues/browser-identity-inconsistent-across-embedded-views.md) -
-  implemented; owner verification pending: default sites now keep stock Electron identity while
-  Google/YouTube use a dedicated session with the verified honest Bitterless UA.
+  implemented; owner verification pending: both profiles now use native Electron/Chromium
+  identity while the Google session remains only an isolated cookie jar; [review 1](plan/reviews/omni-native-browser-identity-006-1.md)
+  passed.
 - [Omni root-axis collapse size mismatch](issues/omni-root-axis-collapse-size-mismatch.md) -
   implemented; owner verification pending: immutable tree edits, lifecycle-event rejection, and one
   serialized Main commit keep `H[V,V]` renderer borders and native bounds on the same geometry.
@@ -349,6 +508,10 @@ earlier review rounds were remediated; Ral's runtime/visual verification remains
 - [OSS release large-artifact timeout](issues/oss-release-large-artifact-timeout.md) - fixed:
   production `0.0.60` proved multipart ZIP/DMG upload, remote-size verification, semantic release
   ordering, manifest-last publication, and post-upload CDN refresh.
+- [Preview release-channel analysis](plan/analysis/desktop-preview-release-channel.md) and
+  [delivery task](plan/tasks/release-preview-channel-007.md) - completed: production-backed Preview
+  runtime isolation, dedicated artwork, three one-step publishers, and the signed/notarized macOS
+  ARM `0.0.79` release proof without mutating Stable manifests. Intel and Windows remain unpublished.
 - [Todo MCP empty-date rejection and missing Step CRUD](issues/todo-mcp-empty-date-and-step-crud-gap.md) - fixed:
   optional dates are validated before creation, and synchronized SubTodo operations now have a
   public, idempotent Step interface plus versioned agent guidance.
@@ -370,8 +533,8 @@ earlier review rounds were remediated; Ral's runtime/visual verification remains
   dense repository counts keep a newly created zero-SubTodo Todo refreshable.
 - [Customer login session transition](issues/customer-auth-login-session-transition.md) - client
   fix implemented; Shanghai backend gate and owner verification pending: valid Core login is no
-  longer blocked or misreported by optional local runtime activation, and General now exposes the
-  current account and Logout.
+  longer blocked or misreported by optional local runtime activation; account controls are being
+  moved from General into the dedicated Workbench Settings Account category.
 - [Customer session disappears after restart](issues/customer-auth-restart-session-loss.md) -
   implemented; owner restart verification pending: transient `/auth/me` failures preserve the
   saved token and offer retry without opening protected routes or requiring credentials again.

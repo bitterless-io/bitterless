@@ -1,10 +1,8 @@
 import { isAbsolute } from 'node:path';
 import type { SettingDao, SettingStoredValue } from '@preload/sqlite/dao/setting.dao';
 import type { OnlyPreviewWorkspace } from '@shared/onlypreview/onlyPreview.types';
-import {
-  onlyPreviewHostRegistry,
-  type OnlyPreviewHostRegistry
-} from './onlyPreviewHost.registry';
+import type { OnlyPreviewValidatedTarget } from '@shared/onlypreview/onlyPreviewFileAuthorityRuntime.types';
+import { onlyPreviewHostRegistry, type OnlyPreviewHostRegistry } from './onlyPreviewHost.registry';
 import {
   onlyPreviewWorkspaceRegistry,
   type OnlyPreviewWorkspaceRegistry
@@ -53,17 +51,24 @@ export class OnlyPreviewRecentDirectoryService {
   private activeExplicitGeneration: number | null = null;
   private readonly hostGeneration = new Map<string, number>();
   private readonly hostMutationChain = new Map<string, Promise<void>>();
-  private readonly restoreFlights = new Map<
-    string,
-    Promise<OnlyPreviewWorkspace | null>
-  >();
+  private readonly restoreFlights = new Map<string, Promise<OnlyPreviewWorkspace | null>>();
+  private inspectTarget: ((absoluteTarget: string) => Promise<OnlyPreviewValidatedTarget>) | null;
+  private bindWorkspace:
+    | ((hostToken: string, workspace: OnlyPreviewWorkspace) => Promise<void>)
+    | null;
 
   constructor(
     private readonly hosts: OnlyPreviewHostRegistry,
     private readonly workspaces: OnlyPreviewWorkspaceRegistry,
-    storage: OnlyPreviewRecentDirectoryStorage | null = null
+    storage: OnlyPreviewRecentDirectoryStorage | null = null,
+    inspectTarget: ((absoluteTarget: string) => Promise<OnlyPreviewValidatedTarget>) | null = null,
+    bindWorkspace:
+      | ((hostToken: string, workspace: OnlyPreviewWorkspace) => Promise<void>)
+      | null = null
   ) {
     this.storage = storage;
+    this.inspectTarget = inspectTarget;
+    this.bindWorkspace = bindWorkspace;
     this.storageLatch = new Promise<boolean>((resolve) => {
       this.resolveStorageLatch = resolve;
     });
@@ -75,6 +80,17 @@ export class OnlyPreviewRecentDirectoryService {
       throw new Error('OnlyPreview recent-directory storage is already configured.');
     }
     this.storage = storage;
+  }
+
+  configureTargetRuntime(params: {
+    inspectTarget: (absoluteTarget: string) => Promise<OnlyPreviewValidatedTarget>;
+    bindWorkspace: (hostToken: string, workspace: OnlyPreviewWorkspace) => Promise<void>;
+  }): void {
+    if (this.inspectTarget || this.bindWorkspace) {
+      throw new Error('OnlyPreview target runtime is already configured.');
+    }
+    this.inspectTarget = params.inspectTarget;
+    this.bindWorkspace = params.bindWorkspace;
   }
 
   markStorageReady(): void {
@@ -120,7 +136,7 @@ export class OnlyPreviewRecentDirectoryService {
     this.bindExplicitTarget(hostToken, generation);
     return await this.runHostMutation(hostToken, async () => {
       if (!this.isCurrentExplicit(hostToken, generation)) return null;
-      const workspace = await this.workspaces.createForTarget(hostToken, absoluteTarget);
+      const workspace = await this.createWorkspaceForTarget(hostToken, absoluteTarget);
       if (!this.isCurrentExplicit(hostToken, generation)) {
         this.revokeWorkspaceIfCurrent(hostToken, workspace.workspaceId);
         return null;
@@ -174,9 +190,7 @@ export class OnlyPreviewRecentDirectoryService {
     const stored = await this.safeGetStored();
     if (!stored) return null;
     if (!this.canRestore(hostToken, generation, hostGeneration)) return null;
-    const candidate = stored.valid
-      ? parseOnlyPreviewRecentDirectory(stored.value)
-      : null;
+    const candidate = stored.valid ? parseOnlyPreviewRecentDirectory(stored.value) : null;
     if (!stored.exists) return null;
     if (!candidate) {
       void this.clearObservedValue(stored);
@@ -190,7 +204,7 @@ export class OnlyPreviewRecentDirectoryService {
 
       let workspace: OnlyPreviewWorkspace;
       try {
-        workspace = await this.workspaces.createForTarget(hostToken, candidate);
+        workspace = await this.createWorkspaceForTarget(hostToken, candidate);
       } catch {
         if (this.canRestore(hostToken, generation, hostGeneration)) {
           void this.clearObservedValue(stored);
@@ -231,9 +245,8 @@ export class OnlyPreviewRecentDirectoryService {
   }
 
   private revokeWorkspaceIfCurrent(hostToken: string, workspaceId: string): void {
-    if (this.workspaces.restore(hostToken)?.workspaceId === workspaceId) {
-      this.workspaces.revokeHost(hostToken);
-    }
+    if (!this.hosts.isLive(hostToken)) return;
+    this.workspaces.revokeWorkspace(workspaceId);
   }
 
   private rememberDirectory(directoryPath: string, generation: number): void {
@@ -264,28 +277,30 @@ export class OnlyPreviewRecentDirectoryService {
       if (!this.isPendingDirectoryCurrent(pending)) return;
       let stored: SettingStoredValue | null;
       try {
-        stored = (await storage.getStored({
-          key: RECENT_DIRECTORY_KEY,
-          sub_key: RECENT_DIRECTORY_SUB_KEY
-        })) ?? null;
+        stored =
+          (await storage.getStored({
+            key: RECENT_DIRECTORY_KEY,
+            sub_key: RECENT_DIRECTORY_SUB_KEY
+          })) ?? null;
       } catch {
         return;
       }
       if (!stored || !this.isPendingDirectoryCurrent(pending)) return;
 
       try {
-        const written = stored.exists && stored.serializedValue !== null
-          ? await storage.compareAndSet({
-              key: RECENT_DIRECTORY_KEY,
-              sub_key: RECENT_DIRECTORY_SUB_KEY,
-              expectedSerializedValue: stored.serializedValue,
-              value
-            })
-          : await storage.insertIfAbsent({
-              key: RECENT_DIRECTORY_KEY,
-              sub_key: RECENT_DIRECTORY_SUB_KEY,
-              value
-            });
+        const written =
+          stored.exists && stored.serializedValue !== null
+            ? await storage.compareAndSet({
+                key: RECENT_DIRECTORY_KEY,
+                sub_key: RECENT_DIRECTORY_SUB_KEY,
+                expectedSerializedValue: stored.serializedValue,
+                value
+              })
+            : await storage.insertIfAbsent({
+                key: RECENT_DIRECTORY_KEY,
+                sub_key: RECENT_DIRECTORY_SUB_KEY,
+                value
+              });
         if (written) {
           if (this.isPendingDirectoryCurrent(pending)) this.pendingDirectory = null;
           return;
@@ -297,20 +312,19 @@ export class OnlyPreviewRecentDirectoryService {
   }
 
   private isPendingDirectoryCurrent(pending: RememberedDirectory): boolean {
-    return (
-      this.pendingDirectory === pending &&
-      pending.generation === this.mutationGeneration
-    );
+    return this.pendingDirectory === pending && pending.generation === this.mutationGeneration;
   }
 
   private async safeGetStored(): Promise<SettingStoredValue | null> {
     const storage = this.storage;
     if (!storage || this.storageState !== 'ready') return null;
     try {
-      return (await storage.getStored({
-        key: RECENT_DIRECTORY_KEY,
-        sub_key: RECENT_DIRECTORY_SUB_KEY
-      })) ?? null;
+      return (
+        (await storage.getStored({
+          key: RECENT_DIRECTORY_KEY,
+          sub_key: RECENT_DIRECTORY_SUB_KEY
+        })) ?? null
+      );
     } catch {
       return null;
     }
@@ -347,6 +361,24 @@ export class OnlyPreviewRecentDirectoryService {
         this.hostMutationChain.delete(hostToken);
       }
     }
+  }
+
+  private async createWorkspaceForTarget(
+    hostToken: string,
+    absoluteTarget: string
+  ): Promise<OnlyPreviewWorkspace> {
+    if (!this.inspectTarget || !this.bindWorkspace) {
+      throw new Error('OnlyPreview target runtime is unavailable.');
+    }
+    const target = await this.inspectTarget(absoluteTarget);
+    const workspace = this.workspaces.registerValidatedTarget(hostToken, target);
+    try {
+      await this.bindWorkspace(hostToken, workspace);
+    } catch (error) {
+      this.revokeWorkspaceIfCurrent(hostToken, workspace.workspaceId);
+      throw error;
+    }
+    return workspace;
   }
 
   private revokeHost(hostToken: string): void {

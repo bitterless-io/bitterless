@@ -4,6 +4,7 @@ export const APPLICATION_DIAGNOSTICS_SCHEMA = 'application-diagnostics-v1' as co
 
 export const APPLICATION_RUNTIME_PROFILE_IDS = [
   'production',
+  'production-preview',
   'production-debug',
   'test-debug',
   'test-release'
@@ -12,10 +13,18 @@ export const APPLICATION_RUNTIME_PROFILE_IDS = [
 export type ApplicationRuntimeProfileId = (typeof APPLICATION_RUNTIME_PROFILE_IDS)[number];
 export type ApplicationViteEnvironment = 'dev' | 'prod';
 export type ApplicationViteMode = 'debug' | 'release';
+export type ApplicationReleaseChannel = 'dev' | 'prod' | 'preview';
 
 export interface ApplicationRuntimeProfile {
   id: ApplicationRuntimeProfileId;
-  appName: 'Bitterless' | 'Bitterless_DEBUG_PROD' | 'Bitterless_DEBUG_DEV' | 'Bitterless_DEV';
+  appId: 'io.bitterless.desktop' | 'io.bitterless.desktop.preview' | 'io.bitterless.desktop_dev';
+  appName:
+    | 'Bitterless'
+    | 'Bitterless_PREVIEW'
+    | 'Bitterless_DEBUG_PROD'
+    | 'Bitterless_DEBUG_DEV'
+    | 'Bitterless_DEV';
+  releaseChannel: ApplicationReleaseChannel;
   viteEnv: ApplicationViteEnvironment;
   viteMode: ApplicationViteMode;
 }
@@ -25,6 +34,7 @@ export const APPLICATION_DIAGNOSTIC_DIRECTORY_KEYS = [
   'userData',
   'sessionData',
   'logs',
+  'onlypreviewLogs',
   'cache',
   'crashDumps',
   'temp',
@@ -51,6 +61,7 @@ export type ApplicationDiagnosticDirectoryKey =
 export const APPLICATION_DIAGNOSTIC_ENVIRONMENT_KEYS = [
   'VITE_ENV',
   'VITE_MODE',
+  'VITE_RELEASE_CHANNEL',
   'VITE_BITTERLESS_CORE_URL',
   'HTTP_PROXY',
   'HTTPS_PROXY',
@@ -98,7 +109,9 @@ export interface ApplicationDiagnosticsSnapshot {
   observedAt: number;
   runtime: {
     profile: ApplicationRuntimeProfileId;
+    appId: ApplicationRuntimeProfile['appId'];
     appName: ApplicationRuntimeProfile['appName'];
+    releaseChannel: ApplicationReleaseChannel;
     viteEnv: ApplicationViteEnvironment;
     viteMode: ApplicationViteMode;
     packaged: boolean;

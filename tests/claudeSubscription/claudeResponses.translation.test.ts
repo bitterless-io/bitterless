@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { buildClaudeExecutionStdin } from '../../src/main/claudeSubscription/claudeCli.executor';
 import {
   buildClaudeBridgePayload,
   extractClaudeCodexTools,
   parseClaudeResponsesRequest,
   resolveClaudeEffort,
-  resolveClaudeSubscriptionModel
+  resolveClaudeSubscriptionModel,
+  resolveClaudeSubscriptionModelId
 } from '../../src/main/claudeSubscription/claudeResponses.translator';
 import {
   buildClaudeResponseEvents,
@@ -15,16 +17,62 @@ import {
 import { ClaudeSubscriptionInvalidRequestError } from '../../src/main/claudeSubscription/claudeSubscription.errors';
 import { readClaudeFixture } from './claudeSubscriptionTest.helper';
 
-test('normalizes Codex text and images without forwarding image bytes', async () => {
+test('lifts image and PDF attachments out of the transcript as real content blocks', async () => {
   const raw = await readClaudeFixture<unknown>('codex-text-request.json');
   const request = parseClaudeResponsesRequest(raw);
   const payload = buildClaudeBridgePayload(request);
 
   assert.equal(payload.codex_instructions, 'Answer concisely and use tools only when required.');
   assert.deepEqual(payload.unsupported_codex_tool_types, ['web_search_preview']);
+
+  // This previously asserted that image bytes were dropped and replaced with a note
+  // telling the model to use its own image-inspection tool. That was the defect, not
+  // the contract: the model received nothing and answered as though no image existed,
+  // while Desktop refused to attach one at all because the catalogue said text-only.
+  assert.deepEqual(payload.media, [
+    { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'RklYVFVSRS1JTUFHRQ==' } }
+  ]);
+
+  // The bytes leave the transcript — it is serialised into one JSON string that
+  // becomes the prompt's text block, where base64 would be unreadable — but a numbered
+  // marker holds their position.
   const serialized = JSON.stringify(payload.conversation);
-  assert.doesNotMatch(serialized, /NOT_FORWARDED|image_url|base64/u);
-  assert.match(serialized, /Codex must use its own image-inspection tool/u);
+  assert.doesNotMatch(serialized, /RklYVFVSRS1JTUFHRQ==|base64/u);
+  assert.match(serialized, /Attachment #1 is supplied as image content/u);
+});
+
+test('carries attachments ahead of the payload text in the CLI stdin envelope', () => {
+  const request = parseClaudeResponsesRequest({
+    model: 'claude-sonnet',
+    stream: true,
+    input: [
+      {
+        type: 'message',
+        role: 'user',
+        content: [
+          { type: 'input_text', text: 'What does this say?' },
+          {
+            type: 'input_file',
+            file_url: 'data:application/pdf;base64,JVBERi0xLjQK'
+          }
+        ]
+      }
+    ]
+  });
+  const envelope = JSON.parse(buildClaudeExecutionStdin(buildClaudeBridgePayload(request))) as {
+    type: string;
+    message: { role: string; content: Array<Record<string, unknown>> };
+  };
+  assert.equal(envelope.type, 'user');
+  assert.equal(envelope.message.role, 'user');
+  // Attachments lead: the text that refers to them by number should be read after the
+  // model has already seen them.
+  assert.equal(envelope.message.content[0]?.type, 'document');
+  assert.equal(envelope.message.content[1]?.type, 'text');
+  // `media` is carried by the envelope, not duplicated inside the payload JSON.
+  const text = envelope.message.content[1]?.text as string;
+  assert.doesNotMatch(text, /JVBERi0xLjQK/u);
+  assert.match(text, /Attachment #1 is supplied as document content/u);
 });
 
 test('preserves ordered messages, function calls, and function outputs', () => {
@@ -80,7 +128,7 @@ test('preserves ordered messages, function calls, and function outputs', () => {
 test('preserves namespace functions and lists unsupported built-ins once', () => {
   const payload = buildClaudeBridgePayload(
     parseClaudeResponsesRequest({
-      model: 'claude-haiku',
+      model: 'claude-opus',
       stream: true,
       input: 'Open the product page.',
       tools: [
@@ -145,11 +193,16 @@ test('rejects malformed supplied function schemas and defaults only omitted para
 test('validates streaming request fields and exact model mapping', () => {
   assert.equal(resolveClaudeSubscriptionModel('claude-sonnet'), 'sonnet');
   assert.equal(resolveClaudeSubscriptionModel('claude-opus'), 'opus');
-  assert.equal(resolveClaudeSubscriptionModel('claude-haiku'), 'haiku');
-  assert.throws(
-    () => resolveClaudeSubscriptionModel('gpt-5'),
-    ClaudeSubscriptionInvalidRequestError
-  );
+  // Haiku is no longer offered, so its slug is an unknown model and takes the
+  // fallback like any other.
+  assert.equal(resolveClaudeSubscriptionModel('claude-haiku'), 'sonnet');
+  // Codex Desktop switches provider globally, so a thread created before the
+  // switch still sends its OpenAI slug here. Rejecting those made every
+  // pre-existing thread unusable; Sonnet answers instead, and the response
+  // reports the model that actually ran rather than echoing the request.
+  assert.equal(resolveClaudeSubscriptionModel('gpt-5'), 'sonnet');
+  assert.equal(resolveClaudeSubscriptionModelId('gpt-5'), 'claude-sonnet');
+  assert.equal(resolveClaudeSubscriptionModelId('claude-opus'), 'claude-opus');
   assert.throws(
     () => parseClaudeResponsesRequest({ model: 'claude-sonnet', stream: false }),
     /stream=true/u
@@ -171,14 +224,21 @@ test('validates streaming request fields and exact model mapping', () => {
 
 test('maps every Codex reasoning effort per request and rejects malformed values', () => {
   const mappings = [
+    // Read in the client's own vocabulary; the shift onto an upstream ladder happens
+    // at dispatch, once the upstream is known.
     ['none', 'low'],
     ['minimal', 'low'],
     ['low', 'low'],
     ['medium', 'medium'],
     ['high', 'high'],
     ['xhigh', 'xhigh'],
-    ['max', 'xhigh'],
-    ['ultra', 'xhigh']
+    // Desktop hides `max` from its picker but its schema still allows it; a request
+    // that names it is legal on the wire and resolves to the top rung at dispatch.
+    ['max', 'ultra'],
+    ['ultra', 'ultra'],
+    // Desktop hides `max` but its schema still allows it; it resolves to the top rung
+    // rather than failing a request that is legal on the wire.
+    ['max', 'ultra']
   ] as const;
   for (const [codex, claude] of mappings) {
     assert.equal(resolveClaudeEffort({ effort: codex }), claude);

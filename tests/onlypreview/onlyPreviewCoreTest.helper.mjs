@@ -2,7 +2,8 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { after } from 'node:test';
 import { build } from 'esbuild';
@@ -21,7 +22,13 @@ await build({
   target: 'node22',
   sourcemap: 'inline',
   tsconfig: join(projectRoot, 'tsconfig.node.json'),
-  alias: { electron: join(projectRoot, 'tests/onlypreview/fixtures/electron.stub.mjs') }
+  alias: {
+    electron: join(projectRoot, 'tests/onlypreview/fixtures/electron.stub.mjs'),
+    '@main/fileSearch/fileSearchWindow.service': join(
+      projectRoot,
+      'tests/onlypreview/fixtures/fileSearchWindow.stub.mjs'
+    )
+  }
 });
 
 export const runtime = await import(pathToFileURL(bundlePath).href);
@@ -51,6 +58,18 @@ export const createRegistries = () => {
   const workspaces = new runtime.OnlyPreviewWorkspaceRegistry(hosts);
   const assets = new runtime.OnlyPreviewAssetRegistry(hosts, workspaces);
   return { hosts, workspaces, assets };
+};
+
+export const registerWorkspace = (workspaces, hostToken, rootPath, selectedRelativePath) => {
+  const rootRealPath = realpathSync(rootPath);
+  const workspace = workspaces.registerValidatedTarget(hostToken, {
+    rootRealPath,
+    displayPath: rootRealPath,
+    rootName: basename(rootRealPath),
+    ...(selectedRelativePath ? { selectedRelativePath } : {})
+  });
+  workspaces.bindProjectAuthority(hostToken, workspace.workspaceId, 1);
+  return workspace;
 };
 
 export const source = (relativePath) => readFileSync(join(projectRoot, relativePath), 'utf8');

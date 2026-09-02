@@ -9,6 +9,60 @@ import { createOnlyPreviewSearchEngine } from '../../src/preload/onlypreview/sea
 const findFile = (response, relativePath) =>
   response.files.find((result) => result.relativePath === relativePath);
 
+test('Office info previews invoke the Search-only preparation hook after stable identity checks', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'onlypreview-global-office-hook-'));
+  const rootPath = join(base, 'workspace');
+  const databasePath = join(base, 'search.sqlite');
+  mkdirSync(rootPath);
+  writeFileSync(join(rootPath, 'workbook.xlsx'), Buffer.from('PK\u0003\u0004bounded'));
+  let prepared = null;
+  const engine = createOnlyPreviewSearchEngine({
+    prepareOfficePreview: async (value) => {
+      prepared = value;
+      return {
+        kind: 'office',
+        adapter: 'xlsx',
+        name: value.authority.name,
+        sourceExtension: '.xlsx',
+        size: value.preview.size,
+        modifiedAt: value.preview.modifiedAt,
+        workspaceId: value.workspaceId,
+        generation: value.generation,
+        requestId: value.requestId,
+        resultToken: value.resultToken,
+        readGrant: 'opaque-office-grant'
+      };
+    }
+  });
+  try {
+    await engine.initialize({ workspaceId: 'workspace', generation: 2, rootPath, databasePath });
+    const response = await engine.search({
+      workspaceId: 'workspace',
+      generation: 2,
+      requestId: 'office-hook-request',
+      query: 'workbook',
+      maxResults: 10,
+      scope: { kind: 'project' },
+      isCancelled: () => false
+    });
+    const result = findFile(response, 'workbook.xlsx');
+    const preview = await engine.preview({
+      workspaceId: 'workspace',
+      generation: 2,
+      requestId: 'office-hook-request',
+      resultToken: result.resultToken,
+      isCancelled: () => false
+    });
+    assert.equal(prepared.authority.relativePath, 'workbook.xlsx');
+    assert.equal(prepared.preview.kind, 'info');
+    assert.equal(preview.kind, 'office');
+    assert.equal('relativePath' in preview, false);
+  } finally {
+    await engine.shutdown();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('result preview is token-only, bounded, typed, and revoked by the next query', async () => {
   const base = mkdtempSync(join(tmpdir(), 'onlypreview-global-preview-'));
   const rootPath = join(base, 'workspace');

@@ -1,7 +1,7 @@
 ---
 name: bitterless-preview
 metadata:
-  version_code: "260809003838"
+  version_code: "260901150707"
 description: >-
   Open one explicit local file or folder in the running Bitterless OnlyPreview window for
   read-only human inspection through the production `bitterless` MCP server. Use when the user
@@ -20,7 +20,8 @@ MCP server name is `bitterless`.
 1. Resolve exactly one absolute path from the request or the artifact you just produced.
 2. Call `preview.open` once with `{ "path": "<absolute path>" }`.
 3. Treat `{ "opened": true }` only as confirmation that Bitterless accepted the open request.
-4. Tell the user briefly that the target is open in OnlyPreview.
+4. Tell the user briefly that Bitterless accepted the target for OnlyPreview. Do not claim that
+   rendering is ready.
 
 Do not search the filesystem, enumerate a directory, guess a path, or broaden the target. Do not
 use Preview as evidence of file contents; read a file through the normal authorized workspace tools

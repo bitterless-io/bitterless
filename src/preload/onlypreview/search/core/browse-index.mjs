@@ -89,6 +89,32 @@ export class OnlyPreviewBrowseIndex {
       throw new TypeError('Browse search policy is required');
     }
     this.searchPolicy = searchPolicy;
+    // A capability names a path, not a policy snapshot. Re-deriving `ancestorBlocked` in place keeps
+    // every issued token usable, so a reconcile never forces the Shell to drop its Project tree.
+    for (const [token, capability] of this.pathByToken) {
+      this.pathByToken.set(token, {
+        relativePath: capability.relativePath,
+        ancestorBlocked: this.resolveAncestorBlocked(capability.relativePath)
+      });
+    }
+  }
+
+  resolveAncestorBlocked(relativePath) {
+    let current = '';
+    for (const segment of relativePath ? relativePath.split('/') : []) {
+      current = current ? `${current}/${segment}` : segment;
+      if (
+        this.searchPolicy.isExcludedDirectoryPath(current) &&
+        !this.searchPolicy.canTraverseExcludedDirectoryPath(current)
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  listedDirectoryPaths() {
+    return [...this.listedPaths];
   }
 
   async rootListing({ workspaceId, generation }) {

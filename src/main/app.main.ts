@@ -2,7 +2,7 @@ import { runtimeProfile } from '@main/environment/runtimeProfile.bootstrap';
 import { app, net, session } from 'electron';
 import { appendFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
-import { electronApp, optimizer } from '@electron-toolkit/utils';
+import { optimizer } from '@electron-toolkit/utils';
 import { createXpcMainEmitter, xpcMain } from 'electron-xpc/main';
 import { packageMainHelper } from '../shared/packageHelper/main/package.helper';
 import { pathMainHelper } from '../shared/pathHelper/main/pathMain.helper';
@@ -515,11 +515,6 @@ const startGui = async (): Promise<void> => {
     },
     initializeForegroundRuntime: async () => {
       installE2ENetworkGuard();
-      electronApp.setAppUserModelId(
-        import.meta.env.VITE_ENV === 'dev'
-          ? 'io.bitterless.desktop_dev'
-          : 'io.bitterless.desktop'
-      );
       if (process.platform === 'darwin') app.dock.setBadge('');
       await runDiagnosedStartupStage('trench-io', async () => {
         await trenchIoWindowService.start();

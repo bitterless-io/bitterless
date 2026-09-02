@@ -60,8 +60,9 @@ mounting the authenticated Home shell or duplicating connector runtime ownership
 - Remove Chat, MessageSearch, their keyboard shortcut, Markdown/KaTeX bootstrap, and the local
   surface marker that existed only to suppress MessageSearch's Home-router import.
 - Reuse `MiniApp.vue` and `Setting.vue`; do not import `Connector.vue`, `Layout.vue`, `HomeMenu.vue`,
-  the normal Home router/default routes, `App.vue`, Login, Home MenuBar, or Home entry
-  initialization.
+  the normal Home router/default routes, `App.vue`, Home MenuBar, or Home entry initialization. The
+  later `maestro-local-home-auth-gate-096` task may mount the shared Login presentation before the
+  workspace through the token-free hidden-Home bridge, but must not import `authStore`.
 - Decouple `MiniApp.vue` from `authStore`: Todo opens through `homeShellBridge.openTodo()`, retaining
   the hidden Home renderer as the sole customer-session and Todo-readiness authority.
 - Keep Workbench as the sole WeChat/DingTalk/Feishu connector runtime and renderer-handler owner.
@@ -83,7 +84,7 @@ mounting the authenticated Home shell or duplicating connector runtime ownership
 
 - Independent source review verifies the local import graph, exact two-route/three-action menu
   structure, Home component reuse, Todo bridge ownership, connector handler uniqueness, i18n, and
-  absence of Chat/auth/update/shell imports.
+  absence of Chat, credential-owner, update, and shell imports.
 - Task-owned `git diff --check` and new-file trailing-whitespace inspection must pass.
 - Do not run tests, type checks, lint, builds, Electron, Playwright/E2E, network, or packaged-app
   smoke in this delivery. Ral owns real-app acceptance.

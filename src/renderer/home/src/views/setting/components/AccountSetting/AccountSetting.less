@@ -1,0 +1,54 @@
+.account-setting {
+  padding: 24px;
+
+  &__section {
+    margin-bottom: 32px;
+  }
+
+  &__section-title {
+    margin: 0 0 12px;
+    color: var(--color-royalblue-700);
+    font-size: 14px;
+    font-weight: 500;
+  }
+
+  &__row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 16px;
+    min-width: 0;
+  }
+
+  &__identity-copy {
+    min-width: 0;
+  }
+
+  &__label {
+    margin-bottom: 4px;
+    color: var(--color-royalblue-500);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  &__email {
+    overflow: hidden;
+    color: var(--color-royalblue-800);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 24px;
+    color: var(--color-royalblue-600);
+    font-size: 13px;
+
+    &--error {
+      color: var(--color-royalblue-700);
+    }
+  }
+}

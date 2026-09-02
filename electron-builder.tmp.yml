@@ -2,6 +2,7 @@ appId: io.bitterless.app
 productName: Bitterless
 directories:
   buildResources: build
+  output: dist
 electronLanguages:
   - zh_CN
   - zh_TW
@@ -16,6 +17,8 @@ files:
   - '!src/*'
   - '!scripts/*'
   - '!tests/**'
+  - '!dist/**'
+  - '!tmp/**'
   - '!output/**'
   - '!out/playwright/**'
   - '!doc/*'
@@ -26,6 +29,8 @@ files:
   - '!local/*'
   - '!downloads/*'
   - '!external_resources/*'
+  - '!external_tools/**'
+  - '!prebuilt/**'
   - '!packages/micromeet-cli/**'
   - '!node_modules/@micromeet/cli{,/**}'
   - '!node_modules/**/*.map'
@@ -61,6 +66,7 @@ extraResources:
     to: sounds
 win:
   executableName: ${name}
+  icon: build/icon.ico
 fileAssociations:
   - ext:
       - txt
@@ -139,7 +145,7 @@ fileAssociations:
     role: Viewer
     rank: Alternate
 nsis:
-  artifactName: ${productName}VITE_ENV_PART-${version}-setup.${ext}
+  artifactName: ARTIFACT_STEM-${version}-setup.${ext}
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
@@ -149,6 +155,11 @@ mac:
   icon: build/icon.icns
   binaries:
     - Contents/Resources/maestro-tools/micromeet
+    - Contents/Resources/maestro-tools/bun
+    - Contents/Resources/maestro-tools/rg
+    - Contents/Resources/maestro-tools/fd
+    - Contents/Resources/maestro-tools/anydoc/anydoc.node
+    - Contents/Resources/maestro-tools/ouch
   entitlementsInherit: build/entitlements.mac.plist
   hardenedRuntime: true
   gatekeeperAssess: false
@@ -166,10 +177,13 @@ mac:
         LSItemContentTypes:
           - public.data
 dmg:
-  artifactName: ${productName}VITE_ENV_PART-${version}.${ext}
+  artifactName: ARTIFACT_STEM-${version}.${ext}
 npmRebuild: false
 publish:
   provider: generic
-  url: https://example.com/auto-updates
+  # Build-time placeholder for the release root only. The afterPack hook rewrites the packaged
+  # app-update.yml to the exact <channel>/<platform> directory, and the package audit rejects
+  # any package still carrying this value.
+  url: https://assets.terncloud.com/bitterless/distro
 #electronDownload:
 #  mirror: https://npmmirror.com/mirrors/electron/

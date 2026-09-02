@@ -1,6 +1,12 @@
 import { reactive } from 'vue'
 import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer'
-import { DEFAULT_COACH_START_URL, type CoachXpcContract, type TabInfo } from '@maestro-shared/coach.api'
+import {
+  DEFAULT_COACH_START_URL,
+  MAESTRO_FORCE_PINNED_HOME_QUERY,
+  MAESTRO_FORCE_PINNED_HOME_QUERY_VALUE,
+  type CoachXpcContract,
+  type TabInfo
+} from '@maestro-shared/coach.api'
 import type { TabsApi, SavedTab } from '@maestro-shared/tabs.api'
 
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
@@ -13,6 +19,20 @@ const tabsDao = createXpcRendererEmitter<TabsApi>('TabsDao') as TabsApi
 // (non-pinned tabs are restored by URL). Missing / no match → default to bundled Home.
 const LAST_ACTIVE_KEY = 'coach.lastActiveTab'
 const tabKey = (t: TabInfo): string => (t.kind === 'home' ? t.kind : t.url)
+const consumeForcePinnedHomeBootQuery = (): boolean => {
+  const url = new URL(window.location.href)
+  const forcePinnedHome =
+    url.searchParams.get(MAESTRO_FORCE_PINNED_HOME_QUERY) ===
+    MAESTRO_FORCE_PINNED_HOME_QUERY_VALUE
+  if (!forcePinnedHome) return false
+  url.searchParams.delete(MAESTRO_FORCE_PINNED_HOME_QUERY)
+  try {
+    window.history.replaceState(window.history.state, '', url.toString())
+  } catch {
+    console.warn('[maestro tabs] Could not consume the force-Home boot query.')
+  }
+  return true
+}
 
 // A tab worth persisting / restoring across launches: a real remote http(s) page. Ephemeral local
 // servers — notably the Demo (http://127.0.0.1:<random-port>/booking, which is GONE next launch) —
@@ -62,6 +82,8 @@ class TabStoreState {
   }
 
   async init(): Promise<void> {
+    const forcePinnedHome = consumeForcePinnedHomeBootQuery()
+    if (forcePinnedHome) localStorage.setItem(LAST_ACTIVE_KEY, 'home')
     xpcRenderer.subscribe('coach/tabs', (payload) => {
       this.tabs = (payload.params as TabInfo[]) || []
       // Main observes each operation view's URL/title/favicon changes and re-broadcasts the strip;
@@ -91,6 +113,15 @@ class TabStoreState {
     this.restored = true
     // Initial snapshot (covers a broadcast that landed before we subscribed + the just-restored set).
     this.tabs = await coach.getTabs()
+    if (forcePinnedHome) {
+      const pinnedHome = this.tabs.find((tab) => tab.kind === 'home' && tab.pinned)
+      if (pinnedHome && !pinnedHome.active) {
+        await coach.activateTab({ id: pinnedHome.id })
+        this.tabs = await coach.getTabs()
+      }
+      localStorage.setItem(LAST_ACTIVE_KEY, 'home')
+      return
+    }
     await this.restoreLastActive()
   }
 

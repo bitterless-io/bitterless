@@ -17,12 +17,39 @@ import {
   ONLY_PREVIEW_OOXML_PREFLIGHT_TIMEOUT_MS
 } from './onlyPreviewOoxmlPreflight.service';
 import type { OnlyPreviewOoxmlPackageKind } from './onlyPreviewOoxmlPreflight.type';
+import type { OnlyPreviewXlsxCompatibility } from './onlyPreviewOoxmlPreflight.type';
 import type {
   OnlyPreviewOfficePreflightRequest,
   OnlyPreviewOfficePreflightResponse
 } from './workers/onlyPreviewOfficePreflight.contract';
+import {
+  ONLY_PREVIEW_XLSX_COMPATIBILITY_MAX_INFLATED_BYTES,
+  ONLY_PREVIEW_XLSX_COMPATIBILITY_MAX_INPUT_BYTES,
+  ONLY_PREVIEW_XLSX_COMPATIBILITY_MAX_OUTPUT_BYTES,
+  ONLY_PREVIEW_XLSX_COMPATIBILITY_TIMEOUT_MS,
+  type OnlyPreviewXlsxCompatibilityRequest,
+  type OnlyPreviewXlsxCompatibilityResponse
+} from './workers/onlyPreviewXlsxCompatibility.contract';
 
 type OoxmlFindMatch = { matchIndex: number };
+
+type OfficeRuntimePhase =
+  | 'read'
+  | 'preflight'
+  | 'compatibility-normalize'
+  | 'compatibility-preflight'
+  | 'module-import'
+  | 'viewer-construction'
+  | 'load'
+  | 'layout'
+  | 'render'
+  | 'find';
+
+interface OfficeRuntimeFailure {
+  name: string;
+  code?: string;
+  message: string;
+}
 
 interface OoxmlViewer {
   findText(query: string, options?: { caseSensitive?: boolean }): Promise<OoxmlFindMatch[]>;
@@ -37,15 +64,17 @@ interface XlsxViewerLike extends OoxmlViewer {
   readonly sheetNames: string[];
 }
 
-interface DocxViewerLike extends OoxmlViewer {
-  load(source: ArrayBuffer): Promise<void>;
+interface ProgressiveOfficeViewer {
   waitUntilLayoutComplete(): Promise<void>;
+}
+
+interface DocxViewerLike extends OoxmlViewer, ProgressiveOfficeViewer {
+  load(source: ArrayBuffer): Promise<void>;
   readonly pageCount: number;
 }
 
-interface PptxViewerLike extends OoxmlViewer {
+interface PptxViewerLike extends OoxmlViewer, ProgressiveOfficeViewer {
   load(source: ArrayBuffer): Promise<void>;
-  waitUntilLayoutComplete(): Promise<void>;
   readonly slideCount: number;
 }
 
@@ -56,14 +85,28 @@ interface OfficePreflightWorkerLike {
   addEventListener(type: 'error' | 'messageerror', listener: () => void): void;
 }
 
+interface XlsxCompatibilityWorkerLike {
+  postMessage(message: OnlyPreviewXlsxCompatibilityRequest, transfer?: Transferable[]): void;
+  terminate(): void;
+  addEventListener(type: 'message', listener: (event: MessageEvent<unknown>) => void): void;
+  addEventListener(type: 'error' | 'messageerror', listener: () => void): void;
+}
+
+interface OfficePreflightResult {
+  bytes: ArrayBuffer;
+  totalUncompressedBytes: number;
+  xlsxCompatibility?: OnlyPreviewXlsxCompatibility;
+}
+
 export interface OnlyPreviewOfficeSessionOptions {
   hostId: string;
   selectionRevision: number;
   kind: OnlyPreviewOoxmlPackageKind;
-  assetUrl: string;
+  sourceExtension: string;
   expectedSize: number;
-  fetchImpl?: typeof fetch;
+  readBytes: () => Promise<ArrayBuffer>;
   workerFactory?: () => OfficePreflightWorkerLike;
+  compatibilityWorkerFactory?: () => XlsxCompatibilityWorkerLike;
   onRuntimeError?: (errorCode: OnlyPreviewErrorCode) => void;
 }
 
@@ -76,6 +119,10 @@ export interface OnlyPreviewOfficeSessionApi extends OnlyPreviewContentFindAdapt
 const COMPLETE_COVERAGE = Object.freeze({ kind: 'complete' as const });
 const FIND_TIMEOUT_MS = 10_000;
 const VIEWER_WORKER_TIMEOUT_MS = 25_000;
+// A preview that takes this long is worth explaining in the log; a fast one is noise.
+const OFFICE_SLOW_PHASE_MS = 1_000;
+// @silurus/ooxml calls host 2D painting "main"; OOXML/WASM parsing still uses its parser Worker.
+const OOXML_RENDER_MODE = 'main' as const;
 const OOXML_RESOURCE_LIMITS = Object.freeze({
   maxArchiveEntries: ONLY_PREVIEW_OOXML_MAX_ENTRIES,
   maxArchiveEntryBytes: ONLY_PREVIEW_OOXML_MAX_ENTRY_UNCOMPRESSED_BYTES,
@@ -112,6 +159,69 @@ const timeoutErrorForKind = (kind: OnlyPreviewOoxmlPackageKind): OnlyPreviewErro
   return 'PRESENTATION_RENDER_TIMEOUT';
 };
 
+const renderErrorForKind = (kind: OnlyPreviewOoxmlPackageKind): OnlyPreviewErrorCode => {
+  if (kind === 'xlsx') return 'SHEET_RENDER_FAILED';
+  if (kind === 'docx') return 'DOCUMENT_RENDER_FAILED';
+  return 'PRESENTATION_RENDER_FAILED';
+};
+
+const boundedErrorToken = (value: unknown, fallback: string): string =>
+  typeof value === 'string' && /^[a-z][a-z0-9._-]{0,63}$/iu.test(value) ? value : fallback;
+
+const safeOfficeFailureMessage = (error: unknown): string => {
+  const message = error instanceof Error ? error.message : '';
+  if (/bitmaprenderer context not available/iu.test(message)) {
+    return 'The browser bitmap renderer is unavailable.';
+  }
+  if (/requires Worker and OffscreenCanvas support/iu.test(message)) {
+    return 'The browser does not provide the required Worker canvas support.';
+  }
+  if (/worker/iu.test(message) && /tim(?:e|ed) out/iu.test(message)) {
+    return 'The OOXML Worker timed out.';
+  }
+  if (/webassembly|\bwasm\b/iu.test(message)) {
+    return 'The OOXML WASM runtime could not be initialized.';
+  }
+  if (/fetch|network|load(?:ing)? .*asset/iu.test(message)) {
+    return 'An OOXML runtime asset could not be loaded.';
+  }
+  if (/resource limit|decoded image limit/iu.test(message)) {
+    return 'An OOXML resource limit was exceeded.';
+  }
+  if (/destroyed|closed|aborted/iu.test(message)) {
+    return 'The OOXML Viewer closed before the operation completed.';
+  }
+  return 'The OOXML Viewer reported an unclassified failure.';
+};
+
+const describeOfficeFailure = (error: unknown): OfficeRuntimeFailure => {
+  const candidate =
+    error && (typeof error === 'object' || typeof error === 'function')
+      ? (error as { name?: unknown; code?: unknown })
+      : null;
+  const code = boundedErrorToken(candidate?.code, '');
+  return {
+    name: boundedErrorToken(candidate?.name, 'Error'),
+    ...(code ? { code } : {}),
+    message: safeOfficeFailureMessage(error)
+  };
+};
+
+const errorCodeForOfficeFailure = (
+  kind: OnlyPreviewOoxmlPackageKind,
+  error: unknown
+): OnlyPreviewErrorCode => {
+  const code = describeOfficeFailure(error).code;
+  if (code === 'ooxml-resource-limit' || code === 'ooxml-decoded-image-limit') {
+    return 'OOXML_ARCHIVE_LIMIT';
+  }
+  if (code === 'encrypted' || code === 'invalid-password' || code === 'unsupported-encryption') {
+    return 'OOXML_ENCRYPTED';
+  }
+  if (code === 'not-ooxml' || code === 'legacy-binary-format') return 'SIGNATURE_MISMATCH';
+  return renderErrorForKind(kind);
+};
+
 const hasZipSignature = (bytes: ArrayBuffer): boolean => {
   const value = bytes.byteLength >= 4 ? new Uint8Array(bytes, 0, 4) : null;
   return Boolean(
@@ -125,43 +235,105 @@ const defaultWorkerFactory = (): OfficePreflightWorkerLike =>
     name: 'onlypreview-office-preflight'
   });
 
+const defaultCompatibilityWorkerFactory = (): XlsxCompatibilityWorkerLike =>
+  new Worker(new URL('./workers/onlyPreviewXlsxCompatibility.worker.ts', import.meta.url), {
+    type: 'module',
+    name: 'onlypreview-xlsx-compatibility'
+  });
+
 const isPreflightResponse = (
   value: unknown,
   runtimeId: string,
-  selectionRevision: number
+  selectionRevision: number,
+  requestId: number
 ): value is OnlyPreviewOfficePreflightResponse => {
   if (!value || typeof value !== 'object') return false;
   const response = value as Record<string, unknown>;
   return (
     response.runtimeId === runtimeId &&
     response.selectionRevision === selectionRevision &&
-    response.requestId === 1 &&
+    response.requestId === requestId &&
     (response.type === 'ready' || response.type === 'error')
+  );
+};
+
+const isPreflightErrorCode = (
+  value: unknown
+): value is
+  | 'OOXML_ARCHIVE_LIMIT'
+  | 'OOXML_ENCRYPTED'
+  | 'OOXML_ARCHIVE_INVALID'
+  | 'OOXML_PREFLIGHT_TIMEOUT' =>
+  value === 'OOXML_ARCHIVE_LIMIT' ||
+  value === 'OOXML_ENCRYPTED' ||
+  value === 'OOXML_ARCHIVE_INVALID' ||
+  value === 'OOXML_PREFLIGHT_TIMEOUT';
+
+const isCompatibilityResponse = (
+  value: unknown,
+  runtimeId: string,
+  selectionRevision: number,
+  requestId: number
+): value is OnlyPreviewXlsxCompatibilityResponse => {
+  if (!value || typeof value !== 'object') return false;
+  const response = value as Record<string, unknown>;
+  return (
+    response.runtimeId === runtimeId &&
+    response.selectionRevision === selectionRevision &&
+    response.requestId === requestId &&
+    (response.type === 'ready' || response.type === 'error')
+  );
+};
+
+const isCompatibilityErrorCode = (
+  value: unknown
+): value is 'OOXML_ARCHIVE_LIMIT' | 'SHEET_PARSE_FAILED' =>
+  value === 'OOXML_ARCHIVE_LIMIT' || value === 'SHEET_PARSE_FAILED';
+
+const isXlsxCompatibility = (value: unknown): value is OnlyPreviewXlsxCompatibility => {
+  if (!value || typeof value !== 'object') return false;
+  const compatibility = value as Record<string, unknown>;
+  return (
+    typeof compatibility.macroEnabled === 'boolean' &&
+    Number.isSafeInteger(compatibility.worksheetCount) &&
+    Number(compatibility.worksheetCount) >= 0 &&
+    Number.isSafeInteger(compatibility.missingSheetDataCount) &&
+    Number(compatibility.missingSheetDataCount) >= 0 &&
+    Number(compatibility.missingSheetDataCount) <= Number(compatibility.worksheetCount) &&
+    typeof compatibility.requiresSheetDataNormalization === 'boolean' &&
+    compatibility.requiresSheetDataNormalization === Number(compatibility.missingSheetDataCount) > 0
   );
 };
 
 export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
   private readonly runtimeId = crypto.randomUUID();
-  private readonly abortController = new AbortController();
-  private readonly fetchImpl: typeof fetch;
   private readonly workerFactory: () => OfficePreflightWorkerLike;
+  private readonly compatibilityWorkerFactory: () => XlsxCompatibilityWorkerLike;
   private viewer: OoxmlViewer | null = null;
   private worker: OfficePreflightWorkerLike | null = null;
+  private compatibilityWorker: XlsxCompatibilityWorkerLike | null = null;
   private container: HTMLElement | null = null;
   private disposed = false;
   private mountStarted = false;
+  private mountStartedAt: number | null = null;
   private runtimeErrorReported = false;
+  private runtimeFailureCode: OnlyPreviewErrorCode | null = null;
   private viewerErrorQueued = false;
+  private queuedViewerError: unknown = null;
+  private failureLogged = false;
   private findGeneration = 0;
   private findQueue: Promise<void> = Promise.resolve();
+  private layoutSettled: Promise<void> = Promise.resolve();
   private lastQuery = '';
   private lastCaseSensitive = false;
   private matchCount = 0;
   private cancelPreflight: (() => void) | null = null;
+  private cancelCompatibilityNormalization: (() => void) | null = null;
 
   constructor(private readonly options: OnlyPreviewOfficeSessionOptions) {
-    this.fetchImpl = options.fetchImpl ?? fetch;
     this.workerFactory = options.workerFactory ?? defaultWorkerFactory;
+    this.compatibilityWorkerFactory =
+      options.compatibilityWorkerFactory ?? defaultCompatibilityWorkerFactory;
   }
 
   get supportsTextSelection(): boolean {
@@ -174,9 +346,17 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
       throw new OnlyPreviewContractError('INVALID_INPUT', 'Office session is single-use.');
     }
     this.mountStarted = true;
+    this.mountStartedAt = performance.now();
     this.container = container;
-    const bytes = await this.fetchBytes();
-    const acceptedBytes = await this.preflight(bytes);
+    const bytes = await this.runOfficePhase('read', () => this.readBytes());
+    const initialPreflight = await this.runOfficePhase('preflight', () => this.preflight(bytes, 1));
+    let acceptedBytes = initialPreflight.bytes;
+    if (
+      this.options.kind === 'xlsx' &&
+      initialPreflight.xlsxCompatibility?.requiresSheetDataNormalization
+    ) {
+      acceptedBytes = await this.prepareXlsxCompatibility(initialPreflight);
+    }
     this.requireActive();
     try {
       if (this.options.kind === 'xlsx') await this.mountXlsx(container, acceptedBytes);
@@ -186,7 +366,7 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
       if (error instanceof OnlyPreviewContractError) throw error;
       this.requireActive();
       throw new OnlyPreviewContractError(
-        parseErrorForKind(this.options.kind),
+        errorCodeForOfficeFailure(this.options.kind, error),
         'Office rendering failed.'
       );
     }
@@ -219,11 +399,14 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
     if (this.disposed) return;
     this.clear();
     this.disposed = true;
-    this.abortController.abort();
     this.cancelPreflight?.();
     this.cancelPreflight = null;
     this.worker?.terminate();
     this.worker = null;
+    this.cancelCompatibilityNormalization?.();
+    this.cancelCompatibilityNormalization = null;
+    this.compatibilityWorker?.terminate();
+    this.compatibilityWorker = null;
     this.viewer?.destroy();
     this.viewer = null;
     this.container?.replaceChildren();
@@ -231,88 +414,191 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
   }
 
   private async mountXlsx(container: HTMLElement, bytes: ArrayBuffer): Promise<void> {
-    const { XlsxViewer } = await import('@silurus/ooxml/xlsx');
+    const { XlsxViewer } = await this.runOfficePhase(
+      'module-import',
+      () => import('@silurus/ooxml/xlsx')
+    );
     this.requireActive();
-    const viewer: XlsxViewerLike = new XlsxViewer(container, {
-      mode: 'worker',
-      useGoogleFonts: false,
-      enableHyperlinks: false,
-      enableElementSelection: false,
-      comments: false,
-      showZoomSlider: false,
-      workerTimeoutMs: VIEWER_WORKER_TIMEOUT_MS,
-      resourceLimits: OOXML_RESOURCE_LIMITS,
-      findHighlightColors: FIND_HIGHLIGHT_COLORS,
-      onError: () => this.handleViewerRuntimeError()
-    });
+    const viewer: XlsxViewerLike = this.runOfficeSyncPhase(
+      'viewer-construction',
+      () =>
+        new XlsxViewer(container, {
+          mode: OOXML_RENDER_MODE,
+          useGoogleFonts: false,
+          enableHyperlinks: false,
+          enableElementSelection: false,
+          comments: false,
+          showZoomSlider: false,
+          workerTimeoutMs: VIEWER_WORKER_TIMEOUT_MS,
+          resourceLimits: OOXML_RESOURCE_LIMITS,
+          findHighlightColors: FIND_HIGHLIGHT_COLORS,
+          onError: (error) => this.handleViewerRuntimeError(error)
+        })
+    );
     this.viewer = viewer;
-    await viewer.load(bytes);
+    await this.runOfficePhase('load', () => viewer.load(bytes));
     this.requireActive();
     if (viewer.sheetNames.length === 0) {
       throw new OnlyPreviewContractError(emptyErrorForKind('xlsx'), 'Workbook has no sheets.');
     }
   }
 
-  private async mountDocx(container: HTMLElement, bytes: ArrayBuffer): Promise<void> {
-    const { DocxScrollViewer } = await import('@silurus/ooxml/docx');
-    this.requireActive();
-    const viewer: DocxViewerLike = new DocxScrollViewer(container, {
-      mode: 'worker',
-      useGoogleFonts: false,
-      enableHyperlinks: false,
-      enableTextSelection: true,
-      enableElementSelection: false,
-      comments: false,
-      progressiveLayout: true,
-      sliceLayout: true,
-      workerTimeoutMs: VIEWER_WORKER_TIMEOUT_MS,
-      resourceLimits: OOXML_RESOURCE_LIMITS,
-      background: '#f2f3f7',
-      pageShadow: '0 4px 18px rgb(30 36 58 / 14%)',
-      findHighlightColors: FIND_HIGHLIGHT_COLORS,
-      onError: () => this.handleViewerRuntimeError()
+  private async prepareXlsxCompatibility(initial: OfficePreflightResult): Promise<ArrayBuffer> {
+    const compatibility = initial.xlsxCompatibility;
+    const normalized = await this.runOfficePhase('compatibility-normalize', async () => {
+      if (
+        this.options.sourceExtension !== '.xlsx' ||
+        !compatibility ||
+        compatibility.macroEnabled ||
+        compatibility.worksheetCount !== 1 ||
+        compatibility.missingSheetDataCount !== 1
+      ) {
+        throw new OnlyPreviewContractError(
+          'SHEET_PARSE_FAILED',
+          'Workbook is outside the bounded XLSX compatibility path.'
+        );
+      }
+      if (
+        initial.bytes.byteLength > ONLY_PREVIEW_XLSX_COMPATIBILITY_MAX_INPUT_BYTES ||
+        initial.totalUncompressedBytes > ONLY_PREVIEW_XLSX_COMPATIBILITY_MAX_INFLATED_BYTES
+      ) {
+        throw new OnlyPreviewContractError(
+          'OOXML_ARCHIVE_LIMIT',
+          'Workbook exceeds the XLSX compatibility memory limit.'
+        );
+      }
+      return await this.normalizeXlsx(initial.bytes);
     });
-    this.viewer = viewer;
-    await viewer.load(bytes);
-    await viewer.waitUntilLayoutComplete();
+    const retry = await this.runOfficePhase('compatibility-preflight', async () => {
+      const result = await this.preflight(normalized, 2);
+      if (
+        !result.xlsxCompatibility ||
+        result.xlsxCompatibility.macroEnabled ||
+        result.xlsxCompatibility.worksheetCount !== 1 ||
+        result.xlsxCompatibility.missingSheetDataCount !== 0 ||
+        result.xlsxCompatibility.requiresSheetDataNormalization
+      ) {
+        throw new OnlyPreviewContractError(
+          'SHEET_PARSE_FAILED',
+          'Normalized workbook is outside the accepted XLSX shape.'
+        );
+      }
+      return result;
+    });
+    return retry.bytes;
+  }
+
+  private async mountDocx(container: HTMLElement, bytes: ArrayBuffer): Promise<void> {
+    const { DocxScrollViewer } = await this.runOfficePhase(
+      'module-import',
+      () => import('@silurus/ooxml/docx')
+    );
     this.requireActive();
-    if (viewer.pageCount === 0) {
-      throw new OnlyPreviewContractError(emptyErrorForKind('docx'), 'Document has no pages.');
-    }
+    const viewer: DocxViewerLike = this.runOfficeSyncPhase(
+      'viewer-construction',
+      () =>
+        new DocxScrollViewer(container, {
+          mode: OOXML_RENDER_MODE,
+          useGoogleFonts: false,
+          enableHyperlinks: false,
+          enableTextSelection: true,
+          enableElementSelection: false,
+          comments: false,
+          progressiveLayout: true,
+          sliceLayout: true,
+          workerTimeoutMs: VIEWER_WORKER_TIMEOUT_MS,
+          resourceLimits: OOXML_RESOURCE_LIMITS,
+          background: '#f2f3f7',
+          pageShadow: '0 4px 18px rgb(30 36 58 / 14%)',
+          findHighlightColors: FIND_HIGHLIGHT_COLORS,
+          onError: (error) => this.handleViewerRuntimeError(error)
+        })
+    );
+    this.viewer = viewer;
+    await this.runOfficePhase('load', () => viewer.load(bytes));
+    await this.presentFirstUnit(viewer, 'docx', () => viewer.pageCount, 'Document has no pages.');
   }
 
   private async mountPptx(container: HTMLElement, bytes: ArrayBuffer): Promise<void> {
-    const { PptxScrollViewer } = await import('@silurus/ooxml/pptx');
+    const { PptxScrollViewer } = await this.runOfficePhase(
+      'module-import',
+      () => import('@silurus/ooxml/pptx')
+    );
     this.requireActive();
-    const viewer: PptxViewerLike = new PptxScrollViewer(container, {
-      mode: 'worker',
-      useGoogleFonts: false,
-      enableHyperlinks: false,
-      enableTextSelection: true,
-      enableElementSelection: false,
-      enableMediaPlayback: false,
-      comments: false,
-      progressiveLayout: true,
-      workerTimeoutMs: VIEWER_WORKER_TIMEOUT_MS,
-      resourceLimits: OOXML_RESOURCE_LIMITS,
-      background: '#f2f3f7',
-      pageShadow: '0 4px 18px rgb(30 36 58 / 14%)',
-      findHighlightColors: FIND_HIGHLIGHT_COLORS,
-      onError: () => this.handleViewerRuntimeError()
-    });
+    const viewer: PptxViewerLike = this.runOfficeSyncPhase(
+      'viewer-construction',
+      () =>
+        new PptxScrollViewer(container, {
+          mode: OOXML_RENDER_MODE,
+          useGoogleFonts: false,
+          enableHyperlinks: false,
+          enableTextSelection: true,
+          enableElementSelection: false,
+          enableMediaPlayback: false,
+          comments: false,
+          progressiveLayout: true,
+          workerTimeoutMs: VIEWER_WORKER_TIMEOUT_MS,
+          resourceLimits: OOXML_RESOURCE_LIMITS,
+          background: '#f2f3f7',
+          pageShadow: '0 4px 18px rgb(30 36 58 / 14%)',
+          findHighlightColors: FIND_HIGHLIGHT_COLORS,
+          onError: (error) => this.handleViewerRuntimeError(error)
+        })
+    );
     this.viewer = viewer;
-    await viewer.load(bytes);
-    await viewer.waitUntilLayoutComplete();
+    await this.runOfficePhase('load', () => viewer.load(bytes));
+    await this.presentFirstUnit(
+      viewer,
+      'pptx',
+      () => viewer.slideCount,
+      'Presentation has no slides.'
+    );
+  }
+
+  // The viewer is constructed with `progressiveLayout`, so its first layout publication records a
+  // unit count and resolves `load()` while the remaining pages keep laying out. Presenting at that
+  // point is what keeps a 298-table combined master from hiding behind its own pagination. A viewer
+  // or document that publishes nothing early still falls back to the full-document barrier, so the
+  // empty check never fires merely because layout was still running.
+  private async presentFirstUnit(
+    viewer: ProgressiveOfficeViewer,
+    kind: Extract<OnlyPreviewOoxmlPackageKind, 'docx' | 'pptx'>,
+    readUnitCount: () => number,
+    emptyMessage: string
+  ): Promise<void> {
     this.requireActive();
-    if (viewer.slideCount === 0) {
-      throw new OnlyPreviewContractError(emptyErrorForKind('pptx'), 'Presentation has no slides.');
+    if (readUnitCount() === 0) {
+      await this.runOfficePhase('layout', () => viewer.waitUntilLayoutComplete());
+      this.requireActive();
+      if (readUnitCount() === 0) {
+        throw new OnlyPreviewContractError(emptyErrorForKind(kind), emptyMessage);
+      }
+      this.layoutSettled = Promise.resolve();
+      return;
     }
+    this.trackRemainingLayout(viewer);
+  }
+
+  private trackRemainingLayout(viewer: ProgressiveOfficeViewer): void {
+    this.layoutSettled = viewer.waitUntilLayoutComplete().then(
+      () => undefined,
+      (error: unknown) => {
+        // Disposal aborts the pending layout; only a live session has a failure to report.
+        if (this.disposed) return;
+        this.reportOfficeFailure('layout', error);
+        this.failClosed(errorCodeForOfficeFailure(this.options.kind, error));
+      }
+    );
   }
 
   private async executeQueuedFind(
     command: OnlyPreviewFindCommand,
     generation: number
   ): Promise<OnlyPreviewContentFindAdapterResult> {
+    if (!this.isFindCurrent(generation)) throw new StaleOfficeFindError();
+    // The library's own `findText` blocks on complete layout to keep coverage complete. Awaiting it
+    // here keeps that wait outside FIND_TIMEOUT_MS, so the deadline still measures the find.
+    await this.layoutSettled;
     if (!this.isFindCurrent(generation)) throw new StaleOfficeFindError();
     let timer: ReturnType<typeof setTimeout> | null = null;
     let timedOut = false;
@@ -334,6 +620,7 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
       ]);
     } catch (error) {
       if (error instanceof StaleOfficeFindError) throw error;
+      if (!timedOut) this.reportOfficeFailure('find', error);
       const failure = timedOut
         ? new OnlyPreviewContractError(
             timeoutErrorForKind(this.options.kind),
@@ -342,7 +629,7 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
         : error instanceof OnlyPreviewContractError
           ? error
           : new OnlyPreviewContractError(
-              parseErrorForKind(this.options.kind),
+              renderErrorForKind(this.options.kind),
               'Office Find failed.'
             );
       if (!this.disposed) this.failClosed(failure.code);
@@ -359,7 +646,7 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
     const viewer = this.viewer;
     if (!viewer) {
       throw new OnlyPreviewContractError(
-        parseErrorForKind(this.options.kind),
+        renderErrorForKind(this.options.kind),
         'Office viewer is unavailable.'
       );
     }
@@ -393,29 +680,21 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
     };
   }
 
-  private async fetchBytes(): Promise<ArrayBuffer> {
-    let response: Response;
+  private async readBytes(): Promise<ArrayBuffer> {
+    let bytes: ArrayBuffer;
     try {
-      response = await this.fetchImpl(this.options.assetUrl, {
-        method: 'GET',
-        cache: 'no-store',
-        credentials: 'omit',
-        signal: this.abortController.signal
-      });
-    } catch {
+      bytes = await this.options.readBytes();
+    } catch (error) {
       this.requireActive();
+      if (error instanceof OnlyPreviewContractError) throw error;
+      throw new OnlyPreviewContractError('OPERATION_FAILED', 'Office bytes could not be read.');
+    }
+    if (!(bytes instanceof ArrayBuffer)) {
       throw new OnlyPreviewContractError(
         parseErrorForKind(this.options.kind),
         'Office bytes could not be read.'
       );
     }
-    if (response.status !== 200) {
-      throw new OnlyPreviewContractError(
-        parseErrorForKind(this.options.kind),
-        'Office bytes could not be read.'
-      );
-    }
-    const bytes = await response.arrayBuffer();
     this.requireActive();
     if (
       !Number.isSafeInteger(this.options.expectedSize) ||
@@ -433,6 +712,18 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
         'Office file exceeds the preview limit.'
       );
     }
+    const header = new Uint8Array(bytes, 0, Math.min(bytes.byteLength, 8));
+    const isCfb =
+      header.length === 8 &&
+      [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1].every(
+        (value, index) => header[index] === value
+      );
+    if (isCfb) {
+      throw new OnlyPreviewContractError(
+        'OOXML_ENCRYPTED',
+        'Encrypted Office files cannot be previewed.'
+      );
+    }
     if (!hasZipSignature(bytes)) {
       throw new OnlyPreviewContractError(
         'SIGNATURE_MISMATCH',
@@ -442,12 +733,15 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
     return bytes;
   }
 
-  private preflight(bytes: ArrayBuffer): Promise<ArrayBuffer> {
+  private preflight(bytes: ArrayBuffer, requestId: number): Promise<OfficePreflightResult> {
     const worker = this.workerFactory();
     this.worker = worker;
-    return new Promise<ArrayBuffer>((resolve, reject) => {
+    return new Promise<OfficePreflightResult>((resolve, reject) => {
       let settled = false;
-      const finish = (value: { bytes?: ArrayBuffer; error?: OnlyPreviewContractError }): void => {
+      const finish = (value: {
+        result?: OfficePreflightResult;
+        error?: OnlyPreviewContractError;
+      }): void => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
@@ -455,7 +749,7 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
         if (this.worker === worker) this.worker = null;
         this.cancelPreflight = null;
         if (value.error) reject(value.error);
-        else resolve(value.bytes!);
+        else resolve(value.result!);
       };
       const timer = setTimeout(() => {
         finish({
@@ -473,14 +767,35 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
           )
         });
       worker.addEventListener('message', (event) => {
-        if (!isPreflightResponse(event.data, this.runtimeId, this.options.selectionRevision))
+        if (
+          !isPreflightResponse(
+            event.data,
+            this.runtimeId,
+            this.options.selectionRevision,
+            requestId
+          )
+        )
           return;
-        if (event.data.type === 'ready' && event.data.bytes instanceof ArrayBuffer) {
-          finish({ bytes: event.data.bytes });
+        if (
+          event.data.type === 'ready' &&
+          event.data.bytes instanceof ArrayBuffer &&
+          Number.isSafeInteger(event.data.totalUncompressedBytes) &&
+          event.data.totalUncompressedBytes >= 0 &&
+          (this.options.kind !== 'xlsx' || isXlsxCompatibility(event.data.xlsxCompatibility))
+        ) {
+          finish({
+            result: {
+              bytes: event.data.bytes,
+              totalUncompressedBytes: event.data.totalUncompressedBytes,
+              ...(event.data.xlsxCompatibility
+                ? { xlsxCompatibility: event.data.xlsxCompatibility }
+                : {})
+            }
+          });
           return;
         }
         const code: OnlyPreviewErrorCode =
-          event.data.type !== 'error'
+          event.data.type !== 'error' || !isPreflightErrorCode(event.data.errorCode)
             ? parseErrorForKind(this.options.kind)
             : event.data.errorCode === 'OOXML_PREFLIGHT_TIMEOUT'
               ? timeoutErrorForKind(this.options.kind)
@@ -499,9 +814,93 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
       const request: OnlyPreviewOfficePreflightRequest = {
         runtimeId: this.runtimeId,
         selectionRevision: this.options.selectionRevision,
-        requestId: 1,
+        requestId,
         type: 'preflight',
         kind: this.options.kind,
+        bytes
+      };
+      try {
+        worker.postMessage(request, [bytes]);
+      } catch {
+        fail();
+      }
+    });
+  }
+
+  private normalizeXlsx(bytes: ArrayBuffer): Promise<ArrayBuffer> {
+    const worker = this.compatibilityWorkerFactory();
+    this.compatibilityWorker = worker;
+    const requestId = 1;
+    return new Promise<ArrayBuffer>((resolve, reject) => {
+      let settled = false;
+      const finish = (value: { bytes?: ArrayBuffer; error?: OnlyPreviewContractError }): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        worker.terminate();
+        if (this.compatibilityWorker === worker) this.compatibilityWorker = null;
+        this.cancelCompatibilityNormalization = null;
+        if (value.error) reject(value.error);
+        else resolve(value.bytes!);
+      };
+      const timer = setTimeout(() => {
+        finish({
+          error: new OnlyPreviewContractError(
+            'SHEET_RENDER_TIMEOUT',
+            'XLSX compatibility normalization timed out.'
+          )
+        });
+      }, ONLY_PREVIEW_XLSX_COMPATIBILITY_TIMEOUT_MS);
+      this.cancelCompatibilityNormalization = () =>
+        finish({
+          error: new OnlyPreviewContractError(
+            'SHEET_RENDER_TIMEOUT',
+            'Office preview session ended during XLSX compatibility normalization.'
+          )
+        });
+      worker.addEventListener('message', (event) => {
+        if (
+          !isCompatibilityResponse(
+            event.data,
+            this.runtimeId,
+            this.options.selectionRevision,
+            requestId
+          )
+        ) {
+          return;
+        }
+        if (
+          event.data.type === 'ready' &&
+          event.data.bytes instanceof ArrayBuffer &&
+          event.data.bytes.byteLength <= ONLY_PREVIEW_XLSX_COMPATIBILITY_MAX_OUTPUT_BYTES
+        ) {
+          finish({ bytes: event.data.bytes });
+          return;
+        }
+        const code: OnlyPreviewErrorCode =
+          event.data.type === 'error' && isCompatibilityErrorCode(event.data.errorCode)
+            ? event.data.errorCode
+            : event.data.type === 'ready' && event.data.bytes instanceof ArrayBuffer
+              ? 'OOXML_ARCHIVE_LIMIT'
+              : 'SHEET_PARSE_FAILED';
+        finish({
+          error: new OnlyPreviewContractError(code, 'XLSX compatibility normalization failed.')
+        });
+      });
+      const fail = (): void =>
+        finish({
+          error: new OnlyPreviewContractError(
+            'SHEET_PARSE_FAILED',
+            'XLSX compatibility Worker failed.'
+          )
+        });
+      worker.addEventListener('error', fail);
+      worker.addEventListener('messageerror', fail);
+      const request: OnlyPreviewXlsxCompatibilityRequest = {
+        runtimeId: this.runtimeId,
+        selectionRevision: this.options.selectionRevision,
+        requestId,
+        type: 'normalize',
         bytes
       };
       try {
@@ -522,25 +921,91 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
     throw new StaleOfficeFindError();
   }
 
-  private handleViewerRuntimeError(): void {
+  private handleViewerRuntimeError(error: unknown): void {
     if (this.runtimeErrorReported || this.disposed) return;
     if (!this.viewer) {
       if (this.viewerErrorQueued) return;
       this.viewerErrorQueued = true;
+      this.queuedViewerError = error;
       queueMicrotask(() => {
         this.viewerErrorQueued = false;
+        const queuedError = this.queuedViewerError;
+        this.queuedViewerError = null;
         if (this.viewer && !this.disposed) {
-          this.failClosed(parseErrorForKind(this.options.kind));
+          this.reportOfficeFailure('render', queuedError);
+          this.failClosed(errorCodeForOfficeFailure(this.options.kind, queuedError));
         }
       });
       return;
     }
-    this.failClosed(parseErrorForKind(this.options.kind));
+    this.reportOfficeFailure('render', error);
+    this.failClosed(errorCodeForOfficeFailure(this.options.kind, error));
+  }
+
+  private async runOfficePhase<T>(
+    phase: OfficeRuntimePhase,
+    operation: () => Promise<T>
+  ): Promise<T> {
+    const startedAt = performance.now();
+    try {
+      const result = await operation();
+      this.reportSlowOfficePhase(phase, startedAt);
+      return result;
+    } catch (error) {
+      if (!this.disposed) this.reportOfficeFailure(phase, error);
+      throw error;
+    }
+  }
+
+  private reportSlowOfficePhase(phase: OfficeRuntimePhase, startedAt: number): void {
+    const elapsedMs = Math.max(0, Math.round(performance.now() - startedAt));
+    if (elapsedMs < OFFICE_SLOW_PHASE_MS || this.disposed) return;
+    console.info(
+      '[OnlyPreview][office]',
+      JSON.stringify({
+        runtimeId: this.runtimeId,
+        selectionRevision: this.options.selectionRevision,
+        elapsedMs,
+        kind: this.options.kind,
+        phase,
+        outcome: 'slow'
+      })
+    );
+  }
+
+  private runOfficeSyncPhase<T>(phase: OfficeRuntimePhase, operation: () => T): T {
+    try {
+      return operation();
+    } catch (error) {
+      if (!this.disposed) this.reportOfficeFailure(phase, error);
+      throw error;
+    }
+  }
+
+  private reportOfficeFailure(phase: OfficeRuntimePhase, error: unknown): void {
+    if (this.failureLogged) return;
+    this.failureLogged = true;
+    const elapsedMs =
+      this.mountStartedAt === null
+        ? 0
+        : Math.max(0, Math.round(performance.now() - this.mountStartedAt));
+    console.warn(
+      '[OnlyPreview][office]',
+      JSON.stringify({
+        runtimeId: this.runtimeId,
+        selectionRevision: this.options.selectionRevision,
+        elapsedMs,
+        kind: this.options.kind,
+        phase,
+        ...describeOfficeFailure(error)
+      })
+    );
   }
 
   private failClosed(errorCode: OnlyPreviewErrorCode): void {
     if (this.runtimeErrorReported || this.disposed) return;
     this.runtimeErrorReported = true;
+    this.runtimeFailureCode = errorCode;
     this.dispose();
     this.options.onRuntimeError?.(errorCode);
   }
@@ -552,7 +1017,7 @@ export class OnlyPreviewOfficeSession implements OnlyPreviewOfficeSessionApi {
   private requireActive(): void {
     if (this.disposed) {
       throw new OnlyPreviewContractError(
-        timeoutErrorForKind(this.options.kind),
+        this.runtimeFailureCode ?? timeoutErrorForKind(this.options.kind),
         'Office preview session ended.'
       );
     }

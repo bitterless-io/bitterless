@@ -25,6 +25,15 @@ export interface BaseAgentPromptOptions {
   images?: AgentRuntimeImage[]
 }
 
+export type BaseAgentSteerOutcome = 'idle' | 'delivered' | 'failed'
+
+export interface BaseAgentSteerResult {
+  outcome: BaseAgentSteerOutcome
+  error?: string
+}
+
+export const STEER_NOT_STREAMING = 'active turn has not started streaming yet — nothing was queued'
+
 export interface BaseAgentOptions {
   /** pi-ai provider id. Default 'openai-codex'. Env: COACH_PI_PROVIDER. */
   providerId?: string
@@ -61,6 +70,9 @@ const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
   anthropic: 'claude-opus-4-8'
 }
 const DEFAULT_SESSION_START_TIMEOUT_MS = 45_000
+const ABORT_SESSION_WAIT_MS = 500
+const ABORT_SIGNAL_WAIT_MS = 1_500
+const ABORT_PROMPT_DRAIN_WAIT_MS = 1_000
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -89,6 +101,9 @@ export class BaseAgent {
   // the LLM system prompt directly); `primed` tracks whether this session has received it.
   private primed = false
   private busy = false
+  /** Monotonic prompt generation. Abort invalidates callbacks before it waits for runtime drain. */
+  private generation = 0
+  private activeGeneration: number | null = null
   // Runtime overrides set by the UI provider switch; take precedence over env/opts.
   private providerOverride?: string
   private modelOverride?: string
@@ -213,7 +228,10 @@ export class BaseAgent {
   // synchronously must be fixed at the source (e.g. async fs in search) — the timer can't fire
   // while the event loop is blocked.
   private withToolTimeout(spec: PiToolSpec): PiToolSpec {
-    const ms = toolTimeoutMs()
+    const ms = spec.timeoutMs ?? toolTimeoutMs()
+    const hint = spec.timeoutHint
+      ? ` The tool may still be ${spec.timeoutHint}; retry with a smaller input if appropriate.`
+      : ' Try a narrower path or a specific file.'
     return {
       ...spec,
       execute: async (args: Record<string, unknown>): Promise<string> => {
@@ -221,7 +239,7 @@ export class BaseAgent {
           return await withTimeout(
             Promise.resolve(spec.execute(args)),
             ms,
-            `tool "${spec.name}" timed out after ${Math.round(ms / 1000)}s — it may be reading a very large file or scanning a huge directory. Try a narrower path or a specific file.`
+            `tool "${spec.name}" timed out after ${Math.round(ms / 1000)}s.${hint}`
           )
         } catch (err) {
           if (isTimeoutError(err)) return `ERROR: ${err instanceof Error ? err.message : String(err)}`
@@ -241,6 +259,8 @@ export class BaseAgent {
   ): Promise<AgentTurnReply> {
     if (this.disposed) return { ok: false, text: '', error: 'agent has been disposed' }
     if (this.busy) return { ok: false, text: '', error: 'agent is already handling a message' }
+    const generation = ++this.generation
+    this.activeGeneration = generation
     this.busy = true
     let resolvePromptDrain: () => void = () => undefined
     const promptDrain = new Promise<void>((resolve) => {
@@ -264,7 +284,12 @@ export class BaseAgent {
         this.sessionPromise = null
         throw err
       }
-      const turn = await this.runPrompt(session, this.withSystemPreamble({ text: message, media: options?.media, images: options?.images }), timeoutMs)
+      const turn = await this.runPrompt(
+        session,
+        this.withSystemPreamble({ text: message, media: options?.media, images: options?.images }),
+        timeoutMs,
+        () => this.activeGeneration === generation && this.generation === generation
+      )
       this.debug(turn.errorMessage ? 'agent-turn-error' : 'agent-turn-complete', turn.errorMessage ? 'warn' : 'info', 'agent runtime turn completed.', {
         durationMs: Date.now() - startedAt,
         outputChars: turn.text.length,
@@ -288,9 +313,65 @@ export class BaseAgent {
       this.debug('agent-error', 'error', 'agent runtime prompt failed.', { error, durationMs: Date.now() - startedAt })
       return { ok: false, text: '', error }
     } finally {
-      this.busy = false
+      if (this.activeGeneration === generation) {
+        this.activeGeneration = null
+        this.busy = false
+      }
       resolvePromptDrain()
       if (this.activePromptDrain === promptDrain) this.activePromptDrain = null
+    }
+  }
+
+  /**
+   * Hand a message to the currently-running runtime turn without starting a second turn.
+   * Non-streaming runtimes deliberately fail closed: calling prompt in that window can invert
+   * the original and steering runs, leaving the real turn without subscribers.
+   */
+  async steerActiveTurn(message: string, waitForStreaming = false): Promise<BaseAgentSteerResult> {
+    const deadline = Date.now() + (waitForStreaming ? sessionStartTimeoutMs() : 0)
+    while ((!this.busy || this.activeGeneration === null) && Date.now() < deadline) {
+      await sleep(20)
+    }
+    if (!this.busy || this.activeGeneration === null) return { outcome: 'idle' }
+    const generation = this.activeGeneration
+    const live = this.sessionPromise
+    if (!live) return { outcome: 'failed', error: 'no live runtime session to steer' }
+    try {
+      const session = await withTimeout(
+        live,
+        sessionStartTimeoutMs(),
+        `agent runtime session start timed out after ${Math.round(sessionStartTimeoutMs() / 1000)}s`
+      )
+      while (
+        session.isStreaming !== true &&
+        this.busy &&
+        this.activeGeneration === generation &&
+        Date.now() < deadline
+      ) {
+        await sleep(20)
+      }
+      if (
+        session.isStreaming !== true ||
+        !this.busy ||
+        this.activeGeneration !== generation
+      ) {
+        this.debug(
+          'agent-steer-not-streaming',
+          'warn',
+          'active turn has not started streaming — steering message was not queued.',
+          { chars: message.length }
+        )
+        return { outcome: 'failed', error: STEER_NOT_STREAMING }
+      }
+      await session.prompt({ text: message })
+      this.debug('agent-steer', 'info', 'steering message handed to the live turn.', {
+        chars: message.length
+      })
+      return { outcome: 'delivered' }
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err)
+      this.debug('agent-steer-error', 'warn', 'steering message was not delivered.', { error })
+      return { outcome: 'failed', error }
     }
   }
 
@@ -394,14 +475,51 @@ export class BaseAgent {
    */
   async abort(): Promise<void> {
     if (!this.busy || !this.sessionPromise) return
+    const generation = this.activeGeneration
+    const sessionPromise = this.sessionPromise
+    const promptDrain = this.activePromptDrain
+    // Gate every old subscriber before asking the runtime to stop. Each wait is bounded: a wedged
+    // adapter must not keep Main's global Turn reservation forever. The generation gate makes it
+    // safe to release after the bound because late callbacks/finally blocks can no longer touch the
+    // next prompt.
+    this.generation += 1
+    this.sessionPromise = null
+    this.primed = false
     try {
-      const session = await Promise.race([this.sessionPromise, sleep(500).then(() => null)])
-      if (session) await Promise.race([session.abort(), sleep(1500)])
+      let session: AgentRuntimeSession | null = null
+      try {
+        session = await withTimeout(
+          sessionPromise,
+          ABORT_SESSION_WAIT_MS,
+          'agent runtime session was still starting when abort was requested'
+        )
+      } catch {
+        // If creation eventually resolves, terminate that orphaned session too. This tracker is not
+        // awaited by Stop; it exists only to prevent a late-created session from living forever.
+        this.trackSessionAbort(sessionPromise)
+      }
+      if (session) {
+        const runtimeAbort = session.abort().catch(() => undefined)
+        this.pendingSessionAborts.add(runtimeAbort)
+        void runtimeAbort.then(() => this.pendingSessionAborts.delete(runtimeAbort))
+        await withTimeout(
+          runtimeAbort,
+          ABORT_SIGNAL_WAIT_MS,
+          'agent runtime abort did not settle before the bounded Stop deadline'
+        ).catch(() => undefined)
+      }
     } catch {
       /* best effort — the turn may already be resolving */
     } finally {
-      this.reset()
-      this.busy = false
+      if (promptDrain) {
+        await withTimeout(
+          promptDrain,
+          ABORT_PROMPT_DRAIN_WAIT_MS,
+          'agent prompt did not drain before the bounded Stop deadline'
+        ).catch(() => undefined)
+      }
+      if (this.activeGeneration === generation) this.activeGeneration = null
+      if (this.activeGeneration === null) this.busy = false
     }
   }
 
@@ -414,7 +532,12 @@ export class BaseAgent {
     return sys ? { ...message, text: `${sys}\n\n${message.text}` } : message
   }
 
-  private async runPrompt(session: AgentRuntimeSession, message: AgentRuntimePrompt, timeoutMs: number): Promise<PiTurnResult> {
+  private async runPrompt(
+    session: AgentRuntimeSession,
+    message: AgentRuntimePrompt,
+    timeoutMs: number,
+    isCurrent: () => boolean = () => true
+  ): Promise<PiTurnResult> {
     let streamed = ''
     let finalText = ''
     let stopReason = ''
@@ -425,14 +548,14 @@ export class BaseAgent {
     const setThinking = (active: boolean): void => {
       if (thinkingActive === active) return
       thinkingActive = active
-      this.opts.onThinking?.({ active, ts: Date.now() })
+      if (isCurrent()) this.opts.onThinking?.({ active, ts: Date.now() })
     }
     const unsubscribe = session.subscribe((event: AgentRuntimeEvent) => {
       const type = event?.type
       if (type === 'text_delta') {
         setThinking(false)
         streamed += event.delta
-        this.opts.onStream?.(event.delta)
+        if (isCurrent()) this.opts.onStream?.(event.delta)
       } else if (type === 'thinking_start') {
         setThinking(true)
       } else if (type === 'thinking_delta') {
@@ -458,15 +581,27 @@ export class BaseAgent {
         starts.push(Date.now())
         toolStartedAt.set(toolName, starts)
         const activity = activityForTool(event.toolName, event.args)
-        this.activity(activity.phase, activity.label)
-        this.debug('agent-tool', 'info', `tool → ${toolName}`, { args: clip(event.args) })
+        if (isCurrent()) this.activity(activity.phase, activity.label)
+        const archiveTool =
+          toolName === 'list_archive' ||
+          toolName === 'extract_archive' ||
+          toolName === 'create_archive'
+        this.debug(
+          'agent-tool',
+          'info',
+          `tool → ${toolName}`,
+          archiveTool ? undefined : { args: clip(event.args) }
+        )
       } else if (type === 'tool_end') {
         const toolName = event.toolName || 'tool'
         const starts = toolStartedAt.get(toolName)
         const started = starts?.shift()
         const detail = started ? { durationMs: Date.now() - started } : undefined
         if (starts && starts.length === 0) toolStartedAt.delete(toolName)
-        if (event.isError) this.activity(activityForTool(event.toolName, event.args).phase, `${event.toolName || 'tool'} failed`, false)
+        if (event.isError) {
+          const failed = activityForTool(event.toolName, event.args)
+          if (isCurrent()) this.activity(failed.phase, `${failed.label} failed`, false)
+        }
         this.debug('agent-tool-end', event.isError ? 'warn' : 'info', `tool ${toolName} ${event.isError ? 'errored' : 'ok'}`, detail)
       }
     })
@@ -530,7 +665,54 @@ const clip = (value: unknown, max = 300): string => {
 const compactActivityLabel = (value: string, max = 180): string => {
   const text = value.replace(/\s+/g, ' ').trim()
   if (!text) return ''
-  return text.length > max ? text.slice(0, max) + '...' : text
+  return text.length > max ? text.slice(0, Math.max(0, max - 3)) + '...' : text
+}
+
+const ACTIVITY_ARG_KEYS = [
+  'pattern',
+  'query',
+  'command',
+  'path',
+  'file_path',
+  'url',
+  'archive',
+  'inputs',
+  'filename',
+  'skill_id',
+  'skill_name',
+  'task_id',
+  'ref',
+  'action',
+  'name'
+]
+
+const ACTIVITY_ARG_DENY =
+  /password|passphrase|token|secret|credential|authorization|cookie|api[_-]?key|content|artifact_json|html|markdown|body|old_?text|new_?text/i
+
+const activityArgValue = (raw: string): string => {
+  const text = raw.replace(/\s+/g, ' ').trim()
+  const home = homedir()
+  const short = home && text.startsWith(home) ? `~${text.slice(home.length)}` : text
+  return short.length > 80 ? `${short.slice(0, 80)}…` : short
+}
+
+const activityArgSummary = (args: unknown): string => {
+  const record =
+    args && typeof args === 'object' && !Array.isArray(args)
+      ? (args as Record<string, unknown>)
+      : {}
+  for (const key of ACTIVITY_ARG_KEYS) {
+    if (ACTIVITY_ARG_DENY.test(key)) continue
+    const value = record[key]
+    if (typeof value === 'string' && value.trim()) return activityArgValue(value)
+  }
+  for (const [key, value] of Object.entries(record)) {
+    if (ACTIVITY_ARG_DENY.test(key)) continue
+    if (typeof value === 'string' && value.trim() && value.length <= 120) {
+      return activityArgValue(value)
+    }
+  }
+  return ''
 }
 
 const activityForTool = (toolName?: string, args?: unknown): { phase: AgentActivityStep['phase']; label: string } => {
@@ -538,7 +720,11 @@ const activityForTool = (toolName?: string, args?: unknown): { phase: AgentActiv
   if (toolName === 'browser_exec') return browserExecActivity(args)
   // Show the raw tool name under its tag (e.g. "tool" + "page_snapshot" → tool:page_snapshot),
   // NOT a remapped semantic verb ("see"/"do") or a "call …" prefix — the record is the tool called.
-  return { phase: activityPhaseForTool(toolName), label: toolName }
+  const summary = activityArgSummary(args)
+  return {
+    phase: activityPhaseForTool(toolName),
+    label: summary ? `${toolName} ${summary}` : toolName
+  }
 }
 
 const activityPhaseForTool = (toolName: string): AgentActivityStep['phase'] => {
@@ -559,7 +745,10 @@ const browserExecActivity = (args: unknown): { phase: AgentActivityStep['phase']
     ? 'api-read'
     : 'api-call'
   const more = fetches.length > 1 ? ` +${fetches.length - 1}` : ''
-  return { phase, label: `${method} ${activityEndpoint(first.url || '')}${more}` }
+  return {
+    phase,
+    label: compactActivityLabel(`${method} ${activityEndpoint(first.url || '')}${more}`)
+  }
 }
 
 const parseBrowserExecCommands = (args: unknown): { command: string; method?: string; url?: string }[] => {
@@ -591,11 +780,14 @@ const parseBrowserExecCommands = (args: unknown): { command: string; method?: st
 const activityEndpoint = (url: string): string => {
   try {
     const parsed = new URL(url, 'https://coach.local')
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '/api'
     const keys = Array.from(parsed.searchParams.keys())
     const query = keys.map((key) => `${encodeURIComponent(key)}=<${activityVarName(key) || 'value'}>`).join('&')
     return `${sanitizeActivityPath(parsed.pathname)}${query ? `?${query}` : ''}`
   } catch {
-    return url || '/api'
+    // Never echo an unparsed target: malformed percent escapes and URL-like strings can carry
+    // credentials in their raw query/fragment.
+    return '/api'
   }
 }
 
@@ -603,7 +795,12 @@ const sanitizeActivityPath = (path: string): string => {
   return path
     .split('/')
     .map((segment) => {
-      const decoded = decodeURIComponent(segment)
+      let decoded = ''
+      try {
+        decoded = decodeURIComponent(segment)
+      } catch {
+        return ':value'
+      }
       if (/^[0-9]{5,}$/.test(decoded) || /^[a-f0-9]{8,}-[a-f0-9-]{12,}$/i.test(decoded) || /^[A-Za-z0-9_-]{16,}$/.test(decoded)) return ':id'
       return segment
     })

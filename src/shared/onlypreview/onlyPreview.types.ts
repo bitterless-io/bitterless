@@ -120,13 +120,16 @@ export type OnlyPreviewErrorCode =
   | 'OOXML_ENCRYPTED'
   | 'OOXML_ARCHIVE_INVALID'
   | 'SHEET_PARSE_FAILED'
+  | 'SHEET_RENDER_FAILED'
   | 'SHEET_EMPTY'
   | 'SHEET_RENDER_TIMEOUT'
   | 'DOCUMENT_PARSE_FAILED'
+  | 'DOCUMENT_RENDER_FAILED'
   | 'DOCUMENT_EMPTY'
   | 'DOCUMENT_SANITIZE_FAILED'
   | 'DOCUMENT_RENDER_TIMEOUT'
   | 'PRESENTATION_PARSE_FAILED'
+  | 'PRESENTATION_RENDER_FAILED'
   | 'PRESENTATION_EMPTY'
   | 'PRESENTATION_RENDER_TIMEOUT'
   | 'DIAGRAM_PARSE_FAILED'
@@ -203,10 +206,16 @@ export interface OnlyPreviewGlobalSearchWorkspaceContext {
   currentDirectoryRelativePath: string;
 }
 
+export interface OnlyPreviewGlobalSearchLayout {
+  viewBounds: OnlyPreviewBounds;
+  workspaceBounds: OnlyPreviewBounds;
+}
+
 export interface OnlyPreviewGlobalSearchContextSnapshot {
   revision: number;
   active: boolean;
   workspace: OnlyPreviewGlobalSearchWorkspaceContext | null;
+  layout: OnlyPreviewGlobalSearchLayout | null;
 }
 
 export interface OnlyPreviewGlobalSearchContextReportRequest extends OnlyPreviewHostRequest {
@@ -216,6 +225,11 @@ export interface OnlyPreviewGlobalSearchContextReportRequest extends OnlyPreview
 export interface OnlyPreviewGlobalSearchVisibilityEvent extends OnlyPreviewHostEvent {
   revision: number;
   active: boolean;
+}
+
+export interface OnlyPreviewGlobalSearchLayoutEvent extends OnlyPreviewHostEvent {
+  revision: number;
+  layout: OnlyPreviewGlobalSearchLayout;
 }
 
 export interface OnlyPreviewGlobalSearchDirectoryRevealRequest extends OnlyPreviewHostRequest {
@@ -306,8 +320,7 @@ export const ONLY_PREVIEW_MAX_HTML_BYTES = ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDE
 export const ONLY_PREVIEW_MAX_PDF_BYTES = ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES['chromium-pdf'];
 export const ONLY_PREVIEW_MAX_IMAGE_BYTES = ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES.image;
 export const ONLY_PREVIEW_MAX_SHEET_BYTES = ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES['ooxml-xlsx'];
-export const ONLY_PREVIEW_MAX_DOCUMENT_BYTES =
-  ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES['ooxml-docx'];
+export const ONLY_PREVIEW_MAX_DOCUMENT_BYTES = ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES['ooxml-docx'];
 export const ONLY_PREVIEW_MAX_PRESENTATION_BYTES =
   ONLY_PREVIEW_FILE_SIZE_LIMIT_OVERRIDES['ooxml-pptx'];
 export const ONLY_PREVIEW_MAX_DIAGRAM_BYTES =
@@ -390,11 +403,6 @@ export interface OnlyPreviewFindResultRequest extends OnlyPreviewPreviewRuntimeR
   result: OnlyPreviewFindResult;
 }
 
-export interface OnlyPreviewTextReadRequest
-  extends OnlyPreviewPreviewRevisionRequest, OnlyPreviewFileRef {
-  adapterId: 'monaco' | 'markdown-dom';
-}
-
 export interface OnlyPreviewPreviewErrorRequest extends OnlyPreviewPreviewRevisionRequest {
   errorCode: OnlyPreviewErrorCode;
 }
@@ -416,6 +424,7 @@ export const ONLY_PREVIEW_GLOBAL_SEARCH_CONTEXT_CHANGED_EVENT =
   'onlypreview/globalSearchContextChanged' as const;
 export const ONLY_PREVIEW_GLOBAL_SEARCH_VISIBILITY_EVENT =
   'onlypreview/globalSearchVisibility' as const;
+export const ONLY_PREVIEW_GLOBAL_SEARCH_LAYOUT_EVENT = 'onlypreview/globalSearchLayout' as const;
 export const ONLY_PREVIEW_GLOBAL_SEARCH_REVEAL_DIRECTORY_EVENT =
   'onlypreview/globalSearchRevealDirectory' as const;
 export const ONLY_PREVIEW_SETTINGS_CHANGED_EVENT = 'onlypreview/settingsChanged' as const;
@@ -433,13 +442,17 @@ export interface OnlyPreviewFocusSearchEvent extends OnlyPreviewHostEvent {
 
 export interface OnlyPreviewApi {
   openOnlyPreviewWindow(): Promise<OnlyPreviewResult<void>>;
+  reportShellMounted(params: OnlyPreviewHostRequest & {
+    openTag: string;
+    phase: 'renderer-script' | 'renderer-language' | 'renderer-import' | 'renderer-mount' | 'renderer-receipt';
+    outcome?: 'success' | 'failure';
+  }): Promise<OnlyPreviewResult<void>>;
   chooseFolder(
     params: OnlyPreviewHostRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewWorkspace | null>>;
   restoreWorkspace(
     params: OnlyPreviewHostRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewWorkspace | null>>;
-  readText(params: OnlyPreviewTextReadRequest): Promise<OnlyPreviewResult<OnlyPreviewTextContent>>;
   selectStandaloneFile(
     params: OnlyPreviewHostRequest & OnlyPreviewFileRef
   ): Promise<OnlyPreviewResult<void>>;

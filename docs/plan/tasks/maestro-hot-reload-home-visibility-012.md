@@ -46,6 +46,9 @@ path can reveal its native `BrowserWindow`.
   rather than revealing Home or leaving the app without a primary window.
 - `mainWindowHelper` remains `showOnReady = false`, is absent from the taskbar, and has no source call
   to `show()`. It continues hosting existing Home renderer/XPC/token/Todo compatibility behavior.
+- Signed-out presentation belongs to the fixed `bitterless://home` tab inside Maestro through the
+  token-free bridge added by `maestro-local-home-auth-gate-096`; this does not make the legacy native
+  Home window visible.
 - Keep the existing Maestro singleton/readiness gates and fixed local-Home miniapp. Do not add a
   second state machine, recovery token protocol, timer, polling loop, or duplicate window.
 

@@ -1,14 +1,14 @@
 # OnlyPreview Sub-Application
 
-Status: Accepted; tasks 032–048, 072, 073, 076, 077, and 078 implemented; owner verification
+Status: Accepted; tasks 032–048, 072, 073, 076, 077, 078, and 098 implemented; owner verification
 pending
 
 ## Purpose And Boundary
 
 OnlyPreview is Bitterless's read-only local-file workbench. Its visible picker opens one directory,
 the user navigates a complete demand-loaded project tree on the left, and the selected file is
-previewed on the right without leaving Bitterless. Main-owned operating-system file-open routes may
-still target an individual file and derive its containing workspace. The current delivery covers
+previewed on the right without leaving Bitterless. Main-owned operating-system, CLI, and agent
+routes may also preview one explicit file from inside or outside that Project. The current delivery covers
 source code, text, PDF, XLSX/XLSM workbooks, DOCX documents, PPTX presentations, Draw.io diagrams,
 image, audio, and video files used in development and ordinary desktop work.
 
@@ -19,9 +19,10 @@ queries run only in the trusted Node-context preload of a dedicated invisible `f
 `BrowserWindow`; Electron Main validates capabilities, privately enriches initialization with
 bootstrap paths, supervises that renderer, and performs a bounded XPC relay without search I/O.
 OnlyPreview never edits file contents or creates, renames, or moves user files. Its one explicit
-filesystem mutation is a Main-owned, capability-scoped permanent Delete action in the native file
-menu: files/directories also have capability-scoped native reveal and clipboard actions; Delete
-requires a destructive confirmation and unlinks exactly one regular file from disk rather
+filesystem mutation is a hidden-preload-owned, capability-scoped permanent Delete action in the
+native file menu: Main owns the parented destructive confirmation and native reveal/open/clipboard
+effects, but the hidden `fileSearch` preload authorizes their canonical targets. Delete uses a
+two-phase identity-bound grant and unlinks exactly one still-current regular file from disk rather
 than moving it to Trash. Unsupported local files still open to an explicit metadata surface with an
 action to use the system application.
 
@@ -42,11 +43,13 @@ implementation contract inside Bitterless and contains no private user data.
 | Standalone `BaseWindow`, Shell, Setting/Guide windows, total cleanup                             | OnlyPreview window handler/helper                                       |
 | Preview selection revision, inner bounds, active surface, readiness, teardown                    | Main `OnlyPreviewPreviewRegionService`                                  |
 | Current-file find state/revision, capability routing, native request/result fencing              | Main `OnlyPreviewFindService` inside the Preview Region                 |
-| Per-view host, search-bootstrap, workspace, and media ownership                                  | Main OnlyPreview capability registries                                  |
-| Workspace capabilities, item containment, descriptor, clipboard projection, preview reads/delete | Main OnlyPreview file/clipboard services                                |
+| Per-view host, search-bootstrap, workspace identity, and media ownership                         | Main OnlyPreview capability registries                                  |
+| Canonical Project root/item authority, containment, metadata, and two-phase Delete               | invisible top-level `fileSearch` renderer's Node-context preload        |
+| Native dialogs, shell open/reveal, and clipboard effects after preload authorization             | Main OnlyPreview handler/clipboard services                             |
 | Project traversal, media classification, filename tier, full-text SQLite, watch/update/query     | invisible top-level `fileSearch` renderer's Node-context preload        |
 | Last canonical directory persistence and restore ordering                                        | Main OnlyPreview recent-directory service + Core SQLite `setting` table |
-| Exact media/PDF assets and contained HTML documents                                              | Main asset/document registries + session-scoped `bitterless-preview://` |
+| Asset/document tokens, Range/CSP routing and session-scoped `bitterless-preview://`              | Main in-memory asset/document protocol registries                       |
+| Non-Office selection identity, text and asset/PDF/media/HTML byte sessions                       | invisible top-level `fileSearch` renderer's Node-context preload        |
 | Rooted Project tree, Global Search, Preview toolbar/actions/Find Bar, status, inner bounds       | OnlyPreview Shell renderer                                              |
 | Monaco/Markdown/XLSX/DOCX/PPTX/Draw.io/image/audio/video/unsupported presentation                | app-owned Vue Preview surface                                           |
 | Executable contained HTML and Chromium PDF presentation                                          | disposable raw Chromium Preview surface                                 |
@@ -137,7 +140,7 @@ OnlyPreview preload. There is no embedded DOM Preview adapter or container mode.
 | raw Chromium view      | none                    | none         | disposable contained HTML or built-in PDF viewer; no first-party renderer entry or host token       |
 | `onlypreview/settings` | `onlypreview.js`        | `settings`   | app-specific settings form                                                                          |
 | `onlypreview/guide`    | `onlypreview.js`        | `guide`      | one-copy MCP and portable Preview-skill setup                                                       |
-| `fileSearch`           | `fileSearch.js`         | `background` | invisible page whose trusted Node-context preload owns browse/index/search/watch                    |
+| `fileSearch`           | `fileSearch.js`         | `background` | invisible page whose trusted Node-context preload owns Project authority/delete, browse/index/search/watch, and bounded current-file read sessions |
 
 Both visible preloads import `electron-xpc/preload` and expose only immutable mode/platform context plus the
 Main-issued content host through `contextBridge`. Main creates and pre-registers one unguessable
@@ -146,8 +149,11 @@ Main-issued content host through `contextBridge`. Main creates and pre-registers
 rotating runtime token used only for its privileged presentation snapshot/readiness observations.
 The raw Chromium view receives neither token nor a preload. Setting and Guide windows each have
 their own narrow host. The search-bootstrap capability remains private in Main;
-no visible preload or page receives its token, absolute workspace root, or database path. Only the
-trusted `fileSearch` preload receives the paths inside a capability-bound initialization call.
+no visible page receives its token, absolute workspace root, or database path. Only the trusted
+`fileSearch` preload receives paths. A second independent capability binds its Office reader to an
+exact one-shot Main grant; a third pairwise-distinct capability owns Project root/item authorization
+and identity-fenced Delete. The Vue content preload keeps its Office broker capability in its
+isolated world and exposes only a path-free current-revision read method.
 
 Every visible OnlyPreview view uses `sandbox: true`, `contextIsolation: true`,
 `nodeIntegration: false`, `webSecurity: true`, an exact navigation fence, and no Node or filesystem
@@ -174,27 +180,40 @@ result envelope.
 OS event or native Open dialog
         |
         v
-Main validates live hostToken + realpath/stat
+hidden preload inspects target + canonical root identity
         |
         v
-random workspaceId ──> Main-owned { hostToken, rootRealPath, selectedRelativePath? }
+random workspaceId ──> Main-owned host/workspace ref + hidden-preload root authority
         |
         +── renderer receives workspaceId + display metadata
         |
         +── renderer requests { workspaceId, relativePath }
                                  |
                                  v
-                         resolve + realpath + containment check
+                 Main validates live host/workspace ref
+                                 |
+                                 v
+                 hidden preload resolves + revalidates identity/containment
 ```
 
 Required properties:
 
-- A file target creates a workspace rooted at its parent and selects its basename. A directory
-  target creates a workspace rooted at that directory.
-- `workspaceId` is an unguessable opaque value. Main owns the absolute root.
+- A directory target creates and persists a Project workspace rooted at that directory.
+- A file target inside the current Project reuses that Project workspace and selects its normalized
+  Project-relative path.
+- A file target outside the current Project creates a separate transient external-preview
+  capability rooted privately at its canonical parent. The current Project remains visible, its
+  selected item is cleared, and the external file is presented without becoming a Project tree
+  item. With no current Project, the Project surface remains empty and unselected.
+- An external-preview capability authorizes exactly its one original canonical basename. Preview,
+  Office, Project, and native-action lanes reject a forged sibling relative path even when it uses
+  the same opaque workspace ID and host.
+- `workspaceId` is an unguessable opaque value. Main may retain the canonical root string only as
+  private in-memory bootstrap state; the hidden preload owns live root identity and path authority.
 - Renderer calls carry only `workspaceId` and normalized relative paths.
-- Main rejects absolute relative-path inputs, `..` traversal, missing capabilities, devices,
-  sockets, and post-`realpath` paths outside the root.
+- Main rejects missing host/workspace capabilities before dispatch. The hidden preload rejects
+  absolute relative-path inputs, `..` traversal, devices, sockets, stale root identity, and
+  post-`realpath` paths outside the root.
 - Content reads open the authorized canonical path with read-only/no-follow flags where supported,
   verify the opened handle is a regular file, then recheck post-open containment and device/inode
   identity. Sampling, bounded text reads, and protocol streams consume that same handle rather than
@@ -511,6 +530,13 @@ uses its own monotonic clock; no cross-process timestamp subtraction is presente
 Diagnostics reuse existing aggregate counters and add no filesystem/SQLite/body work or protocol
 fields. They never run inside entry, file, chunk, result, batch, or progress loops.
 
+A separate fixed open timeline correlates native window construction, hidden runtime readiness,
+Shell load/mount, show/focus, explicit target inspection/binding, presentation publication, and a
+current Preview-ready acknowledgement where one already exists. It reuses the profile logging
+policy and never makes Main wait for renderer readiness only for diagnostics. Like search timing,
+it records short local tags, fixed enums, and monotonic durations only—never a path, filename,
+workspace identity, query/content, URL, capability, renderer payload, or raw error.
+
 Index progress and Global Search availability are independent. When a complete SQLite index
 already exists, it remains the active read-only query authority while a separate candidate index is
 counted and built. Each query phase acquires a reader lease that captures one internally consistent
@@ -550,12 +576,28 @@ reconcile. Manual refresh uses the same path; it does not reintroduce a Main dir
 
 The committed trailing update also publishes a bounded host/workspace/relative-path/watch-revision
 signal through the private capability-bound XPC event channel. Main validates the event, binds it to
-the attached host, and routes a matching selected-file change through the Main Preview Region. The
-Region advances its selection revision, revokes the old surface authority and streams, then
-reclassifies and mounts only the newly selected revision. Delete/rename renders the typed missing
-state; a later recreation carries a newer revision and reloads. Full reconcile and manual refresh
-use the same selection-safe transition. Main still performs no file watch, search traversal, index
-query, or Preview polling; it only owns the selected-file presentation transition.
+the attached host, and routes a matching selected-file change through the Main Preview Region. A
+commit that does not reach the selected path is ignored, and a commit that does — including every
+`full` commit, which carries no paths — first reads the selected item's current Project authority
+metadata once. The Region rebuilds only when that item is missing, is no longer a regular file, or
+its `size`/`modifiedAt` left the presented descriptor; an unchanged selected file keeps its mounted
+surface, selection revision, and find state. When it does rebuild, the Region advances its selection
+revision, revokes the old surface authority and streams, then reclassifies and mounts only the newly
+selected revision. Delete/rename renders the typed missing state; a later recreation carries a newer
+revision and reloads. Full reconcile and manual refresh use the same selection-safe transition. Main
+still performs no file watch, search traversal, index build, query, or Preview polling; it only owns
+the selected-file presentation transition.
+
+A reconcile never invalidates the Project tree. Browse directory tokens are per-path capabilities:
+a search-policy change re-derives each issued capability's `ancestorBlocked` in place instead of
+rotating tokens, so a full rebuild or a manual refresh republishes the root **and every directory
+already listed for that workspace**, parents before children, under the tokens the Shell already
+holds. The Shell replaces those directories' entries in place, so any file or index change leaves
+the tree's selection, expanded directories, and scroll position exactly where they were. The one
+tree movement a change may cause is deletion of the selected item: the Shell hands the selection to
+the next surviving visible row that is not a descendant of the deleted path, otherwise the previous
+such row, otherwise the closest surviving ancestor, otherwise the workspace root, and centres that
+row without taking keyboard focus.
 
 ### Product Overmind acceptance evidence
 
@@ -635,7 +677,7 @@ runtime/UI path; packaged release startup remains untested.
 | `text` / Markdown | `.md`                                                                                                                                                         | Vue: centered semantic reading surface compiled by `marked` and sanitized by DOMPurify; `.markdown` and `.mdx` remain Monaco |
 | `html`            | `.html`, `.htm`                                                                                                                                               | raw Chromium: executable entry document plus contained relative JS/CSS/image/font/media resources                            |
 | `pdf`             | `.pdf` with matching signature                                                                                                                                | raw Chromium: built-in PDF viewer over one exact revision-bound bounded asset                                                |
-| `image`           | PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, SVG                                                                                                                     | Vue: bounded Blob + off-DOM decode, then an accessible fit/zoom/reset/pan viewer                                             |
+| `image`           | PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, SVG                                                                                                                     | Vue: bounded Blob + off-DOM decode, then an accessible fit/zoom/rotate/reset/pan viewer                                      |
 | `audio`           | MP3, WAV, OGG, M4A, AAC, FLAC; actual codec support remains Chromium-owned                                                                                    | Vue: HEAD preflight, then `<audio controls preload="metadata">`, no autoplay                                                 |
 | `video`           | MP4, WebM, OGV, MOV, M4V; actual codec support remains Chromium-owned                                                                                         | Vue: HEAD preflight, then `<video controls preload="metadata">`, no autoplay                                                 |
 | `sheet`           | `.xlsx`, `.xlsm` with bounded OOXML ZIP structure                                                                                                             | Vue: one-shot preflight Worker + lazy `@silurus/ooxml/xlsx` `XlsxViewer`                                                     |
@@ -676,7 +718,9 @@ runtime/UI path; packaged release startup remains untested.
   as visible text before sanitization. Sanitized output allows only semantic text/list/table/code
   tags and no attributes; scripts, styles, forms, frames, SVG/MathML, event handlers, `href`, `src`,
   and remote/data/local resource loads cannot survive. Links remain readable but inert, and images
-  become alt-text placeholders rather than loading a resource.
+  become alt-text placeholders rather than loading a resource. A valid leading YAML front-matter
+  block is stripped before compilation and never rendered; the preview begins with the document
+  body. An unclosed leading `---` remains ordinary Markdown.
 - Image admission checks extension, the 100 MiB limit, and a bounded signature probe. Common SVG
   XML declaration/comment/DOCTYPE prologs, AAC `ADIF`, and plausible MOV/QuickTime
   `ftyp/moov/mdat/wide/free/skip` first atoms are accepted by their respective gates. An admitted
@@ -686,6 +730,9 @@ runtime/UI path; packaged release startup remains untested.
   `min(0.1, currentFitScale)`, an `8` maximum, exact 100% Reset, centered pan clamps, ResizeObserver,
   primary-pointer capture/cancel, and focusable viewport arrow-key pan. Empty, read, signature, and
   decoder failures remain distinct; every created Blob URL is revoked exactly once.
+- Image rotation is renderer-only in 90° increments and never writes/re-encodes the source. A
+  quarter-turn swaps effective dimensions before Fit/pan clamping; Reset returns rotation to zero,
+  exact 100% scale, and zero translation. Selection/error/unmount clear the same state.
 - Audio/video stay on the revision-bound Range asset instead of buffering the full file. A HEAD
   preflight requires the exact expected `Content-Length` plus CORS-visible `Accept-Ranges: bytes`;
   only then does a native `preload="metadata"` player mount. `loadedmetadata` is the first ready
@@ -701,6 +748,11 @@ runtime/UI path; packaged release startup remains untested.
   negative Region behavior coverage fixed that finding.
   [Independent review round 2](../plan/reviews/onlypreview-media-truthful-state-022-2.md) recorded
   **PASS**. Ral owns the remaining real-app image/media runtime and visual verification.
+- Task 101 is `implemented; owner verification pending`.
+  [Independent review round 1](../plan/reviews/onlypreview-image-rotation-media-regression-101-1.md)
+  recorded **PASS** for quarter-turn geometry, reset/teardown fencing, source immutability, native
+  player preservation, Range delivery, and bounded resource behavior. Ral owns the supplied
+  PNG/WAV and supported-video visual/playback verification.
 - Monaco editor and model are both disposed on file changes and component unmount.
 - Selection/copy/find remain enabled; mutation commands and ordinary keyboard input cannot modify
   the model. Electron E2E must prove a selected range can be copied and attempted input leaves the
@@ -714,11 +766,24 @@ runtime/UI path; packaged release startup remains untested.
   `docx-preview` renderer paths while preserving their 25MiB/signature/OOXML preflight boundary.
   After the one-shot Worker returns the exact transferred bytes, Vue dynamically imports only the
   selected pinned `@silurus/ooxml@0.83.0` subpath and creates `XlsxViewer`, `DocxScrollViewer`, or
-  `PptxScrollViewer` in `mode: 'worker'`. Main and preload never import or execute an Office parser.
+  `PptxScrollViewer` in the library's `mode: 'main'`: host 2D painting stays inside the isolated Vue
+  Preview renderer while the package's parser Worker continues OOXML/WASM parsing. Main and preload
+  never import or execute an Office parser.
 - The common Office adapter disables Google Fonts and hyperlinks, passes explicit archive limits,
   relies on pinned 0.83.0's built-in decoded-image guards, and destroys the exact viewer on
   replacement, failure, timeout, or unmount. The library exposes no app-configurable raster/decode
   options, so Bitterless does not claim to pass them.
+  For `.xlsx` only, Task 088 adds one narrow producer-compatibility path inside the original archive
+  preflight: while worksheet XML is already streamed, a trusted descriptor extension of `.xlsx`
+  plus exactly one non-macro worksheet with zero `sheetData` marks the in-memory preview copy for
+  one disposable ExcelJS normalization Worker. `.xlsm`, macro-bearing, multi-sheet, and
+  multiple-`sheetData` cases remain invalid. The exceptional rewrite has a tighter 4 MiB archive /
+  8 MiB inflated ceiling, and normalized output is capped at 4 MiB before archive preflight runs
+  again and the single
+  `@silurus/ooxml/xlsx` Viewer is constructed. This pre-Viewer gate is required because the pinned
+  package paints that worksheet parser error instead of rejecting `load()`. The original file is
+  untouched, Main performs no content I/O, and arbitrary/encrypted/limited/XLSM failures never enter
+  this path. Final rendering and Find/highlight remain owned by the OOXML Viewer.
   Legacy `.xls`, `.doc`, and `.ppt` remain unsupported. XLSM is read-only and macros are never
   executed. XLSX generally presents saved formula results, with the documented upstream exception
   that `TODAY()` and `NOW()` are evaluated against the current clock; no Excel-perfect calculation,
@@ -738,6 +803,9 @@ runtime/UI path; packaged release startup remains untested.
   XML, more than 128 pages, more than 20,000 cells, any embedded/external raster/SVG/data/blob image
   resource, image shape/source, `mxImage`/`image` markup, or a non-renewing 10-second deadline. Main separately
   owns a non-renewing 30-second loading watchdog that can rebuild the exact blocked Vue view.
+  The viewer-ready handshake is asynchronous because the official runtime defers a zero-width mount
+  until it becomes visible; one shorter non-renewing renderer deadline and component-owned abort
+  authority fence that callback across view attachment, selection replacement, and unmount.
   Success supplies read-only page/layer/fit/zoom controls; teardown terminates Worker/fetch and
   destroys generated viewer state before another adapter mounts. Image-bearing graphs are rejected
   as `DIAGRAM_LIMIT` before viewer/GPU work; remote stencils, fonts, navigation, popups, downloads,
@@ -760,41 +828,44 @@ scheme before `ready`. The normal app session handles only exact asset tokens. A
 session installs its own asset plus document handlers before navigation and removes both on teardown;
 the normal session never resolves document URLs.
 
-The Main Preview Region issues every random, revision-bound asset token only after classifier and
-opened-file identity checks for the exact current selection. A URL contains exactly a 64-hex token and one matching encoded display filename, never
-an absolute path; credentials, ports, query strings, fragments, and path aliases are rejected. The
-handler resolves the token to a Main-owned real path only while its issuing host and workspace are
-live. Legacy/unbound and one-shot image/Office tokens keep the 30-minute TTL. Audio/video tokens use
-selection lifetime so a long-running player can seek after 30 minutes; selection, workspace, host,
-shutdown, or explicit revoke still invalidates them, and the bounded registry may evict its oldest
-entry under global pressure. Unknown, expired, revoked, or malformed tokens return a non-content
-response.
+The hidden Preview Read runtime prepares each non-Office selection against the exact active Project
+workspace generation and returns only a descriptor plus opaque identity-pinned selection grant.
+Main then issues every random, revision-bound asset/document token against that path-free grant. A
+URL contains exactly a 64-hex token and one matching encoded display filename, never an absolute
+path; credentials, ports, query strings, fragments, and path aliases are rejected. One-shot image
+and Draw.io tokens keep the 30-minute TTL. Audio/video tokens use selection lifetime so a long-running
+player can seek after 30 minutes; selection, workspace, host, shutdown, or explicit revoke still
+invalidates them, and the bounded registry may evict its oldest entry under global pressure.
+Unknown, expired, revoked, or malformed tokens return a non-content response.
 
-Electron 40's `net.fetch(file:)` does not preserve Range semantics, so the handler must not delegate
-file responses to it. Main parses one valid byte-range request, opens a bounded `fs` read stream,
-and returns `206` with `Accept-Ranges`, `Content-Range`, exact `Content-Length`, and the authorized
-MIME type. Full `GET`/`HEAD`, malformed/unsatisfiable range, and unsupported method behavior are
-explicit and covered by focused protocol tests. Responses expose `Accept-Ranges` to the renderer's
-CORS fetch so media HEAD preflight can verify seek support. This is required for real audio/video
-seeking.
-Each live response stream remains registered to its asset. A bounded `pipeline` propagates source,
-overflow, cancellation, and revoke errors to the response body. Before successful EOF, Main
-revalidates the still-open handle and reopens the current canonical path to compare exact size,
-device, inode, and real path. Growth and same-size path replacement therefore abort instead of
-returning a valid old prefix. `HEAD`, error, and no-body responses close their verified handle
-immediately.
+Main parses and validates one byte-range request, then asks the hidden preload to open that exact
+range against the selection grant. It returns `206` with `Accept-Ranges`, `Content-Range`, exact
+`Content-Length`, and the authorized MIME type. Full `GET`/`HEAD`, malformed/unsatisfiable range,
+and unsupported method behavior remain explicit. Responses expose `Accept-Ranges` to the renderer's
+CORS fetch so media HEAD preflight can verify seek support.
+Each live response owns one preload session with at most one pending read. Main's
+`ReadableStream.pull()` requests and awaits exactly one bounded frame of at most 512 KiB, preserving
+Chromium backpressure without a whole-file XPC result. PDF/audio/video may own multiple concurrent
+Range sessions; no global read tail serializes them. Abort, token revoke, replacement and timeout
+generation-revoke the exact session, close its handle independently and reject late frames. The
+preload rechecks the pinned handle/current identity before successful EOF, so growth and same-size
+replacement abort instead of returning a valid old prefix. `HEAD`, error and no-body responses hold
+no live body session.
 
 PDF navigates a fresh raw Chromium view to one exact asset URL and uses Chromium's built-in PDF
-viewer; the Vue/pdf.js path is retired. The token is rejected before navigation when the verified
-file exceeds 100 MiB and again during streaming if identity/size changes. Teardown revokes the
-token, aborts active streams, removes session handlers, clears session data, and destroys the view.
+viewer; the Vue/pdf.js path is retired. The selection grant is rejected before navigation when the
+verified file exceeds 100 MiB and its concurrent Range sessions remain identity/size fenced.
+Teardown revokes the token, aborts active sessions, removes session handlers, clears session data,
+and destroys the view.
 
-HTML uses a separate document registry whose opaque URL contains one token plus a contained
-relative resource path. The token binds the host, non-reused `workspaceId` generation identity, selection revision,
-canonical entry directory, exact entry identity, and total budget. Every request is decoded once,
-opened through the workspace registry, checked against the canonical entry directory, and bound to
-the resource's exact identity. Entry bytes are capped at 1 MiB, each relative resource at 25 MiB,
-and all accepted responses for the revision at 100 MiB.
+HTML uses a separate Main token/router whose opaque URL contains one token plus a contained relative
+resource path. Its hidden-preload document grant binds the host, non-reused workspace generation,
+selection revision, exact entry-directory identity, exact entry identity and total budget. Every
+request is decoded once, contained relative to that pinned directory and opened as a transient
+resource session. Entry bytes are capped at 1 MiB, each relative resource at 25 MiB, all accepted
+body ranges for the revision are atomically reserved against 100 MiB and never refunded, while HEAD
+does not spend that byte budget. The distinct resource-identity table is separately bounded so
+zero-byte and HEAD probes cannot grow it without limit.
 
 The registries evict oldest tokens at their bounds and clear on shutdown. Raw HTML responses set a
 restrictive CSP and `X-DNS-Prefetch-Control: off`; the raw session rejects remote HTTP(S)/WS/file
@@ -882,7 +953,10 @@ The Guide intentionally has one short surface only:
 
 - eyebrow `LOCAL MCP`;
 - title `Copy the skill to your agent`;
-- the existing test-instance warning when the current server is not `bitterless`;
+- the existing test-instance warning when the current server is not `bitterless`; the exact Preview
+  alias `bitterless-preview` replaces its generic warning copy with one localized sentence that
+  names the current MCP mount and complete bundled skill directory, then explains that copying a
+  later Production Guide overwrites the same-named skill and uses production `bitterless`;
 - one `Complete setup instructions` copy card with `Copy these instructions to your agent. They
 include the skill and MCP setup.`
 
@@ -892,7 +966,8 @@ ensures the current MCP helper, derives its server/config, resolves the fixed de
 directory, and verifies every required skill file is a readable regular non-symlink file. The Guide
 renderer receives only the server name, expected skill version, and one complete English
 instruction. That text contains the current MCP config, complete skill directory, Codex/Claude
-install destinations, production-versus-DEBUG warning, and new-session guidance. Clipboard access
+install destinations, production-versus-DEBUG warning, later-edition supersession guidance, and
+new-session guidance. Clipboard access
 occurs only after the user clicks the copy card; success/failure/restart-required feedback is
 localized. The Guide's renderer-side XPC client is an exact
 `Pick<OnlyPreviewApi, 'getAgentSkillGuideInfo'>`; the separate Home launch endpoint is not reachable
@@ -911,11 +986,20 @@ a package when any of those four required files is missing, empty, non-regular, 
 - Helper modes never inspect GUI file arguments.
 - In packaged Windows startup, parse the initial process arguments after removing executable and
   Chromium flags. During `second-instance`, inspect that event's argv/working directory.
-- Development only accepts an explicit `--onlypreview-open=<path>` test/development argument; it
-  must not mistake the repository path or Electron entrypoint for a user file.
+- Development and packaged macOS/Windows accept an explicit
+  `--onlypreview-open=<absolute-path>` argument without mistaking the repository path, Electron
+  entrypoint, or a relative switch value for a user file. Packaged Windows also retains ordinary
+  file-argument parsing.
 - Queue entries are consumed only after the GUI/XPC runtime is ready.
-- Opening another file focuses the singleton and replaces its workspace/selection. Multiple
-  simultaneous requests are serialized; the latest completed request becomes visible.
+- Opening another file focuses the singleton. A contained file updates the current Project
+  selection; an external file preserves the Project and clears its selection. After the folder
+  chooser returns, its target mutation joins OS, MCP, and internal requests on one FIFO
+  serialization boundary; the dialog itself does not occupy the queue. Each caller settles only
+  with its own Main operation, one failure does not poison the queue, and the latest completed
+  request becomes visible. MCP success is accepted/processed, not renderer-ready.
+- Revoking the presented workspace synchronously advances the Preview revision and removes
+  Preview/Office broker access before the exact hidden PreviewReader root is revoked best-effort.
+  A slow or failed replacement directory bind therefore cannot leave the old file readable.
 - The explicit-target generation is advanced before standalone creation, so newly mounted Shell
   and Preview renderers cannot restore an older directory ahead of the queued file target.
 
@@ -1047,6 +1131,11 @@ Shift+Cmd/Ctrl+F:
   contrasting fill. Main clamps reported and resized content bounds to the 32px MenuBar plus 43px
   Preview toolbar, minimum 180px project column plus the functional 5px hit target, and 25px status
   rail, so a compromised or stale Shell cannot let a native content view cover Shell controls.
+- The Project column width is one Shell-renderer visual preference shared across Projects. Shell
+  restores it from local storage with the existing `180–480px` and viewport-aware clamp. Dragging
+  updates layout and Preview bounds continuously, while leading-plus-trailing throttled persistence
+  bounds storage writes; pointer completion, cancellation, and Shell teardown flush the latest
+  width synchronously. Missing, malformed, or inaccessible storage falls back to `264px`.
 
 ## Interaction Contract
 
@@ -1148,9 +1237,12 @@ format, large-directory resource, locator, and file-association verification in 
   never its internal unknown media type.
 - **Global Search no result:** preserve the Files and Contents group labels and show one compact
   localized empty state within each empty group.
-- **Global Search result preview:** keep the previously accepted preview until the latest result-token
-  request settles. Invalid/stale tokens fail closed. Unsupported/non-text files show filename,
-  relative directory, media type, size, and icon without reading their bodies.
+- **Global Search result preview:** selecting a new result immediately clears and disposes the prior
+  payload so old content is never presented under a new row. A 120ms fixed-window
+  leading-plus-trailing scheduler renders the first selection promptly and only the final selection
+  during rapid navigation. Invalid/stale tokens fail closed. XLSX/XLSM, DOCX, and PPTX use one
+  Search-dedicated bounded Office lane and lazy OOXML Viewer; other unsupported/non-text files show
+  filename, relative directory, media type, size, and icon without reading their bodies.
 - **Index memory advisory:** runtime strictly above 1GiB may show/log one aggregate optimization
   advisory; strictly above 2GiB sets `performanceAccepted=false` and keeps `stop=false` for the next
   iteration without invalidating the benchmark artifact or method. Neither value includes the
@@ -1190,15 +1282,21 @@ format, large-directory resource, locator, and file-association verification in 
   Reveal plus Copy Folder/the three text-copy actions, but never recursive Delete. Main opens the menu
   and every confirmation/error dialog with
   the active OnlyPreview `BaseWindow` as owner, so they can extend beyond the Shell child view.
-  Copy Path resolves the canonical absolute path only inside Main and writes it directly to the
-  system clipboard; the renderer receives no path result. Project-item copy uses a bounded native OS
+  Copy Path resolves the canonical absolute path only inside the hidden preload and returns it only
+  to Main's private native-action call, which writes it directly to the system clipboard; the
+  renderer receives no path result. Project-item copy uses a bounded native OS
   clipboard adapter so Finder/Explorer receives a pasteable file/folder reference without reading
   file bytes. Project-tree/search-result shortcuts are active only for a focused item outside
   editable controls, preserving ordinary text copy everywhere else. Delete is never exposed as a
-  renderer filesystem API: Main revalidates the host-bound regular-file
-  reference, asks for explicit destructive confirmation with Cancel as default, rechecks canonical
-  identity immediately before one direct `unlink`, and never deletes directories or uses recursive
-  removal. Success clears selection/Preview only when the deleted file was selected; failure leaves
+  renderer filesystem API: Main validates the host/workspace ref, asks the hidden preload to prepare
+  one opaque regular-file identity grant, then shows the explicit destructive confirmation with
+  Cancel as default. Cancel revokes the grant; confirmation asks the preload to atomically isolate
+  the directory entry in a high-entropy same-parent private quarantine, recheck its pinned identity
+  and active generation, then unlink only that matching isolated entry. A mismatch is restored only
+  by a no-overwrite hard link or retained for recovery; it never overwrites a concurrent candidate
+  or copies a potentially large file. Main never opens or unlinks the target, and
+  directories/recursive removal remain forbidden. Success clears selection/Preview only when the
+  deleted file was selected; failure leaves
   current state intact and discloses no absolute path. Task 029 is
   `implemented; owner verification pending` after two independently found selection-generation
   races were corrected and
@@ -1209,10 +1307,10 @@ format, large-directory resource, locator, and file-association verification in 
 - **Media/PDF error:** preserve toolbar identity/actions and explain that Chromium codec/content
   support failed. A content crash does not close the Shell; it publishes a recoverable unavailable
   state under a newer revision.
-- **DOCX error:** distinguish `DOCUMENT_PARSE_FAILED`, `DOCUMENT_EMPTY`,
-  `DOCUMENT_SANITIZE_FAILED`, and `DOCUMENT_RENDER_TIMEOUT` from existing byte/signature/ZIP
-  admission errors. Preserve Shell file identity/actions, never mount partial DOM, and fence an old
-  timer or renderer result from changing a newer revision/view.
+- **Office error:** distinguish parser/empty/timeout failures from host-viewer failures
+  (`SHEET_RENDER_FAILED`, `DOCUMENT_RENDER_FAILED`, `PRESENTATION_RENDER_FAILED`) and existing
+  byte/signature/ZIP admission errors. Preserve Shell file identity/actions, never retain a partial
+  viewer, and fence an old timer or renderer result from changing a newer revision/view.
 - **Draw.io error:** distinguish oversize admission, `DIAGRAM_EMPTY`, `DIAGRAM_PARSE_FAILED`,
   `DIAGRAM_LIMIT`, and `DIAGRAM_RENDER_TIMEOUT`. `DIAGRAM_LIMIT` also truthfully covers the phase-one
   rejection of image-bearing graphs. Worker/viewer failures never mount a partial graph; Shell
@@ -1224,8 +1322,13 @@ format, large-directory resource, locator, and file-association verification in 
   remains explicitly previewable and filename-searchable where its scope permits, but its body is
   title-only and never enters the content index.
 - **Selected file changed:** after the final 400ms-trailing committed watch revision, automatically
-  rerender that file if it is still selected; stale reads and prior selections/workspaces cannot
-  install, and delete/recreate progresses through typed missing then the newer content.
+  rerender that file if it is still selected *and* its own authority `size`/`modifiedAt` moved;
+  stale reads and prior selections/workspaces cannot install, and delete/recreate progresses through
+  typed missing then the newer content. A commit that leaves the selected file untouched — including
+  a full reconcile triggered by an unrelated delete, rename, or temp-file save — never rebuilds it.
+- **Selected item deleted:** the Preview stops rendering the removed content and reports its typed
+  missing state, while the Project tree moves its selection to the row that took the deleted row's
+  place and centres it; expansion and every other row stay untouched.
 - **Unavailable recent directory:** a missing, invalid, non-directory, or unreadable stored
   candidate is CAS-cleared to `null` and returns the empty state without exposing its path.
 - **SQLite unavailable:** recent-directory restore returns `null`; explicit folder and OS file
@@ -1246,6 +1349,24 @@ them.
   host/workspace and sends absolute root/database paths only inside the private capability-bound
   file-search XPC initialization request. The hidden preload returns only relative metadata and
   aggregate telemetry.
+- Project native actions use a third pairwise-distinct preload capability bound to the exact hidden
+  runtime instance and workspace generation. Main accepts no renderer-supplied absolute path and
+  performs no Project `lstat`/`realpath`/`stat`/`open`/`unlink`; it consumes a strictly validated
+  private authorization result only for the immediate native effect. Prepared Delete grants are
+  bounded, one-shot, pin a read-only handle, use same-parent quarantine isolation and are actively
+  revoked on cancel, rebind, runtime replacement, timeout, unload, or host close. Portable Node has
+  no unlink-by-handle primitive, so this contract covers ordinary replacement races and an untrusted
+  renderer; it does not claim absolute protection from a hostile same-UID local process that can
+  discover and replace the private quarantine entry itself.
+- Office uses a separate unguessable preload capability and one-shot grant. Main validates only the
+  in-memory host/runtime/selection/adapter and performs no `fs` open/stat/realpath/read/stream or
+  Office parsing. The hidden preload owns containment, identity and the asynchronous bounded read;
+  the visible bridge has
+  no arbitrary path method and returns only the exact current revision's bytes or a typed error.
+  Reads are single-generation, capped at 25 MiB, `O_NOFOLLOW`, regular-file/containment checked and
+  identity checked before and after. Existing XPC structured-clones results through its Main broker,
+  so the preload uses serial bounded frames rather than one whole-file response; parallel reads and
+  stale full-buffer retention are forbidden.
 - Never give arbitrary web content an OnlyPreview preload. Raw HTML/PDF receives no preload,
   `additionalArguments`, host/runtime token, XPC, Node, or Electron API, and never shares the
   Bitterless application session.
@@ -1259,14 +1380,19 @@ them.
   resources, are generation-guarded so a late teardown cannot unhandle a newer revision, and are
   removed with all streams/tokens revoked before the view is destroyed; the session's connections,
   storage, and cache are discarded whenever no raw view is mounted on it.
-- A PDF is served by Chromium's network service, not by Main-process reads: the revision's token
-  response resolves and re-verifies the file identity per request and then delegates the admitted
-  byte range to `net.fetch` on the resolved real path, synthesizing the `206`/`Content-Range`/
-  `Content-Length` contract. The byte-counting ceiling and post-stream re-`stat` do not apply to that
-  path; every other adapter keeps in-process streaming and its ceilings.
-- `chromium-pdf` becomes `ready` only once the viewer's own document frame exists at the navigation
-  URL. A finished navigation alone is not readiness — a blank viewer also finishes loading — and a
-  bounded wait that never sees the frame publishes `PDF_VIEWER_UNAVAILABLE`.
+- A PDF is served through the same session-scoped custom protocol as other assets. Main validates
+  the token and Range contract but receives no path or handle; the hidden preload opens and
+  re-verifies the admitted range and supplies pull-driven bounded frames. Concurrent Chromium Range
+  sessions are independent and remain selection-generation fenced.
+- `chromium-pdf` becomes `ready` only once the viewer's exact current non-main document frame emits
+  `did-frame-finish-load` at the navigation URL. Mere frame existence and main-frame completion are
+  not readiness — PDFium can still have zero loaded pages and discard an early Find — while a
+  bounded wait that never reaches exact frame ready publishes `PDF_VIEWER_UNAVAILABLE`. An entered
+  pending Find query dispatches once on this ready transition through the existing request fences.
+  Task 100 is `implemented; owner verification pending`;
+  [independent review 1](../plan/reviews/onlypreview-pdf-search-overlay-find-100-1.md) recorded
+  **PASS** for exact frame readiness, pending Find replay, full-window Search z-order, transparent
+  dismissal, listener cleanup, and revision fencing.
 - Raw HTML may execute inline and contained relative code, but remote network is denied by request
   filtering, response CSP, disabled DNS prefetch, an awaited unavailable proxy, and restricted
   WebRTC IP policy. Permissions, popups, downloads, redirects, `file:`, traversal, encoded
@@ -1274,9 +1400,15 @@ them.
 - Public presentation snapshots and events never contain an asset/document URL. Events are
   host-only nudges; Shell refetches a public snapshot, and only the exact current runtime-token-bound
   Vue renderer can refetch its media asset URL. No renderer-authored revision is trusted.
-- File operations are read-only and capability-scoped. No broad filesystem API is exposed. Main
-  never traverses or reads searchable content; the hidden file-search preload opens only contained
-  workspace-relative paths and keeps its persistent database below application user data.
+- Project-content operations are capability-scoped. No broad filesystem API is exposed. Main does
+  not open, read, buffer, stream or mutate potentially large project files; the hidden file-search
+  preload opens only contained workspace-relative search paths, Project-authorized native-action
+  targets, exact current Office grants, or exact non-Office selection/source sessions, and keeps
+  its persistent database below application user data. Existing small bounded window-state,
+  settings, shim and logging persistence remains in Main. The only project mutation is the
+  separately confirmed, identity-fenced Project Delete contract above. The final data-path audit
+  and [independent review](../plan/reviews/onlypreview-main-fs-boundary-audit-087-1.md) passed with
+  no P1, P2 or P3 finding.
 - The file-search SQLite database is deliberately plaintext. It never requests or inherits the
   Core SQLite/SQLCipher key, and its database/WAL/SHM files rely only on the user's local OS file
   permissions. This exception applies only to the rebuildable search index; it does not downgrade
@@ -1331,8 +1463,8 @@ them.
   abort on revocation.
 - Office unit/source tests cover all three adapter IDs and extensions, each format's required OOXML
   part, preflight-before-import, ArrayBuffer transfer, the 10-second Worker timeout, the three exact
-  dynamic subpath imports/viewer constructors, explicit worker/offline/resource options, typed
-  parse/empty/render-timeout failures, lifecycle destruction, current runtime/revision fencing, and
+  dynamic subpath imports/viewer constructors, host-2D/offline/resource options, typed
+  parse/empty/render/render-timeout failures, lifecycle destruction, current runtime/revision fencing, and
   `findText` plus next/previous/clear with persistent all-match/active highlighting. Production
   build audit proves the engine and per-format WASM/worker assets remain outside the initial Vue
   chunk.

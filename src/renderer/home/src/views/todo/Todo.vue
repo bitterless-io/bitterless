@@ -21,7 +21,13 @@ onMounted(async () => {
     if (!mounted) await todoWindowEmitter.hideTodoView();
   } catch (error) {
     console.error('[Todo] Todo runtime is unavailable:', error);
-    if (mounted) Message.error(i18nHelper.todo.runtimeUnavailable);
+    // No authenticated customer is the normal state of an install that has never signed in, so it
+    // must not be reported as a local data runtime failure.
+    if (mounted) {
+      Message.error(
+        authStore.current ? i18nHelper.todo.runtimeUnavailable : i18nHelper.todo.sessionRequired,
+      );
+    }
   }
 });
 

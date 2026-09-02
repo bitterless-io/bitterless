@@ -42,6 +42,40 @@ export const resolveOnlyPreviewTreeFocusPath = (
   return rows[0]?.entry.relativePath || '';
 };
 
+// The tree row a deleted selection hands its selection to: the next surviving visible row, then the
+// previous one, then the closest surviving ancestor, and finally the synthetic workspace root.
+export const resolveOnlyPreviewDeletedSelection = (
+  previousRows: readonly OnlyPreviewTreeRow[],
+  deletedRelativePath: string,
+  hasEntry: (relativePath: string) => boolean
+): string => {
+  const survives = (relativePath: string): boolean =>
+    relativePath !== deletedRelativePath &&
+    !relativePath.startsWith(`${deletedRelativePath}/`) &&
+    hasEntry(relativePath);
+  const deletedIndex = previousRows.findIndex(
+    (row) => row.entry.relativePath === deletedRelativePath
+  );
+  if (deletedIndex >= 0) {
+    for (let offset = deletedIndex + 1; offset < previousRows.length; offset += 1) {
+      if (survives(previousRows[offset].entry.relativePath)) {
+        return previousRows[offset].entry.relativePath;
+      }
+    }
+    for (let offset = deletedIndex - 1; offset > 0; offset -= 1) {
+      if (survives(previousRows[offset].entry.relativePath)) {
+        return previousRows[offset].entry.relativePath;
+      }
+    }
+  }
+  let ancestor = getOnlyPreviewParentPath(deletedRelativePath);
+  while (ancestor) {
+    if (hasEntry(ancestor)) return ancestor;
+    ancestor = getOnlyPreviewParentPath(ancestor);
+  }
+  return '';
+};
+
 const buildOnlyPreviewChildRows = (
   index: OnlyPreviewIndex,
   expandedPaths: ReadonlySet<string>,

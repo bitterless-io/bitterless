@@ -27,8 +27,17 @@ workerScope.onmessage = async (event: MessageEvent<OnlyPreviewOfficePreflightReq
     requestId: request.requestId
   };
   try {
-    await preflightOnlyPreviewOoxml(request.bytes, request.kind);
-    post({ ...identity, type: 'ready', bytes: request.bytes }, [request.bytes]);
+    const result = await preflightOnlyPreviewOoxml(request.bytes, request.kind);
+    post(
+      {
+        ...identity,
+        type: 'ready',
+        bytes: request.bytes,
+        totalUncompressedBytes: result.totalUncompressedBytes,
+        ...(result.xlsxCompatibility ? { xlsxCompatibility: result.xlsxCompatibility } : {})
+      },
+      [request.bytes]
+    );
   } catch (error) {
     const errorCode =
       error instanceof OnlyPreviewOoxmlPreflightError

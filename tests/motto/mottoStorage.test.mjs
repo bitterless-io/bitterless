@@ -132,6 +132,25 @@ test('every persistence operation writes one complete validated array', () => {
   ]);
 });
 
+test('whole-array persistence retains an explicit reordered collection', () => {
+  let serialized = null;
+  const storage = {
+    getItem: () => serialized,
+    setItem: (key, value) => {
+      assert.equal(key, MOTTO_STORAGE_KEY);
+      serialized = value;
+    }
+  };
+  const reordered = [
+    { id: 'third', title: 'Third', subtitle: '' },
+    { id: 'first', title: 'First', subtitle: 'One' },
+    { id: 'second', title: 'Second', subtitle: 'Two' }
+  ];
+
+  assert.deepEqual(persistMottoItems(storage, reordered), reordered);
+  assert.deepEqual(loadMottoItems(storage), reordered);
+});
+
 test('a failed whole-array write raises a typed error', () => {
   const storage = {
     getItem: () => null,

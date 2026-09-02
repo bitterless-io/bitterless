@@ -2,8 +2,11 @@ import { xpcMain } from 'electron-xpc/main'
 import type {
   AgentActivityStep,
   AgentThinkingState,
+  AgentTurnSnapshot,
   CodexDebugEvent
 } from '@maestro-shared/coach.api'
+
+type AgentTurnIdentity = Pick<AgentTurnSnapshot, 'sessionId' | 'turnId' | 'generation'>
 
 const formatDebugDuration = (detail: unknown): string => {
   if (!detail || typeof detail !== 'object' || Array.isArray(detail)) return ''
@@ -17,9 +20,10 @@ const formatDebugDuration = (detail: unknown): string => {
 export const broadcastAgentActivity = (
   phase: AgentActivityStep['phase'],
   label: string,
-  ok = true
+  ok = true,
+  identity?: AgentTurnIdentity
 ): void => {
-  xpcMain.broadcast('coach/agent-activity', { phase, label, ok, ts: Date.now() })
+  xpcMain.broadcast('coach/agent-activity', { phase, label, ok, ts: Date.now(), ...identity })
 }
 
 /** Structured provider/runtime diagnostics for console and the Workbench log stream. */
@@ -34,18 +38,18 @@ export const broadcastCodexDebug = (event: CodexDebugEvent): void => {
 }
 
 /** Streamed assistant text for one normalized Maestro session key. */
-export const broadcastAgentStream = (sessionId: string, delta: string): void => {
+export const broadcastAgentStream = (identity: AgentTurnIdentity, delta: string): void => {
   if (!delta) return
-  xpcMain.broadcast('coach/agent-stream', { sessionId, delta, ts: Date.now() })
+  xpcMain.broadcast('coach/agent-stream', { ...identity, delta, ts: Date.now() })
 }
 
 /** Provider thinking-state transitions for one normalized Maestro session key. */
 export const broadcastAgentThinking = (
-  sessionId: string,
+  identity: AgentTurnIdentity,
   state: Omit<AgentThinkingState, 'sessionId'>
 ): void => {
   xpcMain.broadcast('coach/agent-thinking', {
-    sessionId,
+    ...identity,
     active: state.active,
     ts: state.ts || Date.now()
   })

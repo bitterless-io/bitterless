@@ -14,6 +14,7 @@ const selectedProfile = loadCanonicalRigEnvironment(rootDir);
 assertSelectedRuntimeProfile(rootDir, selectedProfile.viteMode);
 const viteEnv = selectedProfile.viteEnv;
 const viteMode = selectedProfile.viteMode;
+const releaseChannel = selectedProfile.releaseChannel;
 
 const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
 const baseName = pkg._name;
@@ -37,8 +38,11 @@ if (pkg.versionCode != null) {
 
 const isDebug = viteMode === 'debug';
 const isDev = viteEnv === 'dev';
+const isPreview = releaseChannel === 'preview';
 
-if (isDev) {
+if (isPreview) {
+  pkg.name = `${baseName}_PREVIEW`;
+} else if (isDev) {
   pkg.name = isDebug ? `${baseName}_DEBUG_DEV` : `${baseName}_DEV`;
 } else {
   pkg.name = isDebug ? `${baseName}_DEBUG_PROD` : baseName;
@@ -49,27 +53,50 @@ if (pkg._version) {
 }
 
 fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf-8');
-console.log(`[before.js] VITE_ENV=${viteEnv}, VITE_MODE=${viteMode}, package.json name set to: ${pkg.name}, version set to: ${pkg.version}`);
+console.log(`[before.js] VITE_ENV=${viteEnv}, VITE_MODE=${viteMode}, VITE_RELEASE_CHANNEL=${releaseChannel}, package.json name set to: ${pkg.name}, version set to: ${pkg.version}`);
 
 // Generate electron-builder.yml from template
-const productName = isDev ? `${baseName}_DEV` : baseName;
+const productName = isPreview ? `${baseName} Preview` : (isDev ? `${baseName}_DEV` : baseName);
 const executableName = productName;
-const appId = viteEnv === 'dev' ? 'io.bitterless.desktop_dev' : 'io.bitterless.desktop';
+const appId = isPreview
+  ? 'io.bitterless.desktop.preview'
+  : (viteEnv === 'dev' ? 'io.bitterless.desktop_dev' : 'io.bitterless.desktop');
+const artifactStem = isPreview ? `${baseName}-Preview` : productName;
+const outputDirectory = isPreview ? 'dist/preview' : (isDev ? 'dist/dev' : 'dist');
+const iconStem = isPreview ? 'icon-preview' : 'icon';
 
 let builderContent = fs.readFileSync(builderTmpPath, 'utf-8');
 builderContent = builderContent.replace(/^appId:.*$/m, `appId: ${appId}`);
 builderContent = builderContent.replace(/^productName:.*$/m, `productName: ${productName}`);
+builderContent = builderContent.replace(/^(\s+output:).*$/m, `$1 ${outputDirectory}`);
 builderContent = builderContent.replace(/^(\s+executableName:).*$/m, `$1 ${executableName}`);
-builderContent = builderContent.replace(/VITE_ENV_PART/g, '');
+builderContent = builderContent.replace(/^(\s+icon:) build\/icon\.ico$/m, `$1 build/${iconStem}.ico`);
+builderContent = builderContent.replace(/^(\s+icon:) build\/icon\.icns$/m, `$1 build/${iconStem}.icns`);
+builderContent = builderContent.replace(/ARTIFACT_STEM/g, artifactStem);
 
 fs.writeFileSync(builderOutPath, builderContent, 'utf-8');
-console.log(`[before.js] electron-builder.yml generated: appId=${appId}, productName=${productName}, executableName=${executableName}, viteEnv=${viteEnv}`);
+console.log(`[before.js] electron-builder.yml generated: appId=${appId}, productName=${productName}, executableName=${executableName}, output=${outputDirectory}, icon=${iconStem}, releaseChannel=${releaseChannel}`);
 
 // Generate installer.nsh from template
 const installerTmpPath = path.join(rootDir, 'build', 'installer.tmp.nsh');
 const installerNshPath = path.join(rootDir, 'build', 'installer.nsh');
 let installerContent = fs.readFileSync(installerTmpPath, 'utf-8');
 installerContent = installerContent.replace(/EXECUTABLE_NAME/g, executableName);
+const onlyPreviewInstall = [
+  '    WriteRegStr SHCTX "Software\\Classes\\*\\shell\\OnlyPreview" "" "Open in Bitterless"',
+  '    WriteRegStr SHCTX "Software\\Classes\\*\\shell\\OnlyPreview" "Icon" "$INSTDIR\\' + executableName + '.exe"',
+  '    WriteRegStr SHCTX "Software\\Classes\\*\\shell\\OnlyPreview\\command" "" \'"$INSTDIR\\' + executableName + '.exe" "%1"\''
+].join('\n');
+installerContent = installerContent.replace(
+  'ONLY_PREVIEW_INSTALL',
+  isPreview ? '    ; Preview does not own the Stable OnlyPreview shell registration.' : onlyPreviewInstall
+);
+installerContent = installerContent.replace(
+  'ONLY_PREVIEW_UNINSTALL',
+  isPreview
+    ? '    ; Preview must not remove the Stable OnlyPreview shell registration.'
+    : '    DeleteRegKey SHCTX "Software\\Classes\\*\\shell\\OnlyPreview"'
+);
 fs.writeFileSync(installerNshPath, installerContent, 'utf-8');
 console.log(`[before.js] installer.nsh generated from template: executableName=${executableName}`);
 
@@ -85,7 +112,7 @@ if (viteMode === 'release') {
 
 // Write version_info.json to dist/
 const writeVersionInfo = () => {
-  const distDir = path.join(rootDir, 'dist');
+  const distDir = path.join(rootDir, outputDirectory);
   if (!fs.existsSync(distDir)) {
     fs.mkdirSync(distDir, { recursive: true });
   }
@@ -99,12 +126,13 @@ const writeVersionInfo = () => {
   const versionInfo = {
     version: pkg.version,
     versionCode: pkg.version_code,
+    channel: releaseChannel,
     releaseNotes,
   };
 
   const versionInfoPath = path.join(distDir, 'version_info.json');
   fs.writeFileSync(versionInfoPath, JSON.stringify(versionInfo, null, 2) + '\n', 'utf-8');
-  console.log(`[before.js] ✅ version_info.json written to dist/ (version=${pkg.version}, versionCode=${pkg.version_code})`);
+  console.log(`[before.js] ✅ version_info.json written to ${outputDirectory}/ (version=${pkg.version}, versionCode=${pkg.version_code}, channel=${releaseChannel})`);
 };
 
 writeVersionInfo();

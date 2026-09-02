@@ -235,13 +235,15 @@ const moveResultFocus = (offset: -1 | 1): void => {
 };
 
 const handleWorkspaceKeydown = (event: KeyboardEvent): void => {
+  const target = event.target as HTMLElement;
   if (event.key === 'Escape') {
     event.preventDefault();
     void onlyPreviewGlobalSearchStore.handleEscape();
     return;
   }
+  if (target.closest('[name="onlypreview__globalSearchPreviewPane"]')) return;
   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-    if ((event.target as HTMLElement).getAttribute('role') === 'separator') return;
+    if (target.getAttribute('role') === 'separator') return;
     event.preventDefault();
     moveResultFocus(event.key === 'ArrowDown' ? 1 : -1);
     return;

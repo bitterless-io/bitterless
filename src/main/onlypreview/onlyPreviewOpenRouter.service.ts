@@ -31,20 +31,18 @@ export const resolveOnlyPreviewOpenTargets = (
     workingDirectory?: string;
   }
 ): string[] => {
+  const explicitPrefix = '--onlypreview-open=';
+  const unique = new Set(
+    argv
+      .filter((value) => value.startsWith(explicitPrefix))
+      .map((value) => value.slice(explicitPrefix.length))
+      .filter((value) => isAbsolute(value))
+  );
   if (!options.packaged) {
-    const prefix = '--onlypreview-open=';
-    return [
-      ...new Set(
-        argv
-          .filter((value) => value.startsWith(prefix))
-          .map((value) => value.slice(prefix.length))
-          .filter((value) => isAbsolute(value))
-      )
-    ];
+    return [...unique];
   }
-  if (options.platform !== 'win32') return [];
+  if (options.platform !== 'win32') return [...unique];
   const workingDirectory = options.workingDirectory;
-  const unique = new Set<string>();
   for (let index = 1; index < argv.length; index += 1) {
     const candidate = argv[index];
     if (!candidate) continue;
@@ -60,6 +58,28 @@ export const resolveOnlyPreviewOpenTargets = (
     if (absoluteTarget) unique.add(absoluteTarget);
   }
   return [...unique];
+};
+
+export class OnlyPreviewTargetMutationQueue {
+  private chain: Promise<void> = Promise.resolve();
+
+  run<T>(operation: () => Promise<T>): Promise<T> {
+    const task = this.chain.then(operation);
+    this.chain = task.then(
+      () => undefined,
+      () => undefined
+    );
+    return task;
+  }
+}
+
+export const serializeOnlyPreviewOpenTarget = <TContext = undefined>(
+  openTarget: (target: string, context: TContext) => Promise<void>,
+  mutations = new OnlyPreviewTargetMutationQueue()
+): ((target: string, context?: TContext) => Promise<void>) => {
+  return (target, context) => {
+    return mutations.run(async () => await openTarget(target, context as TContext));
+  };
 };
 
 export class OnlyPreviewOpenQueue {

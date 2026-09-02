@@ -233,9 +233,10 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     this.broadcastTabs()
   }
 
-  async openStartupTabIfNeeded(): Promise<void> {
+  async openStartupTabIfNeeded(params?: { skipForThisBoot?: boolean }): Promise<void> {
     if (this.startupTabOpened) return
     this.startupTabOpened = true
+    if (params?.skipForThisBoot) return
     const settings = this._state.readMaestroSettings()
     if (!this._state.hasCustomStartUrl()) return
     const url = settings.startUrl

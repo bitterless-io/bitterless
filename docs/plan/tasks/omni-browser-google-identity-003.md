@@ -1,7 +1,7 @@
 ---
 id: omni-browser-google-identity-003
 scope: provider-scoped remote-browser identity in Omni cells
-status: implemented; owner verification pending
+status: superseded by omni-native-browser-identity-006
 depends-on: []
 verify:
   - default-profile browser cells keep untouched Electron identity in persist:omni
@@ -12,6 +12,10 @@ verify:
 ---
 
 # Omni Browser Google Identity
+
+> Historical delivery: the later global UA-CH shim and this task's Google-specific UA contract are
+> both superseded by `omni-native-browser-identity-006`, which keeps both browser partitions on
+> native Electron/Chromium identity.
 
 ## Objective
 

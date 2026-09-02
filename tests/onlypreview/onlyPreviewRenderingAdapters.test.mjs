@@ -31,10 +31,7 @@ test('DOCX renders through the shared Office component instead of unsupported me
 });
 
 test('DOCX creates one revision-bound OOXML session and waits for Office readiness', async () => {
-  const descriptor = {
-    ...officeDescriptor('.docx', 'document'),
-    assetUrl: `bitterless-preview://asset/${'d'.repeat(64)}/71-document`
-  };
+  const descriptor = officeDescriptor('.docx', 'document');
   const presentation = {
     ...officePresentation(descriptor, 71, 'ooxml-docx'),
     selectedTextAvailable: true
@@ -57,17 +54,18 @@ test('DOCX creates one revision-bound OOXML session and waits for Office readine
       hostId: harness.officeSessions[0].options.hostId,
       selectionRevision: harness.officeSessions[0].options.selectionRevision,
       kind: harness.officeSessions[0].options.kind,
-      assetUrl: harness.officeSessions[0].options.assetUrl,
       expectedSize: harness.officeSessions[0].options.expectedSize
     },
     {
       hostId: 'host-for-tests',
       selectionRevision: 71,
       kind: 'docx',
-      assetUrl: descriptor.assetUrl,
       expectedSize: 4096
     }
   );
+  assert.equal(Object.hasOwn(harness.officeSessions[0].options, 'assetUrl'), false);
+  assert.equal((await harness.officeSessions[0].options.readBytes()).byteLength, 4096);
+  assert.deepEqual(harness.officeReads, [{ selectionRevision: 71 }]);
   assert.equal(harness.readText.length, 0);
   assert.equal(harness.ready.length, 0);
   assert.equal(harness.errors.length, 0);
@@ -76,15 +74,18 @@ test('DOCX creates one revision-bound OOXML session and waits for Office readine
   store.reportOfficeReady('71');
   await new Promise((resolveWait) => setImmediate(resolveWait));
   assert.equal(store.loading, false);
-  assert.deepEqual(harness.ready.map(({ request }) => request), [
-    {
-      hostToken: 'host-token-for-tests',
-      previewRuntimeToken: 'preview-runtime-token-for-tests',
-      selectionRevision: 71,
-      findCoverage: { kind: 'complete' },
-      findAdapter: 'office'
-    }
-  ]);
+  assert.deepEqual(
+    harness.ready.map(({ request }) => request),
+    [
+      {
+        hostToken: 'host-token-for-tests',
+        previewRuntimeToken: 'preview-runtime-token-for-tests',
+        selectionRevision: 71,
+        findCoverage: { kind: 'complete' },
+        findAdapter: 'office'
+      }
+    ]
+  );
   store.dispose();
   assert.equal(harness.officeDisposals, 1);
 });
@@ -210,10 +211,7 @@ test('all Office formats create the matching lazy OOXML session and report compl
     ['.pptx', 'presentation', 'ooxml-pptx', 'pptx']
   ];
   for (const [index, [extension, descriptorKind, adapterId, sessionKind]] of formats.entries()) {
-    const descriptor = {
-      ...officeDescriptor(extension, descriptorKind),
-      assetUrl: `bitterless-preview://asset/${'a'.repeat(64)}/${index + 1}-office`
-    };
+    const descriptor = officeDescriptor(extension, descriptorKind);
     const presentation = officePresentation(descriptor, index + 10, adapterId);
     const harness = createRendererStoreHarness(presentation);
     globalThis.__onlyPreviewRendererStoreHarness = harness;
@@ -229,10 +227,16 @@ test('all Office formats create the matching lazy OOXML session and report compl
     assert.equal(store.loading, true, extension);
     assert.equal(harness.officeSessions.length, 1, extension);
     assert.equal(harness.officeSessions[0].options.hostId, 'host-for-tests');
-    assert.equal(harness.officeSessions[0].options.selectionRevision, presentation.selectionRevision);
+    assert.equal(
+      harness.officeSessions[0].options.selectionRevision,
+      presentation.selectionRevision
+    );
     assert.equal(harness.officeSessions[0].options.kind, sessionKind);
-    assert.equal(harness.officeSessions[0].options.assetUrl, descriptor.assetUrl);
+    assert.equal(harness.officeSessions[0].options.sourceExtension, extension);
+    assert.equal(Object.hasOwn(harness.officeSessions[0].options, 'assetUrl'), false);
     assert.equal(harness.officeSessions[0].options.expectedSize, 4096);
+    assert.equal((await harness.officeSessions[0].options.readBytes()).byteLength, 4096);
+    assert.deepEqual(harness.officeReads, [{ selectionRevision: presentation.selectionRevision }]);
     assert.equal(harness.ready.length, 0, extension);
     assert.equal(harness.errors.length, 0, extension);
 
@@ -250,10 +254,7 @@ test('all Office formats create the matching lazy OOXML session and report compl
 });
 
 test('a current Office runtime failure clears ready truth and reports one typed failure', async () => {
-  const descriptor = {
-    ...officeDescriptor('.pptx', 'presentation'),
-    assetUrl: `bitterless-preview://asset/${'c'.repeat(64)}/81-presentation`
-  };
+  const descriptor = officeDescriptor('.pptx', 'presentation');
   const presentation = officePresentation(descriptor, 81, 'ooxml-pptx');
   const harness = createRendererStoreHarness(presentation);
   harness.reportErrorPromise = new Promise(() => {});
@@ -292,10 +293,7 @@ test('a current Office runtime failure clears ready truth and reports one typed 
 });
 
 test('an old Office session failure after selection change is silent', async () => {
-  const firstDescriptor = {
-    ...officeDescriptor('.xlsx', 'sheet'),
-    assetUrl: `bitterless-preview://asset/${'d'.repeat(64)}/91-workbook`
-  };
+  const firstDescriptor = officeDescriptor('.xlsx', 'sheet');
   const firstPresentation = officePresentation(firstDescriptor, 91, 'ooxml-xlsx');
   const harness = createRendererStoreHarness(firstPresentation);
   globalThis.__onlyPreviewRendererStoreHarness = harness;
@@ -309,8 +307,7 @@ test('an old Office session failure after selection change is silent', async () 
   const nextDescriptor = {
     ...officeDescriptor('.xlsx', 'sheet'),
     relativePath: 'fixtures/next.xlsx',
-    name: 'next.xlsx',
-    assetUrl: `bitterless-preview://asset/${'e'.repeat(64)}/92-workbook`
+    name: 'next.xlsx'
   };
   harness.presentation = officePresentation(nextDescriptor, 92, 'ooxml-xlsx');
   harness.subscriptions.get('onlypreview/previewPresentation')({
@@ -331,10 +328,7 @@ test('an old Office session failure after selection change is silent', async () 
 });
 
 test('Office surface errors install local truth and dispose before Main reporting settles', async () => {
-  const descriptor = {
-    ...officeDescriptor('.xlsx', 'sheet'),
-    assetUrl: `bitterless-preview://asset/${'b'.repeat(64)}/77-workbook`
-  };
+  const descriptor = officeDescriptor('.xlsx', 'sheet');
   const presentation = officePresentation(descriptor, 77, 'ooxml-xlsx');
   const harness = createRendererStoreHarness(presentation);
   harness.reportErrorPromise = new Promise(() => {});

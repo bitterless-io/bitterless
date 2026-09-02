@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 /**
- * Convert build/icon.png to build/icon.icns and build/icon.ico
- * Usage: node scripts/convertIcon.js
+ * Convert a build PNG to matching ICNS and ICO files.
+ * Usage: node scripts/convertIcon.js [input.png] [output-stem]
  */
 
 const sharp = require('sharp');
@@ -11,7 +11,8 @@ const fs = require('fs');
 const { execSync } = require('child_process');
 
 const BUILD_DIR = path.resolve(__dirname, '..', 'build');
-const INPUT = path.join(BUILD_DIR, 'icon.png');
+const INPUT = process.argv[2] ? path.resolve(process.argv[2]) : path.join(BUILD_DIR, 'icon.png');
+const OUTPUT_STEM = process.argv[3] || path.parse(INPUT).name;
 
 // ICO sizes (standard Windows icon sizes)
 const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256];
@@ -41,10 +42,10 @@ async function generateIcns() {
     await sharp(INPUT).resize(size, size).png().toFile(path.join(iconsetDir, name));
   }
 
-  const output = path.join(BUILD_DIR, 'icon.icns');
+  const output = path.join(BUILD_DIR, `${OUTPUT_STEM}.icns`);
   execSync(`iconutil -c icns "${iconsetDir}" -o "${output}"`);
   fs.rmSync(tmpDir, { recursive: true, force: true });
-  console.log('  ✓ icon.icns');
+  console.log(`  ✓ ${OUTPUT_STEM}.icns`);
 }
 
 /**
@@ -83,10 +84,10 @@ async function generateIco() {
     dataOffset += img.data.length;
   }
 
-  const output = path.join(BUILD_DIR, 'icon.ico');
+  const output = path.join(BUILD_DIR, `${OUTPUT_STEM}.ico`);
   const ico = Buffer.concat([header, ...dirEntries, ...images.map((i) => i.data)]);
   fs.writeFileSync(output, ico);
-  console.log('  ✓ icon.ico');
+  console.log(`  ✓ ${OUTPUT_STEM}.ico`);
 }
 
 async function main() {

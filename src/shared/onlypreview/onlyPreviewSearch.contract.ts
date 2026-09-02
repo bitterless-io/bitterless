@@ -2,6 +2,8 @@ import {
   ONLY_PREVIEW_SEARCH_MAX_RESULTS,
   type OnlyPreviewBrowseDirectoryRequest,
   type OnlyPreviewGlobalSearchPreviewRequest,
+  type OnlyPreviewGlobalSearchOfficeReadChunkRequest,
+  type OnlyPreviewGlobalSearchOfficeReadRequest,
   type OnlyPreviewSearchCancelRequest,
   type OnlyPreviewSearchInitializeRequest,
   type OnlyPreviewSearchPrioritizeFileRequest,
@@ -165,6 +167,48 @@ export const parseOnlyPreviewGlobalSearchPreviewRequest = (
     generation: expectGeneration(record.generation),
     requestId: expectToken(record.requestId, 'Search request ID'),
     resultToken: expectToken(record.resultToken, 'Search result capability')
+  };
+};
+
+export const parseOnlyPreviewGlobalSearchOfficeReadRequest = (
+  value: unknown
+): OnlyPreviewGlobalSearchOfficeReadRequest => {
+  const record = expectRecord(value, 'Global search Office read request');
+  expectExactKeys(
+    record,
+    ['generation', 'hostToken', 'readGrant', 'requestId', 'resultToken', 'workspaceId'],
+    'Global search Office read request'
+  );
+  return {
+    hostToken: expectToken(record.hostToken, 'Host capability'),
+    workspaceId: expectToken(record.workspaceId, 'Workspace capability'),
+    generation: expectGeneration(record.generation),
+    requestId: expectToken(record.requestId, 'Search request ID'),
+    resultToken: expectToken(record.resultToken, 'Search result capability'),
+    readGrant: expectToken(record.readGrant, 'Search Office read grant')
+  };
+};
+
+export const parseOnlyPreviewGlobalSearchOfficeReadChunkRequest = (
+  value: unknown
+): OnlyPreviewGlobalSearchOfficeReadChunkRequest => {
+  const record = expectRecord(value, 'Global search Office chunk request');
+  expectExactKeys(
+    record,
+    ['generation', 'hostToken', 'offset', 'readGrant', 'requestId', 'resultToken', 'workspaceId'],
+    'Global search Office chunk request'
+  );
+  if (!Number.isSafeInteger(record.offset) || (record.offset as number) < 0) {
+    throw new OnlyPreviewContractError('INVALID_INPUT', 'Search Office read offset is invalid.');
+  }
+  return {
+    hostToken: expectToken(record.hostToken, 'Host capability'),
+    workspaceId: expectToken(record.workspaceId, 'Workspace capability'),
+    generation: expectGeneration(record.generation),
+    requestId: expectToken(record.requestId, 'Search request ID'),
+    resultToken: expectToken(record.resultToken, 'Search result capability'),
+    readGrant: expectToken(record.readGrant, 'Search Office read grant'),
+    offset: record.offset as number
   };
 };
 

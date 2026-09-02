@@ -1,7 +1,7 @@
 ---
 id: maestro-turn-steering-073
 scope: Maestro main-side steering policy, pi delivery wiring, and busy-gate entry for in-turn steering
-status: pending
+status: superseded by maestro-cowork-chat-core-089
 depends-on: []
 verify:
   - Policy returns steer while streaming and followUp while compacting, with a pending steering message, or while aborting
@@ -18,6 +18,10 @@ verify:
 ---
 
 # Maestro main 侧 steering —— 策略 · 投递 · busy 入口
+
+> Superseded: current Cowork steering is integrated with its Turn/status/task model. Implement
+> [`maestro-cowork-chat-core-089`](maestro-cowork-chat-core-089.md) instead of changing the obsolete
+> Maestro `busy` architecture in isolation.
 
 ## Objective
 

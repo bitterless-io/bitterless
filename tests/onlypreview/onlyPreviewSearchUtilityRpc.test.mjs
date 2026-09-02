@@ -164,6 +164,9 @@ const shellChainRuntime = await import(pathToFileURL(shellChainBundlePath).href)
 after(() => rmSync(buildRoot, { recursive: true, force: true }));
 
 const capability = 'a'.repeat(43);
+const officeReadCapability = 'o'.repeat(43);
+const projectAuthorityCapability = 'p'.repeat(43);
+const previewReadCapability = 'v'.repeat(43);
 const workspaceId = 'workspace-current';
 const generation = 4;
 const entry = {
@@ -384,7 +387,7 @@ test('file-search XPC channel names are capability-bound in both directions', ()
   );
 });
 
-test('hidden preload registers only capability-bound XPC handler names', async () => {
+test('hidden preload registers pairwise-independent Search, Office, and Project authority handlers', async () => {
   const originalArgv = process.argv;
   globalThis.__fileSearchRegisteredHandlers = [];
   globalThis.__fileSearchEventHandlers = [];
@@ -394,13 +397,21 @@ test('hidden preload registers only capability-bound XPC handler names', async (
     originalArgv[0],
     originalArgv[1],
     `--file-search-capability=${capability}`,
+    `--file-search-office-read-capability=${officeReadCapability}`,
+    `--file-search-project-authority-capability=${projectAuthorityCapability}`,
+    `--file-search-preview-read-capability=${previewReadCapability}`,
     '--file-search-instance=123e4567-e89b-42d3-a456-426614174000'
   ];
   try {
     const preload = await import(pathToFileURL(preloadBundlePath).href);
     assert.ok(preload.fileSearchRuntime);
+    assert.ok(preload.officeReadRuntime);
+    assert.ok(preload.projectAuthorityRuntime);
     assert.deepEqual(globalThis.__fileSearchRegisteredHandlers, [
-      runtime.fileSearchRuntimeHandlerName(capability)
+      runtime.fileSearchRuntimeHandlerName(capability),
+      `OnlyPreviewOfficeReadRuntime_${officeReadCapability}`,
+      `OnlyPreviewFileAuthorityRuntime_${projectAuthorityCapability}`,
+      `OnlyPreviewPreviewReadRuntime_${previewReadCapability}`
     ]);
     assert.deepEqual(globalThis.__fileSearchEventHandlers, [
       runtime.fileSearchRuntimeEventHandlerName(capability)
@@ -425,20 +436,30 @@ test('hidden preload defers exact-target XPC registration until its document URL
     originalArgv[0],
     originalArgv[1],
     `--file-search-capability=${capability}`,
+    `--file-search-office-read-capability=${officeReadCapability}`,
+    `--file-search-project-authority-capability=${projectAuthorityCapability}`,
+    `--file-search-preview-read-capability=${previewReadCapability}`,
     '--file-search-instance=123e4567-e89b-42d3-a456-426614174000'
   ];
   try {
     delete loadModule.cache[loadModule.resolve(preloadBundlePath)];
     const preload = loadModule(preloadBundlePath);
     assert.equal(preload.fileSearchRuntime, null);
+    assert.equal(preload.officeReadRuntime, null);
+    assert.equal(preload.projectAuthorityRuntime, null);
     assert.deepEqual(globalThis.__fileSearchRegisteredHandlers, []);
     assert.equal(typeof listeners.get('DOMContentLoaded'), 'function');
 
     globalThis.location.pathname = '/fileSearch/index.html';
     listeners.get('DOMContentLoaded')();
     assert.ok(preload.fileSearchRuntime);
+    assert.ok(preload.officeReadRuntime);
+    assert.ok(preload.projectAuthorityRuntime);
     assert.deepEqual(globalThis.__fileSearchRegisteredHandlers, [
-      runtime.fileSearchRuntimeHandlerName(capability)
+      runtime.fileSearchRuntimeHandlerName(capability),
+      `OnlyPreviewOfficeReadRuntime_${officeReadCapability}`,
+      `OnlyPreviewFileAuthorityRuntime_${projectAuthorityCapability}`,
+      `OnlyPreviewPreviewReadRuntime_${previewReadCapability}`
     ]);
     assert.deepEqual(globalThis.__fileSearchEventHandlers, [
       runtime.fileSearchRuntimeEventHandlerName(capability)

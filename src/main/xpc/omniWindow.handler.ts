@@ -1,5 +1,9 @@
 import { XpcMainHandler, createXpcMainEmitter } from 'electron-xpc/main';
 import { omniWindowHelper } from '../windows/omniWindow.helper';
+import type {
+  OmniRendererMountedReadyParams,
+  OmniRendererMountedReadyResult,
+} from '../windows/omniWindow.helper';
 import type { OmniLayoutConfig, OmniPaneNode } from '@shared/omni/omni.types';
 import type { SettingDao } from '@preload/sqlite/dao/setting.dao';
 
@@ -7,20 +11,22 @@ const settingEmitter = createXpcMainEmitter<SettingDao>('SettingDao');
 const LAYOUT_KEY = 'omni_layout';
 
 class OmniWindowHandler extends XpcMainHandler {
-  async openOmniWindow(): Promise<void> {
+  async openOmniWindow(): Promise<{ opened: boolean }> {
     console.log('[OmniWindowHandler] openOmniWindow called');
-    if (omniWindowHelper.baseWindow && !omniWindowHelper.baseWindow.isDestroyed()) {
-      console.log('[OmniWindowHandler] baseWindow exists, focusing');
-      omniWindowHelper.show();
-      return;
+    try {
+      await omniWindowHelper.create();
+      console.log('[OmniWindowHandler] omni window ready');
+      return { opened: true };
+    } catch (error) {
+      console.error('[OmniWindowHandler] omni window failed to open:', error);
+      return { opened: false };
     }
-    if (omniWindowHelper.isCreating) {
-      console.log('[OmniWindowHandler] create already in progress, ignoring duplicate open');
-      return;
-    }
-    console.log('[OmniWindowHandler] creating new omni window');
-    await omniWindowHelper.create();
-    console.log('[OmniWindowHandler] omni window created');
+  }
+
+  async rendererMountedReady(
+    params: OmniRendererMountedReadyParams,
+  ): Promise<OmniRendererMountedReadyResult> {
+    return omniWindowHelper.markRendererMountedReady(params);
   }
 
   async updateLayout(params: { tree: OmniPaneNode }): Promise<void> {

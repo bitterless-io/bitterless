@@ -18,7 +18,7 @@ const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
 }
 
 const OPENAI_CODEX_MODELS = ['gpt-5.5', 'gpt-5.6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra'] as const
-const LOCAL_CLAUDE_MODELS = ['claude-sonnet', 'claude-opus', 'claude-haiku'] as const
+const LOCAL_CLAUDE_MODELS = ['claude-sonnet', 'claude-opus'] as const
 
 export class CoachSettingsService {
   private readonly file: string
