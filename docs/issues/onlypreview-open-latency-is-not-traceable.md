@@ -1,6 +1,6 @@
 # OnlyPreview open latency is not fully traceable
 
-Status: reopened; packaged hidden-Shell and missing-directory regressions confirmed; fix in progress
+Status: implemented; owner packaged verification pending
 
 ## Observed behavior
 
@@ -136,5 +136,6 @@ performance behavior is changed. The 80-second Project reconciliation is a separ
   first-visible on reconciliation.
 
 [desktop-first-visible-performance-117](../plan/tasks/desktop-first-visible-performance-117.md)
-shows the native graph immediately after Shell attachment and removes the renderer timer as the
-only restored-Project initialization path.
+now shows the native graph immediately after Shell attachment and removes the renderer timer as the
+only restored-Project initialization path;
+[independent review 1](../plan/reviews/desktop-first-visible-performance-117-1.md) passed.

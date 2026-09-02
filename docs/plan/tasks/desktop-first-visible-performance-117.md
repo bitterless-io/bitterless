@@ -1,7 +1,7 @@
 ---
 id: desktop-first-visible-performance-117
 scope: Restore near-instant first-visible startup for Maestro, Omni Browser, and OnlyPreview
-status: in-progress
+status: implemented; owner packaged verification pending
 depends-on: [maestro-open-diagnostics-113, omni-open-readiness-112, onlypreview-open-diagnostics-114]
 verify: node --test tests/maestro/*.test.mjs tests/omni/*.test.mjs tests/onlypreview/onlyPreviewOpenDiagnostics.test.mjs tests/onlypreview/onlyPreviewDeferredIndex.test.mjs && yarn typecheck:node && yarn vue-tsc --noEmit --noCheck -p tsconfig.web.json --composite false && node scripts/environment/runWithRuntimeProfile.cjs release_preview -- yarn _build:release && git diff --check
 ---
@@ -87,3 +87,21 @@ opens.
 - Confirm OnlyPreview publishes the restored Project directory before full reconciliation ends.
 - Rapidly click Omni Open twice and confirm one graph, one eventual success response, and a usable
   address field.
+
+## Delivery
+
+- Maestro now shows after Shell/Home host mount. Control, pinned Home/startup navigation, delayed
+  Workbench creation, and spare prewarm settle through a separately observed background promise;
+  rejection is diagnosed without destroying the primary window. Local Home/Workbench Settings and
+  each Settings panel are lazy, keeping System Prompt's Monaco out of startup chunks.
+- Omni shows/focuses immediately after restored native views are attached, then retains the same
+  single-flight top/browser load and mount gate for Open feedback. Cold readiness completion cannot
+  focus the window a second time; deferred content and Control remain generation-owned.
+- OnlyPreview shows immediately after Shell attachment/bounds. Restored Project indexing moves from
+  a throttled 750ms renderer timer to a cancelable microtask, so the existing early root listing can
+  populate the directory before full reconciliation. Renderer receipt no longer steals focus.
+- Focused tests passed Maestro 16/16, Omni 55/55, and OnlyPreview 28/28. Node/Web type checks,
+  Maestro CLI integration, the final Preview-profile production build, and `git diff --check`
+  passed. Electron/E2E and packaged runtime were not run.
+- [Independent review 1](../reviews/desktop-first-visible-performance-117-1.md) passed after its P1
+  focus-restoration and P2 background-diagnostic findings were fixed; no P0--P3 remained.

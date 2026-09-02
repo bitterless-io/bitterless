@@ -1,6 +1,6 @@
 # Omni Open returns before the browser is ready
 
-Status: reopened; packaged hidden-renderer scheduling regression confirmed; fix in progress
+Status: implemented; owner packaged verification pending
 
 ## Observed behavior
 
@@ -114,6 +114,6 @@ changing visibility, throttling, or restore order.
   not the observed first-window bottleneck.
 
 [desktop-first-visible-performance-117](../plan/tasks/desktop-first-visible-performance-117.md)
-therefore moves native show/focus immediately after restore/view attachment, while retaining the
-shared in-flight readiness promise so rapid repeated Open still joins one graph until local chrome
-is usable.
+now moves native show/focus immediately after restore/view attachment, while retaining the shared
+in-flight readiness promise so rapid repeated Open still joins one graph until local chrome is
+usable; [independent review 1](../plan/reviews/desktop-first-visible-performance-117-1.md) passed.

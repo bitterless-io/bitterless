@@ -4,11 +4,16 @@ export class OnlyPreviewDeferredIndexService {
   private pending = false;
   private generation = 0;
   private diagnostic: { tag: string; startedAt: number; generation: number } | null = null;
+  private readonly diagnostics: OnlyPreviewSearchDiagnostics;
+  private readonly scheduleMicrotask: (run: () => void) => void;
 
   constructor(
-    private readonly diagnostics: OnlyPreviewSearchDiagnostics,
-    private readonly scheduleMicrotask: (run: () => void) => void = queueMicrotask
-  ) {}
+    diagnostics: OnlyPreviewSearchDiagnostics,
+    scheduleMicrotask: (run: () => void) => void = queueMicrotask
+  ) {
+    this.diagnostics = diagnostics;
+    this.scheduleMicrotask = scheduleMicrotask;
+  }
 
   async run(
     deferred: boolean,

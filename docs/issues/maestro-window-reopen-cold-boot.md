@@ -1,6 +1,6 @@
 # Maestro window reopen performs a full cold boot
 
-Status: reopened; packaged cold-first-visible regression confirmed; fix in progress
+Status: implemented; owner packaged verification pending
 
 ## Observed behavior
 
@@ -70,5 +70,6 @@ Diagnostic task:
 
 The corrective contract is tracked by
 [desktop-first-visible-performance-117](../plan/tasks/desktop-first-visible-performance-117.md):
-show the mounted primary graph first, keep optional startup progressive/non-destructive, and lazy
-load Settings-only heavy bundles. The retained-runtime close/reopen behavior remains unchanged.
+now shows the mounted primary graph first, keeps optional startup progressive/non-destructive, and
+lazy-loads Settings-only heavy bundles. The retained-runtime close/reopen behavior remains
+unchanged; [independent review 1](../plan/reviews/desktop-first-visible-performance-117-1.md) passed.
