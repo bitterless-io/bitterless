@@ -23,3 +23,10 @@ Non-blocking review findings are recorded here after task verification.
 - Split `tests/onlypreview/onlyPreviewGlobalSearchShell.test.mjs` before the next Global Search
   feature adds cases. Task 048's focused opener-dismiss regression is bounded, but the shared test
   file now has 880 lines and exceeds the TS-1 800-line limit.
+- Task 081 review: `parseClaudeHookEvent` does not explicitly forbid a hand-crafted
+  `schemaVersion: 3` payload for a non-`SessionStart` event with no terminal fields; unreachable from
+  the real writer today, but not forbidden by the design doc either. Tighten if a future schema
+  change makes this path reachable.
+- Task 081 review: `docs/INDEX.md` gained its new-feature-doc registration line outside that task's
+  declared `Path` list. No functional impact; note the convention gap rather than treating INDEX.md
+  updates as automatically in scope for every task.

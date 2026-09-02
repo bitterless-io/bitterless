@@ -10,6 +10,8 @@ import type {
   ClaudeHookEventV1,
   ClaudeHookEventV2,
   ClaudeHookEventV2Payload,
+  ClaudeHookEventV3,
+  ClaudeHookEventV3Payload,
   ClaudeHookHelperArgs,
   ClaudeHookMetadataOnlyDelivery,
   ClaudeHookMetadataOnlyEvent
@@ -41,6 +43,15 @@ const CONTROL = /[\0\r\n]/;
 const NUL = /\0/;
 const UTF8_ENCODER = new TextEncoder();
 const BASE_PAYLOAD_KEYS = ['hookEventName', 'sessionId', 'transcriptPath', 'cwd'] as const;
+
+// Shared with the future `eyesOnAgents.contract.ts` deep-link builder (task 082) so the
+// `ITERM_SESSION_ID` shape has a single source of truth instead of being redefined per consumer.
+export const CLAUDE_HOOK_ITERM2_SESSION_ID_PATTERN = /^w\d+t\d+p\d+:[0-9A-Fa-f-]{36}$/;
+
+export const parseClaudeHookIterm2SessionId = (value: unknown): string | null => {
+  if (typeof value !== 'string' || !CLAUDE_HOOK_ITERM2_SESSION_ID_PATTERN.test(value)) return null;
+  return value;
+};
 
 const exactKeys = (value: Record<string, unknown>, keys: string[], label: string): void => {
   if (Object.keys(value).sort().join(',') !== [...keys].sort().join(',')) {
@@ -203,23 +214,77 @@ export const createClaudeHookEventV2 = (params: {
   };
 };
 
+const readClaudeHookTerminalIdentity = (
+  environment: NodeJS.ProcessEnv
+): { terminalApp: 'iterm2'; terminalSessionId: string } | null => {
+  if (environment.TERM_PROGRAM !== 'iTerm.app') return null;
+  const terminalSessionId = parseClaudeHookIterm2SessionId(environment.ITERM_SESSION_ID);
+  return terminalSessionId === null ? null : { terminalApp: 'iterm2', terminalSessionId };
+};
+
+export const createClaudeHookEventV3 = (params: {
+  rawInput: unknown;
+  eventId: unknown;
+  occurredAt: unknown;
+  captureUserPrompt: boolean;
+  environment?: NodeJS.ProcessEnv;
+}): ClaudeHookEventV2 | ClaudeHookEventV3 => {
+  if (!isEyesOnAgentsRecord(params.rawInput)) throw new Error('Claude hook input must be an object');
+  const parsed = parseEventIdentity({ ...params, rawInput: params.rawInput });
+  if (parsed.payload.hookEventName !== 'SessionStart') return createClaudeHookEventV2(params);
+  const terminal = readClaudeHookTerminalIdentity(params.environment ?? process.env);
+  return {
+    schemaVersion: 3,
+    eventId: parsed.eventId,
+    occurredAt: parsed.occurredAt,
+    payload: (terminal
+      ? { ...parsed.payload, hookEventName: 'SessionStart', ...terminal }
+      : { ...parsed.payload, hookEventName: 'SessionStart' }) as ClaudeHookEventV3Payload
+  };
+};
+
+const parseTerminalApp = (value: unknown): 'iterm2' => {
+  if (value !== 'iterm2') throw new Error('Claude hook terminalApp is unsupported');
+  return 'iterm2';
+};
+
+const parseTerminalSessionId = (value: unknown): string => {
+  const parsed = parseClaudeHookIterm2SessionId(value);
+  if (parsed === null) throw new Error('Claude hook terminalSessionId is invalid');
+  return parsed;
+};
+
 export const parseClaudeHookEvent = (value: unknown): ClaudeHookEvent => {
   if (!isEyesOnAgentsRecord(value)) throw new Error('Claude hook event must be an object');
   exactKeys(value, ['schemaVersion', 'eventId', 'occurredAt', 'payload'], 'Claude hook event');
-  if ((value.schemaVersion !== 1 && value.schemaVersion !== 2) || !isEyesOnAgentsRecord(value.payload)) {
+  if (
+    (value.schemaVersion !== 1 && value.schemaVersion !== 2 && value.schemaVersion !== 3) ||
+    !isEyesOnAgentsRecord(value.payload)
+  ) {
     throw new Error('Claude hook event version is unsupported');
   }
   const hasPreview = hasOwn(value.payload, 'userPromptPreview');
   const hasTruncated = hasOwn(value.payload, 'userPromptTruncated');
   const hasPromptFields = hasPreview || hasTruncated;
-  exactKeys(value.payload, hasPromptFields
-    ? [...BASE_PAYLOAD_KEYS, 'userPromptPreview', 'userPromptTruncated']
-    : [...BASE_PAYLOAD_KEYS], 'Claude hook payload');
-  if (value.schemaVersion === 1 && hasPromptFields) {
+  const hasTerminalApp = hasOwn(value.payload, 'terminalApp');
+  const hasTerminalSessionId = hasOwn(value.payload, 'terminalSessionId');
+  const hasTerminalFields = hasTerminalApp || hasTerminalSessionId;
+  exactKeys(value.payload, [
+    ...BASE_PAYLOAD_KEYS,
+    ...(hasPromptFields ? ['userPromptPreview', 'userPromptTruncated'] : []),
+    ...(hasTerminalFields ? ['terminalApp', 'terminalSessionId'] : [])
+  ], 'Claude hook payload');
+  if (value.schemaVersion === 1 && (hasPromptFields || hasTerminalFields)) {
     throw new Error('Claude V1 hook events must be metadata-only');
+  }
+  if (value.schemaVersion === 2 && hasTerminalFields) {
+    throw new Error('Claude V2 hook events cannot carry terminal identity fields');
   }
   if (hasPreview !== hasTruncated) {
     throw new Error('Claude hook prompt fields must be provided together');
+  }
+  if (hasTerminalApp !== hasTerminalSessionId) {
+    throw new Error('Claude hook terminal fields must be provided together');
   }
   const transcriptPath = parseEyesOnAgentsPath(value.payload.transcriptPath);
   if (transcriptPath !== null && !isAbsolute(transcriptPath)) {
@@ -236,31 +301,40 @@ export const parseClaudeHookEvent = (value: unknown): ClaudeHookEvent => {
   if (hasPromptFields && payload.hookEventName !== 'UserPromptSubmit') {
     throw new Error('Claude hook prompt fields are only allowed for UserPromptSubmit');
   }
-  if (value.schemaVersion === 1) return {
-    schemaVersion: 1,
-    eventId: parseEyesOnAgentsUuid(value.eventId, 'Claude event ID'),
-    occurredAt: parseEyesOnAgentsTimestamp(value.occurredAt, 'occurredAt', false) as number,
-    payload
-  };
-  if (!hasPromptFields) return {
-    schemaVersion: 2,
-    eventId: parseEyesOnAgentsUuid(value.eventId, 'Claude event ID'),
-    occurredAt: parseEyesOnAgentsTimestamp(value.occurredAt, 'occurredAt', false) as number,
-    payload: toV2MetadataPayload(payload)
-  };
-  if (typeof value.payload.userPromptTruncated !== 'boolean') {
+  if (hasTerminalFields && payload.hookEventName !== 'SessionStart') {
+    throw new Error('Claude hook terminal fields are only allowed for SessionStart');
+  }
+  const eventId = parseEyesOnAgentsUuid(value.eventId, 'Claude event ID');
+  const occurredAt = parseEyesOnAgentsTimestamp(value.occurredAt, 'occurredAt', false) as number;
+  if (value.schemaVersion === 1) return { schemaVersion: 1, eventId, occurredAt, payload };
+  if (hasPromptFields && typeof value.payload.userPromptTruncated !== 'boolean') {
     throw new Error('Claude userPromptTruncated must be a boolean');
   }
-  return {
+  const promptFields = hasPromptFields ? {
+    userPromptPreview: parsePromptPreview(value.payload.userPromptPreview),
+    userPromptTruncated: value.payload.userPromptTruncated as boolean
+  } : null;
+  if (value.schemaVersion === 2) return {
     schemaVersion: 2,
-    eventId: parseEyesOnAgentsUuid(value.eventId, 'Claude event ID'),
-    occurredAt: parseEyesOnAgentsTimestamp(value.occurredAt, 'occurredAt', false) as number,
+    eventId,
+    occurredAt,
+    payload: promptFields
+      ? { ...payload, hookEventName: 'UserPromptSubmit', ...promptFields }
+      : toV2MetadataPayload(payload)
+  };
+  const terminalFields = hasTerminalFields ? {
+    terminalApp: parseTerminalApp(value.payload.terminalApp),
+    terminalSessionId: parseTerminalSessionId(value.payload.terminalSessionId)
+  } : null;
+  return {
+    schemaVersion: 3,
+    eventId,
+    occurredAt,
     payload: {
       ...payload,
-      hookEventName: 'UserPromptSubmit',
-      userPromptPreview: parsePromptPreview(value.payload.userPromptPreview),
-      userPromptTruncated: value.payload.userPromptTruncated
-    }
+      ...(promptFields ?? {}),
+      ...(terminalFields ?? {})
+    } as ClaudeHookEventV3Payload
   };
 };
 
@@ -268,16 +342,31 @@ export const toMetadataOnlyClaudeHookEvent = (
   value: ClaudeHookEvent
 ): ClaudeHookMetadataOnlyEvent => {
   const event = parseClaudeHookEvent(value);
+  const basePayload: ClaudeHookEventPayloadBase = {
+    hookEventName: event.payload.hookEventName,
+    sessionId: event.payload.sessionId,
+    transcriptPath: event.payload.transcriptPath,
+    cwd: event.payload.cwd
+  };
+  // terminalApp/terminalSessionId are content-free identifiers (not prompt/transcript content),
+  // so unlike userPromptPreview/userPromptTruncated they are carried through, not stripped.
+  if (event.schemaVersion === 3 && 'terminalApp' in event.payload) {
+    return {
+      schemaVersion: 3,
+      eventId: event.eventId,
+      occurredAt: event.occurredAt,
+      payload: {
+        ...basePayload,
+        terminalApp: event.payload.terminalApp,
+        terminalSessionId: event.payload.terminalSessionId
+      }
+    } as ClaudeHookMetadataOnlyEvent;
+  }
   return {
     schemaVersion: event.schemaVersion,
     eventId: event.eventId,
     occurredAt: event.occurredAt,
-    payload: {
-      hookEventName: event.payload.hookEventName,
-      sessionId: event.payload.sessionId,
-      transcriptPath: event.payload.transcriptPath,
-      cwd: event.payload.cwd
-    }
+    payload: basePayload
   } as ClaudeHookMetadataOnlyEvent;
 };
 
@@ -317,7 +406,7 @@ export const parseClaudeHookMetadataOnlyDelivery = (
 ): ClaudeHookMetadataOnlyDelivery => {
   const delivery = parseClaudeHookDelivery(value);
   if (
-    delivery.event.schemaVersion === 2 &&
+    (delivery.event.schemaVersion === 2 || delivery.event.schemaVersion === 3) &&
     (hasOwn(delivery.event.payload, 'userPromptPreview') ||
       hasOwn(delivery.event.payload, 'userPromptTruncated'))
   ) {
