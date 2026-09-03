@@ -206,7 +206,18 @@ export interface EyesOnAgentsClaudeEnvironmentStatus {
   lastSuccessfulScanAt: string | null;
   nextRetryAt: string | null;
   error: string | null;
+  // Mirrors ClaudeDirectoryConfigService.removeEnvironment's own guard ("The last remaining Claude
+  // environment cannot be removed") so the renderer disables Remove from the authoritative rule
+  // instead of re-deriving it from the row count. Always false for the synthetic
+  // invalid-hydration entry, which has no environment identity to remove.
+  canRemove: boolean;
 }
+
+// The per-environment watcher status as the observation service tracks it internally: every field
+// except canRemove, which is a property of the environment LIST rather than of one environment's
+// watcher, and is therefore stamped only when getDirectoryStatus() assembles the array.
+export type EyesOnAgentsClaudeEnvironmentWatcherStatus =
+  Omit<EyesOnAgentsClaudeEnvironmentStatus, 'canRemove'>;
 
 // One entry per configured Claude environment (task 085). When the persisted directory
 // configuration itself failed to hydrate, this is a single synthetic entry (id/label empty)

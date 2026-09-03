@@ -752,7 +752,6 @@ export const en = {
       removePlugin: 'Remove plugin'
     },
     claudeDirectory: {
-      title: 'Session directories',
       pathLabel: 'Claude config directory',
       automatic: 'Automatic',
       custom: 'Custom',
@@ -763,12 +762,9 @@ export const en = {
       retrying: 'Retrying',
       error: 'Configuration error',
       stopped: 'Stopped',
-      unavailable: 'Directory unavailable',
       desktopDirectories: 'Desktop metadata directories: {count}',
       lastSuccessfulScan: 'Last successful scan: {time}',
       nextRetry: 'Next retry: {time}',
-      change: 'Change',
-      useAutomatic: 'Use automatic',
       retry: 'Retry'
     },
     claudeEnvironment: {

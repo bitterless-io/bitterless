@@ -312,15 +312,26 @@ the same states the pre-multi-environment single block used: a global Claude pro
 row's own state being `waiting`, `degraded`, `retrying`, or `error`. Retry acts on that one
 environment's watcher only — one environment's failure/retry never affects another's.
 
+**Rename** and **Remove** render on every row that has a real environment id, and the state-driven
+plugin setup action is repeated inside each row as well as in the card-level setup section below the
+list. Because every environment shares one plugin installation identity, that per-row setup block
+shows the same title/label on every row (only its click target is per-environment), so a card in a
+`repair`/`enable` state shows that action once per row plus once card-level — as the diagram below
+shows. The synthetic invalid-hydration row (no known environment id) hides its Rename/Remove and
+enable switch.
+
 ```text
 ┌ Claude environments ─────────────────────────────────[Add environment] ┐
 │ Default                                     Automatic · Watching  [on] │
 │ [ /Users/ral/.claude__________ ]                    [Change directory] │
 │ Desktop metadata directories: 1 · Last successful scan 10:42           │
+│ Repair                                                        [Repair] │
+│                                                     [Rename]  [Remove] │
 │                                                                        │
 │ claude2                                        Custom · Retrying  [on] │
-│ [ /Users/ral/.claude2_________ ]                    [Change directory] │
-│ Desktop metadata directories: 0 · Next retry 10:44             [Retry] │
+│ [ /Users/ral/.claude2_________ ]           [Change directory]  [Retry] │
+│ Desktop metadata directories: 0 · Next retry 10:44                     │
+│ Repair                                                        [Repair] │
 │                                                     [Rename]  [Remove] │
 │                                                                        │
 │ Note: each environment needs its own hook install. Point               │

@@ -982,11 +982,32 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
     /const isEligibleForAutomatic = \(environment: EyesOnAgentsClaudeEnvironmentStatus\): boolean =>[\s\S]*environment\.mode === 'custom' \|\| environment\.state === 'error'/,
     'a malformed saved directory must still expose Use automatic recovery on the default row',
   );
+  // The last-remaining-environment rule is surfaced from the service as
+  // EyesOnAgentsClaudeEnvironmentStatus.canRemove (mirroring
+  // ClaudeDirectoryConfigService.removeEnvironment's own guard), not re-derived from the row count.
   assert.match(
     claudeCard,
-    /:disabled="environmentRows\.length <= 1/,
-    'remove must be disabled for the last remaining environment',
+    /:disabled="!environment\.canRemove/,
+    'remove must be disabled from the service-surfaced canRemove flag',
   );
+  assert.doesNotMatch(
+    claudeCard,
+    /environmentRows\.length <= 1/,
+    'the renderer must not re-derive the last-remaining-environment guard',
+  );
+  // The Add-environment busy key is one exported literal in the store, not a duplicate in the card.
+  assert.match(
+    store,
+    /export const ADD_CLAUDE_ENVIRONMENT_KEY = '__add__';/,
+    'the Add-environment busy key must be exported from the store',
+  );
+  assert.match(
+    claudeCard,
+    /import \{ ADD_CLAUDE_ENVIRONMENT_KEY, eyesOnAgentsStore \} from '\.\.\/\.\.\/store\/eyesOnAgents\.store';/,
+    'the card must import the shared Add-environment busy key instead of redeclaring it',
+  );
+  assert.doesNotMatch(claudeCard, /= '__add__'/,
+    'the card must not declare its own copy of the Add-environment busy key');
   assert.match(claudeCard, /eyesOnAgentsStore\.chooseClaudeEnvironmentDirectory\(id\)/);
   assert.match(claudeCard, /eyesOnAgentsStore\.useAutomaticClaudeEnvironment\(id\)/);
   assert.match(claudeCard, /eyesOnAgentsStore\.removeClaudeEnvironment\(id\)/);
@@ -1048,9 +1069,11 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
   assert.match(chinese, /copied: '已复制'/);
   assert.match(chinese, /hooksCommand: '\/hooks'/);
   assert.match(chinese, /copySessionPath: '复制会话路径'/);
-  assert.match(english, /title: 'Session directories'/);
+  // The block's own title is claudeEnvironment.title since task 088 replaced the single
+  // "Session directories" block with the environment list; claudeDirectory.title is gone.
+  assert.match(english, /title: 'Claude environments'/);
   assert.match(english, /useAutomatic: 'Use automatic'/);
-  assert.match(chinese, /title: '会话目录'/);
+  assert.match(chinese, /title: 'Claude 环境'/);
   assert.match(chinese, /useAutomatic: '恢复自动发现'/);
 });
 

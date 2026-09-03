@@ -68,6 +68,27 @@ Non-blocking review findings are recorded here after task verification.
   `plugin enable` CLI branch (source-level correctness was confirmed independently via a call-site
   scan showing all 16 `this.command()` sites thread `configDirectory`, but no test pins the enable
   branch specifically). Add direct coverage if this area is touched again.
+- Task 088 review: `eyesOnAgentsStore.resolveClaudeEnvironmentLabel` compares a thread's
+  `claudeConfigDir` — read **verbatim** from the shell env var by
+  `readClaudeHookEnvironmentAttribution` (`src/shared/eyesOnAgents/claudeHookBridge.contract.ts`,
+  whose comment states "no trim/normalize") — against an environment's `configuredDirectory`, which
+  is **realpath-canonicalized** by `requireCanonicalClaudeConfigDirectory`
+  (`src/main/eyesOnAgents/claudePath.resolver.ts` → `realpathSync.native`). Only trailing slashes
+  are reconciled, so a wrapper exporting `CLAUDE_CONFIG_DIR=/Users/ral/./.claude2`, a case-differing
+  path on case-insensitive APFS, or a symlinked path renders no environment label. Consequence is
+  confined to a **missing** label, never a wrong one (same-directory duplicates are an explicit
+  feature Non-goal), so it stays inside the contract's "no match renders as it does today"
+  allowance. Normalize both sides — `path.resolve` plus platform-aware case folding, or canonicalize
+  the hook-side value at ingest — if this label ever becomes load-bearing.
+- Task 088 review: the plugin setup-action block renders once **per environment row** while its
+  content comes from the single global `bridge.value?.setupAction` computed, and the standalone
+  card-level setup section still renders too. With two environments and `setupAction: 'enable'` the
+  user sees the same "Enable" title plus three identical primary buttons on one screen, differing
+  only in click target. The shared *status* is a deliberate consequence of the feature's
+  single-installation-identity Non-goal and is documented in
+  `docs/features/eyes-on-agents-claude-multi-environment.md`; the visual triplication is not.
+  Collapse the repeated block into one card-level surface with a per-environment target selector, or
+  drop the standalone section, next time this card is touched.
 - **Pre-existing, unrelated to any EyesOnAgents/iTerm2/multi-environment task in this log:**
   `scripts/eyes-on-agents/thread-card-open-capability.test.mjs`'s test "right-click opens the shared
   pointer menu and Archive remains Codex-only" intermittently fails on `assert.ok(dropdown,
@@ -88,7 +109,7 @@ Non-blocking review findings are recorded here after task verification.
 
 - Pre-existing, unrelated to the iTerm2 Open feature: `yarn check:renderer-i18n` crashes on
   `assert(trayCreateIndex > homeCreateIndex, 'Tray must follow Home creation')`
-  (`scripts/renderer-i18n/check-renderer-i18n.mjs:172`) because commit `c67ac21` changed
+  (`scripts/renderer-i18n/check-renderer-i18n.mjs:186`) because commit `c67ac21` changed
   `trayHelper.init(mainWindowHelper)` to `trayHelper.init({ ... })` in `src/main/app.main.ts` without
   updating the check script's literal-substring probe. The script never reaches any i18n-content
   assertion while this is broken. Fix the probe (or the assertion it feeds) so the i18n check is

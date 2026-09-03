@@ -40,7 +40,7 @@
           <h3 :id="directoryTitleId">{{ i18nHelper.eyesOnAgents.claudeEnvironment.title }}</h3>
           <a-button
             size="mini"
-            :loading="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(ADD_ENVIRONMENT_KEY)"
+            :loading="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(ADD_CLAUDE_ENVIRONMENT_KEY)"
             :disabled="addingEnvironment"
             @click="handleStartAddEnvironment"
           >
@@ -60,7 +60,7 @@
           <a-button
             size="mini"
             type="primary"
-            :loading="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(ADD_ENVIRONMENT_KEY)"
+            :loading="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(ADD_CLAUDE_ENVIRONMENT_KEY)"
             :disabled="!addEnvironmentLabel.trim()"
             @click="handleAddEnvironment"
           >
@@ -107,7 +107,12 @@
             </div>
             <div class="eyes-connection-card__directories-path">
               <a-tooltip :content="environmentPath(environment)">
-                <a-input :model-value="environmentPath(environment)" size="mini" readonly />
+                <a-input
+                  :model-value="environmentPath(environment)"
+                  size="mini"
+                  :aria-label="i18nHelper.eyesOnAgents.claudeDirectory.pathLabel"
+                  readonly
+                />
               </a-tooltip>
               <a-button
                 size="mini"
@@ -183,11 +188,11 @@
                 size="mini"
                 status="danger"
                 :loading="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(environment.id)"
-                :disabled="environmentRows.length <= 1
+                :disabled="!environment.canRemove
                   || eyesOnAgentsStore.busyClaudeEnvironmentIds.has(environment.id)"
-                :title="environmentRows.length <= 1
-                  ? i18nHelper.eyesOnAgents.claudeEnvironment.removeLastHint
-                  : undefined"
+                :title="environment.canRemove
+                  ? undefined
+                  : i18nHelper.eyesOnAgents.claudeEnvironment.removeLastHint"
                 @click="handleRemoveEnvironment(environment.id)"
               >
                 {{ i18nHelper.eyesOnAgents.claudeEnvironment.remove }}
@@ -375,7 +380,7 @@ import { computed, ref, watch } from 'vue';
 import { IconInfoCircle } from '@tabler/icons-vue';
 import type { EyesOnAgentsClaudeEnvironmentStatus } from '@shared/eyesOnAgents/eyesOnAgents.type';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
-import { eyesOnAgentsStore } from '../../store/eyesOnAgents.store';
+import { ADD_CLAUDE_ENVIRONMENT_KEY, eyesOnAgentsStore } from '../../store/eyesOnAgents.store';
 
 const bridge = computed(() => eyesOnAgentsStore.snapshot?.claudeBridge ?? null);
 const provider = computed(() => eyesOnAgentsStore.snapshot?.claudeProvider ?? null);
@@ -490,7 +495,6 @@ const observationProofLabel = computed(() => {
 // list below — environmentRows/environmentPath/environmentModeLabel/environmentStateLabel replace
 // directoryPath/directoryModeLabel/directoryStateLabel/desktopDirectoryLabel/lastScanLabel/
 // nextRetryLabel/canRetryDirectory/canUseAutomaticDirectory, which had no per-environment identity.
-const ADD_ENVIRONMENT_KEY = '__add__';
 const environmentRows = computed(() => eyesOnAgentsStore.snapshot?.claudeDirectory ?? []);
 const defaultEnvironmentId = computed(() => environmentRows.value[0]?.id ?? null);
 const addingEnvironment = ref(false);

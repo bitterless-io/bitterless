@@ -3,7 +3,7 @@ import type {
   EyesOnAgentsClaudeDirectoryState,
   EyesOnAgentsClaudeDirectoryStatus,
   EyesOnAgentsClaudeEnvironment,
-  EyesOnAgentsClaudeEnvironmentStatus,
+  EyesOnAgentsClaudeEnvironmentWatcherStatus,
   EyesOnAgentsClaudeInventoryThread,
   EyesOnAgentsRepositoryApi,
   EyesOnAgentsRepositoryMutationResult
@@ -70,7 +70,7 @@ interface ClaudeEnvironmentObservationState {
   capabilityClearPending: boolean;
   retryTimer: RetryTimer | null;
   retryAttempt: number;
-  status: EyesOnAgentsClaudeEnvironmentStatus;
+  status: EyesOnAgentsClaudeEnvironmentWatcherStatus;
   watcher: ClaudeEnvironmentWatcher;
   lifecycleTail: Promise<void>;
   refreshPromise: Promise<EyesOnAgentsRepositoryMutationResult> | null;
@@ -97,7 +97,7 @@ export class ClaudeObservationService {
   // Set only when the persisted directory configuration itself failed to hydrate (malformed value,
   // or a thrown getStored/hydrate error) — i.e. we don't yet know any environment identities at
   // all. Mirrors the pre-085 singleton's single fixed error/retrying status object.
-  private invalidHydrationStatus: EyesOnAgentsClaudeEnvironmentStatus | null = null;
+  private invalidHydrationStatus: EyesOnAgentsClaudeEnvironmentWatcherStatus | null = null;
   private hydrationRetryTimer: RetryTimer | null = null;
   private hydrationRetryAttempt = 0;
 
@@ -121,9 +121,17 @@ export class ClaudeObservationService {
     logger?: Pick<Console, 'info'>;
   }) {}
 
+  // canRemove is stamped here rather than tracked per watcher because it is a property of the whole
+  // environment list: it mirrors ClaudeDirectoryConfigService.removeEnvironment's own guard
+  // ("The last remaining Claude environment cannot be removed"), so the renderer can disable Remove
+  // from the authoritative rule instead of re-deriving the row count. The synthetic
+  // invalid-hydration entry has no environment identity at all, so it is never removable.
   getDirectoryStatus(): EyesOnAgentsClaudeDirectoryStatus {
-    if (this.invalidHydrationStatus) return [{ ...this.invalidHydrationStatus }];
-    return [...this.environments.values()].map((state) => ({ ...state.status }));
+    if (this.invalidHydrationStatus) {
+      return [{ ...this.invalidHydrationStatus, canRemove: false }];
+    }
+    const canRemove = this.environments.size > 1;
+    return [...this.environments.values()].map((state) => ({ ...state.status, canRemove }));
   }
 
   // Tries every currently-configured environment's projects root, since a transcript may belong
@@ -301,7 +309,7 @@ export class ClaudeObservationService {
     };
   }
 
-  private invalidHydrationStatusFields(): Omit<EyesOnAgentsClaudeEnvironmentStatus, 'state' | 'error' | 'nextRetryAt'> {
+  private invalidHydrationStatusFields(): Omit<EyesOnAgentsClaudeEnvironmentWatcherStatus, 'state' | 'error' | 'nextRetryAt'> {
     return {
       id: '',
       label: '',
@@ -467,7 +475,7 @@ export class ClaudeObservationService {
     };
   }
 
-  private stoppedEnvironmentStatus(environment: EyesOnAgentsClaudeEnvironment): EyesOnAgentsClaudeEnvironmentStatus {
+  private stoppedEnvironmentStatus(environment: EyesOnAgentsClaudeEnvironment): EyesOnAgentsClaudeEnvironmentWatcherStatus {
     return {
       id: environment.id,
       label: environment.label,
@@ -802,7 +810,7 @@ export class ClaudeObservationService {
 
   private setEnvironmentStatus(
     state: ClaudeEnvironmentObservationState,
-    status: EyesOnAgentsClaudeEnvironmentStatus
+    status: EyesOnAgentsClaudeEnvironmentWatcherStatus
   ): void {
     if (JSON.stringify(state.status) === JSON.stringify(status)) return;
     state.status = status;

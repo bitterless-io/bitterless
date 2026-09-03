@@ -77,6 +77,9 @@ const stubsPlugin = {
         : ({
           contents: `
           const current = () => globalThis.__eyesOnAgentsClaudeSetupHarness.store;
+          // Mirrors eyesOnAgents.store.ts's exported Add-environment busy key, which
+          // ClaudeObservationCard.vue imports instead of declaring its own literal.
+          export const ADD_CLAUDE_ENVIRONMENT_KEY = '__add__';
           export const eyesOnAgentsStore = new Proxy({}, {
             get: (_target, key) => current()[key],
             set: (_target, key, value) => {
@@ -127,6 +130,7 @@ const createStore = (setupAction) => ({
       lastSuccessfulScanAt: null,
       nextRetryAt: null,
       error: null,
+      canRemove: false,
     }],
   },
   busyAction: null,

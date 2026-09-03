@@ -200,8 +200,9 @@ design document.
   visible and adds an independent `iterm2:///reveal` Open action beside the existing Claude Desktop
   route.
 - [EyesOnAgents Claude Multi-Environment](features/eyes-on-agents-claude-multi-environment.md) -
-  draft: N independently-managed `CLAUDE_CONFIG_DIR` environments (own watcher, own hook install
-  target, Hook-attributed `claude_config_dir`), superseding the single-directory model.
+  implemented; owner runtime verification pending: N independently-managed `CLAUDE_CONFIG_DIR`
+  environments (own watcher, own hook install target, Hook-attributed `claude_config_dir`),
+  superseding the single-directory model.
 - [Omni browser and mini-app cells](features/omni-miniapp-cells.md) - persistent per-cell browser
   or local Todo/EyesOnAgents/Translator/Motto/Trench/Submodules operation views with development and
   packaged runtime mapping.

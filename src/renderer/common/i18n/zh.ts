@@ -739,7 +739,6 @@ export const zh: typeof en = {
       removePlugin: '移除插件'
     },
     claudeDirectory: {
-      title: '会话目录',
       pathLabel: 'Claude 配置目录',
       automatic: '自动发现',
       custom: '自定义',
@@ -750,12 +749,9 @@ export const zh: typeof en = {
       retrying: '正在重试',
       error: '配置错误',
       stopped: '已停止',
-      unavailable: '目录不可用',
       desktopDirectories: 'Desktop 元数据目录：{count}',
       lastSuccessfulScan: '最近成功扫描：{time}',
       nextRetry: '下次重试：{time}',
-      change: '更改',
-      useAutomatic: '恢复自动发现',
       retry: '重试'
     },
     claudeEnvironment: {

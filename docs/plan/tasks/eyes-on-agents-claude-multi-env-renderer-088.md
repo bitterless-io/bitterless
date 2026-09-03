@@ -1,7 +1,7 @@
 ---
 id: eyes-on-agents-claude-multi-env-renderer-088
 scope: Replace the single Claude directory block with an environment list (add/rename/remove/enable) and per-environment setup, plus a resolved environment label on the thread card
-status: in-progress
+status: done
 depends-on: [eyes-on-agents-claude-multi-env-data-model-084, eyes-on-agents-claude-multi-env-watcher-085, eyes-on-agents-claude-multi-env-plugin-install-086, eyes-on-agents-claude-multi-env-hook-attribution-087]
 verify: focused EyesOnAgents UI-source/store tests, renderer i18n check, UI strict typecheck; no Electron; manual multi-environment verification is owner-only
 ---
@@ -74,10 +74,14 @@ section (excluding the owner-only manual two-environment check) should be fully 
 - `ClaudeObservationCard.vue`'s current single directory block (path/mode/state/last-scan/actions)
   becomes a list, one row per `EyesOnAgentsClaudeEnvironment`/`EyesOnAgentsClaudeEnvironmentStatus`
   pair: label, resolved path or "not configured", mode, the existing status pill values
-  (`watching`/`waiting`/`degraded`/`retrying`/`error`/`stopped`), and the existing per-environment
-  plugin setup action (`enable`/`finish`/`reload`/`retry`/`repair`) evaluated per environment via
-  task 086's `{ environmentId }`-scoped XPC methods — the setup-action state machine's own logic is
-  unchanged, it is simply invoked once per environment instead of once globally.
+  (`watching`/`waiting`/`degraded`/`retrying`/`error`/`stopped`), and the existing plugin setup
+  action (`enable`/`finish`/`reload`/`retry`/`repair`) rendered per environment row and invoked
+  through task 086's `{ environmentId }`-scoped XPC methods. Its displayed status/label is **not**
+  independently evaluated per environment — every environment shares one plugin installation
+  identity, so the setup action reflects global bridge state and only its click target is
+  per-environment. `docs/features/eyes-on-agents-claude-multi-environment.md`'s "Implementation note
+  (task 088)" is the authority on this point; an earlier version of this bullet said "evaluated per
+  environment", which read as implying independent per-row status.
 - Row actions: rename (inline or small dialog), change directory (existing native picker) or "Use
   automatic" for the one eligible environment, enable/disable toggle, remove (disabled/hidden when
   it is the last remaining environment — surface this constraint from task 084's service rather than
@@ -207,7 +211,15 @@ section (excluding the owner-only manual two-environment check) should be fully 
   `environments[0]` and currently `custom` or in `error` state, mirroring the pre-088
   `canUseAutomaticDirectory` condition one-to-one), **Use automatic**; inline **Rename**/**Save**/
   **Cancel**; and **Remove**, disabled (with a `title` hint, `claudeEnvironment.removeLastHint`) when
-  `environmentRows.length <= 1`. A persistent **Add environment** button opens an inline label input
+  the row's `canRemove` is false. `canRemove` is a field on
+  `EyesOnAgentsClaudeEnvironmentStatus` stamped by `ClaudeObservationService.getDirectoryStatus()`
+  from the authoritative rule in `ClaudeDirectoryConfigService.removeEnvironment` ("The last
+  remaining Claude environment cannot be removed"), and is always `false` for the identity-less
+  synthetic invalid-hydration row — i.e. the constraint is surfaced from the service as this task's
+  Required behavior demanded. (The delivery and completion passes above instead re-derived it in the
+  renderer as `:disabled="environmentRows.length <= 1"`, an undisclosed deviation from that
+  instruction; review 1 caught it and it is now corrected — see the review-1 follow-up below.)
+  A persistent **Add environment** button opens an inline label input
   + **Add**/**Cancel**, calling `addClaudeEnvironment(label.trim())` on submit. The plugin setup
   action (`enable`/`finish`/`reload`/`retry`/`repair`) is rendered inside each row unchanged from the
   pre-088 `setupAction`/`setupTitle`/`setupActionLabel` computeds (still driven by the single global
@@ -307,13 +319,18 @@ section (excluding the owner-only manual two-environment check) should be fully 
     exactly the pre-088 `'Working directory: /repo/project'`; and a `null` `claudeConfigDir`
     (single-default-environment snapshot) rendering the same unchanged string. Every pre-existing test
     in this file (iTerm2 Open, 081-083) is otherwise unmodified.
-  - `scripts/eyes-on-agents/ui-source.test.mjs`: removed the now-stale
-    `assert.match(claudeCard, /providerError\.value !== null \|\|/)` assertion (the `canRetryDirectory`
-    computed it targeted no longer exists) and updated every directory-block source-pattern assertion
-    to match the new per-row shape (`environmentPath(environment)`, the `id === ''` legacy-fallback
-    branches, `isEligibleForAutomatic`, `environmentRows.length <= 1`, and the 6 new store method call
-    sites) — source-pattern assertions only, consistent with this file's existing style; no new
-    assertion was added for the dropped last-scan/manual-retry surface noted above.
+  - `scripts/eyes-on-agents/ui-source.test.mjs`: removed the
+    `assert.match(claudeCard, /providerError\.value !== null \|\|/)` assertion and updated every
+    directory-block source-pattern assertion to match the new per-row shape
+    (`environmentPath(environment)`, the `id === ''` legacy-fallback branches,
+    `isEligibleForAutomatic`, the Remove guard, and the 6 new store method call sites) —
+    source-pattern assertions only, consistent with this file's existing style.
+    **Correction (review 1):** the original justification for dropping that assertion — "the
+    `canRetryDirectory` computed it targeted no longer exists" — is stale. Gap 1 re-introduced that
+    exact expression as `canRetryEnvironment` (`ClaudeObservationCard.vue`), so the computed does
+    exist; the assertion simply was not restored. Coverage is not lost: the behaviour is exercised
+    behaviourally by `claude-environment-render.test.mjs`'s "a global Claude provider error offers
+    Retry even on an otherwise-healthy row" test.
   - New `scripts/eyes-on-agents/claude-environment-render.test.mjs` (9 tests, real-DOM mount/click
     harness mirroring `thread-card-open-capability.test.mjs`'s approach rather than source-pattern
     matching): one row per configured environment with correct label/mode/state text and resolved
@@ -377,8 +394,9 @@ pass on top of the delivery above, not a rewrite; nothing already shipped was re
   - `ClaudeObservationCard.vue` adds, per row: `environmentDesktopLabel`/`environmentLastScanLabel`/
     `environmentNextRetryLabel` computed helpers reusing the exact pre-088 `claudeDirectory
     .desktopDirectories`/`.lastSuccessfulScan`/`.nextRetry` i18n keys (never removed, just unused since
-    088's first pass), rendered in a second `.eyes-connection-card__directories-meta` row (the class is
-    already reused twice per row for the plugin-setup meta; no new CSS needed); and a `canRetryEnvironment`
+    088's first pass), rendered in a second `.eyes-connection-card__directories-meta` row — that class
+    appeared twice in the whole card at `ebd82eb` (once per concern) and is now used twice **per row**,
+    for the metadata line and the row's setup action, so no new CSS was needed; and a `canRetryEnvironment`
     computed reproducing the pre-088 `canRetryDirectory` computed's condition exactly —
     `providerError.value !== null || ['waiting', 'degraded', 'retrying', 'error'].includes(environment
     .state)` — gating a per-row **Retry** button (`claudeDirectory.retry` copy, unchanged) next to
@@ -523,3 +541,97 @@ pass on top of the delivery above, not a rewrite; nothing already shipped was re
   contradiction with the shipped renderer/store/service code.
 - Electron, packaged-app, and end-to-end tests were not run in this completion pass either, per the
   task's standing instruction.
+
+## Review-1 follow-up (2026-09-03)
+
+`docs/plan/reviews/eyes-on-agents-claude-multi-env-renderer-088-1.md` passed the task with 7 P3
+findings and 4 evidence corrections. Every item that was cleanup of this task's own change, or its
+own unmet contract, is closed here; the two genuinely deferred ones stay in `docs/plan/backlog.md`.
+
+- **Restored the per-environment path input's accessible name.** The read-only row directory
+  `a-input` in `ClaudeObservationCard.vue` regained
+  `:aria-label="i18nHelper.eyesOnAgents.claudeDirectory.pathLabel"` — the same binding the pre-088
+  single-directory input carried, reusing the existing key rather than adding a new one.
+- **Deleted 4 orphaned i18n keys** from both `en.ts` and `zh.ts`: `eyesOnAgents.claudeDirectory`'s
+  `title`, `unavailable`, `change`, `useAutomatic`. `pathLabel` is kept (the aria-label above) and
+  every remaining `claudeDirectory.*` key is still live. Each deletion was proven to have no dotted
+  reference and no dynamic/computed access anywhere in `src/` or `scripts/`; the only survivors were
+  two `ui-source.test.mjs` i18n-copy assertions on the block title, retargeted to the live
+  `claudeEnvironment.title` copy.
+- **One `'__add__'` literal.** `eyesOnAgents.store.ts` now exports `ADD_CLAUDE_ENVIRONMENT_KEY` and
+  `ClaudeObservationCard.vue` imports it; the card's independent `ADD_ENVIRONMENT_KEY` duplicate is
+  gone. `ui-source.test.mjs` asserts the export, the import, and that the card declares no copy.
+- **Import ordering in `eyesOnAgents.store.ts`.** The emitter `import` block moved above the two
+  `const` declarations, so all static imports are contiguous at the top of the file.
+- **Remove guard now comes from the service** (this task's Required behavior; see the corrected
+  `ClaudeObservationCard.vue` bullet above). `EyesOnAgentsClaudeEnvironmentStatus` gains
+  `canRemove: boolean`; `ClaudeObservationService.getDirectoryStatus()` stamps it from
+  `this.environments.size > 1`, mirroring `ClaudeDirectoryConfigService.removeEnvironment`'s guard,
+  and hard-codes `false` for the synthetic invalid-hydration entry. Because `canRemove` is a property
+  of the environment list rather than of one watcher, the service's internal per-environment status
+  is typed against the new `EyesOnAgentsClaudeEnvironmentWatcherStatus`
+  (`Omit<EyesOnAgentsClaudeEnvironmentStatus, 'canRemove'>`) so only the array-assembly point sets
+  it. The renderer binds `:disabled="!environment.canRemove"` and the `removeLastHint` title to the
+  same flag.
+- **Direct coverage for `resolveClaudeEnvironmentLabel`.** `focus-board-store.test.mjs` gains
+  "resolveClaudeEnvironmentLabel resolves a thread's claudeConfigDir against the snapshot" (real
+  store module, not a stub): exact match, trailing slash on either side, non-match, `null`
+  `claudeConfigDir`, the automatic row's `null` `configuredDirectory` being skipped rather than
+  compared (it is deliberately first in the fixture, so a missing null-filter would throw there), and
+  first-match ordering when two environments normalize to the same directory. `createSnapshot` gained
+  an optional `claudeDirectory` argument for it.
+- **`docs/integrations/eyes-on-agents-layout.md`'s environments diagram corrected** to what ships:
+  Rename/Remove on every row with a real id, and the per-row setup-action block repeated inside each
+  row (with a prose sentence noting the block also appears card-level and shows shared status because
+  of the single installation identity).
+- **`docs/plan/backlog.md`'s `check:renderer-i18n` line citation** corrected from
+  `check-renderer-i18n.mjs:172` to `:186`, the assertion's actual current line.
+
+Deliberately **not** closed here: the `resolveClaudeEnvironmentLabel` verbatim-vs-canonicalized
+path-normalization asymmetry (cosmetic missing label, never a wrong one), and collapsing the visually
+triplicated per-row setup-action block into a single card-level surface. Both are now recorded as
+entries in `docs/plan/backlog.md` as part of closing this task out.
+
+### Review-1 follow-up verification (2026-09-03)
+
+- `yarn typecheck:eyes-on-agents:core` — 0 errors.
+- `yarn typecheck:eyes-on-agents:ui` — 0 errors.
+- `yarn test:eyes-on-agents:claude` — all groups pass, `fail 0`.
+- `yarn test:eyes-on-agents:ui` — 99 tests (98 + the new store test), 97 pass, 2 fail: only the two
+  already-logged pre-existing failures (`ui-source.test.mjs`'s deterministic bundle-id assertion and
+  `thread-card-open-capability.test.mjs`'s flaky right-click/dropdown assertion). No third failure.
+- `yarn check:renderer-i18n` — still fails at the same pre-existing tray/Home ordering assertion
+  (`check-renderer-i18n.mjs:186`), which is not an i18n-content check.
+- Electron, packaged builds, Playwright, and every `test:e2e:*` suite — not run, per the standing
+  owner instruction. The owner-only two-real-environment manual verification is still not run.
+
+## Review
+
+[Independent review 1](../reviews/eyes-on-agents-claude-multi-env-renderer-088-1.md) passed with no
+blocking findings, after two earlier attempts at this review were killed mid-run by session limits.
+It independently re-ran every scoped check rather than trusting this task's writeup, and settled the
+plan's highest-risk item: the `EyesOnAgentsApi` / `EyesOnAgentsService` type conflict is genuinely
+resolved, with **no** `any`, cast, `@ts-ignore`, or silently-dropped parameter anywhere in this
+task's additions, and the resolved `configDirectory` is actually consumed by
+`install()`/`refresh()`/`remove()` rather than being a type-clean dead parameter. It also confirmed
+the three restored per-row capabilities (last-scan, Desktop count, Retry) are bound to the `v-for`
+loop variable rather than `environments[0]`, that Retry is row-scoped end to end, and that the
+shipped iTerm2 Open feature does not regress (the ThreadCard diff is one hunk, the store diff is
+purely additive, and the widened visibility rule is intact).
+
+Seven P3 findings and five corrections to this task's own evidence came out of it. Everything that
+was cleanup of this task's own change, or its own unmet contract, was fixed before close-out and is
+recorded in the "Review-1 follow-up" section above: the lost per-row `aria-label`, four i18n keys
+this task orphaned, the duplicated `'__add__'` literal, the import/const ordering, the missing
+`resolveClaudeEnvironmentLabel` store test, the layout-doc ASCII diagram, and — the one real
+contract deviation — the last-remaining-environment Remove guard, which was re-derived in the
+renderer instead of being surfaced from the service as this task's Required behavior demanded. That
+guard now ships as a service-stamped `canRemove` field on
+`EyesOnAgentsClaudeEnvironmentStatus`. The two genuinely-deferred findings (path-normalization
+asymmetry, setup-action visual triplication) are logged in `docs/plan/backlog.md`.
+
+One correction to the review itself: it reported the flaky right-click test passing in both of its
+runs, which is consistent with (not evidence against) the ~6/10 flake rate already recorded in
+backlog — the orchestrator's own post-fix run did see it fire, alongside the deterministic bundle-id
+failure, for the expected 99 tests / 97 pass / 2 fail. No third failure appeared in any run, and no
+failure traces into this task's changes.

@@ -88,7 +88,7 @@ const createThread = ({
   },
 });
 
-const createSnapshot = (threads) => ({
+const createSnapshot = (threads, claudeDirectory = []) => ({
   domains: [],
   threads,
   connection: {
@@ -120,9 +120,29 @@ const createSnapshot = (threads) => ({
     restartRequired: false,
     error: null,
   },
+  claudeDirectory,
   lastSyncedAt: null,
   lastUserPromptCaptureEnabled: false,
   titleEnrichmentDiagnostic: null,
+});
+
+// One configured Claude environment's status row, as snapshot.claudeDirectory carries it (task 085).
+const createClaudeEnvironment = ({ id, label, configuredDirectory, mode = 'custom' }) => ({
+  id,
+  label,
+  enabled: true,
+  mode,
+  configuredDirectory,
+  effectiveDirectory: configuredDirectory,
+  projectsDirectory: null,
+  desktopDirectoryCount: 0,
+  state: 'watching',
+  watching: true,
+  lastScanAt: null,
+  lastSuccessfulScanAt: null,
+  nextRetryAt: null,
+  error: null,
+  canRemove: true,
 });
 
 test('Focus board store contract', async (context) => {
@@ -1027,6 +1047,62 @@ test('Focus board store contract', async (context) => {
           globalThis.__eyesOnAgentsFocusBoardHarness.openThreadInIterm2 =
             originalOpenThreadInIterm2;
         }
+      },
+    );
+
+    // Task 088 (review 1): direct coverage for the store's own matching/normalization logic. The
+    // ThreadCard test stubs resolveClaudeEnvironmentLabel out through createStore overrides, so it
+    // only exercises ThreadCard.vue's folderLabel branch, never this resolver.
+    await context.test(
+      'resolveClaudeEnvironmentLabel resolves a thread\'s claudeConfigDir against the snapshot',
+      () => {
+        resetStore(createSnapshot([], [
+          // The automatic default row has no configuredDirectory and must be skipped, not treated
+          // as a candidate — it is deliberately first so a missing null-filter would fail here.
+          createClaudeEnvironment({
+            id: '11111111-1111-4111-8111-111111111111',
+            label: 'Default',
+            mode: 'automatic',
+            configuredDirectory: null,
+          }),
+          createClaudeEnvironment({
+            id: '22222222-2222-4222-8222-222222222222',
+            label: 'claude2',
+            configuredDirectory: '/Users/ral/.claude2',
+          }),
+          createClaudeEnvironment({
+            id: '33333333-3333-4333-8333-333333333333',
+            label: 'claude3',
+            configuredDirectory: '/Users/ral/.claude3/',
+          }),
+        ]));
+
+        assert.equal(store.resolveClaudeEnvironmentLabel('/Users/ral/.claude2'), 'claude2',
+          'an exact path match resolves that environment\'s label');
+        assert.equal(store.resolveClaudeEnvironmentLabel('/Users/ral/.claude2/'), 'claude2',
+          'a trailing slash on the thread side still matches');
+        assert.equal(store.resolveClaudeEnvironmentLabel('/Users/ral/.claude3'), 'claude3',
+          'a trailing slash on the configured side still matches');
+        assert.equal(store.resolveClaudeEnvironmentLabel('/Users/ral/.claude9'), null,
+          'a non-matching path resolves no label');
+        assert.equal(store.resolveClaudeEnvironmentLabel(null), null,
+          'a thread with no captured claudeConfigDir resolves no label');
+
+        resetStore(createSnapshot([], [
+          createClaudeEnvironment({
+            id: '44444444-4444-4444-8444-444444444444',
+            label: 'first',
+            configuredDirectory: '/Users/ral/.claude-shared',
+          }),
+          createClaudeEnvironment({
+            id: '55555555-5555-4555-8555-555555555555',
+            label: 'second',
+            configuredDirectory: '/Users/ral/.claude-shared/',
+          }),
+        ]));
+
+        assert.equal(store.resolveClaudeEnvironmentLabel('/Users/ral/.claude-shared'), 'first',
+          'the first configured environment wins when two normalize to the same directory');
       },
     );
   } finally {

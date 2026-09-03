@@ -5,14 +5,17 @@ import type {
   EyesOnAgentsSessionKey,
   EyesOnAgentsThread,
 } from '@shared/eyesOnAgents/eyesOnAgents.type';
-// A thread's claudeConfigDir is a raw path (task 087), resolved against the current environments
-// list at read time rather than stored as a foreign key — see resolveClaudeEnvironmentLabel below.
-const ADD_CLAUDE_ENVIRONMENT_KEY = '__add__';
-const normalizeClaudeConfigDirPath = (value: string): string => value.replace(/\/+$/u, '');
 import {
   eyesOnAgentsEmitter,
   subscribeEyesOnAgentsChanges,
 } from '../emitter/eyesOnAgents.emitter';
+
+// A thread's claudeConfigDir is a raw path (task 087), resolved against the current environments
+// list at read time rather than stored as a foreign key — see resolveClaudeEnvironmentLabel below.
+// Exported so ClaudeObservationCard.vue's Add-environment loading state reads the same literal the
+// busy gate below is keyed by, instead of duplicating it.
+export const ADD_CLAUDE_ENVIRONMENT_KEY = '__add__';
+const normalizeClaudeConfigDirPath = (value: string): string => value.replace(/\/+$/u, '');
 
 const isActiveRuntimeState = (thread: EyesOnAgentsThread): boolean =>
   thread.runtimeState === 'working'

@@ -113,6 +113,9 @@ const stubsPlugin = {
         : ({
           contents: `
           const current = () => globalThis.__eyesOnAgentsClaudeEnvironmentHarness.store;
+          // Mirrors eyesOnAgents.store.ts's exported Add-environment busy key, which
+          // ClaudeObservationCard.vue imports instead of declaring its own literal.
+          export const ADD_CLAUDE_ENVIRONMENT_KEY = '__add__';
           export const eyesOnAgentsStore = new Proxy({}, {
             get: (_target, key) => current()[key],
             set: (_target, key, value) => {
@@ -145,6 +148,15 @@ const createEnvironment = (overrides = {}) => ({
   ...overrides,
 });
 
+// ClaudeObservationService.getDirectoryStatus() stamps canRemove on every row when it assembles the
+// status array (mirroring ClaudeDirectoryConfigService.removeEnvironment's last-remaining guard, and
+// never removable for the identity-less synthetic sentinel row), so the harness reproduces that here
+// instead of making every fixture repeat it. An explicit canRemove on a fixture still wins.
+const withRemovability = (environments) => environments.map((environment) => ({
+  canRemove: environments.length > 1 && environment.id !== '',
+  ...environment,
+}));
+
 const createStore = (environments, { providerError = null, ...overrides } = {}) => {
   const calls = {
     add: [], rename: [], remove: [], setEnabled: [], chooseDirectory: [], useAutomatic: [],
@@ -159,7 +171,7 @@ const createStore = (environments, { providerError = null, ...overrides } = {}) 
         lastInspectedAt: null, observationProof: 'receipt', restartRequired: false, error: null,
       },
       claudeProvider: { enabled: true, error: providerError, revision: 1 },
-      claudeDirectory: environments,
+      claudeDirectory: withRemovability(environments),
       claudeLastUserPromptCaptureEnabled: false,
     },
     busyAction: null,
