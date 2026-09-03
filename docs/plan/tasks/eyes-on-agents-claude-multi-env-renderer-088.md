@@ -635,3 +635,39 @@ runs, which is consistent with (not evidence against) the ~6/10 flake rate alrea
 backlog — the orchestrator's own post-fix run did see it fire, alongside the deterministic bundle-id
 failure, for the expected 99 tests / 97 pass / 2 fail. No third failure appeared in any run, and no
 failure traces into this task's changes.
+[Independent review 2](../reviews/eyes-on-agents-claude-multi-env-renderer-088-2.md) was produced
+concurrently on another machine, without knowledge of review 1, and independently also concluded
+`pass` with no blocking findings. Both reviews were written against the same commit and merged here
+rather than one being discarded — two independent passes agreeing on the highest-risk item is worth
+more than either alone. Review 2 adds what review 1 did not have: a bullet-by-bullet
+**Acceptance-criteria satisfaction table** against the feature doc's Acceptance section (9 of 9
+satisfied, with the production `yarn build` bullet scope-limited to typecheck because a real build
+risks launching Electron, and the manual two-environment check correctly left to the owner). It
+reached the `EyesOnAgentsApi`/`EyesOnAgentsService` conclusion by a different route — tracing all 11
+widened/added interface members and noting that the 7 CRUD delegates on `EyesOnAgentsService` are
+`implements`-satisfying dead code, with the live handler still calling `claudeDirectoryConfig`
+directly — and confirmed `claude-provider-toggle.test.mjs`, the oldest pre-088 test in this area,
+still exercises the zero-dependency ambient fallback unchanged. It corroborated the flakiness
+finding with far more samples than review 1 or the completion pass had (11/15 and 10/15 failure
+rates on two different commits, same single assertion).
+
+Two notes on where review 2 and this task's final state diverge, both resolved in this task's
+favor because review 2 was written against the pre-fix commit:
+
+- Review 2's P3-1 observed that the Remove guard's last-remaining-environment constraint "was not
+  literally followed, but there is nothing to surface," since no task from 084 onward added a
+  `canRemove`/`isLast` field. That is accurate for the commit it reviewed, and it is exactly what
+  the "Review-1 follow-up" above then implemented: `EyesOnAgentsClaudeEnvironmentStatus.canRemove`
+  is now stamped by the service, so the renderer no longer re-derives the rule. Review 2's
+  corresponding `docs/plan/backlog.md` entry was stale on arrival and has been removed as part of
+  this merge.
+- Review 2's P3-2 is a finding review 1 did **not** make and which still stands:
+  `resolveClaudeEnvironmentLabel` cannot label a session captured under the *automatic*
+  environment's own inherited `CLAUDE_CONFIG_DIR`, because `configuredDirectory` is unconditionally
+  `null` for the single `mode: 'automatic'` environment. It is consistent with the design doc's own
+  field semantics and outside every Acceptance bullet, so it is informational — it is now logged in
+  `docs/plan/backlog.md` alongside review 1's related path-normalization entry.
+
+With this task done, the entire Claude Multi-Environment plan (084 → 085 → 086 → 087 → 088) is
+complete; the feature doc's Acceptance section is satisfied except the explicitly owner-only manual
+two-real-environment verification.

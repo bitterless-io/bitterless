@@ -107,6 +107,18 @@ Non-blocking review findings are recorded here after task verification.
   only the bundle-id failure is not evidence this one was fixed. Needs investigation into the
   underlying timing race, not just a retry/flake-quarantine.
 
+- Task 088 review 2: `resolveClaudeEnvironmentLabel` cannot label a session captured under the
+  **automatic** environment's own inherited `CLAUDE_CONFIG_DIR`. It matches only against
+  `environment.configuredDirectory`, which is unconditionally `null` for the single
+  `mode: 'automatic'` environment (`claudeObservation.service.ts`'s status builder returns the
+  configured directory only when `mode === 'custom'`). So if Bitterless's own GUI process ambiently
+  inherits a real `CLAUDE_CONFIG_DIR` — making the automatic environment's effective directory a
+  real non-`~/.claude` path — a session started under that same ambient var never gets a label, even
+  in a two-environment setup. Consistent with the design doc's own field semantics
+  (`configDirectory` is defined as `null` when `mode` is `'automatic'`) and outside every Acceptance
+  bullet, so informational. Pairs with the path-normalization entry above: both are reasons the
+  environment label can come back empty. Give the automatic environment a resolvable effective
+  directory for matching purposes if the label ever becomes load-bearing.
 - Pre-existing, unrelated to the iTerm2 Open feature: `yarn check:renderer-i18n` crashes on
   `assert(trayCreateIndex > homeCreateIndex, 'Tray must follow Home creation')`
   (`scripts/renderer-i18n/check-renderer-i18n.mjs:186`) because commit `c67ac21` changed
