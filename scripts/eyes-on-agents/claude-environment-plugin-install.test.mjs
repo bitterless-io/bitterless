@@ -285,6 +285,106 @@ try {
     assert(logs[0][1].length < 500, 'a long error message must be bounded, matching the 300-char plugin-bridge convention');
   }
 
+  // ---- Task 090: probePluginPresence's verdict mapping ----
+  // The read-only sibling of the install flow above. Every branch is asserted, because the whole
+  // point of the four-value verdict is that 'unknown' ("we could not check") never masquerades as
+  // 'not_installed' ("we checked and it is absent") — those prompt different user action.
+  {
+    const harness = createPluginHarness(pluginModule, { name: 'presence' });
+
+    // Nothing installed yet: a successful probe that finds no plugin.
+    assert.equal(await harness.service.probePluginPresence(), 'not_installed');
+
+    // Installed and enabled.
+    harness.state.installed = true;
+    harness.state.enabled = true;
+    harness.state.version = PLUGIN_VERSION;
+    assert.equal(await harness.service.probePluginPresence(), 'installed');
+
+    // Present but disabled must be distinguishable from absent, so the UI can offer the right fix.
+    harness.state.enabled = false;
+    assert.equal(await harness.service.probePluginPresence(), 'disabled');
+
+    // The probe must target the directory it was given, exactly like the install flow does.
+    harness.calls.length = 0;
+    await harness.service.probePluginPresence('/env/claude2/config');
+    const probeCalls = harness.calls.filter((call) => call.command.endsWith('--json'));
+    assert.equal(probeCalls.length, 2, 'a probe is exactly one plugin list + one marketplace list');
+    for (const call of probeCalls) {
+      assert.equal(call.configDirectory, '/env/claude2/config');
+    }
+
+    // It must not disturb the shared installation state the rest of the bridge owns.
+    const before = harness.service.getStatus();
+    await harness.service.probePluginPresence('/env/claude2/config');
+    assert.deepEqual(harness.service.getStatus(), before,
+      'a read-only presence probe must not mutate the profile-wide bridge status');
+  }
+
+  {
+    // A CLI that fails, and a CLI whose JSON is unparseable, are both "we could not check".
+    const failing = new pluginModule.ClaudePluginBridgeService({
+      identity: pluginModule.resolveClaudePluginBridgeIdentity('production'),
+      userDataPath: fixtureRoot,
+      execPath: '/Applications/Bitterless.app/Contents/MacOS/Bitterless',
+      appRootPath: fixtureRoot,
+      pluginVersion: PLUGIN_VERSION,
+      executableCandidates: ['/usr/bin/claude'],
+      helperSourcePath: join(fixtureRoot, 'presence', 'claudeHookHelper.js'),
+      idFactory: () => uuid(1),
+      runtimeStatus: () => ({ listening: false, listeningSince: null }),
+      runCommand: async (_executable, args) => {
+        const command = args.join(' ');
+        if (HELP_COMMANDS.has(command)) {
+          return command === 'plugin --help'
+            ? { exitCode: 0, stdout: 'marketplace', stderr: '' }
+            : { exitCode: 0, stdout: '--scope <scope>', stderr: '' };
+        }
+        return { exitCode: 1, stdout: '', stderr: 'boom' };
+      }
+    });
+    assert.equal(await failing.probePluginPresence(), 'unknown',
+      'a non-zero CLI exit must report unknown, never not_installed');
+
+    const unparseable = new pluginModule.ClaudePluginBridgeService({
+      identity: pluginModule.resolveClaudePluginBridgeIdentity('production'),
+      userDataPath: fixtureRoot,
+      execPath: '/Applications/Bitterless.app/Contents/MacOS/Bitterless',
+      appRootPath: fixtureRoot,
+      pluginVersion: PLUGIN_VERSION,
+      executableCandidates: ['/usr/bin/claude'],
+      helperSourcePath: join(fixtureRoot, 'presence', 'claudeHookHelper.js'),
+      idFactory: () => uuid(1),
+      runtimeStatus: () => ({ listening: false, listeningSince: null }),
+      runCommand: async (_executable, args) => {
+        const command = args.join(' ');
+        if (command === 'plugin --help') return { exitCode: 0, stdout: 'marketplace', stderr: '' };
+        if (command === 'plugin marketplace remove --help') {
+          return { exitCode: 0, stdout: '--scope <scope>', stderr: '' };
+        }
+        return { exitCode: 0, stdout: 'not json at all', stderr: '' };
+      }
+    });
+    assert.equal(await unparseable.probePluginPresence(), 'unknown');
+
+    // No usable `claude` on the machine at all: resolveExecutable throws, which must still be
+    // 'unknown' rather than a rejection escaping into the caller.
+    const noExecutable = new pluginModule.ClaudePluginBridgeService({
+      identity: pluginModule.resolveClaudePluginBridgeIdentity('production'),
+      userDataPath: fixtureRoot,
+      execPath: '/Applications/Bitterless.app/Contents/MacOS/Bitterless',
+      appRootPath: fixtureRoot,
+      pluginVersion: PLUGIN_VERSION,
+      executableCandidates: [],
+      helperSourcePath: join(fixtureRoot, 'presence', 'claudeHookHelper.js'),
+      idFactory: () => uuid(1),
+      runtimeStatus: () => ({ listening: false, listeningSince: null }),
+      runCommand: async () => { throw new Error('never reached'); }
+    });
+    assert.equal(await noExecutable.probePluginPresence(), 'unknown',
+      'a missing claude executable must report unknown, never not_installed');
+  }
+
   console.log('EyesOnAgents Claude environment plugin install tests passed');
 } finally {
   rmSync(fixtureRoot, { recursive: true, force: true });

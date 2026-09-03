@@ -159,27 +159,33 @@
             <p v-if="environment.error" class="eyes-connection-card__directories-error" role="status">
               {{ environment.error }}
             </p>
-            <div v-if="setupAction !== 'none'" class="eyes-connection-card__directories-meta">
-              <span>{{ setupTitle }}</span>
+            <div
+              v-if="environment.id"
+              name="eyesOnAgents__connections__claudeEnvironmentPlugin"
+              class="eyes-connection-card__directories-meta"
+            >
+              <span class="eyes-connection-card__status" :class="presenceClass(environment)">
+                {{ presenceLabel(environment) }}
+              </span>
               <a-button
-                v-if="['enable', 'finish', 'repair'].includes(setupAction)"
+                v-if="environment.pluginPresence === 'not_installed'
+                  || environment.pluginPresence === 'disabled'"
                 size="mini"
                 type="primary"
                 :loading="eyesOnAgentsStore.busyAction === 'claude-bridge-install'"
                 :disabled="Boolean(eyesOnAgentsStore.busyAction)"
                 @click="handleInstallForEnvironment(environment.id)"
               >
-                {{ setupActionLabel }}
+                {{ i18nHelper.eyesOnAgents.claudeEnvironment.installPlugin }}
               </a-button>
               <a-button
-                v-else-if="setupAction === 'retry'"
+                v-else-if="environment.pluginPresence === 'unknown'"
                 size="mini"
-                type="primary"
                 :loading="eyesOnAgentsStore.busyAction === 'claude-bridge-refresh'"
                 :disabled="Boolean(eyesOnAgentsStore.busyAction)"
                 @click="handleRefreshForEnvironment(environment.id)"
               >
-                {{ i18nHelper.eyesOnAgents.claudeBridge.retryListener }}
+                {{ i18nHelper.eyesOnAgents.claudeEnvironment.checkPlugin }}
               </a-button>
             </div>
             <div v-if="environment.id" class="eyes-connection-card__directories-actions">
@@ -519,6 +525,24 @@ const environmentPath = (environment: EyesOnAgentsClaudeEnvironmentStatus): stri
   environment.effectiveDirectory
   ?? environment.configuredDirectory
   ?? i18nHelper.eyesOnAgents.claudeEnvironment.notConfigured;
+// Task 090: this environment's OWN plugin presence, from the cached read-only probe. Distinct from
+// statusClass/statusLabel above, which report the one profile-wide installation and listener.
+const presenceLabel = (environment: EyesOnAgentsClaudeEnvironmentStatus): string => {
+  switch (environment.pluginPresence) {
+    case 'installed': return i18nHelper.eyesOnAgents.claudeEnvironment.pluginInstalled;
+    case 'disabled': return i18nHelper.eyesOnAgents.claudeEnvironment.pluginDisabled;
+    case 'not_installed': return i18nHelper.eyesOnAgents.claudeEnvironment.pluginNotInstalled;
+    default: return i18nHelper.eyesOnAgents.claudeEnvironment.pluginUnknown;
+  }
+};
+const presenceClass = (environment: EyesOnAgentsClaudeEnvironmentStatus): string => {
+  switch (environment.pluginPresence) {
+    case 'installed': return 'eyes-connection-card__status--installed';
+    case 'not_installed': return 'eyes-connection-card__status--stopped';
+    // 'disabled' and 'unknown' both mean "needs your attention, but nothing is broken yet".
+    default: return 'eyes-connection-card__status--needs_review';
+  }
+};
 const environmentModeLabel = (environment: EyesOnAgentsClaudeEnvironmentStatus): string =>
   environment.mode === 'custom'
     ? i18nHelper.eyesOnAgents.claudeDirectory.custom

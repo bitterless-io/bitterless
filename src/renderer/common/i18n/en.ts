@@ -799,7 +799,13 @@ export const en = {
       enable: 'Enable',
       disable: 'Disable',
       remove: 'Remove',
-      removeLastHint: 'The last remaining environment cannot be removed'
+      removeLastHint: 'The last remaining environment cannot be removed',
+      pluginInstalled: 'Plugin installed',
+      pluginDisabled: 'Plugin disabled',
+      pluginNotInstalled: 'Plugin not installed',
+      pluginUnknown: 'Plugin status unknown',
+      installPlugin: 'Install plugin',
+      checkPlugin: 'Check plugin'
     },
     actions: {
       sync: 'Sync',

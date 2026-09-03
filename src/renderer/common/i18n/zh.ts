@@ -786,7 +786,13 @@ export const zh: typeof en = {
       enable: '启用',
       disable: '停用',
       remove: '移除',
-      removeLastHint: '无法移除最后一个环境'
+      removeLastHint: '无法移除最后一个环境',
+      pluginInstalled: '插件已安装',
+      pluginDisabled: '插件已停用',
+      pluginNotInstalled: '插件未安装',
+      pluginUnknown: '插件状态未知',
+      installPlugin: '安装插件',
+      checkPlugin: '检查插件'
     },
     actions: {
       sync: '同步',

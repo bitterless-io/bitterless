@@ -21,6 +21,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import type {
   EyesOnAgentsClaudeBridgeStatus,
   EyesOnAgentsClaudeBridgeState,
+  EyesOnAgentsClaudePluginPresence,
   EyesOnAgentsClaudeSetupAction
 } from '@shared/eyesOnAgents/eyesOnAgents.type';
 import type {
@@ -429,6 +430,33 @@ export class ClaudePluginBridgeService {
       this.retainRefreshError(error);
     }
     return this.getStatus();
+  }
+
+  // Task 090: read-only presence probe for ONE environment's config directory. Deliberately
+  // separate from inspectCurrent()/this.inspection, which own the single profile-wide installation
+  // identity state machine — this answers only "does this directory have the plugin, and is it
+  // enabled", mutates no installation state, and returns 'unknown' rather than guessing whenever it
+  // cannot answer. It spawns two `claude` child processes, so callers must cache it and must never
+  // call it while assembling a snapshot.
+  async probePluginPresence(
+    configDirectory?: string
+  ): Promise<EyesOnAgentsClaudePluginPresence> {
+    try {
+      const executable = await this.resolveExecutable();
+      const namespace = await this.inspectClaudeNamespace(executable, configDirectory);
+      const plugin = namespace.plugins.find((entry) =>
+        entry.id === this.dependencies.identity.pluginId && entry.scope === 'user'
+      );
+      if (plugin === undefined) return 'not_installed';
+      if (plugin.enabled === true) return 'installed';
+      if (plugin.enabled === false) return 'disabled';
+      return 'unknown';
+    } catch {
+      // A missing/unusable executable, a non-zero CLI exit, and unparseable CLI JSON are all "we
+      // could not check". The error is intentionally swallowed rather than logged: its message can
+      // carry the config directory, which must never reach main.log.
+      return 'unknown';
+    }
   }
 
   private async refreshWithoutAutomaticUpgrade(

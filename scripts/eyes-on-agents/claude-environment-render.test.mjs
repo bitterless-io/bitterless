@@ -154,6 +154,11 @@ const createEnvironment = (overrides = {}) => ({
 // instead of making every fixture repeat it. An explicit canRemove on a fixture still wins.
 const withRemovability = (environments) => environments.map((environment) => ({
   canRemove: environments.length > 1 && environment.id !== '',
+  // Task 090: getDirectoryStatus() also stamps plugin presence on every row. Default to the
+  // never-probed value so pre-090 fixtures keep describing a valid row; an explicit
+  // pluginPresence on a fixture still wins.
+  pluginPresence: 'unknown',
+  pluginProbedAt: null,
   ...environment,
 }));
 
@@ -161,6 +166,7 @@ const createStore = (environments, { providerError = null, ...overrides } = {}) 
   const calls = {
     add: [], rename: [], remove: [], setEnabled: [], chooseDirectory: [], useAutomatic: [],
     changeDirectory: 0, useAutomaticDirectory: 0, retry: [], retryDirectory: 0, copySetup: [],
+    installBridge: [], refreshBridge: [],
   };
   return {
     calls,
@@ -179,8 +185,8 @@ const createStore = (environments, { providerError = null, ...overrides } = {}) 
     installClaudeBridge: async () => undefined,
     refreshClaudeBridgeStatus: async () => undefined,
     removeClaudeBridge: async () => undefined,
-    installClaudeBridgeForEnvironment: async () => undefined,
-    refreshClaudeBridgeStatusForEnvironment: async () => undefined,
+    installClaudeBridgeForEnvironment: async (id) => { calls.installBridge.push(id); },
+    refreshClaudeBridgeStatusForEnvironment: async (id) => { calls.refreshBridge.push(id); },
     openNewClaudeSession: async () => undefined,
     copyClaudeReloadCommand: async () => undefined,
     changeClaudeDirectory: async () => { calls.changeDirectory += 1; },
@@ -271,6 +277,76 @@ try {
       const path = environmentRows[1].querySelector('input[readonly]');
       assert.ok(path);
       assert.equal(path.value, '/Users/ral/.claude2');
+    } finally {
+      mounted.app.unmount();
+      document.body.innerHTML = '';
+    }
+  });
+
+  // Task 090: each row reports its OWN plugin presence, and the offered action follows from it —
+  // Install when we know it is missing/disabled, Check when we could not find out. The whole point
+  // is that these are per-row facts, so two rows in one card must be able to disagree.
+  await test('each row shows its own plugin presence and the matching action', async () => {
+    const environments = [
+      createEnvironment({
+        id: '11111111-1111-4111-8111-111111111111',
+        label: 'Default',
+        mode: 'automatic',
+        pluginPresence: 'installed',
+        pluginProbedAt: '2026-09-03T00:00:00.000Z',
+      }),
+      createEnvironment({
+        id: '22222222-2222-4222-8222-222222222222',
+        label: 'claude2',
+        mode: 'custom',
+        configuredDirectory: '/Users/ral/.claude2',
+        effectiveDirectory: '/Users/ral/.claude2',
+        pluginPresence: 'not_installed',
+      }),
+    ];
+    const mounted = await mountCard(environments);
+    try {
+      const environmentRows = rows(mounted.host);
+      assert.match(environmentRows[0].textContent ?? '', /Plugin installed/);
+      assert.match(environmentRows[1].textContent ?? '', /Plugin not installed/);
+      // An already-installed row must not nag with an Install button...
+      assert.equal(rowButton(environmentRows[0], /^Install plugin$/), undefined);
+      assert.equal(rowButton(environmentRows[0], /^Check plugin$/), undefined);
+      // ...while the row that genuinely lacks it offers the row-scoped install.
+      const install = rowButton(environmentRows[1], /^Install plugin$/);
+      assert.ok(install, 'a not_installed row must offer Install plugin');
+      install.click();
+      await nextTick();
+      assert.deepEqual(mounted.store.calls.installBridge,
+        ['22222222-2222-4222-8222-222222222222'],
+        'Install must target that row\'s environment id');
+    } finally {
+      mounted.app.unmount();
+      document.body.innerHTML = '';
+    }
+  });
+
+  await test('an unprobed row offers Check rather than Install', async () => {
+    const environments = [
+      createEnvironment({
+        id: '33333333-3333-4333-8333-333333333333',
+        pluginPresence: 'unknown',
+      }),
+    ];
+    const mounted = await mountCard(environments);
+    try {
+      const row = rows(mounted.host)[0];
+      assert.match(row.textContent ?? '', /Plugin status unknown/);
+      // 'unknown' means "we could not check", so the honest offer is to check again — not to
+      // invite a reinstall of something that may already be installed.
+      assert.equal(rowButton(row, /^Install plugin$/), undefined);
+      const check = rowButton(row, /^Check plugin$/);
+      assert.ok(check, 'an unknown row must offer Check plugin');
+      check.click();
+      await nextTick();
+      assert.deepEqual(mounted.store.calls.refreshBridge,
+        ['33333333-3333-4333-8333-333333333333'],
+        'Check must refresh that row\'s environment id');
     } finally {
       mounted.app.unmount();
       document.body.innerHTML = '';

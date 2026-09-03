@@ -189,6 +189,17 @@ export type EyesOnAgentsClaudeDirectoryState =
 
 // One configured Claude environment's watcher status (task 085: the singular
 // EyesOnAgentsClaudeDirectoryStatus shape moved to a per-environment array — see
+// Whether one Claude environment's own config directory has the Bitterless plugin (task 090).
+// 'unknown' means the probe could not answer — never probed yet, the probe threw, or the `claude`
+// executable is missing/unusable. It is deliberately NOT folded into 'not_installed': "we could not
+// check" and "we checked and it is absent" call for different user action, and conflating them
+// turns a broken PATH into a misleading "not installed" that invites a pointless reinstall.
+export type EyesOnAgentsClaudePluginPresence =
+  | 'installed'
+  | 'disabled'
+  | 'not_installed'
+  | 'unknown';
+
 // EyesOnAgentsClaudeDirectoryStatus below). id/label/enabled mirror the environment this status
 // belongs to; every other field is the pre-existing per-directory watcher status shape unchanged.
 export interface EyesOnAgentsClaudeEnvironmentStatus {
@@ -211,13 +222,20 @@ export interface EyesOnAgentsClaudeEnvironmentStatus {
   // instead of re-deriving it from the row count. Always false for the synthetic
   // invalid-hydration entry, which has no environment identity to remove.
   canRemove: boolean;
+  // Whether THIS environment's own CLAUDE_CONFIG_DIR has the Bitterless plugin (task 090). Read
+  // from a cached read-only probe, never computed during snapshot assembly — see
+  // EyesOnAgentsClaudePluginPresence. Distinct from the profile-wide claudeBridge status, which
+  // reports the single shared installation identity and listener.
+  pluginPresence: EyesOnAgentsClaudePluginPresence;
+  pluginProbedAt: string | null;
 }
 
 // The per-environment watcher status as the observation service tracks it internally: every field
-// except canRemove, which is a property of the environment LIST rather than of one environment's
-// watcher, and is therefore stamped only when getDirectoryStatus() assembles the array.
+// except the ones that are properties of the environment LIST or of a separate probe rather than of
+// one environment's watcher, and are therefore stamped only when getDirectoryStatus() assembles the
+// array.
 export type EyesOnAgentsClaudeEnvironmentWatcherStatus =
-  Omit<EyesOnAgentsClaudeEnvironmentStatus, 'canRemove'>;
+  Omit<EyesOnAgentsClaudeEnvironmentStatus, 'canRemove' | 'pluginPresence' | 'pluginProbedAt'>;
 
 // One entry per configured Claude environment (task 085). When the persisted directory
 // configuration itself failed to hydrate, this is a single synthetic entry (id/label empty)

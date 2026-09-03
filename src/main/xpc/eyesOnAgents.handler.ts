@@ -246,7 +246,10 @@ claudeObservation = new ClaudeObservationService({
     pathValue: process.env.PATH
   })),
   createWatcher: createClaudeWatcher,
-  broadcastChanged: () => xpcMain.broadcast('eyes-on-agents/changed', {})
+  broadcastChanged: () => xpcMain.broadcast('eyes-on-agents/changed', {}),
+  // Task 090: read-only per-environment plugin presence. Bound to the same plugin bridge instance
+  // the install/refresh/remove actions use, but through a probe that touches no installation state.
+  probePluginPresence: (configDirectory) => claudePluginBridge.probePluginPresence(configDirectory)
 });
 
 eyesOnAgentsService = new EyesOnAgentsService({

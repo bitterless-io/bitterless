@@ -5,6 +5,7 @@ import type {
   EyesOnAgentsClaudeEnvironment,
   EyesOnAgentsClaudeEnvironmentWatcherStatus,
   EyesOnAgentsClaudeInventoryThread,
+  EyesOnAgentsClaudePluginPresence,
   EyesOnAgentsRepositoryApi,
   EyesOnAgentsRepositoryMutationResult
 } from '@shared/eyesOnAgents/eyesOnAgents.type';
@@ -119,19 +120,104 @@ export class ClaudeObservationService {
     setTimer?: typeof setTimeout;
     clearTimer?: typeof clearTimeout;
     logger?: Pick<Console, 'info'>;
+    // Task 090: read-only per-environment plugin presence probe. Optional, so every pre-090 test
+    // harness that never wires it keeps its exact behavior (presence stays 'unknown', nothing is
+    // spawned). Spawns two `claude` child processes per call, so it is only ever invoked from
+    // refreshPluginPresence() — never while assembling a snapshot.
+    probePluginPresence?: (configDirectory?: string) => Promise<EyesOnAgentsClaudePluginPresence>;
   }) {}
+
+  // Task 090: last known presence per environment id, written only by refreshPluginPresence().
+  private readonly pluginPresence = new Map<
+    string,
+    { presence: EyesOnAgentsClaudePluginPresence; probedAt: string }
+  >();
+  // One in-flight probe per environment id, so two overlapping refreshes for the same environment
+  // share a single pair of CLI calls. Keyed per id, so different environments still probe
+  // concurrently and one environment's failure or hang never blocks another's.
+  private readonly pluginPresenceInFlight = new Map<
+    string,
+    Promise<EyesOnAgentsClaudePluginPresence>
+  >();
+
+  // Probes the given environment, or every configured environment when no id is passed. Safe to
+  // call without the probe dependency wired (no-op). Never throws: the probe itself maps every
+  // failure to 'unknown'.
+  async refreshPluginPresence(environmentId?: string): Promise<void> {
+    if (!this.dependencies.probePluginPresence) return;
+    const ids = environmentId === undefined
+      ? [...this.environments.keys()]
+      : [environmentId];
+    await this.probeEnvironmentPresence(ids);
+  }
+
+  // Probes the given ids concurrently and broadcasts once, so reconciling several environments at
+  // App start does not emit one change notification per environment.
+  private async probeEnvironmentPresence(ids: readonly string[]): Promise<void> {
+    const probe = this.dependencies.probePluginPresence;
+    if (!probe || ids.length === 0) return;
+    let probed = false;
+    await Promise.all(ids.map(async (id) => {
+      const state = this.environments.get(id);
+      if (!state) return;
+      // Coalesce onto one in-flight probe per id, so two overlapping refreshes for the same
+      // environment share a single pair of CLI calls.
+      const existing = this.pluginPresenceInFlight.get(id);
+      if (existing) {
+        await existing;
+        return;
+      }
+      // A rejecting probe must be contained here, not just inside the bridge's own probe: this runs
+      // during reconcile/start, so an escaping rejection would fail environment startup over a
+      // read-only status lookup. A probe that could not answer leaves the cache untouched, which
+      // reads as 'unknown' with a null probedAt — never a guessed 'not_installed'.
+      const pending = probe(state.config.configDirectory ?? undefined)
+        .catch((): null => null);
+      this.pluginPresenceInFlight.set(id, pending.then((presence) => presence ?? 'unknown'));
+      try {
+        const presence = await pending;
+        // A reconcile may have dropped this environment while the probe was running; do not
+        // resurrect a cache entry for an id that no longer exists.
+        if (presence === null || !this.environments.has(id)) return;
+        this.pluginPresence.set(id, {
+          presence,
+          probedAt: new Date((this.dependencies.now ?? Date.now)()).toISOString()
+        });
+        probed = true;
+      } finally {
+        this.pluginPresenceInFlight.delete(id);
+      }
+    }));
+    if (probed) this.dependencies.broadcastChanged?.();
+  }
 
   // canRemove is stamped here rather than tracked per watcher because it is a property of the whole
   // environment list: it mirrors ClaudeDirectoryConfigService.removeEnvironment's own guard
   // ("The last remaining Claude environment cannot be removed"), so the renderer can disable Remove
   // from the authoritative rule instead of re-deriving the row count. The synthetic
   // invalid-hydration entry has no environment identity at all, so it is never removable.
+  // pluginPresence/pluginProbedAt are likewise stamped here, read-only, from whatever
+  // refreshPluginPresence() last cached. This method must never trigger a probe: it is called on
+  // every snapshot assembly, and a probe costs two `claude` child processes per environment.
   getDirectoryStatus(): EyesOnAgentsClaudeDirectoryStatus {
     if (this.invalidHydrationStatus) {
-      return [{ ...this.invalidHydrationStatus, canRemove: false }];
+      return [{
+        ...this.invalidHydrationStatus,
+        canRemove: false,
+        pluginPresence: 'unknown',
+        pluginProbedAt: null
+      }];
     }
     const canRemove = this.environments.size > 1;
-    return [...this.environments.values()].map((state) => ({ ...state.status, canRemove }));
+    return [...this.environments.values()].map((state) => {
+      const probed = this.pluginPresence.get(state.config.id);
+      return {
+        ...state.status,
+        canRemove,
+        pluginPresence: probed?.presence ?? 'unknown',
+        pluginProbedAt: probed?.probedAt ?? null
+      };
+    });
   }
 
   // Tries every currently-configured environment's projects root, since a transcript may belong
@@ -382,21 +468,35 @@ export class ClaudeObservationService {
     for (const [id, state] of this.environments) {
       if (nextIds.has(id)) continue;
       this.environments.delete(id);
+      // Drop the cached presence with the environment, so a re-added id never inherits a verdict
+      // that was probed against a different directory.
+      this.pluginPresence.delete(id);
       tasks.push(this.teardownEnvironment(state));
     }
+    // Task 090: an environment is worth re-probing when it is newly added or its config directory
+    // changed — those are exactly the cases where the cached verdict describes a different
+    // directory than the one now configured. A rename or an enabled-flag flip changes nothing the
+    // probe looks at, so it does not spend two CLI calls.
+    const staleIds: string[] = [];
     for (const environment of list) {
       const existing = this.environments.get(environment.id);
       if (existing) {
+        if (existing.config.configDirectory !== environment.configDirectory) {
+          this.pluginPresence.delete(environment.id);
+          staleIds.push(environment.id);
+        }
         tasks.push(this.runEnvironmentLifecycle(existing, () => (
           this.applyEnvironmentConfigBody(existing, environment)
         )));
       } else {
         const created = this.createEnvironmentState(environment);
         this.environments.set(environment.id, created);
+        staleIds.push(environment.id);
         tasks.push(this.runEnvironmentLifecycle(created, () => this.startEnvironmentBody(created)));
       }
     }
     await Promise.all(tasks);
+    await this.probeEnvironmentPresence(staleIds);
   }
 
   private async teardownAllEnvironments(): Promise<void> {

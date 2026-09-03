@@ -112,6 +112,10 @@ interface EyesOnAgentsServiceDependencies {
     // Task 088: reconciles the environment-CRUD map (task 085's applyEnvironments()) after a thin
     // delegating CRUD call below mutates the persisted environment list.
     applyEnvironments?(): Promise<void>;
+    // Task 090: re-probes one environment's plugin presence (or all, when the id is omitted) after
+    // an action that can change it. Never called while assembling a snapshot — it spawns two
+    // `claude` child processes per environment.
+    refreshPluginPresence?(environmentId?: string): Promise<void>;
   };
   // Task 088: the same ClaudeDirectoryConfigService singleton eyesOnAgents.handler.ts constructs,
   // injected here so this service can (a) satisfy EyesOnAgentsApi's 7 environment-CRUD members with
@@ -2913,6 +2917,10 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
         throw error;
       }
     });
+    // Task 090: the install just changed this environment's plugin presence, so re-probe that one
+    // environment before the snapshot the renderer will read. Failures inside the probe already
+    // resolve to 'unknown'; a missing dependency makes this a no-op.
+    await this.dependencies.claudeObservation?.refreshPluginPresence?.(params?.environmentId);
     return await this.changedSnapshot();
   }
 
@@ -2970,6 +2978,9 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
         throw new Error('Claude listener retry failed');
       }
     });
+    // Task 090: an explicit Retry/Refresh on a row is also the user asking "check this environment
+    // again", so re-probe presence for it.
+    await this.dependencies.claudeObservation?.refreshPluginPresence?.(params?.environmentId);
     return await this.changedSnapshot();
   }
 
@@ -2988,6 +2999,8 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
         !this.claudeProviderPreferenceEnabled) return;
       await this.dependencies.claudeBridge?.remove(configDirectory);
     });
+    // Task 090: removal changes this environment's presence too, so re-probe it.
+    await this.dependencies.claudeObservation?.refreshPluginPresence?.(params?.environmentId);
     return await this.changedSnapshot();
   }
 
