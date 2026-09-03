@@ -1,0 +1,239 @@
+:root {
+  --onlypreview-canvas: #f6f7fa;
+  --onlypreview-surface: #ffffff;
+  --onlypreview-divider: #d9ddea;
+  --onlypreview-ink: #25283a;
+  --onlypreview-muted: #6f7487;
+  --onlypreview-royal: #4e5882;
+  --onlypreview-royal-soft: #eceef7;
+  --onlypreview-danger: #a13d3d;
+  --onlypreview-danger-soft: #f6e9e9;
+  --onlypreview-focus: #737ea8;
+  --onlypreview-scrim: rgba(37, 40, 58, 0.28);
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: transparent;
+  color: var(--onlypreview-ink);
+}
+
+html,
+body {
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+#app {
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 12px;
+}
+
+.onlypreview-alert-canvas {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.onlypreview-alert-scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--onlypreview-scrim);
+}
+
+/* The dialog shell every dialog shares. `--layer` is what the owner asked for literally: the error
+   surface is the same layer as the dialog it reports on, one z-index above it. */
+.onlypreview-alert-panel {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 320px;
+  max-width: min(520px, calc(100% - 48px));
+  max-height: calc(100% - 48px);
+  padding: 16px;
+  border: 1px solid var(--onlypreview-divider);
+  border-radius: 8px;
+  background: var(--onlypreview-surface);
+  box-shadow: 0 12px 32px rgba(37, 40, 58, 0.22);
+  transform: translate(-50%, -50%);
+}
+
+.onlypreview-alert-panel--error {
+  z-index: 20;
+}
+
+.onlypreview-alert-title {
+  margin: 0;
+  color: var(--onlypreview-ink);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.onlypreview-alert-subtitle {
+  margin: 0;
+  color: var(--onlypreview-muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.onlypreview-alert-message {
+  margin: 0;
+  color: var(--onlypreview-ink);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-line;
+}
+
+.onlypreview-alert-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.onlypreview-alert-field-label {
+  color: var(--onlypreview-muted);
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.onlypreview-alert-input {
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--onlypreview-divider);
+  border-radius: 4px;
+  background: var(--onlypreview-surface);
+  color: var(--onlypreview-ink);
+  outline: none;
+}
+
+.onlypreview-alert-input:focus {
+  border-color: var(--onlypreview-focus);
+}
+
+.onlypreview-alert-input--rejected {
+  border-color: var(--onlypreview-danger);
+}
+
+.onlypreview-alert-hint {
+  min-height: 14px;
+  color: var(--onlypreview-danger);
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.onlypreview-alert-entries {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--onlypreview-divider);
+  border-radius: 4px;
+  background: var(--onlypreview-canvas);
+  list-style: none;
+}
+
+.onlypreview-alert-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--onlypreview-ink);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.onlypreview-alert-entry-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.onlypreview-alert-entry-tag {
+  flex: 0 0 auto;
+  color: var(--onlypreview-muted);
+  font-size: 10px;
+}
+
+.onlypreview-alert-entry-more {
+  color: var(--onlypreview-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.onlypreview-alert-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.onlypreview-alert-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid var(--onlypreview-divider);
+  border-radius: 4px;
+  background: var(--onlypreview-surface);
+  color: var(--onlypreview-ink);
+  cursor: pointer;
+}
+
+.onlypreview-alert-button:focus-visible {
+  outline: 2px solid var(--onlypreview-focus);
+  outline-offset: -2px;
+}
+
+.onlypreview-alert-button--primary {
+  border-color: var(--onlypreview-royal);
+  background: var(--onlypreview-royal);
+  color: #ffffff;
+}
+
+.onlypreview-alert-button--destructive {
+  border-color: var(--onlypreview-danger);
+  background: var(--onlypreview-danger);
+  color: #ffffff;
+}
+
+.onlypreview-alert-button:disabled {
+  border-color: var(--onlypreview-divider);
+  background: var(--onlypreview-canvas);
+  color: var(--onlypreview-muted);
+  cursor: default;
+}
+
+.onlypreview-alert-button-hint {
+  opacity: 0.75;
+  font-size: 10px;
+}

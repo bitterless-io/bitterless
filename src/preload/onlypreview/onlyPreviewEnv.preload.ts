@@ -16,6 +16,7 @@ const resolveEntryMode = (): OnlyPreviewEntryMode => {
   if (
     value === 'preview' ||
     value === 'globalSearch' ||
+    value === 'alert' ||
     value === 'settings' ||
     value === 'guide'
   ) {

@@ -463,6 +463,10 @@ export const ONLY_PREVIEW_PREVIEW_PRESENTATION_EVENT = 'onlypreview/previewPrese
 export const ONLY_PREVIEW_FIND_STATE_EVENT = 'onlypreview/findState' as const;
 export const ONLY_PREVIEW_FIND_FOCUS_EVENT = 'onlypreview/findFocus' as const;
 export const ONLY_PREVIEW_FIND_COMMAND_EVENT = 'onlypreview/findCommand' as const;
+// The alert renderer pulls the dialog stack with `getAlertSnapshot` and this only tells it that the
+// stack changed. A lazily created renderer misses broadcasts sent before it subscribed, and a
+// broadcast has no replay, so the state itself must never travel in the event.
+export const ONLY_PREVIEW_ALERT_STATE_EVENT = 'onlypreview/alertState' as const;
 
 // `failed` is not a search-engine state. It is the terminal Main needs: a first build that throws
 // before an index exists emits no snapshot at all, so without it the preview pane would animate

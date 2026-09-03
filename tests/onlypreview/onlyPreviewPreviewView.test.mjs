@@ -194,7 +194,11 @@ test('Chrome crash increments revision, tears down the raw view, and rejects its
   await service.present(host.hostToken, fileRef('page.html'));
   const chrome = state.chromeViews[0];
   assert.equal(chrome.webContents.webRTCIPHandlingPolicy, 'disable_non_proxied_udp');
-  assert.equal(chrome.webContents.session.proxyConfig.proxyBypassRules, '<-loopback>');
+  // The dead proxy is gone: a previewed page loads its remote dependencies (owner decision). What
+  // is still refused is every `file:`/`ftp:` request, so the page reaches its own siblings through
+  // the document protocol and nothing else on disk.
+  assert.equal(chrome.webContents.session.proxyConfig.mode, 'direct');
+  assert.deepEqual(chrome.webContents.session.webRequestFilter.urls, ['ftp://*/*', 'file://*/*']);
 
   chrome.webContents.emit('render-process-gone', {}, { reason: 'crashed' });
   const snapshot = service.snapshot(host.hostToken);
@@ -262,7 +266,21 @@ test('Vue bundle load failure publishes unavailable without an automatic recreat
   assert.equal(children.has(state.vueViews[1]), true);
 });
 
-test('PDF readiness requires the exact document-frame finish event and reports a truthful timeout', async () => {
+test('PDF readiness polls the frame subtree and the deadline is a bound, not a verdict', async () => {
+  // The viewer's inner content frame is handed a stream by the extension rather than performing a
+  // navigation, so it never reports a frame load. Subscribing to `did-frame-finish-load` therefore
+  // put every PDF on the 8-second deadline — which is the whole "Cmd+F does not search a PDF"
+  // symptom, since find cannot dispatch until the presentation leaves `loading`. Polling the
+  // subtree is what the original implementation did, and it is restored here.
+  const advance = (timers, times) => {
+    for (let index = 0; index < times; index += 1) {
+      const pending = timers.find((timer) => timer.active);
+      if (!pending) return;
+      pending.active = false;
+      pending.callback(...pending.args);
+    }
+  };
+
   await withFakeTimeouts(async (timers) => {
     const { service } = createHarness();
     service.updateBounds(host.hostToken, bounds);
@@ -270,44 +288,36 @@ test('PDF readiness requires the exact document-frame finish event and reports a
     await service.present(host.hostToken, fileRef('paper.pdf'));
     const chrome = state.chromeViews.at(-1);
     const navigationUrl = chrome.webContents.loadedUrls.at(-1);
-    const attachNotifications = state.activeViewAttachNotifications;
 
-    // Main-frame completion and mere frame existence cannot publish PDFium readiness.
+    // Main-frame completion alone cannot publish PDFium readiness.
     chrome.webContents.emit('did-finish-load');
     assert.equal(service.snapshot(host.hostToken).status, 'loading');
-    const documentFrame = chrome.webContents.addSubframe(navigationUrl);
-    assert.equal(service.snapshot(host.hostToken).status, 'loading');
 
-    // A main-frame-flagged completion is still ignored even for a real frame.
-    chrome.webContents.emit(
-      'did-frame-finish-load',
-      {},
-      true,
-      documentFrame.processId,
-      documentFrame.routingId
-    );
-    assert.equal(service.snapshot(host.hostToken).status, 'loading');
-
-    // Chromium hosts the PDF in its viewer extension frame, whose URL is NOT the navigation URL.
-    // Requiring that equality is what made the surface unreachable: it recorded zero ready
-    // outcomes and timed out at 8s on every PDF.
-    const viewerFrame = chrome.webContents.addSubframe(
+    // Neither can the viewer extension's own shell frame, whose URL is not the navigation URL.
+    chrome.webContents.addSubframe(
       'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html'
     );
-    chrome.webContents.emit(
-      'did-frame-finish-load',
-      {},
-      false,
-      viewerFrame.processId,
-      viewerFrame.routingId
-    );
+    advance(timers, 3);
+    assert.equal(service.snapshot(host.hostToken).status, 'loading');
+
+    // The document frame is the signal, and the poll picks it up without any event from it.
+    chrome.webContents.addSubframe(navigationUrl);
+    const pending = timers.find((timer) => timer.active);
+    assert.ok(pending, 'the poll must stay armed');
+    assert.equal(pending.delay, 150, 'the poll interval, not the deadline');
+    advance(timers, 1);
+
     const ready = service.snapshot(host.hostToken);
     assert.equal(ready.status, 'ready');
     assert.equal(ready.adapterId, 'chromium-pdf');
     assert.equal(ready.error, null);
-    assert.equal(state.activeViewAttachNotifications, attachNotifications + 1);
-    assert.equal(chrome.webContents.listenerCount('did-frame-finish-load'), 0);
-    assert.equal(timers.filter((timer) => timer.active).length, 0);
+    // Readiness no longer has to re-raise anything: the preview's own show re-sorts every layer,
+    // so there is nothing for Global Search to undo afterwards.
+    assert.deepEqual(
+      state.layerShows.map(({ layer, owner }) => `${layer}:${owner}`).slice(-1),
+      ['main:preview']
+    );
+    assert.equal(timers.filter((timer) => timer.active).length, 0, 'the poll must stop');
   });
 
   await withFakeTimeouts(async (timers) => {
@@ -321,19 +331,14 @@ test('PDF readiness requires the exact document-frame finish event and reports a
       'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html'
     );
 
-    const pending = timers.find((timer) => timer.active);
-    assert.ok(pending, 'a bounded document-frame deadline must be scheduled');
-    assert.equal(pending.delay, 8_000);
-    pending.active = false;
-    pending.callback(...pending.args);
-
-    // The deadline is not a verdict on its own: the viewer built a document frame, so the PDF on
-    // screen must not be replaced by a failure card.
+    // A subtree that never holds the navigation URL still reaches the deadline, and the deadline is
+    // not a verdict: the viewer built a frame, so a rendered PDF must not become a failure card.
+    advance(timers, Math.ceil(8_000 / 150) + 2);
     const snapshot = service.snapshot(host.hostToken);
     assert.equal(snapshot.status, 'ready');
     assert.equal(snapshot.adapterId, 'chromium-pdf');
     assert.equal(snapshot.error, null);
-    assert.equal(chrome.webContents.listenerCount('did-frame-finish-load'), 0);
+    assert.equal(timers.filter((timer) => timer.active).length, 0);
   });
 
   await withFakeTimeouts(async (timers) => {
@@ -344,18 +349,13 @@ test('PDF readiness requires the exact document-frame finish event and reports a
     const chrome = state.chromeViews.at(-1);
     chrome.webContents.emit('did-finish-load');
 
-    // No document frame at all is the one genuine failure.
-    const pending = timers.find((timer) => timer.active);
-    assert.ok(pending, 'a bounded document-frame deadline must be scheduled');
-    pending.active = false;
-    pending.callback(...pending.args);
-
+    // No sub-frame at all is the one genuine failure.
+    advance(timers, Math.ceil(8_000 / 150) + 2);
     const snapshot = service.snapshot(host.hostToken);
     assert.equal(snapshot.status, 'unavailable');
     assert.equal(snapshot.surface, 'vue');
     assert.equal(snapshot.error.code, 'PDF_VIEWER_UNAVAILABLE');
     assert.equal(chrome.webContents.destroyed, true);
-    assert.equal(chrome.webContents.listenerCount('did-frame-finish-load'), 0);
   });
 });
 

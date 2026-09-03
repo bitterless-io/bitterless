@@ -211,6 +211,6 @@ test('Global Search keeps Office lazy, keyed, disposable, and separate from curr
   );
   assert.match(html, /script-src 'self' 'wasm-unsafe-eval'/);
   assert.match(html, /worker-src 'self' blob:/);
-  assert.match(config, /\['shell', 'preview', 'globalSearch', 'settings', 'guide'\]/);
+  assert.match(config, /\['shell', 'preview', 'globalSearch', 'alert', 'settings', 'guide'\]/);
   assert.match(config, /mode === 'preview' \|\| mode === 'globalSearch'/);
 });

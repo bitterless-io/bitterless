@@ -4,7 +4,13 @@ import { pathToFileURL } from 'node:url';
 import { is } from '@electron-toolkit/utils';
 import type { OnlyPreviewHostCapability } from '@main/onlypreview/onlyPreviewHost.registry';
 
-export type OnlyPreviewRendererMode = 'shell' | 'preview' | 'globalSearch' | 'settings' | 'guide';
+export type OnlyPreviewRendererMode =
+  | 'shell'
+  | 'preview'
+  | 'globalSearch'
+  | 'alert'
+  | 'settings'
+  | 'guide';
 
 export const getOnlyPreviewRendererTarget = (
   mode: OnlyPreviewRendererMode,

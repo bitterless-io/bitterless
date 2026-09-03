@@ -91,6 +91,8 @@ const createHarness = (loadView = async () => undefined) => {
   const broadcasts = [];
   let projectFocuses = 0;
   let previewFocuses = 0;
+  const layerShows = [];
+  const layerHides = [];
   let openerRestores = 0;
   let openerClears = 0;
   const window = {
@@ -99,6 +101,7 @@ const createHarness = (loadView = async () => undefined) => {
       return this.destroyed;
     },
     contentView: {
+      children,
       addChildView(view) {
         const current = children.indexOf(view);
         if (current >= 0) children.splice(current, 1);
@@ -137,6 +140,15 @@ const createHarness = (loadView = async () => undefined) => {
     focusPreview: () => {
       previewFocuses += 1;
       return true;
+    },
+    showInGlobalLayer: (view) => {
+      layerShows.push(view.name);
+      window.contentView.addChildView(view);
+    },
+    hideGlobalLayer: () => {
+      layerHides.push(true);
+      const current = views.at(-1);
+      if (current) window.contentView.removeChildView(current);
     }
   });
   return {
@@ -146,6 +158,8 @@ const createHarness = (loadView = async () => undefined) => {
     children,
     views,
     broadcasts,
+    layerShows,
+    layerHides,
     counts: () => ({ projectFocuses, previewFocuses, openerRestores, openerClears })
   };
 };
@@ -181,11 +195,8 @@ test('Search spans the BaseWindow, publishes exact Preview geometry, and stays t
       layout: { viewBounds, workspaceBounds: bounds }
     }
   );
-  // A raise is a real detach-then-attach: re-adding an attached child reorders the views tree, but
-  // only the detach drives the native host path that restacks AppKit subviews on macOS.
-  assert.deepEqual(harness.operations.slice(0, 3), [
+  assert.deepEqual(harness.operations.slice(0, 2), [
     { kind: 'bounds', name: 'search-1', bounds: viewBounds },
-    { kind: 'remove', name: 'search-1' },
     { kind: 'add', name: 'search-1', bounds: viewBounds }
   ]);
 
@@ -195,13 +206,28 @@ test('Search spans the BaseWindow, publishes exact Preview geometry, and stays t
     harness.children.map(({ name }) => name),
     ['search-1', 'pdf-preview']
   );
-  harness.service.raiseAfterPreviewAttach(host.hostToken);
+  // `raiseAfterPreviewAttach` is gone: the preview's own show re-sorts every layer, so nothing has
+  // to call back here after it attaches. Re-showing re-asserts the order through the layer service.
+  const beforeRaise = harness.operations.length;
+  harness.service.show(host.hostToken, 'shell');
   assert.deepEqual(
     harness.children.map(({ name }) => name),
     ['pdf-preview', 'search-1']
   );
+  assert.deepEqual(
+    harness.operations.slice(beforeRaise).map(({ kind }) => kind),
+    ['bounds', 'add'],
+    'no detach — the documented reorder moves it'
+  );
+
+  // The overlay goes through the `global` layer; the layer service owns the order and the occlusion
+  // of everything beneath it, so this view no longer raises or hides anything itself.
+  // Shown once per raise — the load-settle re-raise counts — and never hidden while open.
+  assert.equal(harness.layerShows.at(-1), 'search-1');
+  assert.deepEqual(harness.layerHides, []);
 
   harness.service.close(host.hostToken, 'discard');
+  assert.deepEqual(harness.layerHides, [true], 'closing releases the layer');
   assert.equal(harness.children.includes(view), false);
   assert.equal(view.webContents.destroyed, false);
   // Re-showing a warm overlay is synchronous: the renderer already exists, which is the whole point
@@ -211,8 +237,10 @@ test('Search spans the BaseWindow, publishes exact Preview geometry, and stays t
   assert.equal(harness.views.length, 1);
   harness.service.destroy();
   assert.equal(view.webContents.destroyed, true);
-  assert.deepEqual(visibilityStates(harness.broadcasts), [true, false, true, false]);
-  assert.deepEqual(visibilityRevisions(harness.broadcasts), [2, 3, 4, 5]);
+  // The extra `show` above re-broadcasts visibility; the ledger's shape is what matters — every
+  // open is followed by exactly one close.
+  assert.deepEqual(visibilityStates(harness.broadcasts), [true, true, false, true, false]);
+  assert.deepEqual(visibilityRevisions(harness.broadcasts), [2, 2, 3, 4, 5]);
 });
 
 test('Main owns monotonic context revisions across a Shell reload generation reset', () => {

@@ -27,7 +27,7 @@ test('window sources delegate dual Preview isolation and preserve generic Omni r
   assert.doesNotMatch(standalone, /PREVIEW_HEADER_HEIGHT/);
   assert.match(
     standalone,
-    /addChildView\(shellView\)[\s\S]*onlyPreviewPreviewRegionService\.start\(\{/
+    /onlyPreviewViewLayerService\.show\('base', 'shell', shellView\)[\s\S]*onlyPreviewPreviewRegionService\.start\(\{/
   );
   assert.doesNotMatch(standalone, /addChildView\(previewView\)/);
   assert.doesNotMatch(standalone, /previewHeaderView/);
@@ -130,9 +130,12 @@ test('window sources delegate dual Preview isolation and preserve generic Omni r
     bindDevToolsShortcut,
     /if \(!isOnlyPreviewDevToolsEnabled\(\)\) return;[\s\S]*webContents\.on\('before-input-event'/
   );
+  // `activate: false` is not cosmetic. A detached DevTools window is a separate NSWindow that takes
+  // key status from the OnlyPreview BaseWindow, and DevTools binds Cmd+F and Shift+Cmd+F itself — so
+  // an activating toggle disabled both find chords for the rest of the session.
   assert.match(
     bindDevToolsShortcut,
-    /event\.preventDefault\(\);[\s\S]*webContents\.isDevToolsOpened\(\)[\s\S]*webContents\.closeDevTools\(\)[\s\S]*webContents\.openDevTools\(\{ mode: 'detach' \}\)/
+    /event\.preventDefault\(\);[\s\S]*webContents\.isDevToolsOpened\(\)[\s\S]*webContents\.closeDevTools\(\)[\s\S]*webContents\.openDevTools\(\{ mode: 'detach', activate: false \}\)/
   );
   const createViewBody = standalone.slice(
     standalone.indexOf('private createView('),
@@ -338,7 +341,7 @@ test('Home, Omni, preload, i18n, logging, build, and installer sources include t
     preloadConfig,
     /fileSearch:\s*resolve\('src\/preload\/fileSearch\/fileSearch\.preload\.ts'\)/
   );
-  for (const renderer of ['shell', 'preview', 'globalSearch', 'settings', 'guide']) {
+  for (const renderer of ['shell', 'preview', 'globalSearch', 'alert', 'settings', 'guide']) {
     assert.match(vite, new RegExp(`'onlypreview/${renderer}'`));
   }
   assert.match(vite, /fileSearch:\s*resolve\('src\/renderer\/fileSearch\/index\.html'\)/);

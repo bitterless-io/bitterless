@@ -1,6 +1,11 @@
 import { OnlyPreviewContractError } from '@shared/onlypreview/onlyPreview.contract';
 import type { OnlyPreviewErrorCode } from '@shared/onlypreview/onlyPreview.types';
 
+// Every code the hidden authority is allowed to report. A code that is missing here is not treated
+// as a failed operation: it is treated as a *protocol violation*, which tears the whole file-search
+// runtime down and destroys the OnlyPreview window. `NAME_INVALID` and `NAME_EXISTS` are ordinary
+// outcomes of `createDirectory` and `renameEntry` — a taken folder name reached this set as a
+// violation and killed the window, which is the one thing a duplicate name must not do.
 const PROJECT_AUTHORITY_ERROR_CODES = new Set<OnlyPreviewErrorCode>([
   'INVALID_INPUT',
   'WORKSPACE_ACCESS_DENIED',
@@ -9,6 +14,8 @@ const PROJECT_AUTHORITY_ERROR_CODES = new Set<OnlyPreviewErrorCode>([
   'PATH_OUTSIDE_WORKSPACE',
   'PATH_NOT_REGULAR_FILE',
   'PATH_UNSUPPORTED_DEVICE',
+  'NAME_INVALID',
+  'NAME_EXISTS',
   'OPERATION_FAILED'
 ]);
 

@@ -113,7 +113,6 @@ export class OnlyPreviewPreviewRegionService {
     onChromeReady: (runtime, view, revision) => this.handleChromeReady(runtime, view, revision),
     onChromeUnavailable: (runtime, view, revision, error) =>
       this.markChromeUnavailable(runtime, view, revision, error),
-    onActiveViewAttached: () => this.runtime?.onActiveViewAttached?.()
   });
   private runtime: OnlyPreviewPreviewRegionRuntime | null = null;
   private selectionRevision = 0;

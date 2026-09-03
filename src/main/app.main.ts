@@ -48,6 +48,7 @@ import {
   withTodoXpcTimeout,
 } from '@shared/todoistSync/todoXpcCall.shared';
 import { initializeApplicationLogging } from '@main/logging/log.setup';
+import { installApplicationFindMenu } from '@main/menu/applicationFindMenu.service';
 import {
   installOnlyPreviewProtocol,
   registerOnlyPreviewScheme,
@@ -626,6 +627,7 @@ if (isLegacyCodingAgentHookHelperMode) {
   });
   void app.whenReady().then(async () => {
     installOnlyPreviewProtocol();
+    installApplicationFindMenu();
     await startGui();
     onlyPreviewOpenQueue.markReady();
   }).catch((err: unknown) => {

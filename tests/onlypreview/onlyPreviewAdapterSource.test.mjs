@@ -316,12 +316,29 @@ test('deep Project rows stay complete while HTML routes to the isolated Chrome s
   const delivery = source('src/main/onlypreview/views/onlyPreviewSelectionDelivery.service.ts');
   assert.match(delivery, /onlyPreviewDocumentRegistry\.issue\(hostToken, prepared, selectionRevision\)/);
   assert.match(viewService, /installOnlyPreviewSessionProtocol/);
-  assert.match(viewService, /setProxy\(/);
+  // The dead proxy and the http/https block are gone by owner decision; the containment that
+  // remains is the `file:`/`ftp:` refusal, the download refusal and the permission handlers.
+  assert.match(viewService, /urls: \['ftp:\/\/\*\/\*', 'file:\/\/\*\/\*'\]/);
+  assert.match(viewService, /setProxy\(\{ mode: 'direct' \}\)/);
+  assert.match(viewService, /setPermissionCheckHandler\(\(\) => false\)/);
+  assert.match(viewService, /'will-download', preventOnlyPreviewDownload/);
   assert.match(viewService, /setWebRTCIPHandlingPolicy\('disable_non_proxied_udp'\)/);
   const documentRegistry = source('src/main/onlypreview/onlyPreviewDocument.registry.ts');
-  assert.match(documentRegistry, /script-src 'self' 'unsafe-inline'/);
-  assert.match(documentRegistry, /connect-src 'none'/);
+  // A previewed page renders as a page, so its own scripts, workers, frames and same-document
+  // fetches are allowed. The property that still matters is that the network stays closed: every
+  // source is the document's own one-shot origin, and no http/ws origin appears anywhere.
+  assert.match(documentRegistry, /script-src 'self' https: 'unsafe-inline'/);
+  assert.match(documentRegistry, /connect-src 'self'/);
+  assert.match(documentRegistry, /worker-src 'self'/);
   assert.match(documentRegistry, /webrtc 'block'/);
+  const documentCsp = documentRegistry.slice(
+    documentRegistry.indexOf("'Content-Security-Policy'"),
+    documentRegistry.indexOf('X-DNS-Prefetch-Control')
+  );
+  // Remote dependencies are allowed; `file:` never is — a previewed page reaches its own siblings
+  // through the document protocol and nothing else on disk.
+  assert.match(documentCsp, /https:/u);
+  assert.doesNotMatch(documentCsp, /file:|\*/u);
 
   const shellStyle = source('src/renderer/onlypreview/shell/src/App.less');
   const treeViewport = shellStyle.slice(

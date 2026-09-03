@@ -7,6 +7,7 @@ import {
   type Session
 } from 'electron';
 import { OnlyPreviewContractError } from '@shared/onlypreview/onlyPreview.contract';
+import { onlyPreviewViewLayerService } from './onlyPreviewViewLayer.service';
 import type {
   OnlyPreviewErrorCode,
   OnlyPreviewPreviewPresentation,
@@ -25,7 +26,6 @@ export interface OnlyPreviewPreviewRegionRuntime {
   ) => WebContentsView;
   loadVuePreviewView: (view: WebContentsView) => Promise<void>;
   bindChromeShortcuts: (webContents: Electron.WebContents) => void;
-  onActiveViewAttached?: () => void;
 }
 
 interface OnlyPreviewPreviewViewCallbacks {
@@ -60,7 +60,6 @@ interface OnlyPreviewPreviewViewCallbacks {
     revision: number,
     error: unknown
   ) => void;
-  onActiveViewAttached: () => void;
 }
 
 interface PendingChromeMount {
@@ -82,6 +81,7 @@ interface PendingChromeMount {
 const ONLY_PREVIEW_CHROME_PARTITION = 'persist:onlypreview-chrome';
 
 /** The exact PDF document frame must finish loading before a Chrome preview may be called ready. */
+const DOCUMENT_FRAME_POLL_INTERVAL_MS = 150;
 const DOCUMENT_FRAME_DEADLINE_MS = 8_000;
 
 /** Session-level hardening outlives a single selection now that the session is shared. */
@@ -262,12 +262,6 @@ export class OnlyPreviewPreviewViewService {
   private documentFrameWatch: {
     view: WebContentsView;
     timer: ReturnType<typeof setTimeout>;
-    listener: (
-      event: Electron.Event,
-      isMainFrame: boolean,
-      frameProcessId: number,
-      frameRoutingId: number
-    ) => void;
   } | null = null;
 
   constructor(private readonly callbacks: OnlyPreviewPreviewViewCallbacks) {}
@@ -474,13 +468,42 @@ export class OnlyPreviewPreviewViewService {
     const view = activeSurface === 'chrome' ? this.chromePreviewView : this.ensureVuePreviewView();
     if (!view || view.webContents.isDestroyed()) return;
     if (activeSurface === 'vue' && !this.callbacks.canAttachVue()) return;
-    if (this.attachedView !== view) {
-      this.detachActiveView();
-      runtime.window.contentView.addChildView(view);
-      this.attachedView = view;
-      this.callbacks.onActiveViewAttached();
-    }
+    // Shown on every call, not only on a change of view. Re-asserting the order is the point: a
+    // bounds update or a surface swap must leave Global Search on top, and the sort is idempotent.
+    // The `preview` owner may replace its own view freely, so switching from one PDF to the next is
+    // never refused — only a *different* owner is.
+    this.attachedView = view;
+    onlyPreviewViewLayerService.show('main', 'preview', view);
     view.setBounds({ ...this.contentBounds });
+    this.ensureFocusedView(runtime, view);
+  }
+
+  /**
+   * Guarantee that *some* child view holds keyboard focus.
+   *
+   * A `BaseWindow` has no web contents, so a window whose child views are all unfocused sends
+   * keystrokes nowhere — `before-input-event` has nothing to fire on, and every OnlyPreview
+   * shortcut is bound through it. The owner's log showed exactly that: the window focused, all four
+   * views bound, and not one shortcut record. Switching PDFs destroys the view that Chromium's PDF
+   * viewer had taken focus into, and nothing claimed it afterwards, so Cmd+F went dead until
+   * something was clicked.
+   *
+   * Only claimed when nothing else has it, so navigating the Project tree by keyboard or by click
+   * keeps its focus — stealing it on every selection would break the tree.
+   */
+  private ensureFocusedView(runtime: OnlyPreviewPreviewRegionRuntime, view: WebContentsView): void {
+    if (view.webContents.isDestroyed()) return;
+    try {
+      const focused = runtime.window.contentView.children.some((child) => {
+        const webContents = (child as { webContents?: Electron.WebContents }).webContents;
+        return !!webContents && !webContents.isDestroyed() && webContents.isFocused();
+      });
+      if (focused) return;
+      view.webContents.focus();
+      console.info('[onlypreview] event=preview-focus-claimed');
+    } catch {
+      // A host that cannot report its children simply keeps whatever focus it had.
+    }
   }
 
   detachActiveView(): void {
@@ -599,17 +622,20 @@ export class OnlyPreviewPreviewViewService {
     targetSession.setPermissionRequestHandler((_webContents, _permission, callback) =>
       callback(false)
     );
+    // The network is open to a previewed page, by owner decision (2026-09-03). Real documents load
+    // real dependencies — the roadmap page that prompted this does
+    // `import mermaid from 'https://cdn.jsdelivr.net/…'` — and a preview that silently drops them is
+    // not showing the owner his file. The cost is stated plainly: a previewed HTML file can fetch
+    // remote code and can send data out.
+    //
+    // `file:` and `ftp:` stay blocked, which is a different property and is kept: a previewed page
+    // may reach its own sibling resources through the document protocol and nothing else on disk.
+    // Downloads, permissions and WebRTC stay refused above.
     targetSession.webRequest.onBeforeRequest(
-      {
-        urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*', 'ftp://*/*', 'file://*/*']
-      },
+      { urls: ['ftp://*/*', 'file://*/*'] },
       (_details, callback) => callback({ cancel: true })
     );
-    await targetSession.setProxy({
-      mode: 'fixed_servers',
-      proxyRules: 'http=127.0.0.1:9;https=127.0.0.1:9;socks=127.0.0.1:9',
-      proxyBypassRules: '<-loopback>'
-    });
+    await targetSession.setProxy({ mode: 'direct' });
   }
 
   private configureChromeNavigation(
@@ -632,7 +658,7 @@ export class OnlyPreviewPreviewViewService {
       event.preventDefault();
     });
     if (requireDocumentFrame) {
-      this.awaitDocumentFrameFinish(view, runtime, revision, navigationUrl);
+      this.awaitDocumentFrame(view, runtime, revision, navigationUrl);
     } else {
       webContents.once('did-finish-load', () => {
         if (this.chromePreviewView !== view || !this.callbacks.isCurrent(runtime, revision)) return;
@@ -660,57 +686,53 @@ export class OnlyPreviewPreviewViewService {
    * ever reached ready — so a correctly rendered PDF was replaced by a failure card once the owner
    * stopped switching files.
    */
-  private awaitDocumentFrameFinish(
+  /**
+   * Wait for Chromium's PDF viewer to create the document frame — by polling, not by subscribing.
+   *
+   * This is a restoration. The original implementation polled `framesInSubtree` every 150 ms and
+   * worked; a later change replaced it with a `did-frame-finish-load` subscription, and every PDF
+   * since has reached ready only through the 8-second deadline. The owner's own dev log is
+   * unambiguous about it: three PDFs, three `pdf-frame-deadline documentFrames=2 elapsedMs=8000`
+   * records, each followed 2 ms later by `outcome=ready elapsedMs≈8035`, and not one listener
+   * match. Two live sub-frames existed the whole time and the event never came for the inner one:
+   * the PDF content frame is handed a stream by the viewer extension rather than performing a
+   * navigation of its own, so it does not report a frame load the way an ordinary iframe does.
+   *
+   * The 8-second wait is the whole "Cmd+F does not search a PDF" symptom. Find is gated on the
+   * presentation leaving `loading`, so for eight seconds the query sits `pending` and nothing is
+   * dispatched; nobody waits that long before calling it broken.
+   *
+   * The deadline stays, but only as the failure bound, and it still reports ready when the view has
+   * any sub-frame — a rendered document must never be replaced by a failure card.
+   */
+  private awaitDocumentFrame(
     view: WebContentsView,
     runtime: OnlyPreviewPreviewRegionRuntime,
     revision: number,
-    navigationUrl: string
+    navigationUrl: string,
+    waitedMs = 0
   ): void {
-    this.clearDocumentFrameWatch();
-    const webContents = view.webContents;
-    const listener = (
-      _event: Electron.Event,
-      isMainFrame: boolean,
-      frameProcessId: number,
-      frameRoutingId: number
-    ): void => {
-      if (this.documentFrameWatch?.listener !== listener) return;
-      if (this.chromePreviewView !== view || !this.callbacks.isCurrent(runtime, revision)) {
-        this.clearDocumentFrameWatch();
-        return;
-      }
-      if (isMainFrame) return;
-      const frame = webFrameMain.fromId(frameProcessId, frameRoutingId);
-      if (!frame || frame.isDestroyed() || frame === webContents.mainFrame) return;
-      // The OOPIF PDF viewer builds two sub-frames: the extension shell, then the content frame
-      // holding the document. Testing the *event's* frame against the navigation URL never matched
-      // — the shell commits at a `chrome-extension://` URL — but testing the subtree does, and it
-      // is what separates "the viewer shell loaded" from "PDFium has the document". Readiness is
-      // what unblocks find, so reporting it before the document exists would dispatch a query into
-      // an empty viewer.
-      if (!this.hasDocumentFrame(webContents, navigationUrl)) return;
+    if (this.chromePreviewView !== view || !this.callbacks.isCurrent(runtime, revision)) {
       this.clearDocumentFrameWatch();
+      return;
+    }
+    if (this.hasDocumentFrame(view.webContents, navigationUrl)) {
+      this.clearDocumentFrameWatch();
+      console.info(`[onlypreview] event=pdf-frame-ready trigger=subtree elapsedMs=${waitedMs}`);
       this.callbacks.onChromeReady(runtime, view, revision);
-      this.callbacks.onActiveViewAttached();
-    };
-    const timer = setTimeout(() => {
-      if (this.documentFrameWatch?.timer !== timer) return;
-      if (this.chromePreviewView !== view || !this.callbacks.isCurrent(runtime, revision)) {
-        this.clearDocumentFrameWatch();
-        return;
-      }
+      return;
+    }
+    if (waitedMs >= DOCUMENT_FRAME_DEADLINE_MS) {
       this.clearDocumentFrameWatch();
-      // The deadline is not a verdict on its own. A viewer that created its document frame has a
-      // rendered PDF on screen, and replacing that with a failure card is the worse outcome. Only a
-      // viewer with no sub-frame at all has genuinely failed. The count is recorded so a future
-      // occurrence separates "no event fired" from "an event fired and was rejected".
-      const documentFrames = this.countDocumentFrames(webContents);
+      // `match=false` is the record that matters if this ever fires again: it says the subtree never
+      // held a frame at the navigation URL, which would mean the predicate — not the signal — is
+      // what needs replacing.
+      const documentFrames = this.countDocumentFrames(view.webContents);
       console.info(
-        `[onlypreview] event=pdf-frame-deadline documentFrames=${documentFrames} elapsedMs=${DOCUMENT_FRAME_DEADLINE_MS}`
+        `[onlypreview] event=pdf-frame-deadline documentFrames=${documentFrames} match=false elapsedMs=${waitedMs}`
       );
       if (documentFrames > 0) {
         this.callbacks.onChromeReady(runtime, view, revision);
-        this.callbacks.onActiveViewAttached();
         return;
       }
       this.callbacks.onChromeUnavailable(
@@ -722,9 +744,21 @@ export class OnlyPreviewPreviewViewService {
           'The built-in PDF viewer never created a document frame for this file.'
         )
       );
-    }, DOCUMENT_FRAME_DEADLINE_MS);
-    this.documentFrameWatch = { view, timer, listener };
-    webContents.on('did-frame-finish-load', listener);
+      return;
+    }
+    this.clearDocumentFrameWatch();
+    const timer = setTimeout(() => {
+      if (this.documentFrameWatch?.timer !== timer) return;
+      this.documentFrameWatch = null;
+      this.awaitDocumentFrame(
+        view,
+        runtime,
+        revision,
+        navigationUrl,
+        waitedMs + DOCUMENT_FRAME_POLL_INTERVAL_MS
+      );
+    }, DOCUMENT_FRAME_POLL_INTERVAL_MS);
+    this.documentFrameWatch = { view, timer };
   }
 
   private hasDocumentFrame(webContents: Electron.WebContents, navigationUrl: string): boolean {
@@ -759,12 +793,14 @@ export class OnlyPreviewPreviewViewService {
     if (!watch) return;
     this.documentFrameWatch = null;
     clearTimeout(watch.timer);
-    if (!watch.view.webContents.isDestroyed()) {
-      watch.view.webContents.removeListener('did-frame-finish-load', watch.listener);
-    }
   }
 
   private detachView(view: WebContentsView): void {
+    if (this.attachedView === view) {
+      // Drops it from the sort and hides it. The removal below is the teardown, not the hide.
+      onlyPreviewViewLayerService.hide('main', 'preview');
+      this.attachedView = null;
+    }
     const window = this.runtime?.window;
     if (!window || window.isDestroyed()) return;
     try {
@@ -772,7 +808,6 @@ export class OnlyPreviewPreviewViewService {
     } catch {
       // Electron may already have detached child views while the parent is closing.
     }
-    if (this.attachedView === view) this.attachedView = null;
   }
 
   private cleanupChromeResources(

@@ -3,11 +3,13 @@ import {
   BaseWindow,
   BrowserWindow,
   screen,
+  webContents as electronWebContents,
   WebContentsView,
   type Input,
   type Rectangle
 } from 'electron';
 import { join } from 'node:path';
+import { setApplicationFindDispatch } from '@main/menu/applicationFindMenu.service';
 import { is } from '@electron-toolkit/utils';
 import type {
   OnlyPreviewBounds,
@@ -27,9 +29,11 @@ import {
 import { resolveOnlyPreviewSettingsBounds } from '@main/onlypreview/onlyPreviewWindowBounds.service';
 import { onlyPreviewSearchBootstrapRegistry } from '@main/onlypreview/onlyPreviewSearchBootstrap.registry';
 import { onlyPreviewProjectIndexStateService } from '@main/onlypreview/onlyPreviewProjectIndexState.service';
+import { onlyPreviewViewLayerService } from '@main/onlypreview/views/onlyPreviewViewLayer.service';
 import { fileSearchWindowService } from '@main/fileSearch/fileSearchWindow.service';
 import { onlyPreviewPreviewRegionService } from '@main/onlypreview/views/onlyPreviewPreviewRegion.service';
 import { onlyPreviewGlobalSearchFocusService } from '@main/onlypreview/onlyPreviewGlobalSearchFocus.service';
+import { onlyPreviewAlertWindowService } from '@main/onlypreview/views/onlyPreviewAlertWindow.service';
 import { onlyPreviewGlobalSearchWindowService } from '@main/onlypreview/views/onlyPreviewGlobalSearchWindow.service';
 import {
   configureOnlyPreviewNavigationFence,
@@ -177,7 +181,7 @@ const bindOnlyPreviewDevToolsShortcut = (webContents: Electron.WebContents): voi
       webContents.closeDevTools();
       return;
     }
-    webContents.openDevTools({ mode: 'detach' });
+    webContents.openDevTools({ mode: 'detach', activate: false });
   });
 };
 
@@ -252,10 +256,48 @@ export class OnlyPreviewWindowHelper {
     host: OnlyPreviewHostCapability,
     origin: OnlyPreviewShortcutOrigin
   ): void {
+    // Recorded per view, because "no shortcut record at all" has two very different causes: the
+    // handler was never installed on the view that had focus, or it was installed and the keystroke
+    // never arrived. This line separates them.
+    console.info(`[onlypreview] event=shortcut-bound origin=${origin}`);
     webContents.on('before-input-event', (event, input) => {
       const command = this.resolveNativeCommand(host, input);
+      // The one measurement that separates "Main never saw the key" from "Main saw it and did
+      // nothing". Both `Cmd+F` and `Shift+Cmd+F` reach Main only through this handler, bound on the
+      // focused view's own WebContents — and a PDF renders in an out-of-process viewer frame, so it
+      // is genuinely unknown whether the keystroke surfaces here at all. Only the F chord is
+      // recorded, so this cannot become a keylogger or flood the log.
+      if (input.type === 'keyDown' && input.key.toLowerCase() === 'f' && isCommandModifier(input)) {
+        console.info(
+          `[onlypreview] event=shortcut origin=${origin} pressed=f shift=${input.shift} resolved=${command ?? 'none'}`
+        );
+      }
       if (!command) return;
       event.preventDefault();
+      this.executeNativeCommand(host, origin, command, webContents);
+    });
+  }
+
+  // Shared by the two carriers of a native command: `before-input-event` (which only fires when a
+  // web contents already owns keyboard focus) and the macOS menu accelerator (which fires whenever
+  // the application is frontmost). Keeping one body means the menu path cannot drift from the
+  // keystroke path.
+  private executeNativeCommand(
+    host: OnlyPreviewHostCapability,
+    origin: OnlyPreviewShortcutOrigin,
+    command: OnlyPreviewNativeCommand,
+    opener: Electron.WebContents
+  ): void {
+    {
+      // A dialog in the alert layer is modal: opening Find or Global Search under it would put the
+      // keyboard on a surface the owner cannot see.
+      if (
+        (command === 'find-in-file' || command === 'focus-search') &&
+        onlyPreviewAlertWindowService.isOpen(host.hostToken)
+      ) {
+        console.info(`[onlypreview] event=shortcut-swallowed by=alert command=${command}`);
+        return;
+      }
       if (command === 'find-in-file') {
         onlyPreviewGlobalSearchWindowService.closeForFind(host.hostToken);
         const opened = onlyPreviewPreviewRegionService.openFind(host.hostToken);
@@ -286,7 +328,7 @@ export class OnlyPreviewWindowHelper {
       }
       if (command === 'focus-search') {
         onlyPreviewPreviewRegionService.closeFind(host.hostToken);
-        onlyPreviewGlobalSearchWindowService.open(host, origin, webContents);
+        onlyPreviewGlobalSearchWindowService.open(host, origin, opener);
         return;
       }
       if (command === 'focus-project') {
@@ -302,7 +344,44 @@ export class OnlyPreviewWindowHelper {
       } else {
         this.commandHandler?.({ hostToken: host.hostToken, command });
       }
-    });
+    }
+  }
+
+  // The macOS menu path. `window` is whichever BaseWindow is key, so a Command+F pressed while
+  // EyesOnAgents or the main window is focused resolves to `false` here and is replayed to that
+  // window instead of reaching OnlyPreview.
+  runMenuFindCommand(
+    command: 'find-in-file' | 'focus-search',
+    window: BaseWindow | null
+  ): boolean {
+    const baseWindow = this.baseWindow;
+    const host = this.getStandaloneHost();
+    if (!baseWindow || baseWindow.isDestroyed() || !host) return false;
+    if (window !== baseWindow) return false;
+    const focused = electronWebContents.getFocusedWebContents() ?? null;
+    const opener =
+      focused && !focused.isDestroyed() ? focused : (this.shellView?.webContents ?? null);
+    if (!opener || opener.isDestroyed()) return false;
+    const origin = this.resolveFocusedOrigin(focused);
+    console.info(
+      `[onlypreview] event=menu-command command=${command} origin=${origin} focus=${focused ? 'view' : 'none'}`
+    );
+    this.executeNativeCommand(host, origin, command, opener);
+    return true;
+  }
+
+  // Only used to tell the global search overlay where focus should return to. An unknown or absent
+  // focus owner falls back to the project tree, which is the safe destination.
+  private resolveFocusedOrigin(focused: Electron.WebContents | null): OnlyPreviewShortcutOrigin {
+    if (!focused || focused.isDestroyed()) return 'shell';
+    if (this.shellView && !this.shellView.webContents.isDestroyed()) {
+      if (this.shellView.webContents.id === focused.id) return 'shell';
+    }
+    const vuePreview = onlyPreviewPreviewRegionService.getVuePreviewView();
+    if (vuePreview && !vuePreview.webContents.isDestroyed()) {
+      if (vuePreview.webContents.id === focused.id) return 'vue';
+    }
+    return 'chrome';
   }
 
   getStandaloneHost(): OnlyPreviewHostCapability | null {
@@ -416,6 +495,7 @@ export class OnlyPreviewWindowHelper {
       if (outcome === 'success') {
         try {
           onlyPreviewGlobalSearchWindowService.preload(hostToken);
+          onlyPreviewAlertWindowService.preload(hostToken);
         } catch {
           // A host that was revoked between the receipt and here simply gets no warm overlay.
         }
@@ -454,6 +534,12 @@ export class OnlyPreviewWindowHelper {
       { x: 0, y: 0, width: contentWidth, height: contentHeight },
       bounds
     );
+    onlyPreviewAlertWindowService.updateBounds(host.hostToken, {
+      x: 0,
+      y: 0,
+      width: contentWidth,
+      height: contentHeight
+    });
   }
 
   async openSettings(sourceHostToken: string): Promise<void> {
@@ -622,12 +708,14 @@ export class OnlyPreviewWindowHelper {
     if (window && shellView && this.standaloneHost) {
       this.settleShellStartupLease(this.standaloneHost.hostToken, window, shellView);
     }
+    onlyPreviewAlertWindowService.destroy();
     onlyPreviewGlobalSearchWindowService.destroy();
     onlyPreviewPreviewRegionService.destroy();
     this.baseWindow = null;
     this.shellView = null;
     this.baseWindowState = null;
     fileSearchWindowService.stop();
+    onlyPreviewViewLayerService.stop();
     if (window && !window.isDestroyed()) {
       try {
         if (shellView) window.contentView.removeChildView(shellView);
@@ -720,6 +808,22 @@ export class OnlyPreviewWindowHelper {
       focused: window.isFocused(),
       backgroundThrottling: true
     });
+    // A `BaseWindow` has no web contents, so a window with no focused child view sends keystrokes
+    // nowhere: `before-input-event` has nothing to fire on. Recording focus is how we tell that
+    // apart from a missing binding.
+    // `keyOwner` separates the two reasons a chord never arrives: another application took over
+    // (nothing this window can do), or a window of this application did — a detached DevTools
+    // window, which binds Command+F and Shift+Command+F itself.
+    window.on('focus', () =>
+      console.info(
+        `[onlypreview] event=window-focus state=focus focus=${electronWebContents.getFocusedWebContents() ? 'view' : 'none'}`
+      )
+    );
+    window.on('blur', () => {
+      const keyWindow = BaseWindow.getFocusedWindow();
+      const keyOwner = !keyWindow ? 'other-app' : keyWindow === window ? 'self' : 'own-window';
+      console.info(`[onlypreview] event=window-focus state=blur keyOwner=${keyOwner}`);
+    });
     this.baseWindowState = windowStateService.register('onlypreview', window);
     const searchBootstrap = onlyPreviewSearchBootstrapRegistry.issue(host.hostToken);
     this.searchBootstrapToken = searchBootstrap.searchToken;
@@ -783,7 +887,11 @@ export class OnlyPreviewWindowHelper {
     });
     this.shellView = shellView;
     this.shellStartupLease = { hostToken: host.hostToken, window, view: shellView };
-    window.contentView.addChildView(shellView);
+    // A `BaseWindow` has no web contents of its own, so the shell — the project rail, toolbar,
+    // status bar and find bar — is a full-window `WebContentsView` and belongs in the stack as its
+    // lowest layer rather than outside it.
+    onlyPreviewViewLayerService.start(window);
+    onlyPreviewViewLayerService.show('base', 'shell', shellView);
     // The constructor only carries width/height/x/y. WindowStateController.show() is what applies
     // the persisted bounds and any saved maximize/full-screen, so the listener has to exist before
     // show() or that restore resize lands with nothing watching and the content keeps the
@@ -792,6 +900,9 @@ export class OnlyPreviewWindowHelper {
       if (this.baseWindow !== window) return;
       const [width, height] = window.getContentSize();
       shellView.setBounds({ x: 0, y: 0, width, height });
+      // Unconditional, unlike the preview's own bounds below: a dialog can be open before any file
+      // has been previewed, and it still has to cover the resized window.
+      onlyPreviewAlertWindowService.updateBounds(host.hostToken, { x: 0, y: 0, width, height });
       const currentBounds = onlyPreviewPreviewRegionService.getBounds();
       if (currentBounds) {
         const bounds = clampPreviewBounds(currentBounds, width, height);
@@ -824,6 +935,21 @@ export class OnlyPreviewWindowHelper {
       focused: window.isFocused(),
       backgroundThrottling: shellView.webContents.getBackgroundThrottling()
     });
+    onlyPreviewAlertWindowService.start({
+      window,
+      host,
+      createView: () => this.createView(host, 'alert'),
+      loadView: async (view) => await this.loadView(view, 'alert')
+    });
+    // Seeded now, not on the first preview: a dialog can open before any file has been selected, and
+    // the alert view is not attached at all while it has no bounds.
+    const [alertWidth, alertHeight] = window.getContentSize();
+    onlyPreviewAlertWindowService.updateBounds(host.hostToken, {
+      x: 0,
+      y: 0,
+      width: alertWidth,
+      height: alertHeight
+    });
     onlyPreviewGlobalSearchWindowService.start({
       window,
       host,
@@ -848,12 +974,12 @@ export class OnlyPreviewWindowHelper {
           previewReadBrokerCapability
         ),
       loadVuePreviewView: async (view) => await this.loadView(view, 'preview'),
+      // No `onActiveViewAttached` any more: the preview's own show re-sorts every layer, so there
+      // is nothing left for Global Search to undo afterwards.
       bindChromeShortcuts: (webContents) => {
         this.bindNativeShortcuts(webContents, host, 'chrome');
         bindOnlyPreviewDevToolsShortcut(webContents);
-      },
-      onActiveViewAttached: () =>
-        onlyPreviewGlobalSearchWindowService.raiseAfterPreviewAttach(host.hostToken)
+      }
     });
 
     // A dead view closes the whole standalone window, which otherwise looks like the window simply
@@ -901,7 +1027,8 @@ export class OnlyPreviewWindowHelper {
       this.shellView = null;
       this.baseWindowState = null;
       fileSearchWindowService.stop();
-      onlyPreviewGlobalSearchWindowService.destroy();
+      onlyPreviewAlertWindowService.destroy();
+    onlyPreviewGlobalSearchWindowService.destroy();
       onlyPreviewPreviewRegionService.destroy();
       closeView(shellView);
       if (this.searchBootstrapToken === searchBootstrap.searchToken) {
@@ -936,7 +1063,7 @@ export class OnlyPreviewWindowHelper {
 
   private createView(
     host: OnlyPreviewHostCapability,
-    mode: 'shell' | 'preview' | 'globalSearch',
+    mode: 'shell' | 'preview' | 'globalSearch' | 'alert',
     previewRuntimeToken?: string,
     officeBrokerCapability?: string,
     previewReadBrokerCapability?: string,
@@ -965,19 +1092,25 @@ export class OnlyPreviewWindowHelper {
       }
     });
     if (mode === 'globalSearch') view.setBackgroundColor('#00000000');
+    if (mode === 'alert') view.setBackgroundColor('#00000000');
     configureOnlyPreviewNavigationFence(view.webContents, target.url, mode === 'shell');
-    this.bindNativeShortcuts(
-      view.webContents,
-      host,
-      mode === 'shell' ? 'shell' : mode === 'preview' ? 'vue' : 'search'
-    );
+    // The alert view deliberately gets no native shortcuts. A dialog is modal, so Cmd+F or
+    // Shift+Cmd+F while it is up would open Find or Global Search *underneath* it, and the dialog
+    // already owns Enter and Escape itself.
+    if (mode !== 'alert') {
+      this.bindNativeShortcuts(
+        view.webContents,
+        host,
+        mode === 'shell' ? 'shell' : mode === 'preview' ? 'vue' : 'search'
+      );
+    }
     bindOnlyPreviewDevToolsShortcut(view.webContents);
     return view;
   }
 
   private async loadView(
     view: WebContentsView,
-    mode: 'shell' | 'preview' | 'globalSearch'
+    mode: 'shell' | 'preview' | 'globalSearch' | 'alert'
   ): Promise<void> {
     const target = getOnlyPreviewRendererTarget(mode, __dirname);
     await (is.dev && process.env['ELECTRON_RENDERER_URL']
@@ -1070,3 +1203,10 @@ export class OnlyPreviewWindowHelper {
 }
 
 export const onlyPreviewWindowHelper = new OnlyPreviewWindowHelper();
+
+// Registered at module load, not at window creation: the menu exists for the whole application
+// lifetime, and an unclaimed chord has to resolve to `false` (so it can be replayed to the window
+// that is actually focused) even while OnlyPreview is closed.
+setApplicationFindDispatch((command, window) =>
+  onlyPreviewWindowHelper.runMenuFindCommand(command, window)
+);

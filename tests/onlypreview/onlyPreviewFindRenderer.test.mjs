@@ -513,6 +513,39 @@ test('find UI source keeps one shell input, IME safety, narrow-pane layout, and 
 
 test('Main shortcut predicates reserve Shift+CommandOrControl+F for Global Search', () => {
   const windowHelper = source('src/main/windows/onlyPreviewWindow.helper.ts');
+
+  // OnlyPreview's shortcuts must only fire while OnlyPreview itself has the key. They are bound per
+  // WebContents through `before-input-event`, so a keystroke delivered to another Bitterless window
+  // — EyesOnAgents, Maestro — or to another application physically cannot reach them. Two things
+  // would break that scoping, so both are refused here:
+  //   - `globalShortcut` registers system-wide and fires with any app focused, so it stays refused.
+  //   - The macOS `Menu` accelerator fires for any window of this app, so the dispatcher must reject
+  //     every window that is not the OnlyPreview BaseWindow and let the chord be replayed to
+  //     whichever window is actually focused.
+  assert.doesNotMatch(windowHelper, /globalShortcut/);
+  assert.match(windowHelper, /if \(window !== baseWindow\) return false;/);
+  const findMenu = source('src/main/menu/applicationFindMenu.service.ts');
+  assert.doesNotMatch(findMenu, /globalShortcut/);
+  assert.match(findMenu, /BaseWindow\.getFocusedWindow\(\)/);
+  assert.match(findMenu, /accelerator: 'Command\+F'/);
+  assert.match(findMenu, /accelerator: 'Shift\+Command\+F'/);
+  assert.match(findMenu, /process\.platform !== 'darwin'/);
+  assert.match(findMenu, /if \(handled\) return;\s*forwardToFocusedContents/);
+  for (const path of [
+    'src/main/onlypreview/views/onlyPreviewFind.service.ts',
+    'src/main/onlypreview/views/onlyPreviewGlobalSearchView.service.ts',
+    'src/main/onlypreview/views/onlyPreviewGlobalSearchWindow.service.ts',
+    'src/main/xpc/onlyPreview.handler.ts'
+  ]) {
+    assert.doesNotMatch(source(path), /globalShortcut|Menu\.setApplicationMenu/);
+  }
+  // Every binding carries the host it was bound for, so a resolved command can only ever act on the
+  // window whose view received the key.
+  assert.match(
+    windowHelper,
+    /bindNativeShortcuts\(\s*webContents: Electron\.WebContents,\s*host: OnlyPreviewHostCapability,\s*origin: OnlyPreviewShortcutOrigin/
+  );
+
   for (const platform of ['darwin', 'win32']) {
     const globalSearch = loadShortcutPredicate(
       windowHelper,
@@ -588,7 +621,17 @@ test('Main shortcut predicates reserve Shift+CommandOrControl+F for Global Searc
   );
   assert.match(
     shortcutBindingBody,
-    /command === 'focus-search'[\s\S]*closeFind\(host\.hostToken\)[\s\S]*onlyPreviewGlobalSearchWindowService\.open\(host, origin, webContents\)/
+    /command === 'focus-search'[\s\S]*closeFind\(host\.hostToken\)[\s\S]*onlyPreviewGlobalSearchWindowService\.open\(host, origin, opener\)/
+  );
+  // Both carriers run one body, so the menu path cannot resolve a command the keystroke path would
+  // have resolved differently.
+  assert.match(
+    shortcutBindingBody,
+    /event\.preventDefault\(\);\s*this\.executeNativeCommand\(host, origin, command, webContents\)/
+  );
+  assert.match(
+    shortcutBindingBody,
+    /runMenuFindCommand\([\s\S]*this\.executeNativeCommand\(host, origin, command, opener\)/
   );
   const globalSearchBranch = shortcutBindingBody.slice(
     shortcutBindingBody.indexOf("if (command === 'focus-search')"),

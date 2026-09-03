@@ -244,6 +244,9 @@ const descriptorFor = (relativePath, kind, assetUrl) => {
 };
 
 const createState = () => ({
+  window: null,
+  layerShows: [],
+  layerHides: [],
   broadcasts: [],
   vueViews: [],
   vueLoads: [],
@@ -447,6 +450,21 @@ const viewModule = loadTypeScriptModule(
     },
     '@shared/onlypreview/onlyPreview.contract': {
       OnlyPreviewContractError: ContractError
+    },
+    './onlyPreviewViewLayer.service': {
+      onlyPreviewViewLayerService: {
+        show: (layer, owner, view) => {
+          state.layerShows.push({ layer, owner, name: view?.name ?? null });
+          // The window is the real one in this harness, so the sort's own attach is reproduced here
+          // to keep the child-order assertions meaningful.
+          state.window?.contentView.addChildView(view);
+          return true;
+        },
+        hide: (layer, owner) => {
+          state.layerHides.push({ layer, owner });
+        },
+        resort: () => undefined
+      }
     },
     '@main/onlypreview/onlyPreviewProtocol.service': {
       installOnlyPreviewSessionProtocol: (session, url) => {
@@ -779,6 +797,8 @@ const createHarness = () => {
       }
     }
   };
+  // The layer service stub attaches through this window, so its sort is observable in `children`.
+  state.window = window;
   const runtime = {
     window,
     host,

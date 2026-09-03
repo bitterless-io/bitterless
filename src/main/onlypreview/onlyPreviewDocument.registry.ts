@@ -20,19 +20,29 @@ import {
 
 const MAX_DOCUMENT_TOKENS = 64;
 const DOCUMENT_TOKEN_TTL_MS = 30 * 60 * 1000;
+// A previewed HTML file has to render the way it would in a browser — its own scripts, stylesheets,
+// workers and frames, its same-document fetches, and its remote dependencies (owner decision
+// 2026-09-03: 「cors csp 都放开不要有安全限制」). The page that prompted this does
+// `import mermaid from 'https://cdn.jsdelivr.net/…'`, so a policy without an `https:` source shows
+// the owner a half-rendered document.
+//
+// `'self'` is the one-shot document token, so same-origin means the file's own sibling resources.
+// `base-uri` and `form-action` stay `'none'`: they change where the page *sends* to rather than what
+// it renders. The session keeps refusing downloads, permissions, WebRTC, and every `file:`/`ftp:`
+// request, so a page still cannot read anything else on disk.
 const DOCUMENT_SECURITY_HEADERS = Object.freeze({
   'Content-Security-Policy': [
-    "default-src 'self' data: blob:",
-    "script-src 'self' 'unsafe-inline'",
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
-    "font-src 'self' data:",
-    "media-src 'self' data: blob:",
-    "connect-src 'none'",
-    "child-src 'none'",
-    "frame-src 'none'",
-    "object-src 'none'",
-    "worker-src 'none'",
+    "default-src 'self' https: data: blob:",
+    "script-src 'self' https: 'unsafe-inline' 'unsafe-eval' data: blob:",
+    "style-src 'self' https: 'unsafe-inline' data: blob:",
+    "img-src 'self' https: data: blob:",
+    "font-src 'self' https: data: blob:",
+    "media-src 'self' https: data: blob:",
+    "connect-src 'self' https: wss: data: blob:",
+    "child-src 'self' https: data: blob:",
+    "frame-src 'self' https: data: blob:",
+    "object-src 'self' https: data: blob:",
+    "worker-src 'self' blob:",
     "base-uri 'none'",
     "form-action 'none'",
     "webrtc 'block'"

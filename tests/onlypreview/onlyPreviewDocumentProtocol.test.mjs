@@ -440,7 +440,19 @@ test('HTML router validates paths, preserves CSP, and uses transient resource fr
   const entryUrl = registry.issue('host-token', selection, 7);
   const entryResponse = await registry.respond(createRequest(entryUrl));
   assert.equal(entryResponse.status, 200);
-  assert.match(entryResponse.headers.get('content-security-policy') ?? '', /connect-src 'none'/);
+  // The page renders as a page: its own scripts, styles, workers, frames and same-document fetches
+  // all work. What must stay closed is the network — no source list may name an http/ws origin, and
+  // `'self'` is the one-shot document token, so a page reaches its siblings and nothing else.
+  const documentCsp = entryResponse.headers.get('content-security-policy') ?? '';
+  for (const directive of ['script-src', 'style-src', 'connect-src', 'worker-src', 'frame-src']) {
+    assert.match(documentCsp, new RegExp(`${directive} 'self'`), `${directive} must allow the document`);
+  }
+  // Remote dependencies are allowed by owner decision; what must never appear is a wildcard, which
+  // would also admit the `file:` and custom schemes the session still blocks.
+  assert.doesNotMatch(documentCsp, /\*/u, 'no wildcard source');
+  assert.match(documentCsp, /script-src[^;]*https:/u, 'a page may load its remote dependencies');
+  assert.match(documentCsp, /base-uri 'none'/);
+  assert.match(documentCsp, /form-action 'none'/);
   assert.equal(await entryResponse.text(), entry.toString());
   const scriptResponse = await registry.respond(
     createRequest(entryUrl.replace('/index.html', '/app.js'))

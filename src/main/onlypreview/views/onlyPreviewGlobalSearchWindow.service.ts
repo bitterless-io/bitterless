@@ -5,6 +5,7 @@ import type { OnlyPreviewHostCapability } from '@main/onlypreview/onlyPreviewHos
 import { onlyPreviewGlobalSearchFocusService } from '@main/onlypreview/onlyPreviewGlobalSearchFocus.service';
 import { onlyPreviewPreviewRegionService } from './onlyPreviewPreviewRegion.service';
 import { onlyPreviewGlobalSearchViewService } from './onlyPreviewGlobalSearchView.service';
+import { onlyPreviewViewLayerService } from './onlyPreviewViewLayer.service';
 
 interface GlobalSearchWindowRuntime {
   window: BaseWindow;
@@ -31,7 +32,13 @@ export class OnlyPreviewGlobalSearchWindowService {
         runtime.shellView.webContents.focus();
         return true;
       },
-      focusPreview: () => onlyPreviewPreviewRegionService.focusActiveContent(runtime.host.hostToken)
+      focusPreview: () => onlyPreviewPreviewRegionService.focusActiveContent(runtime.host.hostToken),
+      showInGlobalLayer: (view) => {
+        onlyPreviewViewLayerService.show('global', 'globalSearch', view);
+      },
+      hideGlobalLayer: () => {
+        onlyPreviewViewLayerService.hide('global', 'globalSearch');
+      }
     });
   }
 
@@ -62,10 +69,6 @@ export class OnlyPreviewGlobalSearchWindowService {
 
   updateBounds(hostToken: string, viewBounds: Rectangle, workspaceBounds: Rectangle): void {
     onlyPreviewGlobalSearchViewService.updateBounds(hostToken, viewBounds, workspaceBounds);
-  }
-
-  raiseAfterPreviewAttach(hostToken: string): void {
-    onlyPreviewGlobalSearchViewService.raiseAfterPreviewAttach(hostToken);
   }
 
   destroy(): void {

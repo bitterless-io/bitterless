@@ -344,7 +344,7 @@ test('Guide is included in renderer, logging, i18n, and complete resource invent
   const vite = source('electron.vite.config.ts');
   assert.match(
     vite,
-    /for \(const mode of \['shell', 'preview', 'globalSearch', 'settings', 'guide'\]\)/
+    /for \(const mode of \['shell', 'preview', 'globalSearch', 'alert', 'settings', 'guide'\]\)/
   );
   assert.match(vite, /'onlypreview\/guide': resolve\('src\/renderer\/onlypreview\/guide\/index\.html'\)/);
   assert.match(

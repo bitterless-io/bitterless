@@ -30,6 +30,8 @@ export interface OnlyPreviewGlobalSearchViewRuntime {
   clearOpener: () => void;
   focusProject: () => boolean;
   focusPreview: () => boolean;
+  showInGlobalLayer: (view: WebContentsView) => void;
+  hideGlobalLayer: () => void;
 }
 
 interface PendingDirectoryReveal {
@@ -169,7 +171,25 @@ export class OnlyPreviewGlobalSearchViewService {
 
   show(hostToken: string, origin: OnlyPreviewGlobalSearchFocusOrigin): WebContentsView | null {
     const runtime = this.requireRuntime(hostToken);
+    console.info(
+      `[onlypreview] event=global-search-show origin=${origin} layout=${this.context.layout ? 'yes' : 'none'}`
+    );
     this.setActive(true);
+    // Republished on every show, not only when the geometry changes.
+    //
+    // The overlay renderer is preloaded now, so it can finish booting BEFORE the shell has reported
+    // preview bounds. Its initial context pull then returns `layout: null`, and the single
+    // change-triggered layout broadcast has already gone by — broadcasts are fire-and-forget with no
+    // replay. Its panel is `v-if`-gated on that layout, so it renders nothing at all and the overlay
+    // looks like it never opened, which is exactly what the owner reported. This is the replay that
+    // preloading removed.
+    if (this.context.layout) {
+      runtime.broadcast(ONLY_PREVIEW_GLOBAL_SEARCH_LAYOUT_EVENT, {
+        hostId: runtime.host.hostId,
+        revision: this.context.revision,
+        layout: cloneLayout(this.context.layout)
+      });
+    }
     const view = this.ensureView();
     this.attachTopmost();
     if (view && !view.webContents.isDestroyed()) view.webContents.focus();
@@ -179,11 +199,6 @@ export class OnlyPreviewGlobalSearchViewService {
     });
     this.broadcastVisibility(runtime);
     return view;
-  }
-
-  raiseAfterPreviewAttach(hostToken: string): void {
-    this.requireRuntime(hostToken);
-    if (this.context.active) this.attachTopmost();
   }
 
   close(hostToken: string, mode: OnlyPreviewGlobalSearchCloseRequest['mode']): boolean {
@@ -314,38 +329,38 @@ export class OnlyPreviewGlobalSearchViewService {
     const runtime = this.runtime;
     const view = this.view;
     const bounds = this.bounds;
-    if (
-      !this.context.active ||
-      !this.ready ||
-      !runtime ||
-      runtime.window.isDestroyed() ||
-      !view ||
-      view.webContents.isDestroyed() ||
-      !bounds
-    ) {
+    // Every one of these ends with the overlay silently absent. Naming which one fired is the
+    // difference between "the overlay is behind the PDF" and "the overlay was never attached" —
+    // three rounds of z-order fixes were spent without knowing which.
+    const gate = !this.context.active
+      ? 'inactive'
+      : !this.ready
+        ? 'unloaded'
+        : !runtime || runtime.window.isDestroyed()
+          ? 'window'
+          : !view || view.webContents.isDestroyed()
+            ? 'view'
+            : !bounds
+              ? 'bounds'
+              : null;
+    if (gate) {
+      console.info(`[onlypreview] event=global-search-blocked gate=${gate}`);
       return;
     }
+    if (!runtime || !view || !bounds) return;
     view.setBounds({ ...bounds });
-    // Detach before re-attaching. Re-adding an already-attached child reorders it in the views tree,
-    // but a real detach also drives the native host's attach path, which is what restacks the AppKit
-    // subviews on macOS. Over a Chromium PDF the views-level reorder alone has not been enough.
-    try {
-      runtime.window.contentView.removeChildView(view);
-    } catch {
-      // Not attached yet; the add below is the first attach.
-    }
-    runtime.window.contentView.addChildView(view);
+    // The `global` layer occludes what is beneath it, so the layer service also hides the preview —
+    // that is a property of the layer, not a workaround for this view.
+    runtime.showInGlobalLayer(view);
   }
 
   private detachView(): void {
     const runtime = this.runtime;
     const view = this.view;
     if (!runtime || runtime.window.isDestroyed() || !view) return;
-    try {
-      runtime.window.contentView.removeChildView(view);
-    } catch {
-      // Electron may already have detached the child while closing the BaseWindow.
-    }
+    // Dropped from the sort and hidden, not torn down: the renderer survives a close so the next
+    // open is instant, and the layer service reveals whatever the `global` layer was covering.
+    runtime.hideGlobalLayer();
   }
 
   private failOverlay(view: WebContentsView, runtime: OnlyPreviewGlobalSearchViewRuntime): void {

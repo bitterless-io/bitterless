@@ -179,6 +179,11 @@ export class OnlyPreviewFindService {
   }
 
   open(): boolean {
+    // The find bar is `v-if`-gated on this in the shell, so a refused open is indistinguishable from
+    // a dead shortcut. `state=none` means no presentation has published a find capability at all.
+    console.info(
+      `[onlypreview] event=find-open state=${this.state?.state ?? 'none'} surface=${this.state?.surface ?? 'none'}`
+    );
     if (!this.state || this.state.state === 'unavailable') {
       this.publishState();
       return false;
@@ -337,9 +342,11 @@ export class OnlyPreviewFindService {
     }
     const target = this.targets[presentation.surface];
     if (!target || target.webContents.isDestroyed()) {
+      console.info(`[onlypreview] event=find-dispatch surface=${presentation.surface} gate=no-target`);
       this.failRuntimeFind();
       return;
     }
+    console.info(`[onlypreview] event=find-dispatch surface=${presentation.surface}`);
     let requestId: number;
     try {
       requestId = target.webContents.findInPage(this.query, {
@@ -363,6 +370,9 @@ export class OnlyPreviewFindService {
 
   private acceptNativeResult(webContents: WebContents, generation: number, value: unknown): void {
     if (!isElectronFindResult(value)) return;
+    // The answer to "does findInPage reach PDFium": a reply with matches proves it does. No query
+    // text is recorded, only the count.
+    console.info(`[onlypreview] event=find-result matches=${value.matches}`);
     const presentation = this.presentation;
     const state = this.state;
     const request = this.nativeRequest;

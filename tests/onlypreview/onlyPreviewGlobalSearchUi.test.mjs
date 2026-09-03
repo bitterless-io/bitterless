@@ -168,7 +168,7 @@ test('Find to Global Search closes Find and delegates native overlay focus for e
   );
   assert.ok(
     focusBranch.indexOf('closeFind(host.hostToken)') <
-      focusBranch.indexOf('onlyPreviewGlobalSearchWindowService.open(host, origin, webContents)')
+      focusBranch.indexOf('onlyPreviewGlobalSearchWindowService.open(host, origin, opener)')
   );
   assert.doesNotMatch(focusBranch, /shellView\.webContents\.focus|\.capture\(|xpcMain\.broadcast/);
   assert.doesNotMatch(focusBranch, /focusActiveContent/);
