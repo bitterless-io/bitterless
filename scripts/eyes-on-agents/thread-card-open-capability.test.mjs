@@ -154,17 +154,21 @@ const stubsPlugin = {
   },
 };
 
-const createStore = () => {
+const createStore = (overrides = {}) => {
   const calls = { open: [], openIterm2: [], readState: [], copyPath: [], archive: [] };
   return {
     calls,
     busyAction: null,
     openingSessionKeys: new Set(),
+    // Task 088: null (no match) by default reproduces every pre-088 folderLabel exactly — a test
+    // that wants a resolved label passes its own resolver via overrides.
+    resolveClaudeEnvironmentLabel: () => null,
     openThread: async (sessionKey) => calls.open.push(sessionKey),
     openThreadInIterm2: async (sessionKey) => calls.openIterm2.push(sessionKey),
     setThreadUnread: async (sessionKey, isUnread) => calls.readState.push([sessionKey, isUnread]),
     copySessionPath: async (sessionKey) => calls.copyPath.push(sessionKey),
     archiveThread: async (sessionKey) => calls.archive.push(sessionKey),
+    ...overrides,
   };
 };
 
@@ -178,6 +182,7 @@ const createThread = (overrides = {}) => ({
   cwd: null,
   desktopSessionId: null,
   iterm2SessionId: null,
+  claudeConfigDir: null,
   isUnread: false,
   lastActivityAt: '2026-08-18T01:59:00.000Z',
   lastCompletedAt: null,
@@ -206,8 +211,8 @@ try {
   const { default: ThreadCard } = await import(
     `${pathToFileURL(outfile).href}?v=${Date.now()}`
   );
-  const render = async (thread) => {
-    globalThis.__eyesOnAgentsThreadCardHarness = { store: createStore() };
+  const render = async (thread, storeOverrides = {}) => {
+    globalThis.__eyesOnAgentsThreadCardHarness = { store: createStore(storeOverrides) };
     const app = createSSRApp({ render: () => h(ThreadCard, { thread }) });
     app.use(ArcoVue);
     const html = await renderToString(app);
@@ -778,6 +783,34 @@ try {
       mounted.app.unmount();
       document.body.innerHTML = '';
     }
+  });
+
+  await test('the folder tooltip gains the resolved environment label only when a match exists', async () => {
+    const withMatch = createThread({ cwd: '/repo/project', claudeConfigDir: '/Users/ral/.claude2' });
+    let document = await render(withMatch, {
+      resolveClaudeEnvironmentLabel: (claudeConfigDir) =>
+        claudeConfigDir === '/Users/ral/.claude2' ? 'claude2' : null,
+    });
+    let folder = document.querySelector('.thread-card__folder');
+    assert.ok(folder, 'a Claude row with a cwd renders the folder tooltip');
+    assert.equal(folder.getAttribute('title'), 'claude2 · Working directory: /repo/project');
+    assert.equal(folder.getAttribute('aria-label'), 'claude2 · Working directory: /repo/project');
+
+    const noMatch = createThread({ cwd: '/repo/project', claudeConfigDir: '/some/removed/env' });
+    document = await render(noMatch, {
+      resolveClaudeEnvironmentLabel: () => null,
+    });
+    folder = document.querySelector('.thread-card__folder');
+    assert.ok(folder);
+    assert.equal(folder.getAttribute('title'), 'Working directory: /repo/project',
+      'a non-matching claudeConfigDir (e.g. a removed environment) renders exactly as today');
+
+    const singleDefault = createThread({ cwd: '/repo/project', claudeConfigDir: null });
+    document = await render(singleDefault);
+    folder = document.querySelector('.thread-card__folder');
+    assert.ok(folder);
+    assert.equal(folder.getAttribute('title'), 'Working directory: /repo/project',
+      'a single-default-environment snapshot (no claudeConfigDir captured) shows no label');
   });
 
   await test('renderer and Main keep their fail-closed Claude Open guards', () => {

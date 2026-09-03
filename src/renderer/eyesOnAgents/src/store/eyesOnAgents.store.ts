@@ -5,6 +5,10 @@ import type {
   EyesOnAgentsSessionKey,
   EyesOnAgentsThread,
 } from '@shared/eyesOnAgents/eyesOnAgents.type';
+// A thread's claudeConfigDir is a raw path (task 087), resolved against the current environments
+// list at read time rather than stored as a foreign key — see resolveClaudeEnvironmentLabel below.
+const ADD_CLAUDE_ENVIRONMENT_KEY = '__add__';
+const normalizeClaudeConfigDirPath = (value: string): string => value.replace(/\/+$/u, '');
 import {
   eyesOnAgentsEmitter,
   subscribeEyesOnAgentsChanges,
@@ -94,6 +98,9 @@ class EyesOnAgentsState {
   actionError: string | null = null;
   busyAction: string | null = null;
   openingSessionKeys = new Set<string>();
+  // Per-environment CRUD in-flight guard (add/rename/remove/enable/directory), independent per id
+  // so acting on one environment never disables another's row — mirrors openingSessionKeys above.
+  busyClaudeEnvironmentIds = new Set<string>();
   titleDraft = '';
   titleQuery = '';
   threadSearchVisible = false;
@@ -379,6 +386,86 @@ class EyesOnAgentsState {
     );
   }
 
+  // Task 088: environment CRUD, mirroring openThread/openThreadInIterm2's call/error-handling
+  // pattern (in-flight guard, error/rethrow contract) rather than the single global busyAction gate
+  // above, so acting on one environment never disables another environment's row controls.
+  async addClaudeEnvironment(label: string): Promise<void> {
+    await this.runClaudeEnvironmentAction(ADD_CLAUDE_ENVIRONMENT_KEY, () =>
+      eyesOnAgentsEmitter.addClaudeEnvironment({ label }),
+    );
+  }
+
+  async renameClaudeEnvironment(id: string, label: string): Promise<void> {
+    await this.runClaudeEnvironmentAction(id, () =>
+      eyesOnAgentsEmitter.renameClaudeEnvironment({ id, label }),
+    );
+  }
+
+  async removeClaudeEnvironment(id: string): Promise<void> {
+    await this.runClaudeEnvironmentAction(id, () =>
+      eyesOnAgentsEmitter.removeClaudeEnvironment({ id }),
+    );
+  }
+
+  async setClaudeEnvironmentEnabled(id: string, enabled: boolean): Promise<void> {
+    await this.runClaudeEnvironmentAction(id, () =>
+      eyesOnAgentsEmitter.setClaudeEnvironmentEnabled({ id, enabled }),
+    );
+  }
+
+  async chooseClaudeEnvironmentDirectory(id: string): Promise<void> {
+    await this.runClaudeEnvironmentAction(id, () =>
+      eyesOnAgentsEmitter.chooseClaudeEnvironmentDirectory({ id }),
+    );
+  }
+
+  async useAutomaticClaudeEnvironment(id: string): Promise<void> {
+    await this.runClaudeEnvironmentAction(id, () =>
+      eyesOnAgentsEmitter.useAutomaticClaudeEnvironment({ id }),
+    );
+  }
+
+  // Task 088 (gap 1): the watcher-retry sibling of chooseClaudeEnvironmentDirectory/
+  // useAutomaticClaudeEnvironment above — a per-id busy gate, not the shared claude-directory-retry
+  // busyAction key its zero-arg predecessor uses, since one environment's watcher retry is fully
+  // independent of every other environment's (unlike the bridge install/refresh actions, which
+  // share one installation identity).
+  async retryClaudeDirectoryForEnvironment(id: string): Promise<void> {
+    await this.runClaudeEnvironmentAction(id, () =>
+      eyesOnAgentsEmitter.retryClaudeDirectory({ environmentId: id }),
+    );
+  }
+
+  // Task 088: the existing global installClaudeBridge/refreshClaudeBridgeStatus above stay zero-arg
+  // (targeting environments[0], exactly as before this task). These are the row-scoped siblings for
+  // a non-default environment's own compact setup action, sharing the same busyAction gate since
+  // every environment's plugin install still shares one installation identity (see the design doc's
+  // "Scope decisions") — only one bridge mutation can usefully be in flight at a time regardless of
+  // which environment it targets.
+  async installClaudeBridgeForEnvironment(environmentId: string): Promise<void> {
+    await this.runSnapshotAction('claude-bridge-install', () =>
+      eyesOnAgentsEmitter.installClaudeBridge({ environmentId }),
+    );
+  }
+
+  async refreshClaudeBridgeStatusForEnvironment(environmentId: string): Promise<void> {
+    await this.runSnapshotAction('claude-bridge-refresh', () =>
+      eyesOnAgentsEmitter.refreshClaudeBridgeStatus({ environmentId }),
+    );
+  }
+
+  // Task 088: resolves a thread's raw claudeConfigDir (task 087) against the currently configured
+  // environments list at read time — never persisted as a foreign key, so a renamed/removed
+  // environment is reflected immediately and a removed environment's threads simply lose their label.
+  resolveClaudeEnvironmentLabel(claudeConfigDir: string | null): string | null {
+    if (claudeConfigDir === null) return null;
+    const normalized = normalizeClaudeConfigDirPath(claudeConfigDir);
+    const match = (this.snapshot?.claudeDirectory ?? []).find((environment) =>
+      environment.configuredDirectory !== null
+      && normalizeClaudeConfigDirPath(environment.configuredDirectory) === normalized);
+    return match?.label ?? null;
+  }
+
   async openThread(sessionKey: EyesOnAgentsSessionKey): Promise<void> {
     const thread = this.threads.find((item) => item.sessionKey === sessionKey);
     if (!thread || (thread.provider === 'claude' && thread.desktopSessionId === null)) return;
@@ -555,6 +642,29 @@ class EyesOnAgentsState {
       throw error;
     } finally {
       this.busyAction = null;
+    }
+  }
+
+  // Task 088: the environment CRUD emitter methods return the mutated environment list, not a
+  // snapshot, so this refreshes the full snapshot afterward instead of applying a returned value
+  // directly (mirroring runSnapshotAction's error/rethrow contract with a per-id, not global, gate).
+  private async runClaudeEnvironmentAction(
+    id: string,
+    callback: () => Promise<unknown>,
+  ): Promise<void> {
+    if (this.busyClaudeEnvironmentIds.has(id)) return;
+    this.busyClaudeEnvironmentIds = new Set(this.busyClaudeEnvironmentIds).add(id);
+    this.actionError = null;
+    try {
+      await callback();
+      this.applySnapshot(await eyesOnAgentsEmitter.getSnapshot());
+    } catch (error) {
+      this.actionError = this.errorMessage(error);
+      throw error;
+    } finally {
+      const next = new Set(this.busyClaudeEnvironmentIds);
+      next.delete(id);
+      this.busyClaudeEnvironmentIds = next;
     }
   }
 

@@ -214,8 +214,9 @@ The rail separates the two provider lifecycles without mixing navigation and ena
 └───────┴───────────────────────────────────────────────────┘
 
 Selecting Claude replaces only the right pane with the complete Claude card: Claude support,
-Session directories, plugin/listener facts, a flat **Store latest user question** row whose small
-Switch authorizes only live Claude Hook capture, and the state-driven setup/reload/repair surface.
+the Claude environments list, plugin/listener facts, a flat **Store latest user question** row whose
+small Switch authorizes only live Claude Hook capture, and the state-driven setup/reload/repair
+surface.
 ```
 
 The rail is a vertical tablist, not a connection control. Click, Arrow Up/Down, Home, and End select
@@ -287,41 +288,70 @@ their persisted annotations return when the provider is enabled. The switch rema
 the saved preference is invalid so it can replace the value. The existing plugin removal control is
 labelled **Remove plugin**, avoiding ambiguity with the provider switch.
 
-The Claude card also contains one compact **Session directories** block before the state-driven
-setup action. It
-uses the card's existing quiet neutral background hierarchy and no decorative border or shadow.
-The current config directory appears in a bordered, read-only Arco Input so it can be selected and
-copied but not edited into an untrusted renderer-supplied path. **Change** opens Main's native folder
-picker. Custom mode adds **Use automatic**; unhealthy states add **Retry**. Canceling the picker is a
-no-op, while a successful choice persists and immediately applies the directory.
+The Claude card also contains one **Claude environments** list before the state-driven setup
+action, replacing the earlier single Session directories block with one row per configured
+`EyesOnAgentsClaudeEnvironment` (multi-environment support). It uses the card's existing quiet
+neutral background hierarchy and no decorative border or shadow. A persistent **Add environment**
+button in the list header opens a small inline label input; submitting always creates a new
+`custom`-mode environment through a native directory picker.
+
+Each row shows: the environment's label (inline **Rename**/**Save**/**Cancel** in place of the
+static label), its resolved path or **Not configured** in a bordered, read-only Arco Input so it can
+be selected and copied but not edited into an untrusted renderer-supplied path, and its mode/state
+text (`Automatic`/`Custom` · `Watching`/`Waiting`/`Degraded`/`Retrying`/`Error`/`Stopped`/`Starting`).
+**Change directory** opens Main's native folder picker scoped to that row; only the one environment
+eligible for automatic mode (the default environment, when it is `custom` or in an `error` state)
+also shows **Use automatic**. Canceling the picker is a no-op, while a successful choice persists and
+immediately applies that environment's directory. An enable/disable Switch and **Remove** sit on the
+row; **Remove** is disabled (with an explanatory hint) for the last remaining environment — at least
+one environment always exists.
+
+Each row also repeats the desktop-directory-count and last-successful-scan metadata the earlier
+single block showed, plus a next-retry note once one is scheduled, and a manual **Retry** button in
+the same states the pre-multi-environment single block used: a global Claude provider error, or the
+row's own state being `waiting`, `degraded`, `retrying`, or `error`. Retry acts on that one
+environment's watcher only — one environment's failure/retry never affects another's.
 
 ```text
-┌ Session directories ─────────────────────────────────────┐
-│ Watching                                                  │
-│ [ /Users/ral/.claude__________________________ ] [Change] │
-│ Automatic · Desktop metadata detected                     │
-│ Last successful scan 10:42                                │
-│                                              [Retry]      │
-└───────────────────────────────────────────────────────────┘
+┌ Claude environments ─────────────────────────────────[Add environment] ┐
+│ Default                                     Automatic · Watching  [on] │
+│ [ /Users/ral/.claude__________ ]                    [Change directory] │
+│ Desktop metadata directories: 1 · Last successful scan 10:42           │
+│                                                                        │
+│ claude2                                        Custom · Retrying  [on] │
+│ [ /Users/ral/.claude2_________ ]                    [Change directory] │
+│ Desktop metadata directories: 0 · Next retry 10:44             [Retry] │
+│                                                     [Rename]  [Remove] │
+│                                                                        │
+│ Note: each environment needs its own hook install. Point               │
+│ Bitterless at your environment's CLAUDE_CONFIG_DIR, then               │
+│ Install — and make sure the shell command for that                     │
+│ environment (e.g. a claude2 wrapper) sets CLAUDE_CONFIG_DIR            │
+│ before invoking claude.                                                │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
-The block reuses system typography and Royal Blue actions. Its only emphasis is the state text;
-there is no additional provider badge or animation. Long paths remain one line, ellipsize in the
-input, and expose the full configured value through the input/tooltip. Buttons use the existing
-mini size and wrap below the input on narrow drawers.
+The list reuses system typography and Royal Blue actions. Its only emphasis is the state text; there
+is no additional provider badge or animation. Long paths remain one line, ellipsize in the input, and
+expose the full configured value through the input/tooltip. Buttons use the existing mini size and
+wrap below the input on narrow drawers. The always-visible guidance note below the list (styled like
+the existing App Server "Desktop note" aside) is the only place this contract is explained; it never
+depends on scroll position or a specific row's state.
 
-| directory state | visible behavior |
+| row state | visible behavior |
 |---|---|
-| automatic + watching | resolved config root, Automatic label, last successful scan |
-| custom + watching | canonical selected root plus **Use automatic** |
-| waiting | directory is valid but `projects` has not appeared; show next retry, not an error |
-| degraded | another source remains watched while the configured transcript source is unavailable |
+| automatic + watching | resolved config root, Automatic label, desktop count, last successful scan |
+| custom + watching | canonical selected root plus **Use automatic** (default row only) |
+| waiting | directory is valid but `projects` has not appeared; show next retry and **Retry**, not an error |
+| degraded | another source remains watched while the configured transcript source is unavailable; **Retry** available |
 | retrying | retain path and persisted tasks; show bounded error, next retry, and **Retry** |
-| error | malformed saved config or unsafe directory; watcher stopped, Change/Use automatic remain |
+| error | malformed saved config or unsafe directory; watcher stopped, Change directory/Use automatic/**Retry** remain |
 | stopped | signed-out/shutdown state; never claim watching |
-| choosing/applying | disable competing Claude directory actions; keep the last snapshot visible |
+| choosing/applying | disable that row's competing directory actions; keep the last snapshot visible |
+| last remaining environment | **Remove** stays disabled with an explanatory hint; every other row action stays available |
 | Claude provider disabled | fold the Claude card to its switch and one explanation; hide every Claude task without deleting it |
 | Claude provider enabling/disabling | disable the switch and all connection actions; persisted Off immediately gates every subsequent snapshot, while On keeps Claude rows hidden until cleanup and the full refresh complete |
+| Claude provider error | **Retry** becomes available on every row, even one that is otherwise `watching`, so recovery is reachable from any environment |
 
 Changing directories does not clear the board. It removes stale Preview availability until the new
 root rediscovers the matching UUID, then restores Preview without moving the card or changing its
@@ -382,9 +412,14 @@ A card displays only observation metadata:
   reactive clock that advances every 10 seconds so visible cards update without receiving a new
   thread snapshot;
 - working-directory folder and the overflow control grouped at the right of the same action row; the
-  folder exposes the full path through tooltip/accessibility text. A Claude row with neither a
-  trusted Desktop Open route nor an `iterm2SessionId` does not render. There is no icon-only `Open`
-  button;
+  folder exposes the full path through tooltip/accessibility text, prefixed with the resolved Claude
+  environment's label (`{label} · Working directory: {path}`) when the thread's `claudeConfigDir`
+  (path-normalized) matches a currently configured multi-environment row's directory; a thread with
+  no match, or in a single-environment setup, keeps the plain `Working directory: {path}` text
+  unchanged. The match is resolved live against the current environments list, never persisted, so a
+  renamed environment's label updates immediately and a removed environment's threads silently lose
+  the prefix. A Claude row with neither a trusted Desktop Open route nor an `iterm2SessionId` does not
+  render. There is no icon-only `Open` button;
 - the overflow (`…`) control is always present. Its items, in order: the provider-named open item
   (**Open in Codex** / **Open in Claude**) with a quiet `(double click)` hint, omitted when the row
   has no trusted route; **Open in iTerm2**, an independent action present whenever a Claude row

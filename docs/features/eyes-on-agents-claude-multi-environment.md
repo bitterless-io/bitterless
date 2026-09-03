@@ -389,9 +389,39 @@ rename, remove, enable/disable):
 
 - One row per `EyesOnAgentsClaudeEnvironment`: label, resolved path (or "not configured"), mode,
   the existing per-environment watcher status pill (`watching`/`waiting`/`degraded`/`retrying`/
-  `error`/`stopped`), and the existing per-environment plugin/hook setup action
-  (`enable`/`finish`/`reload`/`retry`/`repair`) — the setup-action state machine itself is unchanged,
-  it is simply evaluated once per environment instead of once globally.
+  `error`/`stopped`), that environment's desktop-directory count and last-successful-scan time (plus
+  a next-retry note once one is scheduled), a manual per-environment **Retry** button in the same
+  states the pre-multi-environment single block offered it (a global Claude provider error, or the
+  row's own state being `waiting`/`degraded`/`retrying`/`error`), and the existing per-environment
+  plugin/hook setup action (`enable`/`finish`/`reload`/`retry`/`repair`) — the setup-action state
+  machine itself is unchanged, it is simply evaluated once per environment instead of once globally.
+
+> **Implementation note (task 088, gap-1 completion):** the initial task 088 delivery replaced the
+> single directory block with the environment list above but dropped the desktop-directory-count/
+> last-successful-scan/next-retry metadata and the manual Retry button entirely (flagged as a real,
+> letter-vs-Objective gap in that task's own Implementation evidence). A follow-up completion pass
+> restored all of it per row: `retryClaudeDirectory` widened to `(params?: { environmentId?: string
+> }) => Promise<EyesOnAgentsSnapshot>` (mirroring the 4 bridge methods' shape exactly), resolving to
+> that environment's id and retrying only its watcher via the pre-existing
+> `ClaudeObservationService.retryEnvironmentEntry`; an omitted `environmentId` still retries
+> `environments[0]`, reproducing every pre-088 zero-arg caller unchanged. The renderer gained a
+> `retryClaudeDirectoryForEnvironment(id)` store method (per-id busy gate, like
+> `chooseClaudeEnvironmentDirectory`/`useAutomaticClaudeEnvironment` — retrying one environment's
+> watcher is fully independent of every other environment's, unlike the shared-identity bridge
+> install/refresh actions) and a `handleRetryEnvironment` row handler that falls back to the legacy
+> zero-arg `retryClaudeDirectory()` for the synthetic empty-id sentinel row, exactly like Change
+> directory/Use automatic.
+
+> **Implementation note (task 088):** per the "Scope decisions"/Non-goals installation-identity
+> boundary above, the setup-action status/label shown in each row is **not** independently evaluated
+> per environment — it stays the single existing `bridge.value?.setupAction` computed, so every row
+> currently displays identical setup-action text/state. What is per-environment is only the
+> **Install**/**Retry listener** button's click target: clicking it in a given row calls
+> `installClaudeBridge`/`refreshClaudeBridgeStatus` with that row's `{ environmentId }`, so the
+> underlying `claude` CLI invocation targets that environment's `CLAUDE_CONFIG_DIR` even though the
+> displayed status is shared. This corrects this bullet's "evaluated once per environment" phrasing,
+> which read as implying independent per-row status.
+
 - Row actions: rename, change directory (opens the existing native picker) or "Use automatic" for
   the one eligible environment, enable/disable, remove (disabled for the last remaining
   environment).

@@ -217,14 +217,18 @@ export class ClaudeObservationService {
     });
   }
 
-  async retryDirectory(): Promise<void> {
+  // Task 088 (gap 1): environmentId is optional so every pre-088 zero-arg caller (the default
+  // environment's own manual retry) keeps working unchanged; an explicit id retries that one
+  // environment's watcher only, via the same retryEnvironmentEntry this class already uses
+  // internally for its own scheduled per-environment retry timers.
+  async retryDirectory(environmentId?: string): Promise<void> {
     await this.runServiceLifecycle(async () => {
       if (!this.desiredStarted) return;
       if (this.invalidHydrationStatus !== null) {
         await this.hydrateAndReconcile();
         return;
       }
-      await this.retryEnvironmentEntry(this.resolveDefaultEnvironmentId());
+      await this.retryEnvironmentEntry(environmentId ?? this.resolveDefaultEnvironmentId());
     });
   }
 

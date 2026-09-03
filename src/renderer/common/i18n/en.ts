@@ -763,6 +763,27 @@ export const en = {
       useAutomatic: 'Use automatic',
       retry: 'Retry'
     },
+    claudeEnvironment: {
+      title: 'Claude environments',
+      guidance:
+        'Each environment needs its own hook install. Point Bitterless at your environment\'s '
+        + 'CLAUDE_CONFIG_DIR, then Install — and make sure the shell command you use for that '
+        + 'environment (e.g. a claude2 wrapper) sets CLAUDE_CONFIG_DIR before invoking claude.',
+      addEnvironment: 'Add environment',
+      addLabelPlaceholder: 'Label (e.g. claude2)',
+      add: 'Add',
+      notConfigured: 'Not configured',
+      rename: 'Rename',
+      renameLabelPlaceholder: 'Label',
+      save: 'Save',
+      cancel: 'Cancel',
+      changeDirectory: 'Change directory',
+      useAutomatic: 'Use automatic',
+      enable: 'Enable',
+      disable: 'Disable',
+      remove: 'Remove',
+      removeLastHint: 'The last remaining environment cannot be removed'
+    },
     actions: {
       sync: 'Sync',
       refresh: 'Refresh',
@@ -804,6 +825,7 @@ export const en = {
       untitledClaude: 'Untitled Claude task',
       new: 'Unread',
       workingDirectory: 'Working directory: {path}',
+      workingDirectoryWithEnvironment: '{label} · Working directory: {path}',
       source: 'Evidence: {source}',
       appServer: 'App Server',
       codexHook: 'Desktop Bridge',

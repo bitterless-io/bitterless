@@ -274,6 +274,12 @@ eyesOnAgentsService = new EyesOnAgentsService({
     return claudeObservation.requireCanonicalTranscript(path, expectedThreadId);
   },
   claudeObservation,
+  // Task 088: the same claudeDirectoryConfig singleton this file's own environment-CRUD/bridge
+  // methods already use, injected so EyesOnAgentsService can satisfy EyesOnAgentsApi's environment
+  // surface and resolve installClaudeBridge/refreshClaudeBridgeStatus/removeClaudeBridge's
+  // { environmentId } internally.
+  claudeDirectoryConfig,
+  pickClaudeConfigDirectory,
   claudeBridge: claudePluginBridge,
   claudeHookListener: {
     start: startClaudeHookListener,
@@ -402,9 +408,9 @@ export class EyesOnAgentsHandler extends XpcMainHandler implements EyesOnAgentsA
       parseEyesOnAgentsClaudeBridgeEnvironmentParams(params)
     );
     try {
-      const snapshot = await eyesOnAgentsService.installClaudeBridge(
-        environment.configDirectory ?? undefined
-      );
+      const snapshot = await eyesOnAgentsService.installClaudeBridge({
+        environmentId: environment.id
+      });
       logClaudeBridgeAction('install', environment);
       return snapshot;
     } catch (error) {
@@ -421,9 +427,9 @@ export class EyesOnAgentsHandler extends XpcMainHandler implements EyesOnAgentsA
       parseEyesOnAgentsClaudeBridgeEnvironmentParams(params)
     );
     try {
-      const snapshot = await eyesOnAgentsService.refreshClaudeBridgeStatus(
-        environment.configDirectory ?? undefined
-      );
+      const snapshot = await eyesOnAgentsService.refreshClaudeBridgeStatus({
+        environmentId: environment.id
+      });
       logClaudeBridgeAction('refresh', environment);
       return snapshot;
     } catch (error) {
@@ -440,9 +446,9 @@ export class EyesOnAgentsHandler extends XpcMainHandler implements EyesOnAgentsA
       parseEyesOnAgentsClaudeBridgeEnvironmentParams(params)
     );
     try {
-      const snapshot = await eyesOnAgentsService.removeClaudeBridge(
-        environment.configDirectory ?? undefined
-      );
+      const snapshot = await eyesOnAgentsService.removeClaudeBridge({
+        environmentId: environment.id
+      });
       logClaudeBridgeAction('remove', environment);
       return snapshot;
     } catch (error) {
@@ -482,8 +488,17 @@ export class EyesOnAgentsHandler extends XpcMainHandler implements EyesOnAgentsA
     return await eyesOnAgentsService.useAutomaticClaudeDirectory();
   }
 
-  async retryClaudeDirectory(): Promise<EyesOnAgentsSnapshot> {
-    return await eyesOnAgentsService.retryClaudeDirectory();
+  // Task 088 (gap 1): resolved the same way as the 4 bridge methods above — an omitted
+  // environmentId retries environments[0], an explicit one must match a real configured
+  // environment, then the resolved id is passed down for the service's own independent resolution.
+  async retryClaudeDirectory(
+    params?: { environmentId?: string }
+  ): Promise<EyesOnAgentsSnapshot> {
+    const environment = resolveClaudeBridgeEnvironment(
+      claudeDirectoryConfig.listEnvironments(),
+      parseEyesOnAgentsClaudeBridgeEnvironmentParams(params)
+    );
+    return await eyesOnAgentsService.retryClaudeDirectory({ environmentId: environment.id });
   }
 
   // Environment-scoped CRUD (task 084). Each mutation persists the environment list, then applies

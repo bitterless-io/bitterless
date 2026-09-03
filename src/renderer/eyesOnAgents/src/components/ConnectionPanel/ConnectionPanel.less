@@ -374,6 +374,43 @@
   margin-top: 8px;
 }
 
+/* Task 088: the environment list reuses every -header/-path/-meta/-actions/-state/-error class
+   above, one row per configured EyesOnAgentsClaudeEnvironment. */
+.eyes-connection-card__directories-header h4 {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.eyes-connection-card__directories-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+}
+
+.eyes-connection-card__directories-add .arco-input-wrapper {
+  min-width: 0;
+  flex: 1 1 160px;
+}
+
+.eyes-connection-card__directories-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.eyes-connection-card__directory-row {
+  padding: 8px;
+  border-radius: 7px;
+  background: oklch(1 0 0 / 55%);
+}
+
+.eyes-connection-card__directory-row .eyes-connection-card__directories-header {
+  margin-bottom: 6px;
+}
+
 .eyes-connection-card__setup {
   margin-bottom: 12px;
   padding: 10px;

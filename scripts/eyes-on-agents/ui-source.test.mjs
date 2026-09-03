@@ -950,7 +950,6 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
     claudeCard,
     /v-if="troubleshootingVisible"[\s\S]*claudeBridge\.hooksDiagnostic[\s\S]*claudeBridge\.hooksCommand/,
   );
-  assert.match(claudeCard, /providerError\.value !== null \|\|/);
   assert.match(
     store,
     /installClaudeBridge\(\)[\s\S]*refreshClaudeBridgeStatus\(\)[\s\S]*removeClaudeBridge\(\)/,
@@ -966,24 +965,56 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
   assert.match(claudeCard, /name="eyesOnAgents__connections__claudeDirectories"/);
   assert.match(
     claudeCard,
-    /<a-input[\s\S]*:model-value="directoryPath"[\s\S]*readonly[\s\S]*\/>/,
-    'the directory path must use a read-only Arco Input',
+    /<a-input[\s\S]*:model-value="environmentPath\(environment\)"[\s\S]*readonly[\s\S]*\/>/,
+    'each environment row must expose its resolved path in a read-only Arco Input',
   );
-  assert.match(claudeCard, /eyesOnAgentsStore\.changeClaudeDirectory\(\)/);
-  assert.match(claudeCard, /eyesOnAgentsStore\.useAutomaticClaudeDirectory\(\)/);
-  assert.match(claudeCard, /eyesOnAgentsStore\.retryClaudeDirectory\(\)/);
+  // Task 088: environments[0] recovers via the same legacy zero-arg store methods (an empty id
+  // fails { id }-scoped UUID validation before ever reaching the recovery-aware
+  // ClaudeDirectoryConfigService methods) — the single-directory "malformed value" recovery
+  // contract stays reachable through the new environment list's default row.
+  assert.match(claudeCard, /if \(id === ''\) \{[\s\S]*eyesOnAgentsStore\.changeClaudeDirectory\(\)/);
   assert.match(
     claudeCard,
-    /const canUseAutomaticDirectory = computed\(\(\) => \([\s\S]*directory\.value\?\.mode === 'custom' \|\| directory\.value\?\.state === 'error'/,
-    'a malformed saved directory must still expose Use automatic recovery',
+    /if \(id === ''\) \{[\s\S]*eyesOnAgentsStore\.useAutomaticClaudeDirectory\(\)/,
   );
+  assert.match(
+    claudeCard,
+    /const isEligibleForAutomatic = \(environment: EyesOnAgentsClaudeEnvironmentStatus\): boolean =>[\s\S]*environment\.mode === 'custom' \|\| environment\.state === 'error'/,
+    'a malformed saved directory must still expose Use automatic recovery on the default row',
+  );
+  assert.match(
+    claudeCard,
+    /:disabled="environmentRows\.length <= 1/,
+    'remove must be disabled for the last remaining environment',
+  );
+  assert.match(claudeCard, /eyesOnAgentsStore\.chooseClaudeEnvironmentDirectory\(id\)/);
+  assert.match(claudeCard, /eyesOnAgentsStore\.useAutomaticClaudeEnvironment\(id\)/);
+  assert.match(claudeCard, /eyesOnAgentsStore\.removeClaudeEnvironment\(id\)/);
+  assert.match(claudeCard, /eyesOnAgentsStore\.addClaudeEnvironment\(label\)/);
+  assert.match(claudeCard, /eyesOnAgentsStore\.renameClaudeEnvironment\(id, label\)/);
+  assert.match(claudeCard, /eyesOnAgentsStore\.setClaudeEnvironmentEnabled\(id, enabled\)/);
+  // Gap 1 (post-088 review): the manual per-environment Retry action falls back to the legacy
+  // zero-arg store method for the empty-id sentinel row, exactly like Change directory/Use automatic.
+  assert.match(claudeCard, /if \(id === ''\) \{[\s\S]*eyesOnAgentsStore\.retryClaudeDirectory\(\)/);
+  assert.match(claudeCard, /eyesOnAgentsStore\.retryClaudeDirectoryForEnvironment\(id\)/);
+  assert.match(claudeCard, /environmentDesktopLabel\(environment\)/);
+  assert.match(claudeCard, /environmentLastScanLabel\(environment\)/);
+  assert.match(claudeCard, /environment\.desktopDirectoryCount/);
+  assert.match(claudeCard, /environment\.lastSuccessfulScanAt/);
+  assert.match(claudeCard, /canRetryEnvironment\(environment\)/);
   assert.match(store, /eyesOnAgentsEmitter\.changeClaudeDirectory\(\)/);
   assert.match(store, /eyesOnAgentsEmitter\.useAutomaticClaudeDirectory\(\)/);
   assert.match(store, /eyesOnAgentsEmitter\.retryClaudeDirectory\(\)/);
+  assert.match(store, /eyesOnAgentsEmitter\.retryClaudeDirectory\(\{ environmentId: id \}\)/,
+    'the per-environment retry sibling must forward the row id');
   assert.match(handler, /dialog\.showOpenDialog\(\{[\s\S]*properties: \['openDirectory'\]/);
   assert.match(handler, /async changeClaudeDirectory\(\): Promise<EyesOnAgentsSnapshot>/);
   assert.match(handler, /async useAutomaticClaudeDirectory\(\): Promise<EyesOnAgentsSnapshot>/);
-  assert.match(handler, /async retryClaudeDirectory\(\): Promise<EyesOnAgentsSnapshot>/);
+  assert.match(
+    handler,
+    /async retryClaudeDirectory\(\s*params\?: \{ environmentId\?: string \}\s*\): Promise<EyesOnAgentsSnapshot>/,
+    'gap 1: retryClaudeDirectory must accept an optional { environmentId } like the 4 bridge methods',
+  );
   assert.match(sharedTypes, /changeClaudeDirectory\(\): Promise<EyesOnAgentsSnapshot>/);
   assert.doesNotMatch(sharedTypes, /changeClaudeDirectory\([^)]*(?:path|directory|url)/i,
     'the renderer contract must not accept a custom path');
