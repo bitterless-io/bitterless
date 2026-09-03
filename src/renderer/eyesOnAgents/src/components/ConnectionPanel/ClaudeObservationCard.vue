@@ -168,8 +168,7 @@
                 {{ presenceLabel(environment) }}
               </span>
               <a-button
-                v-if="environment.pluginPresence === 'not_installed'
-                  || environment.pluginPresence === 'disabled'"
+                v-if="environmentInstallable(environment)"
                 size="mini"
                 type="primary"
                 :loading="eyesOnAgentsStore.busyAction === 'claude-bridge-install'"
@@ -179,11 +178,21 @@
                 {{ i18nHelper.eyesOnAgents.claudeEnvironment.installPlugin }}
               </a-button>
               <a-button
+                v-else-if="environmentSetupActionable"
+                size="mini"
+                type="primary"
+                :loading="eyesOnAgentsStore.busyAction === 'claude-bridge-install'"
+                :disabled="Boolean(eyesOnAgentsStore.busyAction)"
+                @click="handleInstallForEnvironment(environment.id)"
+              >
+                {{ setupActionLabel }}
+              </a-button>
+              <a-button
                 v-else-if="environment.pluginPresence === 'unknown'"
                 size="mini"
-                :loading="eyesOnAgentsStore.busyAction === 'claude-bridge-refresh'"
-                :disabled="Boolean(eyesOnAgentsStore.busyAction)"
-                @click="handleRefreshForEnvironment(environment.id)"
+                :loading="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(environment.id)"
+                :disabled="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(environment.id)"
+                @click="handleCheckPlugin(environment.id)"
               >
                 {{ i18nHelper.eyesOnAgents.claudeEnvironment.checkPlugin }}
               </a-button>
@@ -525,7 +534,19 @@ const environmentPath = (environment: EyesOnAgentsClaudeEnvironmentStatus): stri
   environment.effectiveDirectory
   ?? environment.configuredDirectory
   ?? i18nHelper.eyesOnAgents.claudeEnvironment.notConfigured;
-// Task 090: this environment's OWN plugin presence, from the cached read-only probe. Distinct from
+// Task 090: a row offers Install when its own directory is known to lack an enabled plugin.
+const environmentInstallable = (environment: EyesOnAgentsClaudeEnvironmentStatus): boolean =>
+  environment.pluginPresence === 'not_installed' || environment.pluginPresence === 'disabled';
+// A profile-wide setup action still has to be applied per CLAUDE_CONFIG_DIR, because installation
+// is per-directory. Without a row-scoped button, a drifted second environment would be
+// unreachable: presence stays 'installed' (the plugin IS present and enabled, it is the profile's
+// artifacts that drifted) while the card-level action resolves to environments[0]. The card-level
+// action stays too — it is the familiar entry point and the only one for listener/reload concerns —
+// so in this one state the action does appear card-level and per row. That is the cost of keeping
+// every directory repairable; the common from-scratch case is driven by per-row presence instead.
+const environmentSetupActionable = computed(() =>
+  ['enable', 'finish', 'repair'].includes(setupAction.value));
+// This environment's OWN plugin presence, from the cached read-only probe. Distinct from
 // statusClass/statusLabel above, which report the one profile-wide installation and listener.
 const presenceLabel = (environment: EyesOnAgentsClaudeEnvironmentStatus): string => {
   switch (environment.pluginPresence) {
@@ -697,8 +718,12 @@ const handleInstallForEnvironment = async (environmentId: string): Promise<void>
   await eyesOnAgentsStore.installClaudeBridgeForEnvironment(environmentId).catch(() => undefined);
 };
 
-const handleRefreshForEnvironment = async (environmentId: string): Promise<void> => {
-  await eyesOnAgentsStore.refreshClaudeBridgeStatusForEnvironment(environmentId)
+// Task 090: re-probes only this row's plugin presence. Deliberately NOT a full bridge refresh,
+// which can run a trusted automatic upgrade and rewrite the profile-wide inspection state — the
+// opposite of what a per-row "check this directory" action should do. This replaced the row's
+// former refreshClaudeBridgeStatusForEnvironment call, which is now unused from this card.
+const handleCheckPlugin = async (environmentId: string): Promise<void> => {
+  await eyesOnAgentsStore.refreshClaudeEnvironmentPluginPresence(environmentId)
     .catch(() => undefined);
 };
 

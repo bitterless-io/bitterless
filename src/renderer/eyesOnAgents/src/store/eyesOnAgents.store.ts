@@ -438,6 +438,12 @@ class EyesOnAgentsState {
     );
   }
 
+  async refreshClaudeEnvironmentPluginPresence(id: string): Promise<void> {
+    await this.runClaudeEnvironmentAction(id, () =>
+      eyesOnAgentsEmitter.refreshClaudeEnvironmentPluginPresence({ id }),
+    );
+  }
+
   // Task 088 (gap 1): the watcher-retry sibling of chooseClaudeEnvironmentDirectory/
   // useAutomaticClaudeEnvironment above — a per-id busy gate, not the shared claude-directory-retry
   // busyAction key its zero-arg predecessor uses, since one environment's watcher retry is fully

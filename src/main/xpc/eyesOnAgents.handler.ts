@@ -571,6 +571,14 @@ export class EyesOnAgentsHandler extends XpcMainHandler implements EyesOnAgentsA
     );
   }
 
+  async refreshClaudeEnvironmentPluginPresence(
+    params: { id: string }
+  ): Promise<EyesOnAgentsSnapshot> {
+    return await eyesOnAgentsService.refreshClaudeEnvironmentPluginPresence(
+      parseEyesOnAgentsClaudeEnvironmentIdParams(params)
+    );
+  }
+
   async setClaudeProviderEnabled(
     params: { enabled: boolean }
   ): Promise<EyesOnAgentsSnapshot> {

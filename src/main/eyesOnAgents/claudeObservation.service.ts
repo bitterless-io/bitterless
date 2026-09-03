@@ -496,7 +496,13 @@ export class ClaudeObservationService {
       }
     }
     await Promise.all(tasks);
-    await this.probeEnvironmentPresence(staleIds);
+    // Deliberately NOT awaited. This runs inside the observation lifecycle queue, which start(),
+    // stop(), and every environment-CRUD round-trip await; each probe spawns `claude` with a 30s
+    // timeout, so awaiting it here would make a slow or hung CLI stall app startup, app shutdown,
+    // and the "Add environment" click, and would keep Claude threads hidden until it finished.
+    // Presence is a status readout, not part of the environment's lifecycle: it lands in the cache
+    // whenever it lands and broadcasts a change then.
+    void this.probeEnvironmentPresence(staleIds).catch(() => undefined);
   }
 
   private async teardownAllEnvironments(): Promise<void> {

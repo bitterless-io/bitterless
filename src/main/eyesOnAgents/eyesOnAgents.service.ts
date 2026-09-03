@@ -3127,6 +3127,24 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
   // the same egress Copy /reload-plugins already uses, never electron's clipboard directly.
   // Nothing here logs: the snippet and configDirectory never reach a logger, and the only failure
   // this method raises identifies the environment by label alone.
+  // Task 090: re-probe ONE environment's plugin presence and nothing else. Kept separate from
+  // refreshClaudeBridgeStatus on purpose — that runs a full profile-wide bridge refresh, which can
+  // trigger a trusted automatic upgrade and rewrite the shared inspection state. A per-row "check
+  // this directory" action must not do either; it only answers whether that directory has the
+  // plugin. Resolving the id first means an unknown id rejects before anything is spawned.
+  async refreshClaudeEnvironmentPluginPresence(
+    params: { id: string }
+  ): Promise<EyesOnAgentsSnapshot> {
+    this.requireClaudeProviderManagementEnabled();
+    const directoryConfig = this.requireClaudeDirectoryConfig();
+    const environment = resolveClaudeBridgeEnvironment(
+      directoryConfig.listEnvironments(),
+      { environmentId: params.id }
+    );
+    await this.dependencies.claudeObservation?.refreshPluginPresence?.(environment.id);
+    return await this.changedSnapshot();
+  }
+
   async copyClaudeEnvironmentSetupCommand(params: { id: string }): Promise<void> {
     const directoryConfig = this.requireClaudeDirectoryConfig();
     const environment = resolveClaudeBridgeEnvironment(

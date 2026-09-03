@@ -90,6 +90,14 @@ and enabled in this directory? — and show it per row.
 - `docs/integrations/eyes-on-agents-layout.md`, and
   `docs/features/eyes-on-agents-claude-multi-environment.md` if implementation reveals the contract
   needs correcting (correct it, do not silently diverge)
+- Amended during delivery (review 1 noted the original Path omitted these): the `remove` trigger in
+  `src/main/eyesOnAgents/eyesOnAgents.service.ts`, the composition-root wiring in
+  `src/main/xpc/eyesOnAgents.handler.ts`, and — added by the review-1 follow-up — the new
+  `refreshClaudeEnvironmentPluginPresence` member across `eyesOnAgents.type.ts`, the handler, the
+  service, and `src/renderer/eyesOnAgents/src/store/eyesOnAgents.store.ts`, plus
+  `scripts/eyes-on-agents/claude-environment-plugin-install.test.mjs` and
+  `scripts/eyes-on-agents/claude-environment-render.test.mjs` for coverage, and `package.json` for
+  test wiring
 
 ## Verify
 
@@ -116,7 +124,8 @@ abandoned rather than retried a third time.
 
 `ClaudePluginBridgeService.probePluginPresence(configDirectory?)`
 (`src/main/eyesOnAgents/claudePluginBridge.service.ts:441-468`) reuses the existing pure,
-already-per-directory `inspectClaudeNamespace(executable, configDirectory)` (`:1381`) and reduces
+already-per-directory `inspectClaudeNamespace(executable, configDirectory)` (`:1381`, cited as
+`:1354` in this task's Context section, which predates task 089's edits to the same file) and reduces
 its `{plugins, marketplaces}` to one verdict. It reuses `inspectCurrent`'s own identity predicate —
 `entry.id === identity.pluginId && entry.scope === 'user'` — so the probe agrees with the install
 flow about what "the Bitterless plugin" means:
@@ -146,10 +155,12 @@ probe is a separate additive path instead, and the shared installation identity,
 are unchanged (the feature doc's Non-goal). A test asserts `getStatus()` is byte-identical across a
 probe call.
 
-One honest caveat: a failing probe reaches the pre-existing `command()` catch, which clears the
-`this.executable` resolution cache. That is a resolution cache, not installation state, and the next
-call simply re-resolves — but it is a side effect the probe does not fully avoid, and it is
-pre-existing shared behavior rather than something this task introduced.
+One honest caveat: a probe whose CLI *spawn* fails reaches the pre-existing `command()` catch,
+which clears the `this.executable` resolution cache. That is a resolution cache, not installation
+state, and the next call simply re-resolves. **Narrowed by review 1:** a non-zero CLI *exit* does
+not clear the cache (only a spawn-level throw does), and the consequences are no worse than stated
+— the cache clear cannot break a concurrent or subsequent install/refresh for another environment,
+it only costs one re-resolution.
 
 ### Cache and triggers
 
@@ -158,17 +169,20 @@ pre-existing shared behavior rather than something this task introduced.
 `pluginPresenceInFlight` coalescing map (`:129-142`), a public `refreshPluginPresence(id?)`
 (`:147-153`), and the private `probeEnvironmentPresence(ids)` that does the work (`:157-193`).
 
-- **`getSnapshot()` never probes.** `getDirectoryStatus()` (`:229-250`) reads the cache only and
+- **`getSnapshot()` never probes.** `getDirectoryStatus()` (`:202-226`) reads the cache only and
   stamps `pluginPresence`/`pluginProbedAt` at the same list-level position task 088 stamps
   `canRemove`; the synthetic invalid-hydration row is always `unknown`/`null`.
-- **Triggers:** app start and every environment add (both via `reconcileEnvironments`, `:428-462`,
+- **Triggers:** app start and every environment add (both via `reconcileEnvironments`, `:465-500`,
   which probes only ids that are newly added or whose `configDirectory` actually changed — a rename
   or an enabled-flag flip spends no CLI calls), plus an explicit per-row install/refresh/remove
-  (`eyesOnAgents.service.ts:2919`, `:2988`, `:3000`, each passing that row's `environmentId`).
+  (`eyesOnAgents.service.ts:2923`, `:2983`, `:3003`, each passing that row's `environmentId`).
 - **Coalescing** is per id, so three overlapping refreshes of one environment share one probe while
   different environments still probe concurrently.
 - A removed environment's cached verdict is deleted with it, so a re-added id cannot inherit a
-  verdict probed against a different directory.
+  verdict probed against a different directory. **Correction from review 1:** the scenario that
+  claimed to prove this passes even with both `pluginPresence.delete(...)` calls removed — a re-add
+  goes through the newly-added branch and re-probes anyway, so the delete is defence in depth rather
+  than the mechanism the test demonstrates. The property holds; the test does not pin it.
 - Wired at the composition root (`src/main/xpc/eyesOnAgents.handler.ts:248-250`) to the same plugin
   bridge instance the install actions use.
 
@@ -237,3 +251,71 @@ really is per-row. No new CSS — the pill reuses the existing
   written; every probe test stubs the command runner.
 - Owner-only manual check still outstanding: with two real environments, install into one and
   confirm only that row reports `Plugin installed` while the other reports `Plugin not installed`.
+
+### Review-1 follow-up
+
+[Independent review 1](../reviews/eyes-on-agents-claude-env-install-probe-090-1.md) returned
+**`blocked`** on two real defects. Both are fixed here. The review earned its keep: this task was
+implemented by the orchestrator itself (two develop subagents died on transient `529 Overloaded`
+errors before writing any code), so it was the only independent pass over this code, and it found
+what self-review missed — including by mutating 15 lines in a scratch copy and reporting the 2 that
+survived.
+
+**B1 — the renderer collapse removed the only path to repair a non-default environment.** Fixed.
+`pluginPresence: 'installed'` means "present and enabled" and deliberately ignores drift, so after a
+Bitterless update the profile can sit in `setupAction: 'repair'` while both directories still list
+the plugin installed and enabled. The row then showed *Plugin installed* with no button, and the
+card-level Repair passes no `environmentId` → `resolveClaudeBridgeEnvironment` → `environments[0]`.
+Since installation is per `CLAUDE_CONFIG_DIR`, `~/.claude2` had become **unrepairable**. A row now
+also offers the profile-wide setup action, row-scoped, when the profile needs
+`enable`/`finish`/`repair` (`ClaudeObservationCard.vue`, `environmentSetupActionable`). Task 088's
+P3 had recommended collapsing "with a per-environment target selector"; the row-scoped button is
+that selector, and it is why reachability was lost when the first attempt omitted it. Pinned by a
+new render test ("an installed row still offers the profile-wide setup action, row-scoped"), which
+was mutation-checked: stubbing the branch to `false` fails it.
+
+**B2 — the read-only probe was wired synchronously into the observation lifecycle queue.** Fixed.
+`reconcileEnvironments` awaited `probeEnvironmentPresence`, and that queue is awaited by `start()`,
+`stop()`, and every environment-CRUD round-trip; each probe spawns `claude` with a 30s timeout. The
+review verified with a never-resolving stub that `start()` and `stop()` both hang. It is now
+fire-and-forget (`void … .catch(() => undefined)`), with a comment stating why. Pinned by new
+scenario 10, which guards `start()`/`applyEnvironments()`/`stop()` behind a 2s deadline; restoring
+the `await` makes it fail with `start() blocked on a hung plugin-presence probe` (verified, and the
+guard's timer is deliberately not `unref`'d so a regression fails loudly instead of hanging).
+
+Also fixed from the review's P3s and its evidence corrections:
+
+- **"Check plugin" is now genuinely read-only.** It previously called
+  `refreshClaudeBridgeStatusForEnvironment`, i.e. a full profile-wide bridge refresh that can run a
+  trusted automatic upgrade and rewrite the shared `this.inspection` — the opposite of a per-row
+  "check this directory". It now goes through a new `refreshClaudeEnvironmentPluginPresence(id)`
+  across `EyesOnAgentsApi` / handler / service / store, which re-probes only that environment. The
+  render test asserts Check hits the presence path and does **not** touch the bridge-refresh path.
+  Removing the now-orphaned `handleRefreshForEnvironment` also cleared a real
+  `@typescript-eslint/no-unused-vars` error this change had introduced.
+- **The new type no longer splits an existing comment block.**
+  `EyesOnAgentsClaudePluginPresence` had been spliced between "…— see" and
+  "EyesOnAgentsClaudeDirectoryStatus below)", orphaning that sentence. Moved above the block.
+- **The probe tests no longer pass by microtask luck.** With reconcile-time probing now
+  fire-and-forget, assertions that read presence right after `start()` were relying on stub probes
+  resolving as microtasks. They use the fixture's `drain()` helper instead.
+- Four wrong `file:line` citations in this evidence corrected, plus the two substantive corrections
+  recorded inline above (the removed-id test not pinning its mechanism; the `this.executable`
+  caveat's trigger being narrower than stated).
+
+Remaining P3s from the review are logged in `docs/plan/backlog.md`.
+
+### Re-verification after the follow-up
+
+- `yarn typecheck:eyes-on-agents:core` — 0 errors. `yarn typecheck:eyes-on-agents:ui` — 0 errors.
+- `yarn test:eyes-on-agents:claude` — all 4 groups `fail 0`.
+- `yarn test:eyes-on-agents:ui` — 105 tests, 103 pass, 2 fail: both already-logged pre-existing
+  failures (the deterministic `ui-source.test.mjs` bundle-id assertion and the ~6/10
+  `thread-card-open-capability.test.mjs` right-click flake, which fired on this run). No third
+  failure.
+- `yarn eslint` on every touched source file — 0 new errors. Pre-existing errors remain at
+  `eyesOnAgents.service.ts:1309`, `eyesOnAgents.handler.ts:93-94` (`prefer-const`) and
+  `eyesOnAgents.store.ts:56` (`no-useless-escape` on `THREAD_TITLE_SEPARATOR_PATTERN`, byte-identical
+  in `HEAD` and unrelated to this task).
+- Electron, packaged builds, Playwright, and `test:e2e:*` — not run. The real `claude` CLI was never
+  invoked. Owner-only two-environment manual check still outstanding.

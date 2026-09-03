@@ -187,8 +187,6 @@ export type EyesOnAgentsClaudeDirectoryState =
   | 'error'
   | 'stopped';
 
-// One configured Claude environment's watcher status (task 085: the singular
-// EyesOnAgentsClaudeDirectoryStatus shape moved to a per-environment array — see
 // Whether one Claude environment's own config directory has the Bitterless plugin (task 090).
 // 'unknown' means the probe could not answer — never probed yet, the probe threw, or the `claude`
 // executable is missing/unusable. It is deliberately NOT folded into 'not_installed': "we could not
@@ -200,6 +198,8 @@ export type EyesOnAgentsClaudePluginPresence =
   | 'not_installed'
   | 'unknown';
 
+// One configured Claude environment's watcher status (task 085: the singular
+// EyesOnAgentsClaudeDirectoryStatus shape moved to a per-environment array — see
 // EyesOnAgentsClaudeDirectoryStatus below). id/label/enabled mirror the environment this status
 // belongs to; every other field is the pre-existing per-directory watcher status shape unchanged.
 export interface EyesOnAgentsClaudeEnvironmentStatus {
@@ -649,6 +649,11 @@ export interface EyesOnAgentsApi {
   // methods' optional { environmentId } — a wrapper is always explicitly row-scoped, and silently
   // falling back to environments[0] would hand the user a snippet for the wrong environment.
   copyClaudeEnvironmentSetupCommand(params: { id: string }): Promise<void>;
+  // Task 090: re-runs ONLY that environment's read-only plugin-presence probe. Deliberately not
+  // routed through refreshClaudeBridgeStatus: that performs a full profile-wide bridge refresh
+  // which can run a trusted automatic upgrade and rewrite the shared inspection state, which is
+  // the opposite of what a per-row "check this directory" action should do.
+  refreshClaudeEnvironmentPluginPresence(params: { id: string }): Promise<EyesOnAgentsSnapshot>;
   setClaudeProviderEnabled(params: {
     enabled: boolean;
   }): Promise<EyesOnAgentsSnapshot>;

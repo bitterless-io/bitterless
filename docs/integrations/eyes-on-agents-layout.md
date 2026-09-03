@@ -327,17 +327,33 @@ invalid-hydration row (no known environment id) hides its Rename/Remove and enab
 Each row with a real environment id also carries its **own plugin-presence pill** — *Plugin
 installed* / *Plugin disabled* / *Plugin not installed* / *Plugin status unknown* — read from the
 cached per-environment probe (task 090). This is the one genuinely per-environment fact about plugin
-setup, and it is what the row's action follows from: a `not_installed` or `disabled` row offers
-**Install plugin** (scoped to that environment), an `unknown` row offers **Check plugin** (re-probe
-that environment) rather than inviting a reinstall of something that may already be present, and an
-`installed` row offers neither. `unknown` covers never-probed-yet, a failed probe, and a
-missing/unusable `claude` executable — it is deliberately never shown as *not installed*.
+setup, and the row's action follows from it, in this precedence:
+
+| row's presence | action offered |
+|---|---|
+| `not_installed` or `disabled` | **Install plugin**, scoped to that environment |
+| otherwise, if the profile needs `enable`/`finish`/`repair` | that action's label, scoped to that environment |
+| otherwise, `unknown` | **Check plugin** — re-probe only this directory |
+| otherwise (`installed`, profile healthy) | none |
+
+`unknown` covers never-probed-yet, a failed probe, and a missing/unusable `claude` executable, and
+is deliberately never shown as *not installed*: it offers **Check plugin** rather than inviting a
+reinstall of something that may already be present. **Check plugin** re-runs only the read-only
+presence probe — it is not the profile-wide bridge refresh, which can trigger a trusted automatic
+upgrade.
+
+The middle row of that table exists because `installed` means "present and enabled" and
+deliberately ignores drift. After a Bitterless update the profile can need `repair` while every
+directory still lists the plugin installed, and the card-level action resolves to `environments[0]`
+— so without a row-scoped button a second environment would be **unrepairable**, since installation
+is per `CLAUDE_CONFIG_DIR`. In that one state the action therefore appears both card-level and per
+row; that is the cost of keeping every directory repairable.
 
 The card-level setup section below the list keeps the profile-wide concerns — the shared
-installation identity, the listener, **Reload in Claude**, **Repair** — because those are one per
-Bitterless profile, not per environment. Task 090 removed the earlier per-row repetition of that
-global setup block, which showed an identical title and button on every row and duplicated the
-card-level one; a per-row surface now appears only where the information is actually per-row.
+installation identity, the listener, **Reload in Claude**, **Repair**. What task 090 removed is the
+earlier *unconditional* per-row repetition of that global block, which showed an identical title and
+button on every row regardless of that row's own state; the common from-scratch case is now driven
+by per-row presence instead.
 
 ```text
 ┌ Claude environments ─────────────────────────────────[Add environment] ┐

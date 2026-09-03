@@ -186,6 +186,54 @@ Non-blocking review findings are recorded here after task verification.
   reaches the clipboard), so this is message accuracy plus a defence-depth gap. Split the two
   conditions into distinct messages, and if `\r`/`\n` should really be impossible upstream, add the
   check to `requireCanonicalClaudeConfigDirectory`.
+- Task 090 review: `ClaudeObservationService`'s two `this.pluginPresence.delete(...)` calls
+  (`src/main/eyesOnAgents/claudeObservation.service.ts:473` on environment removal, `:485` on a
+  config-directory change) are **not covered by any test**. Deleting either line leaves
+  `scripts/eyes-on-agents/claude-environment-install-probe.test.mjs` fully green (verified by
+  mutation), because scenarios 6 and 7 both `await applyEnvironments()`, which awaits the re-probe
+  that overwrites the stale verdict anyway. The delete at `:485` *is* load-bearing in the one case
+  the suite does not exercise: a directory change whose re-probe then **fails** leaves the cache
+  untouched, so without the delete the row would keep displaying a verdict probed against the old
+  directory instead of falling back to `unknown`. Add that scenario (change directory → probe
+  rejects → assert `pluginPresence === 'unknown'` and `pluginProbedAt === null`).
+- Task 090 review: `presenceClass()`
+  (`src/renderer/eyesOnAgents/src/components/ConnectionPanel/ClaudeObservationCard.vue:538-545`) is
+  unasserted — the render tests match only pill **text**, never the pill class. Deleting the
+  `not_installed → eyes-connection-card__status--stopped` case leaves all 17 tests in
+  `claude-environment-render.test.mjs` green (verified by mutation), so the presence pill's
+  installed/needs_review/stopped colour mapping can regress silently. Assert `classList` on the
+  `eyesOnAgents__connections__claudeEnvironmentPlugin` pill for at least the `installed` and
+  `not_installed` rows.
+- Task 090 review: `refreshPluginPresence` is called *after* `runClaudeBridgeLifecycle(...)` in
+  `installClaudePlugin` / `refreshClaudeBridgeStatus` / `removeClaudeBridge`
+  (`src/main/eyesOnAgents/eyesOnAgents.service.ts:2923`, `:2983`, `:3003`), not in a `finally`. A
+  **partially** failed install — the plugin installs but the hook listener fails to start, so the
+  lifecycle body rethrows (`:2913`) — skips the re-probe entirely, leaving the row's pill at its
+  pre-install verdict. The user sees "Plugin not installed" plus an Install button for a plugin that
+  is now installed. Move the re-probe into a `finally`.
+- Task 090 review: the card-level Repair / Enable / Finish / Retry-listener buttons call
+  `installClaudeBridge()` / `refreshClaudeBridgeStatus()` with no `environmentId`
+  (`src/renderer/eyesOnAgents/src/store/eyesOnAgents.store.ts:344`, `:350`), which reaches
+  `refreshPluginPresence(undefined)` and therefore probes **every** configured environment —
+  2 `claude` CLI calls per environment per click. The contract's trigger list is "an explicit
+  install/refresh/retry action on **that row**"; probing all rows for a card-level action is
+  defensible but undocumented and uncosted. Either scope it to `environments[0]` (the directory the
+  card-level action actually targets) or document the fan-out in
+  `docs/features/eyes-on-agents-claude-multi-environment.md`.
+- Task 090 review: `resolveExecutable()`
+  (`src/main/eyesOnAgents/claudePluginBridge.service.ts:1490-1518`) is a plain check-then-set with
+  no in-flight coalescing, so N environments probing concurrently at app start each run their own
+  candidate scan (up to two 30 s `claude … --help` spawns per candidate). The per-environment probe
+  coalescing added by task 090 does not help, because it is keyed per environment id while the
+  executable resolution is profile-wide. Coalesce `resolveExecutable()` onto a single in-flight
+  promise.
+- Task 090 review: the two new row buttons use the **global** `eyesOnAgentsStore.busyAction`
+  for `:loading` and `:disabled` (`ClaudeObservationCard.vue:174-176`, `:184-186`), so clicking
+  Install on one row spins the Install button on every other `not_installed` row and disables every
+  row's Check. Harmless pre-090 (all rows rendered the same button); newly misleading now that rows
+  genuinely differ. `busyClaudeEnvironmentIds` already exists for exactly this
+  (used by Retry/Remove at `:147-148`, `:205-207`) — use it, or accept that only one bridge
+  mutation can be in flight and grey the others explicitly.
 - Pre-existing, unrelated to the iTerm2 Open feature: `yarn check:renderer-i18n` crashes on
   `assert(trayCreateIndex > homeCreateIndex, 'Tray must follow Home creation')`
   (`scripts/renderer-i18n/check-renderer-i18n.mjs:186`) because commit `c67ac21` changed

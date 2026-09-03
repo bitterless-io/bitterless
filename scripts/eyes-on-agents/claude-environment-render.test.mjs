@@ -162,11 +162,11 @@ const withRemovability = (environments) => environments.map((environment) => ({
   ...environment,
 }));
 
-const createStore = (environments, { providerError = null, ...overrides } = {}) => {
+const createStore = (environments, { providerError = null, bridge = {}, ...overrides } = {}) => {
   const calls = {
     add: [], rename: [], remove: [], setEnabled: [], chooseDirectory: [], useAutomatic: [],
     changeDirectory: 0, useAutomaticDirectory: 0, retry: [], retryDirectory: 0, copySetup: [],
-    installBridge: [], refreshBridge: [],
+    installBridge: [], refreshBridge: [], checkPlugin: [],
   };
   return {
     calls,
@@ -175,6 +175,9 @@ const createStore = (environments, { providerError = null, ...overrides } = {}) 
         state: 'observing', setupAction: 'none', configured: true, enabled: true,
         listening: true, listeningSince: null, firstReceiptAt: null, lastReceiptAt: null,
         lastInspectedAt: null, observationProof: 'receipt', restartRequired: false, error: null,
+        // Lets a test put the profile into a setup state (e.g. `repair`) without rebuilding the
+        // whole snapshot.
+        ...bridge,
       },
       claudeProvider: { enabled: true, error: providerError, revision: 1 },
       claudeDirectory: withRemovability(environments),
@@ -187,6 +190,7 @@ const createStore = (environments, { providerError = null, ...overrides } = {}) 
     removeClaudeBridge: async () => undefined,
     installClaudeBridgeForEnvironment: async (id) => { calls.installBridge.push(id); },
     refreshClaudeBridgeStatusForEnvironment: async (id) => { calls.refreshBridge.push(id); },
+    refreshClaudeEnvironmentPluginPresence: async (id) => { calls.checkPlugin.push(id); },
     openNewClaudeSession: async () => undefined,
     copyClaudeReloadCommand: async () => undefined,
     changeClaudeDirectory: async () => { calls.changeDirectory += 1; },
@@ -344,9 +348,50 @@ try {
       assert.ok(check, 'an unknown row must offer Check plugin');
       check.click();
       await nextTick();
-      assert.deepEqual(mounted.store.calls.refreshBridge,
+      assert.deepEqual(mounted.store.calls.checkPlugin,
         ['33333333-3333-4333-8333-333333333333'],
-        'Check must refresh that row\'s environment id');
+        'Check must re-probe that row\'s presence');
+      assert.deepEqual(mounted.store.calls.refreshBridge, [],
+        'Check must NOT run a profile-wide bridge refresh — that can trigger an automatic upgrade');
+    } finally {
+      mounted.app.unmount();
+      document.body.innerHTML = '';
+    }
+  });
+
+  // Review 1 (B1): pluginPresence: 'installed' means "present and enabled" and deliberately ignores
+  // drift. So after a Bitterless update the profile can need `repair` while every directory still
+  // lists the plugin installed — and if the row offered no action in that state, a second
+  // environment would be UNREPAIRABLE, because the card-level action resolves to environments[0]
+  // and installation is per CLAUDE_CONFIG_DIR.
+  await test('an installed row still offers the profile-wide setup action, row-scoped', async () => {
+    const environments = [
+      createEnvironment({
+        id: '11111111-1111-4111-8111-111111111111',
+        label: 'Default',
+        pluginPresence: 'installed',
+      }),
+      createEnvironment({
+        id: '22222222-2222-4222-8222-222222222222',
+        label: 'claude2',
+        mode: 'custom',
+        configuredDirectory: '/Users/ral/.claude2',
+        effectiveDirectory: '/Users/ral/.claude2',
+        pluginPresence: 'installed',
+      }),
+    ];
+    const mounted = await mountCard(environments, {
+      bridge: { setupAction: 'repair', state: 'drifted' },
+    });
+    try {
+      const environmentRows = rows(mounted.host);
+      const repair = rowButton(environmentRows[1], /^Repair$/);
+      assert.ok(repair, 'a drifted profile must stay repairable from the second environment\'s row');
+      repair.click();
+      await nextTick();
+      assert.deepEqual(mounted.store.calls.installBridge,
+        ['22222222-2222-4222-8222-222222222222'],
+        'row-scoped Repair must target that row, not environments[0]');
     } finally {
       mounted.app.unmount();
       document.body.innerHTML = '';

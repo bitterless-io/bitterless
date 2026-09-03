@@ -3,7 +3,8 @@ import {
   createClaudeDirectoryFixture,
   createRepository,
   createTimerHarness,
-  createWatcherFactory
+  createWatcherFactory,
+  drain
 } from './claude-directory-runtime.fixture.mjs';
 
 // Task 090: ClaudeObservationService caches a read-only per-environment plugin-presence verdict and
@@ -86,7 +87,10 @@ try {
 
     await runtime.start();
 
-    assert.equal(statusOf(runtime, 'env-b').pluginPresence, 'installed');
+    // Reconcile-time probing is intentionally NOT awaited by start() (it would let a hung `claude`
+    // stall startup), so settle on the verdict rather than depending on microtask ordering.
+    await drain(() => statusOf(runtime, 'env-b').pluginPresence === 'installed',
+      'env-b must eventually report its probed presence');
     assert.equal(statusOf(runtime, 'env-a').pluginPresence, 'not_installed');
     assert.notEqual(statusOf(runtime, 'env-b').pluginProbedAt, null);
     assert.equal(statusOf(runtime, 'env-b').pluginProbedAt, new Date(100_000).toISOString());
@@ -103,8 +107,8 @@ try {
     const runtime = createRuntime(createDirectoryConfig([ENV_A, ENV_B]), probe);
 
     await runtime.start();
+    await drain(() => calls.length === 2, 'start must probe each environment exactly once');
     const afterStart = calls.length;
-    assert.equal(afterStart, 2, 'start must probe each environment exactly once');
 
     // Assembling the status array is the hot path the renderer hits on every snapshot; it must read
     // the cache only. Two `claude` child processes per environment per snapshot would be a serious
@@ -127,6 +131,7 @@ try {
     });
     const runtime = createRuntime(createDirectoryConfig([ENV_A, ENV_B]), probe);
     await runtime.start();
+    await drain(() => calls.length === 2, 'start must probe both environments');
     const afterStart = calls.length;
 
     const first = runtime.refreshPluginPresence('env-b');
@@ -151,6 +156,8 @@ try {
     const runtime = createRuntime(createDirectoryConfig([ENV_A, ENV_B]), probe);
 
     await runtime.start();
+    await drain(() => statusOf(runtime, 'env-a').pluginPresence === 'installed',
+      'the healthy environment must still report its verdict');
 
     // The probe contract maps every failure to 'unknown'; here the dependency itself throws, which
     // must be contained rather than rejecting refreshPluginPresence or poisoning the sibling.
@@ -172,6 +179,7 @@ try {
     const { probe } = createProbe(async () => 'unknown');
     const runtime = createRuntime(createDirectoryConfig([ENV_A]), probe);
     await runtime.start();
+    await runtime.refreshPluginPresence('env-a');
     assert.equal(statusOf(runtime, 'env-a').pluginPresence, 'unknown',
       '"we could not check" must stay distinct from "we checked and it is absent"');
     await runtime.stop();
@@ -185,7 +193,8 @@ try {
     const runtime = createRuntime(directoryConfig, probe);
 
     await runtime.start();
-    assert.equal(statusOf(runtime, 'env-b').pluginPresence, 'installed');
+    await drain(() => statusOf(runtime, 'env-b').pluginPresence === 'installed',
+      'env-b must report installed before it is removed');
 
     directoryConfig.environments = [ENV_A];
     await runtime.applyEnvironments();
@@ -196,7 +205,7 @@ try {
     verdict = 'not_installed';
     directoryConfig.environments = [ENV_A, ENV_B];
     await runtime.applyEnvironments();
-    assert.equal(statusOf(runtime, 'env-b').pluginPresence, 'not_installed',
+    await drain(() => statusOf(runtime, 'env-b').pluginPresence === 'not_installed',
       'a re-added environment must not inherit the removed environment\'s cached verdict');
 
     await runtime.stop();
@@ -209,6 +218,7 @@ try {
     const runtime = createRuntime(directoryConfig, probe);
 
     await runtime.start();
+    await drain(() => calls.length === 2, 'start must probe both environments');
     const afterStart = calls.length;
 
     // A rename changes nothing the probe inspects, so it must not spend two CLI calls.
@@ -219,7 +229,7 @@ try {
     // Repointing it at another directory invalidates the verdict, so it must re-probe.
     directoryConfig.environments = [ENV_A, { ...ENV_B, configDirectory: configA }];
     await runtime.applyEnvironments();
-    assert.equal(calls.length, afterStart + 1,
+    await drain(() => calls.length === afterStart + 1,
       'changing an environment\'s config directory must re-probe that environment');
     assert.equal(calls.at(-1), configA, 'the re-probe must use the NEW config directory');
 
@@ -249,6 +259,46 @@ try {
     assert.equal(calls.length, afterStart,
       'refreshing an unconfigured environment id must not probe anything');
     await runtime.stop();
+  }
+
+  // ---- Scenario 10: a hung probe must never block start(), stop(), or environment CRUD ----
+  // Review 1 (B2) caught the original implementation awaiting the probe inside the observation
+  // lifecycle queue, which start()/stop()/every CRUD round-trip await. A `claude` invocation has a
+  // 30s timeout, so that made a slow or hung CLI stall app startup, app shutdown, and the "Add
+  // environment" click. Presence is a status readout, not part of an environment's lifecycle.
+  {
+    // Never resolves: if any lifecycle call awaits the probe, this scenario hangs instead of failing.
+    const { probe } = createProbe(() => new Promise(() => {}));
+    const directoryConfig = createDirectoryConfig([ENV_A, ENV_B]);
+    const runtime = createRuntime(directoryConfig, probe);
+
+    // The timer is deliberately NOT unref'd: it must keep the loop alive so a regression fails
+    // loudly with this message instead of the process quietly hanging on an unsettled await.
+    const guard = async (label, operation) => {
+      let timer = null;
+      const timeout = new Promise((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${label} blocked on a hung plugin-presence probe`)),
+          2_000
+        );
+      });
+      try {
+        await Promise.race([operation(), timeout]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    };
+
+    await guard('start()', () => runtime.start());
+    // Status stays readable and simply reports the never-answered verdict.
+    assert.equal(statusOf(runtime, 'env-a').pluginPresence, 'unknown');
+    assert.equal(statusOf(runtime, 'env-a').pluginProbedAt, null);
+
+    directoryConfig.environments = [ENV_A, ENV_B, {
+      id: 'env-c', label: 'claude3', mode: 'custom', configDirectory: configB, enabled: true
+    }];
+    await guard('applyEnvironments()', () => runtime.applyEnvironments());
+    await guard('stop()', () => runtime.stop());
   }
 
   console.log('EyesOnAgents Claude environment install-probe tests passed');
