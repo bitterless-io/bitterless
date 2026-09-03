@@ -14,10 +14,10 @@ import type { OnlyPreviewProjectEntry } from '@shared/onlypreview/onlyPreview.ty
 import { onlyPreviewClient } from '../../common/onlyPreviewClient';
 import { onlyPreviewI18n } from '../../common/onlyPreviewI18n';
 import {
-  resolveOnlyPreviewAuthoringFailure,
   resolveOnlyPreviewEditCommit,
   type OnlyPreviewEditState
 } from './onlyPreviewProjectAuthoring.service';
+import { getOnlyPreviewParentPath } from './onlyPreviewTree.service';
 import { onlyPreviewShellStore } from './onlyPreviewShell.store';
 
 /**
@@ -50,24 +50,20 @@ export class OnlyPreviewProjectAuthoringController {
 
   constructor(private readonly host: OnlyPreviewProjectAuthoringHost) {}
 
-  async beginNewFolder(parentRelativePath: string): Promise<void> {
+  /**
+   * A folder Main has already created.
+   *
+   * The name is now collected by the alert-layer dialog, and nothing is written until that dialog is
+   * confirmed, so by the time this runs the folder exists on disk. All that is left is to make its
+   * row appear and select it — there is no editor to open and no failure to report here.
+   */
+  async revealCreatedFolder(relativePath: string): Promise<void> {
     if (this.busy) return;
     this.busy = true;
     try {
-      // Main allocates the name: it owns the untitled sequence, because only the atomic `mkdir`
-      // behind it can decide which index is actually free.
-      const created = await this.createFolder(parentRelativePath);
+      const parentRelativePath = getOnlyPreviewParentPath(relativePath);
       if (parentRelativePath) this.host.expandedPaths.add(parentRelativePath);
-      await this.settle(created);
-      this.begin(created.relativePath, created.name);
-    } catch (error) {
-      const failure = resolveOnlyPreviewAuthoringFailure(error);
-      this.host.errorMessage =
-        failure === 'exists'
-          ? onlyPreviewI18n.project.newFolderExhausted
-          : failure === 'invalid'
-            ? onlyPreviewI18n.project.nameInvalid
-            : onlyPreviewI18n.errors.OPERATION_FAILED;
+      await this.settle({ relativePath, name: relativePath.split('/').at(-1) ?? relativePath });
     } finally {
       this.busy = false;
     }
@@ -120,15 +116,6 @@ export class OnlyPreviewProjectAuthoringController {
     }
   }
 
-  private async createFolder(parentRelativePath: string): Promise<OnlyPreviewProjectEntry> {
-    const hostToken = onlyPreviewEnv.hostToken;
-    const workspaceId = this.host.workspace?.workspaceId;
-    if (!hostToken || !workspaceId) throw new Error('OnlyPreview has no active Project.');
-    return unwrapOnlyPreviewResult(
-      await onlyPreviewClient.createProjectFolder({ hostToken, workspaceId, parentRelativePath })
-    );
-  }
-
   private async renameItem(relativePath: string, name: string): Promise<OnlyPreviewProjectEntry> {
     const hostToken = onlyPreviewEnv.hostToken;
     const workspaceId = this.host.workspace?.workspaceId;
@@ -138,7 +125,7 @@ export class OnlyPreviewProjectAuthoringController {
     );
   }
 
-  private async settle(entry: OnlyPreviewProjectEntry): Promise<void> {
+  private async settle(entry: { relativePath: string; name: string }): Promise<void> {
     await this.host.refreshIndex();
     this.host.selectedRelativePath = entry.relativePath;
     this.host.focusedRelativePath = entry.relativePath;
@@ -178,8 +165,8 @@ const isHostEvent = (value: unknown): value is { hostId: string; workspaceId: st
 export const subscribeOnlyPreviewProjectIntents = (): void => {
   xpcRenderer.subscribe(ONLY_PREVIEW_PROJECT_NEW_FOLDER_EVENT, ({ params }) => {
     const event = params as OnlyPreviewProjectNewFolderEvent;
-    if (!isHostEvent(event) || typeof event.parentRelativePath !== 'string') return;
-    void onlyPreviewProjectAuthoring.beginNewFolder(event.parentRelativePath);
+    if (!isHostEvent(event) || !event.relativePath) return;
+    void onlyPreviewProjectAuthoring.revealCreatedFolder(event.relativePath);
   });
   xpcRenderer.subscribe(ONLY_PREVIEW_PROJECT_RENAME_EVENT, ({ params }) => {
     const event = params as OnlyPreviewProjectRenameEvent;

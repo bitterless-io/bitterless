@@ -27,6 +27,7 @@ import {
   ONLY_PREVIEW_PROJECT_RENAME_EVENT,
   ONLY_PREVIEW_SELECTION_CHANGED_EVENT
 } from '@shared/onlypreview/onlyPreview.types';
+import { presentOnlyPreviewNewFolderDialog } from './onlyPreviewNewFolderDialog.service';
 import { xpcMain } from 'electron-xpc/main';
 
 type ProjectItemRequest = OnlyPreviewHostRequest & OnlyPreviewFileRef;
@@ -108,8 +109,9 @@ export class OnlyPreviewProjectNativeActionService {
         id: 'onlypreview-new-folder',
         label: labels.newFolder,
         click: () =>
-          this.requestNewFolder(authority.host.hostId, currentRequest.workspaceId, {
-            parentRelativePath: item.relativePath
+          this.requestNewFolder(authority.host.hostId, currentRequest, {
+            parentRelativePath: item.relativePath,
+            destinationName: item.name
           })
       });
     }
@@ -183,8 +185,9 @@ export class OnlyPreviewProjectNativeActionService {
         id: 'onlypreview-new-folder-project-root',
         label: labels.newFolder,
         click: () =>
-          this.requestNewFolder(authority.host.hostId, request.workspaceId, {
-            parentRelativePath: ''
+          this.requestNewFolder(authority.host.hostId, request, {
+            parentRelativePath: '',
+            destinationName: ''
           })
       },
       { type: 'separator' },
@@ -561,18 +564,24 @@ export class OnlyPreviewProjectNativeActionService {
     if (!sameAuthority(current, expected)) this.throwAuthorityChanged();
   }
 
-  // The menu click cannot create the folder or open the editor itself: the row that has to become
-  // editable only exists in the shell renderer's tree, so Main delivers the intent and the renderer
-  // performs the create and the inline edit against the row it owns.
+  // No longer an intent for the renderer to start an inline edit: the name is collected by the
+  // alert-layer dialog, in Main, and only the finished folder reaches the tree.
   private requestNewFolder(
     hostId: string,
-    workspaceId: string,
-    params: { parentRelativePath: string }
+    request: { hostToken: string; workspaceId: string },
+    params: { parentRelativePath: string; destinationName: string }
   ): void {
-    xpcMain.broadcast(ONLY_PREVIEW_PROJECT_NEW_FOLDER_EVENT, {
+    void presentOnlyPreviewNewFolderDialog({
       hostId,
-      workspaceId,
-      parentRelativePath: params.parentRelativePath
+      hostToken: request.hostToken,
+      workspaceId: request.workspaceId,
+      parentRelativePath: params.parentRelativePath,
+      destinationName: params.destinationName
+    }, {
+      createUntitled: async (target) => await this.createUntitledProjectFolder(target),
+      createNamed: async (target) => await this.createProjectFolder(target)
+    }).catch(() => {
+      // A revoked host or a closed window simply gets no dialog; nothing has been written.
     });
   }
 

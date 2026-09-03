@@ -283,7 +283,10 @@ test('Global Search alone renders as one inset transparent floating surface', ()
     workspaceStyle.indexOf('\n}', workspaceStart) + 2
   );
 
-  assert.equal((helper.match(/setBackgroundColor\(/g) ?? []).length, 1);
+  // Two transparent overlays now: Global Search and the alert layer. Both draw their own surface,
+  // and an opaque view would blank the window behind it.
+  assert.equal((helper.match(/setBackgroundColor\(/g) ?? []).length, 2);
+  assert.match(helper, /if \(mode === 'alert'\) view\.setBackgroundColor\('#00000000'\);/);
   assert.match(
     createView,
     /if \(mode === 'globalSearch'\) view\.setBackgroundColor\('#00000000'\);/

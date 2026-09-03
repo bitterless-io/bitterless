@@ -477,9 +477,12 @@ export interface OnlyPreviewCopyProjectItemEvent extends OnlyPreviewHostEvent {
   copyKind: Extract<OnlyPreviewProjectItemCopyKind, 'absolute-path' | 'name'>;
 }
 
+// Carries the folder Main has already created, not the parent to create in: the name is collected
+// by the alert-layer dialog and nothing is written until it is confirmed, so the tree's only job is
+// to make the finished row appear.
 export interface OnlyPreviewProjectNewFolderEvent extends OnlyPreviewHostEvent {
   workspaceId: string;
-  parentRelativePath: string;
+  relativePath: string;
 }
 
 export interface OnlyPreviewProjectRenameEvent extends OnlyPreviewHostEvent {

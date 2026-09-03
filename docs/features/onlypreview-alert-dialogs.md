@@ -1,6 +1,6 @@
 # OnlyPreview Alert Dialogs
 
-Status: design
+Status: implemented; owner verification pending
 
 Owner request, 2026-09-03: replace the in-tree New Folder edit row with a real dialog, give
 OnlyPreview a reusable error dialog, and make both live in the **alert** layer reserved by
@@ -73,15 +73,18 @@ already exists, and the row is the natural place for it.
 
 - The input is focused with its text selected the moment the dialog paints, so typing replaces the
   prefill and **Enter** alone creates `untitled folder`.
-- The prefill is the next free untitled name, resolved by the preload's existing sequencing
-  (`untitled folder`, `untitled folder 2`, …) *before* the dialog opens, so Enter never lands on a
-  name that is already taken.
+- The prefill is always `untitled folder`. Confirming it **untouched** runs the existing untitled
+  sequence (`untitled folder`, `untitled folder 2`, …) at commit time, so Enter always creates
+  something; a name the owner actually typed is created verbatim and its collision is reported.
+  Silently creating `untitled folder 2` instead of what was typed would be worse than a conflict,
+  and probing for a free name before the dialog opens would need a new read path in the hidden
+  authority for a prefill.
 - `in “<folder>”` names the destination, because New Folder is reachable from a folder row **and**
   from the Project root menu; without it the two are indistinguishable.
 - **Enter** or `OK` commits. **Esc** or `Cancel` closes with no syscall.
-- `OK` is disabled while the trimmed name is empty or fails
-  `validateOnlyPreviewEntryName`, and the rejection reason is shown under the input rather than in an
-  error dialog — an invalid character is a typing state, not a failure.
+- `OK` is disabled while the trimmed name is empty or fails `validateOnlyPreviewEntryName`, and one
+  message appears under the input rather than in an error dialog — an invalid character is a typing
+  state, not a failure. Nothing is said while the field is empty, which is a starting state.
 
 The owner asked for 「确定和保存 按钮」. Read as one commit action plus the cancel affordance every
 dialog needs: the commit button is `OK` / `确定`, which is the one the owner then referred to

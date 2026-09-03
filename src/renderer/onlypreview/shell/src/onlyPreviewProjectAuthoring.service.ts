@@ -1,23 +1,13 @@
-import type { OnlyPreviewErrorCode } from '@shared/onlypreview/onlyPreview.types';
 import {
   ONLY_PREVIEW_UNTITLED_FOLDER_MAX_INDEX,
   onlyPreviewUntitledFolderName,
   validateOnlyPreviewEntryName
 } from '@shared/onlypreview/onlyPreviewEntryName.shared';
 
-export type OnlyPreviewAuthoringFailure = 'exists' | 'invalid' | 'other';
-
 export const onlyPreviewUntitledFolderNames = (): string[] =>
   Array.from({ length: ONLY_PREVIEW_UNTITLED_FOLDER_MAX_INDEX }, (_value, index) =>
     onlyPreviewUntitledFolderName(index + 1)
   );
-
-export const resolveOnlyPreviewAuthoringFailure = (error: unknown): OnlyPreviewAuthoringFailure => {
-  const code = (error as { code?: OnlyPreviewErrorCode } | null)?.code;
-  if (code === 'NAME_EXISTS') return 'exists';
-  if (code === 'NAME_INVALID') return 'invalid';
-  return 'other';
-};
 
 export interface OnlyPreviewEditState {
   relativePath: string;

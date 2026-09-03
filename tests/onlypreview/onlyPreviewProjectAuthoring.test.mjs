@@ -27,29 +27,11 @@ await build({
   }
 });
 
-const {
-  onlyPreviewEditInputWidthCh,
-  resolveOnlyPreviewAuthoringFailure,
-  resolveOnlyPreviewEditCommit
-} = await import(pathToFileURL(bundlePath).href);
+const { onlyPreviewEditInputWidthCh, resolveOnlyPreviewEditCommit } = await import(
+  pathToFileURL(bundlePath).href
+);
 
 after(() => rmSync(buildRoot, { recursive: true, force: true }));
-
-test('only a genuine collision advances Main\'s untitled sequence', () => {
-  assert.equal(resolveOnlyPreviewAuthoringFailure({ code: 'NAME_EXISTS' }), 'exists');
-  assert.equal(resolveOnlyPreviewAuthoringFailure({ code: 'NAME_INVALID' }), 'invalid');
-  // Anything else has to stop the loop: retrying a permission or workspace failure a thousand times
-  // would turn one failed click into a thousand round trips.
-  for (const error of [
-    { code: 'PATH_PERMISSION_DENIED' },
-    { code: 'WORKSPACE_ACCESS_DENIED' },
-    new Error('boom'),
-    null,
-    undefined
-  ]) {
-    assert.equal(resolveOnlyPreviewAuthoringFailure(error), 'other');
-  }
-});
 
 test('committing an edit distinguishes unchanged, invalid, and a real rename', () => {
   const state = (draft, originalName = 'notes.md') => ({

@@ -260,7 +260,7 @@ test('Guide renderer and Main capability wiring remain narrow and one-card only'
   assert.match(types, /interface OnlyPreviewAgentSkillGuideInfo \{[\s\S]*serverName: string;[\s\S]*skillVersionCode: string;[\s\S]*instruction: string;/);
   assert.match(
     preloadType,
-    /'shell' \| 'preview' \| 'globalSearch' \| 'settings' \| 'guide'/
+    /'shell'[\s\S]*'preview'[\s\S]*'globalSearch'[\s\S]*'alert'[\s\S]*'settings'[\s\S]*'guide'/
   );
   assert.match(envPreload, /value === 'guide'/);
   assert.doesNotMatch(preload, /clipboard|writeText|openAgentSkillGuide|getAgentSkillGuideInfo/);
