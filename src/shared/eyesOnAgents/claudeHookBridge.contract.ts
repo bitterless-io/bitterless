@@ -12,6 +12,8 @@ import type {
   ClaudeHookEventV2Payload,
   ClaudeHookEventV3,
   ClaudeHookEventV3Payload,
+  ClaudeHookEventV4,
+  ClaudeHookEventV4Payload,
   ClaudeHookHelperArgs,
   ClaudeHookMetadataOnlyDelivery,
   ClaudeHookMetadataOnlyEvent
@@ -243,6 +245,45 @@ export const createClaudeHookEventV3 = (params: {
   };
 };
 
+// Sibling of readClaudeHookTerminalIdentity, one level up: which CLAUDE_CONFIG_DIR emitted this
+// SessionStart. Read verbatim (no trim/normalize) and never throws — absence or a malformed value
+// both mean "attribute to the automatic environment," per the feature doc's "Hook payload
+// attribution (schema V4)" section.
+const readClaudeHookEnvironmentAttribution = (
+  environment: NodeJS.ProcessEnv
+): { claudeConfigDir: string } | null => {
+  const value = environment.CLAUDE_CONFIG_DIR;
+  return typeof value === 'string' && value !== '' && isAbsolute(value)
+    ? { claudeConfigDir: value }
+    : null;
+};
+
+export const createClaudeHookEventV4 = (params: {
+  rawInput: unknown;
+  eventId: unknown;
+  occurredAt: unknown;
+  captureUserPrompt: boolean;
+  environment?: NodeJS.ProcessEnv;
+}): ClaudeHookEventV2 | ClaudeHookEventV3 | ClaudeHookEventV4 => {
+  if (!isEyesOnAgentsRecord(params.rawInput)) throw new Error('Claude hook input must be an object');
+  const parsed = parseEventIdentity({ ...params, rawInput: params.rawInput });
+  if (parsed.payload.hookEventName !== 'SessionStart') return createClaudeHookEventV3(params);
+  const environment = params.environment ?? process.env;
+  const terminal = readClaudeHookTerminalIdentity(environment);
+  const environmentAttribution = readClaudeHookEnvironmentAttribution(environment);
+  return {
+    schemaVersion: 4,
+    eventId: parsed.eventId,
+    occurredAt: parsed.occurredAt,
+    payload: {
+      ...parsed.payload,
+      hookEventName: 'SessionStart',
+      ...(terminal ?? {}),
+      ...(environmentAttribution ?? {})
+    } as ClaudeHookEventV4Payload
+  };
+};
+
 const parseTerminalApp = (value: unknown): 'iterm2' => {
   if (value !== 'iterm2') throw new Error('Claude hook terminalApp is unsupported');
   return 'iterm2';
@@ -254,11 +295,19 @@ const parseTerminalSessionId = (value: unknown): string => {
   return parsed;
 };
 
+const parseWireClaudeConfigDir = (value: unknown): string => {
+  if (typeof value !== 'string' || !value || !isAbsolute(value)) {
+    throw new Error('Claude hook claudeConfigDir is invalid');
+  }
+  return value;
+};
+
 export const parseClaudeHookEvent = (value: unknown): ClaudeHookEvent => {
   if (!isEyesOnAgentsRecord(value)) throw new Error('Claude hook event must be an object');
   exactKeys(value, ['schemaVersion', 'eventId', 'occurredAt', 'payload'], 'Claude hook event');
   if (
-    (value.schemaVersion !== 1 && value.schemaVersion !== 2 && value.schemaVersion !== 3) ||
+    (value.schemaVersion !== 1 && value.schemaVersion !== 2 &&
+      value.schemaVersion !== 3 && value.schemaVersion !== 4) ||
     !isEyesOnAgentsRecord(value.payload)
   ) {
     throw new Error('Claude hook event version is unsupported');
@@ -269,16 +318,21 @@ export const parseClaudeHookEvent = (value: unknown): ClaudeHookEvent => {
   const hasTerminalApp = hasOwn(value.payload, 'terminalApp');
   const hasTerminalSessionId = hasOwn(value.payload, 'terminalSessionId');
   const hasTerminalFields = hasTerminalApp || hasTerminalSessionId;
+  const hasClaudeConfigDir = hasOwn(value.payload, 'claudeConfigDir');
   exactKeys(value.payload, [
     ...BASE_PAYLOAD_KEYS,
     ...(hasPromptFields ? ['userPromptPreview', 'userPromptTruncated'] : []),
-    ...(hasTerminalFields ? ['terminalApp', 'terminalSessionId'] : [])
+    ...(hasTerminalFields ? ['terminalApp', 'terminalSessionId'] : []),
+    ...(hasClaudeConfigDir ? ['claudeConfigDir'] : [])
   ], 'Claude hook payload');
-  if (value.schemaVersion === 1 && (hasPromptFields || hasTerminalFields)) {
+  if (value.schemaVersion === 1 && (hasPromptFields || hasTerminalFields || hasClaudeConfigDir)) {
     throw new Error('Claude V1 hook events must be metadata-only');
   }
   if (value.schemaVersion === 2 && hasTerminalFields) {
     throw new Error('Claude V2 hook events cannot carry terminal identity fields');
+  }
+  if ((value.schemaVersion === 2 || value.schemaVersion === 3) && hasClaudeConfigDir) {
+    throw new Error('Claude hook events below schemaVersion 4 cannot carry claudeConfigDir');
   }
   if (hasPreview !== hasTruncated) {
     throw new Error('Claude hook prompt fields must be provided together');
@@ -304,6 +358,9 @@ export const parseClaudeHookEvent = (value: unknown): ClaudeHookEvent => {
   if (hasTerminalFields && payload.hookEventName !== 'SessionStart') {
     throw new Error('Claude hook terminal fields are only allowed for SessionStart');
   }
+  if (hasClaudeConfigDir && payload.hookEventName !== 'SessionStart') {
+    throw new Error('Claude hook claudeConfigDir is only allowed for SessionStart');
+  }
   const eventId = parseEyesOnAgentsUuid(value.eventId, 'Claude event ID');
   const occurredAt = parseEyesOnAgentsTimestamp(value.occurredAt, 'occurredAt', false) as number;
   if (value.schemaVersion === 1) return { schemaVersion: 1, eventId, occurredAt, payload };
@@ -326,7 +383,7 @@ export const parseClaudeHookEvent = (value: unknown): ClaudeHookEvent => {
     terminalApp: parseTerminalApp(value.payload.terminalApp),
     terminalSessionId: parseTerminalSessionId(value.payload.terminalSessionId)
   } : null;
-  return {
+  if (value.schemaVersion === 3) return {
     schemaVersion: 3,
     eventId,
     occurredAt,
@@ -335,6 +392,20 @@ export const parseClaudeHookEvent = (value: unknown): ClaudeHookEvent => {
       ...(promptFields ?? {}),
       ...(terminalFields ?? {})
     } as ClaudeHookEventV3Payload
+  };
+  const claudeConfigDirFields = hasClaudeConfigDir ? {
+    claudeConfigDir: parseWireClaudeConfigDir(value.payload.claudeConfigDir)
+  } : null;
+  return {
+    schemaVersion: 4,
+    eventId,
+    occurredAt,
+    payload: {
+      ...payload,
+      ...(promptFields ?? {}),
+      ...(terminalFields ?? {}),
+      ...(claudeConfigDirFields ?? {})
+    } as ClaudeHookEventV4Payload
   };
 };
 
@@ -348,8 +419,29 @@ export const toMetadataOnlyClaudeHookEvent = (
     transcriptPath: event.payload.transcriptPath,
     cwd: event.payload.cwd
   };
-  // terminalApp/terminalSessionId are content-free identifiers (not prompt/transcript content),
-  // so unlike userPromptPreview/userPromptTruncated they are carried through, not stripped.
+  // terminalApp/terminalSessionId/claudeConfigDir are content-free identifiers (not
+  // prompt/transcript content), so unlike userPromptPreview/userPromptTruncated they are carried
+  // through, not stripped. Terminal identity and environment attribution are independent
+  // SessionStart-only facts, so each is carried through only when actually present.
+  if (event.schemaVersion === 4) {
+    return {
+      schemaVersion: 4,
+      eventId: event.eventId,
+      occurredAt: event.occurredAt,
+      payload: {
+        ...basePayload,
+        ...('terminalApp' in event.payload
+          ? {
+              terminalApp: event.payload.terminalApp,
+              terminalSessionId: event.payload.terminalSessionId
+            }
+          : {}),
+        ...('claudeConfigDir' in event.payload
+          ? { claudeConfigDir: event.payload.claudeConfigDir }
+          : {})
+      }
+    } as ClaudeHookMetadataOnlyEvent;
+  }
   if (event.schemaVersion === 3 && 'terminalApp' in event.payload) {
     return {
       schemaVersion: 3,
@@ -406,7 +498,8 @@ export const parseClaudeHookMetadataOnlyDelivery = (
 ): ClaudeHookMetadataOnlyDelivery => {
   const delivery = parseClaudeHookDelivery(value);
   if (
-    (delivery.event.schemaVersion === 2 || delivery.event.schemaVersion === 3) &&
+    (delivery.event.schemaVersion === 2 || delivery.event.schemaVersion === 3 ||
+      delivery.event.schemaVersion === 4) &&
     (hasOwn(delivery.event.payload, 'userPromptPreview') ||
       hasOwn(delivery.event.payload, 'userPromptTruncated'))
   ) {

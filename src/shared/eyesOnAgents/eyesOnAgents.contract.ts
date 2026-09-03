@@ -1,3 +1,4 @@
+import { isAbsolute } from 'node:path';
 import type {
   EyesOnAgentsBridgeState,
   EyesOnAgentsDesktopSessionId,
@@ -116,6 +117,18 @@ export const parseEyesOnAgentsIterm2SessionId = (
   if (typeof value !== 'string') throw new Error('iterm2SessionId must be a string');
   if (!CLAUDE_HOOK_ITERM2_SESSION_ID_PATTERN.test(value)) {
     throw new Error('iterm2SessionId must be a valid ITERM_SESSION_ID value');
+  }
+  return value;
+};
+
+// Raw CLAUDE_CONFIG_DIR path captured on SessionStart (schema V4). Independent from
+// iterm2SessionId above; never a foreign key to an EyesOnAgentsClaudeEnvironment id.
+export const parseEyesOnAgentsClaudeConfigDir = (
+  value: unknown
+): string | null => {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string' || !value || !isAbsolute(value)) {
+    throw new Error('claudeConfigDir must be a non-empty absolute path');
   }
   return value;
 };

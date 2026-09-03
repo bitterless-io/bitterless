@@ -79,7 +79,37 @@ export interface ClaudeHookEventV3 {
   payload: ClaudeHookEventV3Payload;
 }
 
-export type ClaudeHookEvent = ClaudeHookEventV1 | ClaudeHookEventV2 | ClaudeHookEventV3;
+// SessionStart-only, one level up from terminal identity: which CLAUDE_CONFIG_DIR emitted this
+// delivery. Never present on any other hookEventName.
+export type ClaudeHookEnvironmentFieldAbsent = {
+  claudeConfigDir?: never;
+};
+
+export type ClaudeHookEventV4Payload =
+  | (Omit<ClaudeHookEventV3Payload, 'hookEventName'> & {
+      hookEventName: Exclude<ClaudeHookEventName, 'SessionStart'>;
+    } & ClaudeHookEnvironmentFieldAbsent)
+  | (Omit<ClaudeHookEventV3Payload, 'hookEventName'> & {
+      hookEventName: 'SessionStart';
+    } & (
+      | ClaudeHookEnvironmentFieldAbsent
+      | {
+          claudeConfigDir: string;
+        }
+    ));
+
+export interface ClaudeHookEventV4 {
+  schemaVersion: 4;
+  eventId: string;
+  occurredAt: number;
+  payload: ClaudeHookEventV4Payload;
+}
+
+export type ClaudeHookEvent =
+  | ClaudeHookEventV1
+  | ClaudeHookEventV2
+  | ClaudeHookEventV3
+  | ClaudeHookEventV4;
 export type ClaudeHookMetadataOnlyEvent =
   | (Omit<ClaudeHookEventV1, 'payload'> & {
       payload: ClaudeHookEventPayloadBase & ClaudeHookPromptFieldsAbsent;
@@ -99,6 +129,26 @@ export type ClaudeHookMetadataOnlyEvent =
             | {
                 terminalApp: 'iterm2';
                 terminalSessionId: string;
+              }
+          ));
+    })
+  | (Omit<ClaudeHookEventV4, 'payload'> & {
+      payload:
+        | (ClaudeHookEventPayloadBase & ClaudeHookPromptFieldsAbsent & {
+            hookEventName: Exclude<ClaudeHookEventName, 'SessionStart'>;
+          } & ClaudeHookTerminalFieldsAbsent & ClaudeHookEnvironmentFieldAbsent)
+        | (ClaudeHookEventPayloadBase & ClaudeHookPromptFieldsAbsent & {
+            hookEventName: 'SessionStart';
+          } & (
+            | ClaudeHookTerminalFieldsAbsent
+            | {
+                terminalApp: 'iterm2';
+                terminalSessionId: string;
+              }
+          ) & (
+            | ClaudeHookEnvironmentFieldAbsent
+            | {
+                claudeConfigDir: string;
               }
           ));
     });

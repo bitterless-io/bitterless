@@ -82,6 +82,9 @@ export interface EyesOnAgentsThread extends EyesOnAgentsThreadIdentity {
   archiveState: EyesOnAgentsArchiveState;
   desktopSessionId: EyesOnAgentsDesktopSessionId | null;
   iterm2SessionId: string | null;
+  // Raw CLAUDE_CONFIG_DIR path captured on SessionStart (schema V4), never a foreign key to an
+  // EyesOnAgentsClaudeEnvironment id — environment-label resolution happens at snapshot-read time.
+  claudeConfigDir: string | null;
   canCopySessionPath: boolean;
   domainId: number;
   title: string | null;
@@ -368,6 +371,9 @@ export interface EyesOnAgentsClaudeInventoryThread {
   // Optional: an omitted or null value never clears an already-stored iTerm2 identity, matching
   // (but independent from) the desktopSessionId COALESCE-preserve rule above.
   iterm2SessionId?: string | null;
+  // Optional: an omitted or null value never clears an already-stored claudeConfigDir, independent
+  // from both the desktopSessionId and iterm2SessionId COALESCE-preserve rules.
+  claudeConfigDir?: string | null;
   transcriptPath: string | null;
   clearDesktopSessionId?: boolean;
   clearTranscriptPath?: boolean;
