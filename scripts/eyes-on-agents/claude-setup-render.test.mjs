@@ -112,7 +112,10 @@ const createStore = (setupAction) => ({
   snapshot: {
     claudeBridge: createBridge(setupAction),
     claudeProvider: { enabled: true, error: null, revision: 1 },
-    claudeDirectory: {
+    claudeDirectory: [{
+      id: '11111111-1111-4111-8111-111111111111',
+      label: 'Default',
+      enabled: true,
       mode: 'automatic',
       configuredDirectory: null,
       effectiveDirectory: '/tmp/claude',
@@ -124,18 +127,28 @@ const createStore = (setupAction) => ({
       lastSuccessfulScanAt: null,
       nextRetryAt: null,
       error: null,
-    },
+    }],
   },
   busyAction: null,
+  busyClaudeEnvironmentIds: new Set(),
   installClaudeBridge: async () => undefined,
   refreshClaudeBridgeStatus: async () => undefined,
   removeClaudeBridge: async () => undefined,
+  installClaudeBridgeForEnvironment: async () => undefined,
+  refreshClaudeBridgeStatusForEnvironment: async () => undefined,
   openNewClaudeSession: async () => undefined,
   copyClaudeReloadCommand: async () => undefined,
   changeClaudeDirectory: async () => undefined,
   useAutomaticClaudeDirectory: async () => undefined,
   retryClaudeDirectory: async () => undefined,
+  retryClaudeDirectoryForEnvironment: async () => undefined,
   setClaudeProviderEnabled: async () => undefined,
+  addClaudeEnvironment: async () => undefined,
+  renameClaudeEnvironment: async () => undefined,
+  removeClaudeEnvironment: async () => undefined,
+  setClaudeEnvironmentEnabled: async () => undefined,
+  chooseClaudeEnvironmentDirectory: async () => undefined,
+  useAutomaticClaudeEnvironment: async () => undefined,
 });
 
 try {
@@ -151,7 +164,7 @@ try {
     format: 'esm',
     target: 'node22',
     tsconfig: join(projectRoot, 'tsconfig.web.json'),
-    external: ['vue'],
+    external: ['vue', '@tabler/icons-vue'],
     plugins: [stubsPlugin, vuePlugin],
   });
 
@@ -243,7 +256,7 @@ try {
     format: 'esm',
     target: 'node22',
     tsconfig: join(projectRoot, 'tsconfig.web.json'),
-    external: ['vue'],
+    external: ['vue', '@tabler/icons-vue'],
     plugins: [stubsPlugin, vueScriptPlugin],
   });
   const scriptModule = await import(`${pathToFileURL(scriptOutfile).href}?v=${Date.now()}`);

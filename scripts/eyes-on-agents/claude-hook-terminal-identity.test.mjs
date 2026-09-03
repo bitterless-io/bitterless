@@ -192,7 +192,10 @@ test('the real helper subprocess only emits terminal identity for a SessionStart
       now: () => 200,
       idFactory: () => EVENT_ID
     });
-    assert.equal(sent[0].event.schemaVersion, 3);
+    // Task 087 wired the real helper subprocess to createClaudeHookEventV4, so a genuine
+    // SessionStart now legitimately reports schemaVersion 4 (still carrying the unchanged terminal
+    // identity capture below) — see docs/plan/tasks/eyes-on-agents-claude-multi-env-hook-attribution-087.md.
+    assert.equal(sent[0].event.schemaVersion, 4);
     assert.equal(sent[0].event.payload.terminalApp, 'iterm2');
     assert.equal(sent[0].event.payload.terminalSessionId, VALID_ITERM_SESSION_ID);
 

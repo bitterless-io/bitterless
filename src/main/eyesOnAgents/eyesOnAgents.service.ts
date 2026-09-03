@@ -4,6 +4,7 @@ import type {
   EyesOnAgentsApi,
   EyesOnAgentsBridgeStatus,
   EyesOnAgentsClaudeBridgeStatus,
+  EyesOnAgentsClaudeEnvironment,
   EyesOnAgentsCompletionAlertIntent,
   EyesOnAgentsDiscoveredThread,
   EyesOnAgentsHookLastUserPromptCandidate,
@@ -45,6 +46,8 @@ import type { ClaudeHookOutboxCoverageGap } from './claudeHookOutbox.service';
 import type { CodexHookOutboxCoverageGap } from './codexHookOutbox.service';
 import type { CodexAppServerSupervisor } from './codexAppServer.supervisor';
 import type { LastUserPromptPreferenceService } from './lastUserPromptPreference.service';
+import type { ClaudeDirectoryConfigService } from './claudeDirectoryConfig.service';
+import { resolveClaudeBridgeEnvironment } from './claudeBridgeEnvironment.resolver';
 import type {
   ClaudeProviderPreferenceHydration,
   ClaudeProviderPreferenceService
@@ -101,8 +104,34 @@ interface EyesOnAgentsServiceDependencies {
     getDirectoryStatus?(): EyesOnAgentsSnapshot['claudeDirectory'];
     changeDirectory?(): Promise<void>;
     useAutomaticDirectory?(): Promise<void>;
-    retryDirectory?(): Promise<void>;
+    // Task 088 (gap 1): widened to accept the target environment id — an omitted id retries
+    // environments[0] (ClaudeObservationService's own resolveDefaultEnvironmentId fallback),
+    // reproducing every pre-088 zero-arg caller's exact ambient behavior unchanged.
+    retryDirectory?(environmentId?: string): Promise<void>;
+    // Task 088: reconciles the environment-CRUD map (task 085's applyEnvironments()) after a thin
+    // delegating CRUD call below mutates the persisted environment list.
+    applyEnvironments?(): Promise<void>;
   };
+  // Task 088: the same ClaudeDirectoryConfigService singleton eyesOnAgents.handler.ts constructs,
+  // injected here so this service can (a) satisfy EyesOnAgentsApi's 7 environment-CRUD members with
+  // real delegation, and (b) resolve installClaudeBridge/refreshClaudeBridgeStatus/removeClaudeBridge's
+  // { environmentId } to a configDirectory internally. Optional so every pre-088 test harness that
+  // constructs this service without it keeps working unchanged (bridge methods fall back to the
+  // ambient/ no-scoping behavior they already had).
+  claudeDirectoryConfig?: Pick<
+    ClaudeDirectoryConfigService,
+    | 'listEnvironments'
+    | 'addEnvironment'
+    | 'renameEnvironment'
+    | 'removeEnvironment'
+    | 'setEnvironmentEnabled'
+    | 'chooseCustomDirectory'
+    | 'useAutomatic'
+  >;
+  // Task 088: reuses eyesOnAgents.handler.ts's existing pickClaudeConfigDirectory free function so
+  // this service's own addClaudeEnvironment delegate can open the same native picker the handler's
+  // real XPC-registered method already uses, rather than duplicating that logic.
+  pickClaudeConfigDirectory?: () => Promise<string | null>;
   claudeBridge?: {
     getStatus(): EyesOnAgentsClaudeBridgeStatus;
     getInstallationId?(): string;
@@ -2839,11 +2868,12 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     return await this.getSnapshot();
   }
 
-  async installClaudeBridge(configDirectory?: string): Promise<EyesOnAgentsSnapshot> {
+  async installClaudeBridge(params?: { environmentId?: string }): Promise<EyesOnAgentsSnapshot> {
     this.requireClaudeProviderManagementEnabled();
     if (!this.dependencies.claudeBridge || !this.dependencies.claudeHookListener) {
       throw new Error('Claude observation plugin is unavailable');
     }
+    const configDirectory = this.resolveClaudeBridgeConfigDirectory(params);
     await this.runClaudeBridgeLifecycle(async () => {
       this.requireClaudeProviderManagementEnabled();
       const runtimeVersion = this.claudeProviderRuntimeVersion;
@@ -2885,9 +2915,12 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     return await this.changedSnapshot();
   }
 
-  async refreshClaudeBridgeStatus(configDirectory?: string): Promise<EyesOnAgentsSnapshot> {
+  async refreshClaudeBridgeStatus(
+    params?: { environmentId?: string }
+  ): Promise<EyesOnAgentsSnapshot> {
     this.requireClaudeProviderManagementEnabled();
     if (!this.dependencies.claudeBridge) throw new Error('Claude observation plugin is unavailable');
+    const configDirectory = this.resolveClaudeBridgeConfigDirectory(params);
     await this.runClaudeBridgeLifecycle(async () => {
       this.requireClaudeProviderManagementEnabled();
       const runtimeVersion = this.claudeProviderRuntimeVersion;
@@ -2939,9 +2972,10 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     return await this.changedSnapshot();
   }
 
-  async removeClaudeBridge(configDirectory?: string): Promise<EyesOnAgentsSnapshot> {
+  async removeClaudeBridge(params?: { environmentId?: string }): Promise<EyesOnAgentsSnapshot> {
     this.requireClaudeProviderManagementEnabled();
     if (!this.dependencies.claudeBridge) throw new Error('Claude observation plugin is unavailable');
+    const configDirectory = this.resolveClaudeBridgeConfigDirectory(params);
     await this.runClaudeBridgeLifecycle(async () => {
       this.requireClaudeProviderManagementEnabled();
       const runtimeVersion = this.claudeProviderRuntimeVersion;
@@ -2969,6 +3003,90 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       }
       return status;
     });
+  }
+
+  // Task 088: resolves { environmentId } to a configDirectory (or undefined for the automatic
+  // environment) using the injected claudeDirectoryConfig singleton. Missing dependency or an empty
+  // environment list reproduces the exact pre-088 ambient behavior (undefined = no CLAUDE_CONFIG_DIR
+  // override) rather than throwing, so every existing zero-arg test harness that never wires this
+  // dependency keeps working unchanged. An explicitly supplied, unknown environmentId still rejects
+  // cleanly (via resolveClaudeBridgeEnvironment) once the dependency is present.
+  private resolveClaudeBridgeConfigDirectory(params?: { environmentId?: string }): string | undefined {
+    if (!this.dependencies.claudeDirectoryConfig) return undefined;
+    const environments = this.dependencies.claudeDirectoryConfig.listEnvironments();
+    if (environments.length === 0) return undefined;
+    return resolveClaudeBridgeEnvironment(environments, params).configDirectory ?? undefined;
+  }
+
+  private requireClaudeDirectoryConfig(): NonNullable<
+    EyesOnAgentsServiceDependencies['claudeDirectoryConfig']
+  > {
+    if (!this.dependencies.claudeDirectoryConfig) {
+      throw new Error('Claude environment configuration is unavailable');
+    }
+    return this.dependencies.claudeDirectoryConfig;
+  }
+
+  // Task 088: thin delegating implementations of the 7 environment-CRUD EyesOnAgentsApi members
+  // task 084 left off this interface. EyesOnAgentsHandler (electron-xpc's real, reflection-registered
+  // target) owns the actual XPC-callable versions of these methods against the same
+  // claudeDirectoryConfig singleton — these exist only so EyesOnAgentsService satisfies
+  // `implements EyesOnAgentsApi`; no renderer or XPC call path reaches them.
+  async listClaudeEnvironments(): Promise<EyesOnAgentsClaudeEnvironment[]> {
+    return this.requireClaudeDirectoryConfig().listEnvironments();
+  }
+
+  async addClaudeEnvironment(params: { label: string }): Promise<EyesOnAgentsClaudeEnvironment[]> {
+    const directoryConfig = this.requireClaudeDirectoryConfig();
+    const configDirectory = (await this.dependencies.pickClaudeConfigDirectory?.()) ?? null;
+    if (configDirectory !== null) {
+      await directoryConfig.addEnvironment({ label: params.label, configDirectory });
+    }
+    await this.dependencies.claudeObservation?.applyEnvironments?.();
+    return directoryConfig.listEnvironments();
+  }
+
+  async renameClaudeEnvironment(
+    params: { id: string; label: string }
+  ): Promise<EyesOnAgentsClaudeEnvironment[]> {
+    const directoryConfig = this.requireClaudeDirectoryConfig();
+    await directoryConfig.renameEnvironment(params);
+    await this.dependencies.claudeObservation?.applyEnvironments?.();
+    return directoryConfig.listEnvironments();
+  }
+
+  async removeClaudeEnvironment(params: { id: string }): Promise<EyesOnAgentsClaudeEnvironment[]> {
+    const directoryConfig = this.requireClaudeDirectoryConfig();
+    await directoryConfig.removeEnvironment(params);
+    await this.dependencies.claudeObservation?.applyEnvironments?.();
+    return directoryConfig.listEnvironments();
+  }
+
+  async setClaudeEnvironmentEnabled(
+    params: { id: string; enabled: boolean }
+  ): Promise<EyesOnAgentsClaudeEnvironment[]> {
+    const directoryConfig = this.requireClaudeDirectoryConfig();
+    await directoryConfig.setEnvironmentEnabled(params);
+    await this.dependencies.claudeObservation?.applyEnvironments?.();
+    return directoryConfig.listEnvironments();
+  }
+
+  async chooseClaudeEnvironmentDirectory(
+    params: { id: string }
+  ): Promise<EyesOnAgentsClaudeEnvironment[]> {
+    const directoryConfig = this.requireClaudeDirectoryConfig();
+    await directoryConfig.chooseCustomDirectory(params);
+    await this.dependencies.claudeObservation?.applyEnvironments?.();
+    return directoryConfig.listEnvironments();
+  }
+
+  async useAutomaticClaudeEnvironment(
+    params: { id: string }
+  ): Promise<EyesOnAgentsClaudeEnvironment[]> {
+    const directoryConfig = this.requireClaudeDirectoryConfig();
+    await directoryConfig.useAutomatic(params);
+    await this.dependencies.claudeObservation?.applyEnvironments?.();
+    return directoryConfig.listEnvironments();
   }
 
   async openNewClaudeSession(): Promise<void> {
@@ -3009,12 +3127,27 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     return await this.getSnapshot();
   }
 
-  async retryClaudeDirectory(): Promise<EyesOnAgentsSnapshot> {
+  // Task 088 (gap 1): resolves { environmentId } to the target environment's id, mirroring
+  // resolveClaudeBridgeConfigDirectory's fallback contract (missing dependency or empty
+  // environment list => undefined, letting ClaudeObservationService.retryDirectory fall back to
+  // its own resolveDefaultEnvironmentId()) but resolving to an id, not a configDirectory, since the
+  // watcher retry entry point (ClaudeObservationService.retryEnvironmentEntry) is keyed by id.
+  private resolveClaudeDirectoryRetryEnvironmentId(
+    params?: { environmentId?: string }
+  ): string | undefined {
+    if (!this.dependencies.claudeDirectoryConfig) return undefined;
+    const environments = this.dependencies.claudeDirectoryConfig.listEnvironments();
+    if (environments.length === 0) return undefined;
+    return resolveClaudeBridgeEnvironment(environments, params).id;
+  }
+
+  async retryClaudeDirectory(params?: { environmentId?: string }): Promise<EyesOnAgentsSnapshot> {
     if (!this.dependencies.claudeObservation?.retryDirectory) {
       throw new Error('Claude directory observation is unavailable');
     }
+    const environmentId = this.resolveClaudeDirectoryRetryEnvironmentId(params);
     const runtimeVersion = await this.captureClaudeProviderManagementAction();
-    await this.dependencies.claudeObservation.retryDirectory();
+    await this.dependencies.claudeObservation.retryDirectory(environmentId);
     await this.reactivateClaudeProviderAfterManagement(runtimeVersion);
     return await this.getSnapshot();
   }
@@ -3084,15 +3217,25 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
           payload.transcriptPath,
           payload.sessionId
         );
-        const iterm2SessionId = delivery.event.schemaVersion === 3 &&
+        const iterm2SessionId = (delivery.event.schemaVersion === 3 ||
+          delivery.event.schemaVersion === 4) &&
           delivery.event.payload.terminalApp === 'iterm2'
           ? delivery.event.payload.terminalSessionId
           : null;
+        const claudeConfigDir = delivery.event.schemaVersion === 4
+          ? delivery.event.payload.claudeConfigDir ?? null
+          : null;
+        if (payload.hookEventName === 'SessionStart') {
+          console.info(
+            `[claude-hook] event=SessionStart environmentAttribution=${claudeConfigDir !== null}`
+          );
+        }
         await this.dependencies.repository.upsertClaudeInventory({
           threads: [{
             threadId: payload.sessionId,
             desktopSessionId: null,
             iterm2SessionId,
+            claudeConfigDir,
             transcriptPath,
             title: null,
             cwd: payload.cwd,

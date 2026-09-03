@@ -339,6 +339,24 @@ type ClaudeHookEvent = ClaudeHookEventV1 | ClaudeHookEventV2 | ClaudeHookEventV3
   non-`SessionStart` events to the unchanged V2 constructor). Terminal identity and environment
   identity are both `SessionStart`-only facts, so this chain of delegation is additive at every
   level and never revisits an already-shipped constructor's behavior.
+
+> **Implementation note (task 087):** the task's own Path list did not name
+> `src/main/eyesOnAgents/claudeHookBridge.helper.ts`, but the helper subprocess's one call site is
+> the only place that actually invokes a version constructor at runtime — task 081 swapped this same
+> call site from `createClaudeHookEventV2` to `createClaudeHookEventV3` for the identical reason.
+> Leaving it on `createClaudeHookEventV3` would mean `CLAUDE_CONFIG_DIR` is never captured outside
+> tests, defeating this task's objective, so it now calls `createClaudeHookEventV4`. This has one
+> necessary, mechanical consequence: `eyesOnAgents.service.ts`'s pre-existing `iterm2SessionId`
+> derivation in `commitClaudeHookDeliveryInternal` (task 082) narrowed on `delivery.event.schemaVersion
+> === 3` to read `payload.terminalApp`; since a genuine `SessionStart` now legitimately arrives as
+> `schemaVersion: 4` (still carrying `terminalApp`/`terminalSessionId` unchanged), that check widened
+> to `schemaVersion === 3 || schemaVersion === 4` so already-shipped iTerm2 attribution keeps working
+> once V4 is live. No other part of the V3 terminal-identity capture or consumption logic changed.
+> The one pre-existing test asserting the real helper subprocess's `schemaVersion` for a genuine
+> `SessionStart` (`scripts/eyes-on-agents/claude-hook-terminal-identity.test.mjs`) was updated from
+> `3` to `4` for the same reason, mirroring task 082's precedent of updating exactly one pre-existing
+> test fixture when a new schema version legitimately changes real subprocess output.
+
 - `eyes_on_agents_thread` gains one more nullable column, `claude_config_dir TEXT`, populated the
   same way `iterm2_session_id` is (independent COALESCE-preserve upsert; no collision/ambiguity
   check). This is a raw path string, not a foreign key to `EyesOnAgentsClaudeEnvironment.id` —
@@ -354,6 +372,14 @@ environment (boolean) plus that environment's `id`/`label` when matched — the 
 `claude_config_dir` value is never logged, matching every other content-free rule in this Hook
 pipeline.
 
+> **Implementation note (task 087):** matching a captured `claude_config_dir` against a known
+> environment's `id`/`label` requires the configured-environments list, which is a service/renderer
+> concern this task does not touch (see the Objective's "does NOT resolve or store an environment
+> label/id on the thread row" boundary). Task 087's log line therefore carries only whether a value
+> was captured on `SessionStart` (`environmentAttribution=true/false`) — never a matched `id`/`label`
+> and never the raw path. Logging the matched environment's `id`/`label` is task 088's job, once
+> snapshot-read-time matching exists.
+
 ## Renderer
 
 `ClaudeObservationCard.vue`'s single directory block becomes an environment list, structurally
@@ -363,9 +389,39 @@ rename, remove, enable/disable):
 
 - One row per `EyesOnAgentsClaudeEnvironment`: label, resolved path (or "not configured"), mode,
   the existing per-environment watcher status pill (`watching`/`waiting`/`degraded`/`retrying`/
-  `error`/`stopped`), and the existing per-environment plugin/hook setup action
-  (`enable`/`finish`/`reload`/`retry`/`repair`) — the setup-action state machine itself is unchanged,
-  it is simply evaluated once per environment instead of once globally.
+  `error`/`stopped`), that environment's desktop-directory count and last-successful-scan time (plus
+  a next-retry note once one is scheduled), a manual per-environment **Retry** button in the same
+  states the pre-multi-environment single block offered it (a global Claude provider error, or the
+  row's own state being `waiting`/`degraded`/`retrying`/`error`), and the existing per-environment
+  plugin/hook setup action (`enable`/`finish`/`reload`/`retry`/`repair`) — the setup-action state
+  machine itself is unchanged, it is simply evaluated once per environment instead of once globally.
+
+> **Implementation note (task 088, gap-1 completion):** the initial task 088 delivery replaced the
+> single directory block with the environment list above but dropped the desktop-directory-count/
+> last-successful-scan/next-retry metadata and the manual Retry button entirely (flagged as a real,
+> letter-vs-Objective gap in that task's own Implementation evidence). A follow-up completion pass
+> restored all of it per row: `retryClaudeDirectory` widened to `(params?: { environmentId?: string
+> }) => Promise<EyesOnAgentsSnapshot>` (mirroring the 4 bridge methods' shape exactly), resolving to
+> that environment's id and retrying only its watcher via the pre-existing
+> `ClaudeObservationService.retryEnvironmentEntry`; an omitted `environmentId` still retries
+> `environments[0]`, reproducing every pre-088 zero-arg caller unchanged. The renderer gained a
+> `retryClaudeDirectoryForEnvironment(id)` store method (per-id busy gate, like
+> `chooseClaudeEnvironmentDirectory`/`useAutomaticClaudeEnvironment` — retrying one environment's
+> watcher is fully independent of every other environment's, unlike the shared-identity bridge
+> install/refresh actions) and a `handleRetryEnvironment` row handler that falls back to the legacy
+> zero-arg `retryClaudeDirectory()` for the synthetic empty-id sentinel row, exactly like Change
+> directory/Use automatic.
+
+> **Implementation note (task 088):** per the "Scope decisions"/Non-goals installation-identity
+> boundary above, the setup-action status/label shown in each row is **not** independently evaluated
+> per environment — it stays the single existing `bridge.value?.setupAction` computed, so every row
+> currently displays identical setup-action text/state. What is per-environment is only the
+> **Install**/**Retry listener** button's click target: clicking it in a given row calls
+> `installClaudeBridge`/`refreshClaudeBridgeStatus` with that row's `{ environmentId }`, so the
+> underlying `claude` CLI invocation targets that environment's `CLAUDE_CONFIG_DIR` even though the
+> displayed status is shared. This corrects this bullet's "evaluated once per environment" phrasing,
+> which read as implying independent per-row status.
+
 - Row actions: rename, change directory (opens the existing native picker) or "Use automatic" for
   the one eligible environment, enable/disable, remove (disabled for the last remaining
   environment).

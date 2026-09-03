@@ -37,65 +37,172 @@
         :aria-labelledby="directoryTitleId"
       >
         <div class="eyes-connection-card__directories-header">
-          <div>
-            <h3 :id="directoryTitleId">
-              {{ i18nHelper.eyesOnAgents.claudeDirectory.title }}
-            </h3>
-            <span class="eyes-connection-card__directories-state">
-              {{ directoryStateLabel }}
-            </span>
+          <h3 :id="directoryTitleId">{{ i18nHelper.eyesOnAgents.claudeEnvironment.title }}</h3>
+          <a-button
+            size="mini"
+            :loading="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(ADD_ENVIRONMENT_KEY)"
+            :disabled="addingEnvironment"
+            @click="handleStartAddEnvironment"
+          >
+            {{ i18nHelper.eyesOnAgents.claudeEnvironment.addEnvironment }}
+          </a-button>
+        </div>
+
+        <div v-if="addingEnvironment" class="eyes-connection-card__directories-add">
+          <a-input
+            v-model="addEnvironmentLabel"
+            size="mini"
+            :max-length="80"
+            :placeholder="i18nHelper.eyesOnAgents.claudeEnvironment.addLabelPlaceholder"
+            :aria-label="i18nHelper.eyesOnAgents.claudeEnvironment.addLabelPlaceholder"
+            @keydown.enter="handleAddEnvironment"
+          />
+          <a-button
+            size="mini"
+            type="primary"
+            :loading="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(ADD_ENVIRONMENT_KEY)"
+            :disabled="!addEnvironmentLabel.trim()"
+            @click="handleAddEnvironment"
+          >
+            {{ i18nHelper.eyesOnAgents.claudeEnvironment.add }}
+          </a-button>
+          <a-button size="mini" @click="handleCancelAddEnvironment">
+            {{ i18nHelper.eyesOnAgents.claudeEnvironment.cancel }}
+          </a-button>
+        </div>
+
+        <div class="eyes-connection-card__directories-list">
+          <div
+            v-for="environment in environmentRows"
+            :key="environment.id"
+            name="eyesOnAgents__connections__claudeEnvironmentRow"
+            class="eyes-connection-card__directory-row"
+          >
+            <div class="eyes-connection-card__directories-header">
+              <div>
+                <a-input
+                  v-if="renamingId === environment.id"
+                  v-model="renameLabelDraft"
+                  size="mini"
+                  :max-length="80"
+                  :aria-label="i18nHelper.eyesOnAgents.claudeEnvironment.renameLabelPlaceholder"
+                  @keydown.enter="handleSaveRename(environment.id)"
+                />
+                <h4 v-else>{{ environment.label }}</h4>
+                <span class="eyes-connection-card__directories-state">
+                  {{ environmentModeLabel(environment) }} · {{ environmentStateLabel(environment) }}
+                </span>
+              </div>
+              <a-switch
+                v-if="environment.id"
+                size="small"
+                :model-value="environment.enabled"
+                :loading="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(environment.id)"
+                :disabled="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(environment.id)"
+                :aria-label="environment.enabled
+                  ? i18nHelper.eyesOnAgents.claudeEnvironment.disable
+                  : i18nHelper.eyesOnAgents.claudeEnvironment.enable"
+                @change="(enabled) => handleToggleEnabled(environment.id, Boolean(enabled))"
+              />
+            </div>
+            <div class="eyes-connection-card__directories-path">
+              <a-tooltip :content="environmentPath(environment)">
+                <a-input :model-value="environmentPath(environment)" size="mini" readonly />
+              </a-tooltip>
+              <a-button
+                size="mini"
+                :loading="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(environment.id)"
+                :disabled="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(environment.id)"
+                @click="handleChooseDirectory(environment.id)"
+              >
+                {{ i18nHelper.eyesOnAgents.claudeEnvironment.changeDirectory }}
+              </a-button>
+              <a-button
+                v-if="isEligibleForAutomatic(environment)"
+                size="mini"
+                :loading="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(environment.id)"
+                :disabled="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(environment.id)"
+                @click="handleUseAutomatic(environment.id)"
+              >
+                {{ i18nHelper.eyesOnAgents.claudeEnvironment.useAutomatic }}
+              </a-button>
+              <a-button
+                v-if="canRetryEnvironment(environment)"
+                size="mini"
+                :loading="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(environment.id)"
+                :disabled="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(environment.id)"
+                @click="handleRetryEnvironment(environment.id)"
+              >
+                {{ i18nHelper.eyesOnAgents.claudeDirectory.retry }}
+              </a-button>
+            </div>
+            <div class="eyes-connection-card__directories-meta">
+              <span>{{ environmentDesktopLabel(environment) }}</span>
+              <span>{{ environmentLastScanLabel(environment) }}</span>
+              <span v-if="environment.nextRetryAt">{{ environmentNextRetryLabel(environment) }}</span>
+            </div>
+            <p v-if="environment.error" class="eyes-connection-card__directories-error" role="status">
+              {{ environment.error }}
+            </p>
+            <div v-if="setupAction !== 'none'" class="eyes-connection-card__directories-meta">
+              <span>{{ setupTitle }}</span>
+              <a-button
+                v-if="['enable', 'finish', 'repair'].includes(setupAction)"
+                size="mini"
+                type="primary"
+                :loading="eyesOnAgentsStore.busyAction === 'claude-bridge-install'"
+                :disabled="Boolean(eyesOnAgentsStore.busyAction)"
+                @click="handleInstallForEnvironment(environment.id)"
+              >
+                {{ setupActionLabel }}
+              </a-button>
+              <a-button
+                v-else-if="setupAction === 'retry'"
+                size="mini"
+                type="primary"
+                :loading="eyesOnAgentsStore.busyAction === 'claude-bridge-refresh'"
+                :disabled="Boolean(eyesOnAgentsStore.busyAction)"
+                @click="handleRefreshForEnvironment(environment.id)"
+              >
+                {{ i18nHelper.eyesOnAgents.claudeBridge.retryListener }}
+              </a-button>
+            </div>
+            <div v-if="environment.id" class="eyes-connection-card__directories-actions">
+              <template v-if="renamingId === environment.id">
+                <a-button size="mini" type="primary" @click="handleSaveRename(environment.id)">
+                  {{ i18nHelper.eyesOnAgents.claudeEnvironment.save }}
+                </a-button>
+                <a-button size="mini" @click="handleCancelRename">
+                  {{ i18nHelper.eyesOnAgents.claudeEnvironment.cancel }}
+                </a-button>
+              </template>
+              <a-button v-else size="mini" @click="handleStartRename(environment)">
+                {{ i18nHelper.eyesOnAgents.claudeEnvironment.rename }}
+              </a-button>
+              <a-button
+                size="mini"
+                status="danger"
+                :loading="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(environment.id)"
+                :disabled="environmentRows.length <= 1
+                  || eyesOnAgentsStore.busyClaudeEnvironmentIds.has(environment.id)"
+                :title="environmentRows.length <= 1
+                  ? i18nHelper.eyesOnAgents.claudeEnvironment.removeLastHint
+                  : undefined"
+                @click="handleRemoveEnvironment(environment.id)"
+              >
+                {{ i18nHelper.eyesOnAgents.claudeEnvironment.remove }}
+              </a-button>
+            </div>
           </div>
-          <span>{{ directoryModeLabel }}</span>
         </div>
-        <div class="eyes-connection-card__directories-path">
-          <a-tooltip :content="directoryPath">
-            <a-input
-              :model-value="directoryPath"
-              size="mini"
-              readonly
-              :aria-label="i18nHelper.eyesOnAgents.claudeDirectory.pathLabel"
-            />
-          </a-tooltip>
-          <a-button
-            size="mini"
-            :loading="eyesOnAgentsStore.busyAction === 'claude-directory-change'"
-            :disabled="Boolean(eyesOnAgentsStore.busyAction)"
-            @click="handleChangeDirectory"
-          >
-            {{ i18nHelper.eyesOnAgents.claudeDirectory.change }}
-          </a-button>
-        </div>
-        <div class="eyes-connection-card__directories-meta">
-          <span>{{ desktopDirectoryLabel }}</span>
-          <span>{{ lastScanLabel }}</span>
-          <span v-if="directory?.nextRetryAt">{{ nextRetryLabel }}</span>
-        </div>
-        <p v-if="directory?.error" class="eyes-connection-card__directories-error" role="status">
-          {{ directory.error }}
-        </p>
-        <div
-          v-if="canUseAutomaticDirectory || canRetryDirectory"
-          class="eyes-connection-card__directories-actions"
+
+        <aside
+          name="eyesOnAgents__connections__claudeEnvironmentGuidance"
+          class="eyes-connection-panel__boundary"
         >
-          <a-button
-            v-if="canUseAutomaticDirectory"
-            size="mini"
-            :loading="eyesOnAgentsStore.busyAction === 'claude-directory-automatic'"
-            :disabled="Boolean(eyesOnAgentsStore.busyAction)"
-            @click="handleUseAutomaticDirectory"
-          >
-            {{ i18nHelper.eyesOnAgents.claudeDirectory.useAutomatic }}
-          </a-button>
-          <a-button
-            v-if="canRetryDirectory"
-            size="mini"
-            :loading="eyesOnAgentsStore.busyAction === 'claude-directory-retry'"
-            :disabled="Boolean(eyesOnAgentsStore.busyAction)"
-            @click="handleRetryDirectory"
-          >
-            {{ i18nHelper.eyesOnAgents.claudeDirectory.retry }}
-          </a-button>
-        </div>
+          <IconInfoCircle :size="17" />
+          <span>{{ i18nHelper.eyesOnAgents.claudeEnvironment.guidance }}</span>
+        </aside>
       </section>
 
       <dl class="eyes-connection-card__facts">
@@ -265,11 +372,12 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import { IconInfoCircle } from '@tabler/icons-vue';
+import type { EyesOnAgentsClaudeEnvironmentStatus } from '@shared/eyesOnAgents/eyesOnAgents.type';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { eyesOnAgentsStore } from '../../store/eyesOnAgents.store';
 
 const bridge = computed(() => eyesOnAgentsStore.snapshot?.claudeBridge ?? null);
-const directory = computed(() => eyesOnAgentsStore.snapshot?.claudeDirectory?.[0] ?? null);
 const provider = computed(() => eyesOnAgentsStore.snapshot?.claudeProvider ?? null);
 const providerEnabled = computed(() => provider.value?.enabled === true);
 const lastUserPromptCaptureEnabled = computed(
@@ -378,14 +486,28 @@ const observationProofLabel = computed(() => {
   return i18nHelper.eyesOnAgents.claudeBridge.proofAwaiting;
 });
 
-const directoryPath = computed(() => directory.value?.effectiveDirectory
-  ?? directory.value?.configuredDirectory
-  ?? i18nHelper.eyesOnAgents.claudeDirectory.unavailable);
-const directoryModeLabel = computed(() => directory.value?.mode === 'custom'
-  ? i18nHelper.eyesOnAgents.claudeDirectory.custom
-  : i18nHelper.eyesOnAgents.claudeDirectory.automatic);
-const directoryStateLabel = computed(() => {
-  switch (directory.value?.state) {
+// Task 088: the single directory computed above (`directory`) is superseded by the environment
+// list below — environmentRows/environmentPath/environmentModeLabel/environmentStateLabel replace
+// directoryPath/directoryModeLabel/directoryStateLabel/desktopDirectoryLabel/lastScanLabel/
+// nextRetryLabel/canRetryDirectory/canUseAutomaticDirectory, which had no per-environment identity.
+const ADD_ENVIRONMENT_KEY = '__add__';
+const environmentRows = computed(() => eyesOnAgentsStore.snapshot?.claudeDirectory ?? []);
+const defaultEnvironmentId = computed(() => environmentRows.value[0]?.id ?? null);
+const addingEnvironment = ref(false);
+const addEnvironmentLabel = ref('');
+const renamingId = ref<string | null>(null);
+const renameLabelDraft = ref('');
+
+const environmentPath = (environment: EyesOnAgentsClaudeEnvironmentStatus): string =>
+  environment.effectiveDirectory
+  ?? environment.configuredDirectory
+  ?? i18nHelper.eyesOnAgents.claudeEnvironment.notConfigured;
+const environmentModeLabel = (environment: EyesOnAgentsClaudeEnvironmentStatus): string =>
+  environment.mode === 'custom'
+    ? i18nHelper.eyesOnAgents.claudeDirectory.custom
+    : i18nHelper.eyesOnAgents.claudeDirectory.automatic;
+const environmentStateLabel = (environment: EyesOnAgentsClaudeEnvironmentStatus): string => {
+  switch (environment.state) {
     case 'watching': return i18nHelper.eyesOnAgents.claudeDirectory.watching;
     case 'waiting': return i18nHelper.eyesOnAgents.claudeDirectory.waiting;
     case 'degraded': return i18nHelper.eyesOnAgents.claudeDirectory.degraded;
@@ -394,26 +516,127 @@ const directoryStateLabel = computed(() => {
     case 'stopped': return i18nHelper.eyesOnAgents.claudeDirectory.stopped;
     default: return i18nHelper.eyesOnAgents.claudeDirectory.starting;
   }
-});
-const desktopDirectoryLabel = computed(() => (
+};
+// Only environments[0] is ever eligible for automatic mode (data-model rule); a custom default
+// environment can switch to automatic, and one already in an error state can retry via the same
+// action (a no-op when already automatic and healthy) — mirroring the pre-088 single-directory
+// recovery contract's canUseAutomaticDirectory condition, generalized to the default row only.
+const isEligibleForAutomatic = (environment: EyesOnAgentsClaudeEnvironmentStatus): boolean =>
+  environment.id === defaultEnvironmentId.value
+  && (environment.mode === 'custom' || environment.state === 'error');
+
+// Gap 1 (post-088 review): restores the pre-088 single block's desktop-directory-count/
+// last-successful-scan/next-retry metadata and manual Retry action, scoped per environment.
+// canRetryEnvironment mirrors the pre-088 canRetryDirectory computed's condition exactly
+// (a global provider error, or the row's own state being one that can plausibly recover).
+const environmentDesktopLabel = (environment: EyesOnAgentsClaudeEnvironmentStatus): string => (
   i18nHelper.eyesOnAgents.claudeDirectory.desktopDirectories
-    .replace('{count}', String(directory.value?.desktopDirectoryCount ?? 0))
-));
-const lastScanLabel = computed(() => (
+    .replace('{count}', String(environment.desktopDirectoryCount))
+);
+const environmentLastScanLabel = (environment: EyesOnAgentsClaudeEnvironmentStatus): string => (
   i18nHelper.eyesOnAgents.claudeDirectory.lastSuccessfulScan
-    .replace('{time}', formatTimestamp(directory.value?.lastSuccessfulScanAt))
-));
-const nextRetryLabel = computed(() => (
+    .replace('{time}', formatTimestamp(environment.lastSuccessfulScanAt))
+);
+const environmentNextRetryLabel = (environment: EyesOnAgentsClaudeEnvironmentStatus): string => (
   i18nHelper.eyesOnAgents.claudeDirectory.nextRetry
-    .replace('{time}', formatTimestamp(directory.value?.nextRetryAt))
-));
-const canRetryDirectory = computed(() => (
-  providerError.value !== null ||
-  ['waiting', 'degraded', 'retrying', 'error'].includes(directory.value?.state ?? '')
-));
-const canUseAutomaticDirectory = computed(() => (
-  directory.value?.mode === 'custom' || directory.value?.state === 'error'
-));
+    .replace('{time}', formatTimestamp(environment.nextRetryAt))
+);
+const canRetryEnvironment = (environment: EyesOnAgentsClaudeEnvironmentStatus): boolean => (
+  providerError.value !== null
+  || ['waiting', 'degraded', 'retrying', 'error'].includes(environment.state)
+);
+
+const handleStartAddEnvironment = (): void => {
+  addingEnvironment.value = true;
+  addEnvironmentLabel.value = '';
+};
+
+const handleCancelAddEnvironment = (): void => {
+  addingEnvironment.value = false;
+  addEnvironmentLabel.value = '';
+};
+
+const handleAddEnvironment = async (): Promise<void> => {
+  const label = addEnvironmentLabel.value.trim();
+  if (!label) return;
+  try {
+    await eyesOnAgentsStore.addClaudeEnvironment(label);
+    addingEnvironment.value = false;
+    addEnvironmentLabel.value = '';
+  } catch {
+    // actionError already reflects the failure; keep the form open so the label is not lost.
+  }
+};
+
+const handleStartRename = (environment: EyesOnAgentsClaudeEnvironmentStatus): void => {
+  renamingId.value = environment.id;
+  renameLabelDraft.value = environment.label;
+};
+
+const handleCancelRename = (): void => {
+  renamingId.value = null;
+  renameLabelDraft.value = '';
+};
+
+const handleSaveRename = async (id: string): Promise<void> => {
+  const label = renameLabelDraft.value.trim();
+  if (!label) return;
+  try {
+    await eyesOnAgentsStore.renameClaudeEnvironment(id, label);
+    renamingId.value = null;
+    renameLabelDraft.value = '';
+  } catch {
+    // actionError already reflects the failure; keep editing open so the draft is not lost.
+  }
+};
+
+const handleToggleEnabled = async (id: string, enabled: boolean): Promise<void> => {
+  await eyesOnAgentsStore.setClaudeEnvironmentEnabled(id, enabled).catch(() => undefined);
+};
+
+// An empty id identifies the single synthetic invalid-hydration row (task 085's
+// invalidHydrationStatus — no environment identity is known yet, e.g. a malformed persisted value).
+// The { id }-scoped XPC methods reject an empty id before it ever reaches the recovery-aware
+// ClaudeDirectoryConfigService methods (it fails UUID validation at the shared contract parser), so
+// this row's actions fall back to the legacy zero-arg store methods, which resolve entirely on the
+// Main side and preserve the pre-088 "a new directory selection/Use automatic replaces a malformed
+// saved value" recovery contract unchanged.
+const handleChooseDirectory = async (id: string): Promise<void> => {
+  if (id === '') {
+    await eyesOnAgentsStore.changeClaudeDirectory().catch(() => undefined);
+    return;
+  }
+  await eyesOnAgentsStore.chooseClaudeEnvironmentDirectory(id).catch(() => undefined);
+};
+
+const handleUseAutomatic = async (id: string): Promise<void> => {
+  if (id === '') {
+    await eyesOnAgentsStore.useAutomaticClaudeDirectory().catch(() => undefined);
+    return;
+  }
+  await eyesOnAgentsStore.useAutomaticClaudeEnvironment(id).catch(() => undefined);
+};
+
+const handleRemoveEnvironment = async (id: string): Promise<void> => {
+  await eyesOnAgentsStore.removeClaudeEnvironment(id).catch(() => undefined);
+};
+
+const handleRetryEnvironment = async (id: string): Promise<void> => {
+  if (id === '') {
+    await eyesOnAgentsStore.retryClaudeDirectory().catch(() => undefined);
+    return;
+  }
+  await eyesOnAgentsStore.retryClaudeDirectoryForEnvironment(id).catch(() => undefined);
+};
+
+const handleInstallForEnvironment = async (environmentId: string): Promise<void> => {
+  await eyesOnAgentsStore.installClaudeBridgeForEnvironment(environmentId).catch(() => undefined);
+};
+
+const handleRefreshForEnvironment = async (environmentId: string): Promise<void> => {
+  await eyesOnAgentsStore.refreshClaudeBridgeStatusForEnvironment(environmentId)
+    .catch(() => undefined);
+};
 
 const formatTimestamp = (value: string | null | undefined): string => {
   if (!value) return i18nHelper.eyesOnAgents.claudeBridge.never;
@@ -446,18 +669,6 @@ const handleCopyReloadCommand = async (): Promise<void> => {
   } catch {
     reloadCommandCopied.value = false;
   }
-};
-
-const handleChangeDirectory = async (): Promise<void> => {
-  await eyesOnAgentsStore.changeClaudeDirectory().catch(() => undefined);
-};
-
-const handleUseAutomaticDirectory = async (): Promise<void> => {
-  await eyesOnAgentsStore.useAutomaticClaudeDirectory().catch(() => undefined);
-};
-
-const handleRetryDirectory = async (): Promise<void> => {
-  await eyesOnAgentsStore.retryClaudeDirectory().catch(() => undefined);
 };
 
 const handleProviderChange = async (enabled: boolean | string | number): Promise<void> => {

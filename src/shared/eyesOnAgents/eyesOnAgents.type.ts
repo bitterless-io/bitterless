@@ -82,6 +82,9 @@ export interface EyesOnAgentsThread extends EyesOnAgentsThreadIdentity {
   archiveState: EyesOnAgentsArchiveState;
   desktopSessionId: EyesOnAgentsDesktopSessionId | null;
   iterm2SessionId: string | null;
+  // Raw CLAUDE_CONFIG_DIR path captured on SessionStart (schema V4), never a foreign key to an
+  // EyesOnAgentsClaudeEnvironment id — environment-label resolution happens at snapshot-read time.
+  claudeConfigDir: string | null;
   canCopySessionPath: boolean;
   domainId: number;
   title: string | null;
@@ -368,6 +371,9 @@ export interface EyesOnAgentsClaudeInventoryThread {
   // Optional: an omitted or null value never clears an already-stored iTerm2 identity, matching
   // (but independent from) the desktopSessionId COALESCE-preserve rule above.
   iterm2SessionId?: string | null;
+  // Optional: an omitted or null value never clears an already-stored claudeConfigDir, independent
+  // from both the desktopSessionId and iterm2SessionId COALESCE-preserve rules.
+  claudeConfigDir?: string | null;
   transcriptPath: string | null;
   clearDesktopSessionId?: boolean;
   clearTranscriptPath?: boolean;
@@ -576,15 +582,39 @@ export interface EyesOnAgentsApi {
   refreshCodexBridgeStatus(): Promise<EyesOnAgentsSnapshot>;
   removeCodexBridge(): Promise<EyesOnAgentsSnapshot>;
   getCodexBridgeStatus(): Promise<EyesOnAgentsBridgeStatus>;
-  installClaudeBridge(): Promise<EyesOnAgentsSnapshot>;
-  refreshClaudeBridgeStatus(): Promise<EyesOnAgentsSnapshot>;
-  removeClaudeBridge(): Promise<EyesOnAgentsSnapshot>;
-  getClaudeBridgeStatus(): Promise<EyesOnAgentsClaudeBridgeStatus>;
+  // Task 086 widened these 4 pre-existing bridge methods to accept an optional { environmentId },
+  // scoping which environment's CLAUDE_CONFIG_DIR the install/refresh/remove/status CLI work runs
+  // against. Optional (task 088): an omitted environmentId resolves to environments[0], reproducing
+  // every pre-088 zero-arg renderer call site's exact behavior.
+  installClaudeBridge(params?: { environmentId?: string }): Promise<EyesOnAgentsSnapshot>;
+  refreshClaudeBridgeStatus(params?: { environmentId?: string }): Promise<EyesOnAgentsSnapshot>;
+  removeClaudeBridge(params?: { environmentId?: string }): Promise<EyesOnAgentsSnapshot>;
+  getClaudeBridgeStatus(
+    params?: { environmentId?: string }
+  ): Promise<EyesOnAgentsClaudeBridgeStatus>;
   openNewClaudeSession(): Promise<void>;
   copyClaudeReloadCommand(): Promise<void>;
   changeClaudeDirectory(): Promise<EyesOnAgentsSnapshot>;
   useAutomaticClaudeDirectory(): Promise<EyesOnAgentsSnapshot>;
-  retryClaudeDirectory(): Promise<EyesOnAgentsSnapshot>;
+  // Task 088 (gap 1): widened the same way as the 4 bridge methods above — an omitted environmentId
+  // retries environments[0], reproducing every pre-088 zero-arg call site's exact behavior; a
+  // supplied environmentId retries that one environment's watcher only.
+  retryClaudeDirectory(params?: { environmentId?: string }): Promise<EyesOnAgentsSnapshot>;
+  // Environment CRUD (task 084 registered these on EyesOnAgentsHandler; task 088 closes the gap
+  // left on this shared interface — see the multi-environment design doc's Renderer section).
+  listClaudeEnvironments(): Promise<EyesOnAgentsClaudeEnvironment[]>;
+  addClaudeEnvironment(params: { label: string }): Promise<EyesOnAgentsClaudeEnvironment[]>;
+  renameClaudeEnvironment(params: {
+    id: string;
+    label: string;
+  }): Promise<EyesOnAgentsClaudeEnvironment[]>;
+  removeClaudeEnvironment(params: { id: string }): Promise<EyesOnAgentsClaudeEnvironment[]>;
+  setClaudeEnvironmentEnabled(params: {
+    id: string;
+    enabled: boolean;
+  }): Promise<EyesOnAgentsClaudeEnvironment[]>;
+  chooseClaudeEnvironmentDirectory(params: { id: string }): Promise<EyesOnAgentsClaudeEnvironment[]>;
+  useAutomaticClaudeEnvironment(params: { id: string }): Promise<EyesOnAgentsClaudeEnvironment[]>;
   setClaudeProviderEnabled(params: {
     enabled: boolean;
   }): Promise<EyesOnAgentsSnapshot>;

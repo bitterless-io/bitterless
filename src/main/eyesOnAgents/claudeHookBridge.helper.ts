@@ -3,7 +3,7 @@ import { lstatSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Readable } from 'node:stream';
 import {
-  createClaudeHookEventV3,
+  createClaudeHookEventV4,
   parseClaudeHookHelperArgs,
   toMetadataOnlyClaudeHookDelivery
 } from '@shared/eyesOnAgents/claudeHookBridge.contract';
@@ -104,7 +104,7 @@ export const runClaudeHookHelper = async (
     } catch {
       captureUserPrompt = false;
     }
-    const event = createClaudeHookEventV3({
+    const event = createClaudeHookEventV4({
       rawInput,
       eventId: deliveryId,
       occurredAt: (dependencies.now ?? Date.now)(),

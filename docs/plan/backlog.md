@@ -2,6 +2,17 @@
 
 Non-blocking review findings are recorded here after task verification.
 
+- **Unrelated to any EyesOnAgents/iTerm2/multi-environment task in this log:** merge commit
+  `34ba84a` (2026-09-02, merging in unrelated upstream work) removed `app.main.ts`'s
+  `electronApp.setAppUserModelId(...)` bundle-id call without updating
+  `scripts/eyes-on-agents/ui-source.test.mjs`'s regex assertion that still expects it, breaking
+  `yarn test:eyes-on-agents:ui` (`ERR_ASSERTION` on a `match` operator). Confirmed via `git log`/`git
+  show` that this predates and is unrelated to every eyes-on-agents-iterm2-*/claude-multi-env-* task
+  — commit 93fc548 (the last of those tasks before the merge) still had the removed code, and no
+  task in this log ever touched `app.main.ts` or `ui-source.test.mjs`. Needs a fix on whichever side
+  owns that app-bootstrap refactor: either restore the bundle-id call or update the test's
+  expectation to match the new startup shape.
+
 - Localize the migrated Maestro renderer's existing English-only product copy after runtime parity is
   accepted. The Bitterless Mini App card is bilingual in the parity delivery.
 - Design an explicit, offline migration tool for a closed standalone Cowork profile if preserving
@@ -51,6 +62,30 @@ Non-blocking review findings are recorded here after task verification.
   `getClaudeInventoryBridgeEndpoint` produces two distinct socket/named-pipe paths for them — the
   fix is verified correct by diff/grep inspection, but only exercised indirectly through mocked
   watchers. Add a direct two-id endpoint-distinctness test if this function is touched again.
+- Task 086 review: a stray blank-line insertion in `src/main/xpc/eyesOnAgents.handler.ts` with no
+  functional effect. Cosmetic; fold into the next touch of that file.
+- Task 086 review: `claude-environment-plugin-install.test.mjs` never directly exercises the
+  `plugin enable` CLI branch (source-level correctness was confirmed independently via a call-site
+  scan showing all 16 `this.command()` sites thread `configDirectory`, but no test pins the enable
+  branch specifically). Add direct coverage if this area is touched again.
+- **Pre-existing, unrelated to any EyesOnAgents/iTerm2/multi-environment task in this log:**
+  `scripts/eyes-on-agents/thread-card-open-capability.test.mjs`'s test "right-click opens the shared
+  pointer menu and Archive remains Codex-only" intermittently fails on `assert.ok(dropdown,
+  'right-click opens the pointer-aligned shared menu')` (`dropdown` is falsy — `activeContextDropdown()`
+  finds no open pointer-aligned menu after the test dispatches a synthetic `contextmenu` `MouseEvent`
+  on the thread card). Confirmed pre-existing and unrelated to task 088 (EyesOnAgents Claude
+  Multi-Environment Renderer) by reproducing the same failure against a clean
+  `git worktree add --detach HEAD` checkout of commit `ebd82eb`, i.e. before any of task 088's changes
+  existed. **This is flaky, not deterministic:** 10 standalone `node --test` runs of this one file
+  against the clean `ebd82eb` worktree failed 6/10 times (and 7/10 on the task-088 working tree,
+  changes unrelated to this file's own logic) — a timing-sensitive race in the real-DOM
+  mount/right-click harness, most likely between the synthetic `contextmenu` dispatch and whatever
+  microtask/animation-frame timing `activeContextDropdown()`'s underlying Arco trigger popup needs
+  to open. `yarn test:eyes-on-agents:ui` therefore intermittently shows 2 pre-existing failures (this
+  one and the `ui-source.test.mjs` bundle-id entry above, the latter deterministic) — a run showing
+  only the bundle-id failure is not evidence this one was fixed. Needs investigation into the
+  underlying timing race, not just a retry/flake-quarantine.
+
 - Pre-existing, unrelated to the iTerm2 Open feature: `yarn check:renderer-i18n` crashes on
   `assert(trayCreateIndex > homeCreateIndex, 'Tray must follow Home creation')`
   (`scripts/renderer-i18n/check-renderer-i18n.mjs:172`) because commit `c67ac21` changed

@@ -532,3 +532,8 @@ export const ensureEyesOnAgentsIterm2SessionSchema = (db: MigrationDatabase): vo
   if (!tableExists(db, 'eyes_on_agents_thread')) return;
   addColumnIfMissing(db, 'eyes_on_agents_thread', 'iterm2_session_id', 'TEXT');
 };
+
+export const ensureEyesOnAgentsClaudeConfigDirSchema = (db: MigrationDatabase): void => {
+  if (!tableExists(db, 'eyes_on_agents_thread')) return;
+  addColumnIfMissing(db, 'eyes_on_agents_thread', 'claude_config_dir', 'TEXT');
+};

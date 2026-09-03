@@ -186,8 +186,17 @@ const cardAriaLabel = computed(() => [
   promptAriaLabel.value,
   showUnreadDot.value ? i18nHelper.eyesOnAgents.thread.new : '',
 ].filter(Boolean).join(', '));
-const folderLabel = computed(() => i18nHelper.eyesOnAgents.thread.workingDirectory
-  .replace('{path}', props.thread.cwd ?? ''));
+// Task 088: resolved at read time against the current environments list (never a persisted foreign
+// key) — see eyesOnAgentsStore.resolveClaudeEnvironmentLabel. null for every non-Claude row, for a
+// Claude row with no claudeConfigDir, or when no currently configured environment matches.
+const environmentLabel = computed(() =>
+  eyesOnAgentsStore.resolveClaudeEnvironmentLabel(props.thread.claudeConfigDir));
+const folderLabel = computed(() => environmentLabel.value
+  ? i18nHelper.eyesOnAgents.thread.workingDirectoryWithEnvironment
+    .replace('{label}', environmentLabel.value)
+    .replace('{path}', props.thread.cwd ?? '')
+  : i18nHelper.eyesOnAgents.thread.workingDirectory
+    .replace('{path}', props.thread.cwd ?? ''));
 const activityLabel = computed(() => {
   const value = props.thread.lastActivityAt ?? props.thread.lastCompletedAt;
   if (!value) return i18nHelper.eyesOnAgents.thread.unknown;

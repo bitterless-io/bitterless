@@ -758,6 +758,27 @@ export const zh: typeof en = {
       useAutomatic: '恢复自动发现',
       retry: '重试'
     },
+    claudeEnvironment: {
+      title: 'Claude 环境',
+      guidance:
+        '每个环境都需要单独安装 Hook。将 Bitterless 指向该环境的 CLAUDE_CONFIG_DIR 后点击安装——'
+        + '并确保该环境使用的 shell 命令（例如 claude2 包装脚本）在调用 claude 之前设置了 '
+        + 'CLAUDE_CONFIG_DIR。',
+      addEnvironment: '添加环境',
+      addLabelPlaceholder: '名称（例如 claude2）',
+      add: '添加',
+      notConfigured: '未配置',
+      rename: '重命名',
+      renameLabelPlaceholder: '名称',
+      save: '保存',
+      cancel: '取消',
+      changeDirectory: '更改目录',
+      useAutomatic: '恢复自动发现',
+      enable: '启用',
+      disable: '停用',
+      remove: '移除',
+      removeLastHint: '无法移除最后一个环境'
+    },
     actions: {
       sync: '同步',
       refresh: '刷新',
@@ -799,6 +820,7 @@ export const zh: typeof en = {
       untitledClaude: '未命名 Claude 任务',
       new: '未读',
       workingDirectory: '工作目录：{path}',
+      workingDirectoryWithEnvironment: '{label} · 工作目录：{path}',
       source: '证据：{source}',
       appServer: 'App Server',
       codexHook: 'Desktop Bridge',
