@@ -2,6 +2,17 @@
 
 Non-blocking review findings are recorded here after task verification.
 
+- **Unrelated to any EyesOnAgents/iTerm2/multi-environment task in this log:** merge commit
+  `34ba84a` (2026-09-02, merging in unrelated upstream work) removed `app.main.ts`'s
+  `electronApp.setAppUserModelId(...)` bundle-id call without updating
+  `scripts/eyes-on-agents/ui-source.test.mjs`'s regex assertion that still expects it, breaking
+  `yarn test:eyes-on-agents:ui` (`ERR_ASSERTION` on a `match` operator). Confirmed via `git log`/`git
+  show` that this predates and is unrelated to every eyes-on-agents-iterm2-*/claude-multi-env-* task
+  — commit 93fc548 (the last of those tasks before the merge) still had the removed code, and no
+  task in this log ever touched `app.main.ts` or `ui-source.test.mjs`. Needs a fix on whichever side
+  owns that app-bootstrap refactor: either restore the bundle-id call or update the test's
+  expectation to match the new startup shape.
+
 - Localize the migrated Maestro renderer's existing English-only product copy after runtime parity is
   accepted. The Bitterless Mini App card is bilingual in the parity delivery.
 - Design an explicit, offline migration tool for a closed standalone Cowork profile if preserving
