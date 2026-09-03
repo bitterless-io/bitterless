@@ -291,7 +291,7 @@
     "rigs/*",
     "rig_dev/*"
   ],
-  "name": "Bitterless_DEBUG_DEV",
+  "name": "Bitterless_DEBUG_PROD",
   "version": "0.0.90",
   "version_code": "260903122011"
 }

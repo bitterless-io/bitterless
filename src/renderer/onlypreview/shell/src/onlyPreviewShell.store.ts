@@ -553,9 +553,6 @@ export class OnlyPreviewShellStore {
       }
     }
   }
-
-  // Reported so the preview pane stops animating: a build that fails before an index exists emits
-  // no snapshot, so Main cannot see its end.
   private failIndex(hostToken: string, workspaceId: string, error: unknown): void {
     this.indexLoading = false;
     this.errorMessage = errorMessage(error);
