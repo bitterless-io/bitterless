@@ -7,7 +7,10 @@ import type {
   OnlyPreviewAlertErrorRequest,
   OnlyPreviewAlertNewFolderRequest
 } from '@shared/onlypreview/onlyPreviewAlert.types';
-import { onlyPreviewAlertViewService } from './onlyPreviewAlertView.service';
+import {
+  onlyPreviewAlertViewService,
+  type OnlyPreviewAlertCommitOutcome
+} from './onlyPreviewAlertView.service';
 import { onlyPreviewViewLayerService } from './onlyPreviewViewLayer.service';
 
 interface AlertWindowRuntime {
@@ -50,11 +53,12 @@ export class OnlyPreviewAlertWindowService {
     onlyPreviewAlertViewService.updateBounds(hostToken, bounds);
   }
 
-  async requestNewFolderName(
+  async requestNewFolder(
     hostToken: string,
-    request: OnlyPreviewAlertNewFolderRequest
-  ): Promise<string | null> {
-    return await onlyPreviewAlertViewService.requestNewFolder(hostToken, request);
+    request: OnlyPreviewAlertNewFolderRequest,
+    commit: (name: string) => Promise<OnlyPreviewAlertCommitOutcome>
+  ): Promise<boolean> {
+    return await onlyPreviewAlertViewService.requestNewFolder(hostToken, request, commit);
   }
 
   async requestConfirm(

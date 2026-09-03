@@ -16,10 +16,12 @@ export class OnlyPreviewAlertXpcService {
     return onlyPreviewAlertViewService.snapshot(host.hostToken);
   }
 
-  resolve(value: unknown): void {
+  async resolve(value: unknown): Promise<void> {
     const resolution = parseOnlyPreviewAlertResolution(value);
     const host = onlyPreviewHostRegistry.require(resolution.hostToken, ['content']);
-    onlyPreviewAlertViewService.resolve(host.hostToken, resolution);
+    // Awaited on purpose: the renderer's call stays open across the commit, which is what keeps the
+    // dialog's buttons disabled for exactly as long as the work runs.
+    await onlyPreviewAlertViewService.resolve(host.hostToken, resolution);
   }
 }
 

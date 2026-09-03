@@ -30,9 +30,17 @@ export interface OnlyPreviewAlertViewRuntime {
   focusedContents: () => WebContents | null;
 }
 
+// `error: null` is a failure with nothing the owner can act on — it closes the dialog instead of
+// stacking a message. A populated `error` keeps the dialog open underneath it.
+export type OnlyPreviewAlertCommitOutcome =
+  | { ok: true }
+  | { ok: false; error: OnlyPreviewAlertErrorRequest | null };
+
 interface PendingDialog {
   dialogId: string;
-  resolve: (resolution: { outcome: 'confirm' | 'cancel'; value: string }) => void;
+  // Only the dialogs that write something have one. A confirmation settles on the owner's answer.
+  commit?: (value: string) => Promise<OnlyPreviewAlertCommitOutcome>;
+  settle: (confirmed: boolean) => void;
 }
 
 interface PendingError {
@@ -120,7 +128,19 @@ export class OnlyPreviewAlertViewService {
     };
   }
 
-  requestNewFolder(hostToken: string, request: OnlyPreviewAlertNewFolderRequest): Promise<string | null> {
+  /**
+   * Collect a folder name, and keep the dialog open until the commit succeeds.
+   *
+   * `commit` is what makes the conflict message usable: on a rejected name the dialog stays on
+   * screen with the typed name still in it and the error stacks above, so the next keystroke edits
+   * the name instead of retyping it. Resolving the promise on the first Enter — and only then
+   * creating — would close the dialog before the collision is known.
+   */
+  requestNewFolder(
+    hostToken: string,
+    request: OnlyPreviewAlertNewFolderRequest,
+    commit: (name: string) => Promise<OnlyPreviewAlertCommitOutcome>
+  ): Promise<boolean> {
     this.requireRuntime(hostToken);
     this.requireFreeDialogSlot();
     const dialog: OnlyPreviewAlertDialog = {
@@ -140,11 +160,8 @@ export class OnlyPreviewAlertViewService {
       confirmLabel: boundOnlyPreviewAlertLabel(request.confirmLabel, 'Alert confirm label'),
       cancelLabel: boundOnlyPreviewAlertLabel(request.cancelLabel, 'Alert cancel label')
     };
-    return new Promise<string | null>((resolve) => {
-      this.pendingDialog = {
-        dialogId: dialog.dialogId,
-        resolve: ({ outcome, value }) => resolve(outcome === 'confirm' ? value : null)
-      };
+    return new Promise<boolean>((settle) => {
+      this.pendingDialog = { dialogId: dialog.dialogId, commit, settle };
       this.openDialog(dialog);
     });
   }
@@ -169,11 +186,8 @@ export class OnlyPreviewAlertViewService {
       confirmHint: boundOnlyPreviewAlertOptionalLabel(request.confirmHint, 'Alert confirm hint'),
       destructive: request.destructive === true
     };
-    return new Promise<boolean>((resolve) => {
-      this.pendingDialog = {
-        dialogId: dialog.dialogId,
-        resolve: ({ outcome }) => resolve(outcome === 'confirm')
-      };
+    return new Promise<boolean>((settle) => {
+      this.pendingDialog = { dialogId: dialog.dialogId, settle };
       this.openDialog(dialog);
     });
   }
@@ -206,34 +220,76 @@ export class OnlyPreviewAlertViewService {
     });
   }
 
-  resolve(hostToken: string, resolution: OnlyPreviewAlertResolution): void {
+  async resolve(hostToken: string, resolution: OnlyPreviewAlertResolution): Promise<void> {
     this.requireRuntime(hostToken);
-    if (this.pendingError?.dialogId === resolution.dialogId) {
-      const pending = this.pendingError;
-      this.pendingError = null;
+    // Matched against the visible error, not against a pending promise: an error raised by a failed
+    // commit has no caller waiting on it, and it still has to be dismissible.
+    if (this.error?.dialogId === resolution.dialogId) {
+      const pending =
+        this.pendingError?.dialogId === resolution.dialogId ? this.pendingError : null;
+      if (pending) this.pendingError = null;
       this.error = null;
       this.publish();
       this.present();
-      pending.resolve();
+      pending?.resolve();
       return;
     }
-    if (this.pendingDialog?.dialogId === resolution.dialogId) {
-      // An error stacked above the dialog owns the keyboard, so a resolution for the dialog
-      // underneath it can only be stale.
-      if (this.error) {
-        throw new OnlyPreviewContractError('INVALID_INPUT', 'An alert error is still open.');
-      }
-      const pending = this.pendingDialog;
+    if (this.pendingDialog?.dialogId !== resolution.dialogId) {
+      // A resolution for a dialog Main no longer holds is not an error state — the window may have
+      // closed under the renderer — but it must never resolve the current dialog.
+      throw new OnlyPreviewContractError('INVALID_INPUT', 'Alert dialog is unavailable.');
+    }
+    // An error stacked above the dialog owns the keyboard, so a resolution for the dialog underneath
+    // it can only be stale.
+    if (this.error) {
+      throw new OnlyPreviewContractError('INVALID_INPUT', 'An alert error is still open.');
+    }
+    const pending = this.pendingDialog;
+    if (resolution.outcome === 'cancel' || !pending.commit) {
       this.pendingDialog = null;
       this.dialog = null;
       this.publish();
       this.present();
-      pending.resolve({ outcome: resolution.outcome, value: resolution.value });
+      pending.settle(resolution.outcome === 'confirm');
       return;
     }
-    // A resolution for a dialog Main no longer holds is not an error state — the window may have
-    // closed under the renderer — but it must never resolve the current dialog.
-    throw new OnlyPreviewContractError('INVALID_INPUT', 'Alert dialog is unavailable.');
+    // The renderer's call stays open across the commit, which is what keeps both of its buttons
+    // disabled while the work runs — the dialog cannot be answered twice.
+    const outcome = await pending.commit(resolution.value).catch(
+      (): OnlyPreviewAlertCommitOutcome => ({
+        ok: false,
+        error: null
+      })
+    );
+    if (this.pendingDialog !== pending) return;
+    if (outcome.ok) {
+      this.pendingDialog = null;
+      this.dialog = null;
+      this.publish();
+      this.present();
+      pending.settle(true);
+      return;
+    }
+    if (!outcome.error) {
+      // A failure with nothing to say still has to end the dialog rather than trap the owner in it.
+      this.pendingDialog = null;
+      this.dialog = null;
+      this.publish();
+      this.present();
+      pending.settle(false);
+      return;
+    }
+    this.error = {
+      kind: 'error',
+      dialogId: randomUUID(),
+      title: boundOnlyPreviewAlertLabel(outcome.error.title, 'Alert title'),
+      message: boundOnlyPreviewAlertText(outcome.error.message, 'Alert message'),
+      confirmLabel: boundOnlyPreviewAlertLabel(outcome.error.confirmLabel, 'Alert confirm label')
+    };
+    // No pending error promise: this error belongs to the dialog underneath it, so dismissing it
+    // returns to that dialog instead of resolving a caller.
+    this.publish();
+    this.present();
   }
 
   destroy(): void {
@@ -386,7 +442,7 @@ export class OnlyPreviewAlertViewService {
     const error = this.pendingError;
     this.pendingDialog = null;
     this.pendingError = null;
-    if (dialog) dialog.resolve({ outcome: 'cancel', value: '' });
+    if (dialog) dialog.settle(false);
     if (error) error.resolve();
   }
 

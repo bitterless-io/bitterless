@@ -18,10 +18,10 @@ import { onlyPreviewLogService } from '@main/onlypreview/onlyPreviewLog.runtime'
 // framework's own way to add a surface. `OnlyPreviewSearchRuntimeHandler` is the existing precedent.
 const runAlertOperation = async <T>(
   operation: 'getAlertSnapshot' | 'resolveAlert',
-  run: () => T
+  run: () => T | Promise<T>
 ): Promise<OnlyPreviewResult<T>> => {
   try {
-    return onlyPreviewSuccess(run());
+    return onlyPreviewSuccess(await run());
   } catch (error) {
     const payload = toOnlyPreviewErrorPayload(error);
     onlyPreviewLogService.writeOperationFailure({ operation, code: payload.code, error });
@@ -39,8 +39,8 @@ export class OnlyPreviewAlertHandler extends XpcMainHandler implements OnlyPrevi
   }
 
   async resolveAlert(params: OnlyPreviewAlertResolution): Promise<OnlyPreviewResult<void>> {
-    return await runAlertOperation('resolveAlert', () => {
-      onlyPreviewAlertXpcService.resolve(params);
+    return await runAlertOperation('resolveAlert', async () => {
+      await onlyPreviewAlertXpcService.resolve(params);
     });
   }
 }
