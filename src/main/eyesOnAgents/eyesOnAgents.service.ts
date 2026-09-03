@@ -3084,15 +3084,25 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
           payload.transcriptPath,
           payload.sessionId
         );
-        const iterm2SessionId = delivery.event.schemaVersion === 3 &&
+        const iterm2SessionId = (delivery.event.schemaVersion === 3 ||
+          delivery.event.schemaVersion === 4) &&
           delivery.event.payload.terminalApp === 'iterm2'
           ? delivery.event.payload.terminalSessionId
           : null;
+        const claudeConfigDir = delivery.event.schemaVersion === 4
+          ? delivery.event.payload.claudeConfigDir ?? null
+          : null;
+        if (payload.hookEventName === 'SessionStart') {
+          console.info(
+            `[claude-hook] event=SessionStart environmentAttribution=${claudeConfigDir !== null}`
+          );
+        }
         await this.dependencies.repository.upsertClaudeInventory({
           threads: [{
             threadId: payload.sessionId,
             desktopSessionId: null,
             iterm2SessionId,
+            claudeConfigDir,
             transcriptPath,
             title: null,
             cwd: payload.cwd,
