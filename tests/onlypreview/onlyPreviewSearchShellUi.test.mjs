@@ -58,8 +58,16 @@ test('Project tree keeps row ARIA ownership while its directory arrow toggles on
     /name="onlypreview__treeChevron"[\s\S]*@click\.stop="onlyPreviewShellStore\.handleTreeClick\(row\.entry, \$event\.detail, true\)"[\s\S]*@dblclick\.prevent\.stop/
   );
   assert.doesNotMatch(chevron, /<button|tabindex=|role=/);
-  assert.match(row, /@click="onlyPreviewShellStore\.handleTreeClick/);
-  assert.match(row, /@dblclick\.prevent="onlyPreviewShellStore\.handleTreeDoubleClick/);
+  // The row delegates through a local wrapper so the row being renamed stays inert: a click there
+  // blurs the input and commits, and re-activating on top of that would re-preview a path that is
+  // about to change. The chevron keeps calling the store directly — it only toggles.
+  assert.match(row, /@click="handleTreeRowClick\(row\.entry, \$event\.detail\)"/);
+  assert.match(row, /@dblclick\.prevent="handleTreeRowDoubleClick\(row\.entry\)"/);
+  assert.match(app, /const handleTreeRowClick[\s\S]*if \(isEditing\(entry\.relativePath\)\) return;/);
+  assert.match(
+    app,
+    /const handleTreeRowDoubleClick[\s\S]*if \(isEditing\(entry\.relativePath\)\) return;/
+  );
   assert.match(
     store,
     /handleTreeClick\(entry:[\s\S]*toggleDirectory = false[\s\S]*clickCount > 1[\s\S]*activateEntry\(entry, clickCount === 0 \|\| toggleDirectory, toggleDirectory\)/

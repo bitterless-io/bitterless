@@ -146,18 +146,10 @@ const rendererStoreHarnessPlugin = {
           loader: 'js',
           contents: `
               const harness = () => globalThis.__onlyPreviewRendererStoreHarness;
-              export class OnlyPreviewImageSession {
-                constructor() {
-                  harness().imageSessions.push(this);
-                }
-                async load(assetUrl, expectedSize, mimeType) {
-                  harness().imageLoads.push({ assetUrl, expectedSize, mimeType });
-                  return harness().imageContent;
-                }
-                dispose() {
-                  harness().imageDisposals += 1;
-                }
-              }
+              export const createOnlyPreviewImageRender = (assetUrl, expectedSize, mimeType) => {
+                harness().imageLoads.push({ assetUrl, expectedSize, mimeType });
+                return { src: assetUrl };
+              };
             `
         };
       }
@@ -361,14 +353,7 @@ export const createRendererStoreHarness = (presentation) => ({
   officeClears: 0,
   officeDisposals: 0,
   drawioContent: null,
-  imageSessions: [],
   imageLoads: [],
-  imageDisposals: 0,
-  imageContent: {
-    objectUrl: 'blob:onlypreview-rendering-test',
-    naturalWidth: 10,
-    naturalHeight: 10
-  },
   mediaSessions: [],
   mediaPrepares: [],
   mediaDisposals: 0

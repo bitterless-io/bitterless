@@ -113,6 +113,8 @@ export type OnlyPreviewErrorCode =
   | 'PATH_PERMISSION_DENIED'
   | 'PATH_OUTSIDE_WORKSPACE'
   | 'PATH_NOT_REGULAR_FILE'
+  | 'NAME_INVALID'
+  | 'NAME_EXISTS'
   | 'PATH_UNSUPPORTED_DEVICE'
   | 'TEXT_TOO_LARGE'
   | 'SIGNATURE_MISMATCH'
@@ -186,6 +188,21 @@ export interface OnlyPreviewProjectItemCopyRequest
 
 export interface OnlyPreviewProjectRootRequest extends OnlyPreviewHostRequest {
   workspaceId: string;
+}
+
+export interface OnlyPreviewCreateProjectFolderRequest extends OnlyPreviewProjectRootRequest {
+  parentRelativePath: string;
+}
+
+export interface OnlyPreviewRenameProjectItemRequest
+  extends OnlyPreviewHostRequest, OnlyPreviewFileRef {
+  name: string;
+}
+
+export interface OnlyPreviewProjectEntry {
+  relativePath: string;
+  name: string;
+  nodeKind: 'file' | 'directory';
 }
 
 export interface OnlyPreviewProjectRootCopyRequest extends OnlyPreviewProjectRootRequest {
@@ -384,6 +401,10 @@ export interface OnlyPreviewPreviewPresentation extends OnlyPreviewHostEvent {
   descriptor: OnlyPreviewDescriptor | null;
   error: OnlyPreviewErrorPayload | null;
   selectedTextAvailable: boolean;
+  // Derived by Main at snapshot time, never stored on the presentation: the Project's index state
+  // outlives the selection, and every path that binds a Project clears the presentation right after
+  // binding it, which would erase a stored value microseconds after it was set.
+  projectIndexState: OnlyPreviewProjectIndexState | null;
 }
 
 export interface OnlyPreviewPreviewRuntimeRequest extends OnlyPreviewHostRequest {
@@ -427,6 +448,13 @@ export const ONLY_PREVIEW_GLOBAL_SEARCH_VISIBILITY_EVENT =
 export const ONLY_PREVIEW_GLOBAL_SEARCH_LAYOUT_EVENT = 'onlypreview/globalSearchLayout' as const;
 export const ONLY_PREVIEW_GLOBAL_SEARCH_REVEAL_DIRECTORY_EVENT =
   'onlypreview/globalSearchRevealDirectory' as const;
+// The native context menu lives in Main, but the tree row that has to become editable lives in the
+// shell renderer, so the menu click is delivered as an intent and the renderer owns the edit.
+// Copy Path / Copy Name are window-wide shortcuts owned by Main, so they reach the shell as an
+// intent: only the shell knows which Project row is selected.
+export const ONLY_PREVIEW_COPY_PROJECT_ITEM_EVENT = 'onlypreview/copyProjectItem' as const;
+export const ONLY_PREVIEW_PROJECT_NEW_FOLDER_EVENT = 'onlypreview/projectNewFolder' as const;
+export const ONLY_PREVIEW_PROJECT_RENAME_EVENT = 'onlypreview/projectRename' as const;
 export const ONLY_PREVIEW_SETTINGS_CHANGED_EVENT = 'onlypreview/settingsChanged' as const;
 export const ONLY_PREVIEW_CHARACTER_COUNT_CHANGED_EVENT =
   'onlypreview/characterCountChanged' as const;
@@ -435,6 +463,25 @@ export const ONLY_PREVIEW_PREVIEW_PRESENTATION_EVENT = 'onlypreview/previewPrese
 export const ONLY_PREVIEW_FIND_STATE_EVENT = 'onlypreview/findState' as const;
 export const ONLY_PREVIEW_FIND_FOCUS_EVENT = 'onlypreview/findFocus' as const;
 export const ONLY_PREVIEW_FIND_COMMAND_EVENT = 'onlypreview/findCommand' as const;
+
+// `failed` is not a search-engine state. It is the terminal Main needs: a first build that throws
+// before an index exists emits no snapshot at all, so without it the preview pane would animate
+// "Loading project" forever while the Project rail already shows the failure.
+export type OnlyPreviewProjectIndexState = 'building' | 'reconciling' | 'ready' | 'failed';
+
+export interface OnlyPreviewCopyProjectItemEvent extends OnlyPreviewHostEvent {
+  copyKind: Extract<OnlyPreviewProjectItemCopyKind, 'absolute-path' | 'name'>;
+}
+
+export interface OnlyPreviewProjectNewFolderEvent extends OnlyPreviewHostEvent {
+  workspaceId: string;
+  parentRelativePath: string;
+}
+
+export interface OnlyPreviewProjectRenameEvent extends OnlyPreviewHostEvent {
+  workspaceId: string;
+  relativePath: string;
+}
 
 export interface OnlyPreviewFocusSearchEvent extends OnlyPreviewHostEvent {
   origin: OnlyPreviewGlobalSearchFocusOrigin;
@@ -498,7 +545,14 @@ export interface OnlyPreviewApi {
   showProjectRootContextMenu(
     params: OnlyPreviewProjectRootRequest
   ): Promise<OnlyPreviewResult<void>>;
+  reportProjectIndexFailed(params: OnlyPreviewProjectRootRequest): Promise<OnlyPreviewResult<void>>;
   copyProjectItem(params: OnlyPreviewProjectItemCopyRequest): Promise<OnlyPreviewResult<void>>;
+  createProjectFolder(
+    params: OnlyPreviewCreateProjectFolderRequest
+  ): Promise<OnlyPreviewResult<OnlyPreviewProjectEntry>>;
+  renameProjectItem(
+    params: OnlyPreviewRenameProjectItemRequest
+  ): Promise<OnlyPreviewResult<OnlyPreviewProjectEntry>>;
   copyProjectRoot(params: OnlyPreviewProjectRootCopyRequest): Promise<OnlyPreviewResult<void>>;
   openExternally(
     params: OnlyPreviewHostRequest & OnlyPreviewFileRef

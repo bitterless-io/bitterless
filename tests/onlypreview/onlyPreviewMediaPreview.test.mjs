@@ -142,31 +142,10 @@ const mediaSession = await import(pathToFileURL(join(buildRoot, 'mediaSession.mj
 
 after(() => rmSync(buildRoot, { recursive: true, force: true }));
 
-const deferred = () => {
-  let resolvePromise;
-  let rejectPromise;
-  const promise = new Promise((resolve, reject) => {
-    resolvePromise = resolve;
-    rejectPromise = reject;
-  });
-  return { promise, resolve: resolvePromise, reject: rejectPromise };
-};
-
-const tick = () => new Promise((resolveTick) => setImmediate(resolveTick));
-
 const assertCode = (code) => (error) => {
   assert.equal(error?.code, code);
   return true;
 };
-
-const imageResponse = (bytes, overrides = {}) =>
-  new Response(bytes, {
-    status: overrides.status ?? 200,
-    headers: {
-      'Content-Length': String(overrides.contentLength ?? bytes.byteLength),
-      'Content-Type': 'image/png'
-    }
-  });
 
 const mediaResponse = (size, overrides = {}) =>
   new Response(null, {
@@ -177,178 +156,34 @@ const mediaResponse = (size, overrides = {}) =>
     }
   });
 
-test('image session verifies the complete body, decodes off-DOM, and revokes each URL once', async () => {
-  const bytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47]);
-  const revoked = [];
-  const createdBlobs = [];
-  const fetchCalls = [];
-  const removedSources = [];
-  const session = new imageSession.OnlyPreviewImageSession({
-    fetchImpl: async (url, init) => {
-      fetchCalls.push({ init, url });
-      return imageResponse(bytes);
-    },
-    createImage: () => ({
-      decoding: 'auto',
-      src: '',
-      naturalWidth: 640,
-      naturalHeight: 480,
-      decode: async () => undefined,
-      removeAttribute: (name) => removedSources.push(name)
-    }),
-    createObjectUrl: (blob) => {
-      createdBlobs.push(blob);
-      return 'blob:onlypreview-image-1';
-    },
-    revokeObjectUrl: (url) => revoked.push(url)
-  });
-
-  const render = await session.load(
-    'bitterless-preview://asset/image.png',
-    bytes.length,
+test('an image render carries the asset URL itself and copies no bytes', () => {
+  // The element is the loader: the store hands the component the revision-bound asset URL and
+  // nothing else. Nothing here fetches, buffers, or creates an object URL, so there is no CORS
+  // check in front of an image and no second copy of the file in the renderer heap.
+  const render = imageSession.createOnlyPreviewImageRender(
+    'bitterless-preview://asset/token/image.png',
+    281_000,
     'image/png'
   );
-  assert.deepEqual(render, {
-    objectUrl: 'blob:onlypreview-image-1',
-    naturalWidth: 640,
-    naturalHeight: 480
-  });
-  assert.equal(fetchCalls[0].init.signal.aborted, false);
-  assert.equal(createdBlobs[0].size, bytes.length);
-  assert.equal(createdBlobs[0].type, 'image/png');
-  assert.deepEqual(removedSources, ['src']);
-  assert.deepEqual(revoked, []);
-  session.dispose();
-  session.dispose();
-  assert.deepEqual(revoked, ['blob:onlypreview-image-1']);
+  assert.deepEqual(render, { src: 'bitterless-preview://asset/token/image.png' });
 });
 
-test('image session separates empty/read/decode failures and cleans decoder-construction errors', async () => {
-  const bytes = Uint8Array.from([1, 2, 3, 4]);
-  let fetchCount = 0;
-  const empty = new imageSession.OnlyPreviewImageSession({
-    fetchImpl: async () => {
-      fetchCount += 1;
-      return imageResponse(bytes);
-    }
-  });
-  await assert.rejects(empty.load('asset', 0, 'image/png'), assertCode('IMAGE_EMPTY'));
-  assert.equal(fetchCount, 0);
-
-  for (const fetchImpl of [
-    async () => imageResponse(bytes, { status: 404 }),
-    async () => imageResponse(bytes, { contentLength: bytes.length + 1 }),
-    async () => ({
-      ok: true,
-      status: 200,
-      headers: new Headers({ 'Content-Length': String(bytes.length) }),
-      blob: async () => {
-        throw new Error('body failed');
-      }
-    }),
-    async () => ({
-      ok: true,
-      status: 200,
-      headers: new Headers({ 'Content-Length': String(bytes.length) }),
-      blob: async () => new Blob([])
-    })
+test('an image render still refuses invalid input and an empty file', () => {
+  for (const [url, size, mime] of [
+    ['', 4, 'image/png'],
+    ['asset', -1, 'image/png'],
+    ['asset', 1.5, 'image/png'],
+    ['asset', 4, 'text/plain']
   ]) {
-    const session = new imageSession.OnlyPreviewImageSession({ fetchImpl });
-    await assert.rejects(
-      session.load('asset', bytes.length, 'image/png'),
-      assertCode('IMAGE_READ_FAILED')
+    assert.throws(
+      () => imageSession.createOnlyPreviewImageRender(url, size, mime),
+      assertCode('INVALID_INPUT')
     );
-    session.dispose();
   }
-
-  for (const createImage of [
-    () => {
-      throw new Error('constructor failed');
-    },
-    () => {
-      const image = {
-        decoding: 'auto',
-        naturalWidth: 1,
-        naturalHeight: 1,
-        decode: async () => undefined,
-        removeAttribute: () => undefined
-      };
-      Object.defineProperty(image, 'src', {
-        set: () => {
-          throw new Error('source assignment failed');
-        }
-      });
-      return image;
-    },
-    () => ({
-      decoding: 'auto',
-      src: '',
-      naturalWidth: 1,
-      naturalHeight: 1,
-      decode: async () => {
-        throw new Error('decode failed');
-      },
-      removeAttribute: () => undefined
-    }),
-    () => ({
-      decoding: 'auto',
-      src: '',
-      naturalWidth: 0,
-      naturalHeight: 0,
-      decode: async () => undefined,
-      removeAttribute: () => undefined
-    })
-  ]) {
-    const revoked = [];
-    const session = new imageSession.OnlyPreviewImageSession({
-      fetchImpl: async () => imageResponse(bytes),
-      createImage,
-      createObjectUrl: () => 'blob:failed-image',
-      revokeObjectUrl: (url) => revoked.push(url)
-    });
-    await assert.rejects(
-      session.load('asset', bytes.length, 'image/png'),
-      assertCode('IMAGE_DECODE_FAILED')
-    );
-    session.dispose();
-    assert.deepEqual(revoked, ['blob:failed-image']);
-  }
-});
-
-test('image session aborts a stale revision and never revokes the replacement URL', async () => {
-  const bytes = Uint8Array.from([1, 2, 3, 4]);
-  const decodes = [deferred(), deferred()];
-  const revoked = [];
-  let imageIndex = 0;
-  let urlIndex = 0;
-  const session = new imageSession.OnlyPreviewImageSession({
-    fetchImpl: async () => imageResponse(bytes),
-    createImage: () => {
-      const decode = decodes[imageIndex++];
-      return {
-        decoding: 'auto',
-        src: '',
-        naturalWidth: 10,
-        naturalHeight: 10,
-        decode: () => decode.promise,
-        removeAttribute: () => undefined
-      };
-    },
-    createObjectUrl: () => `blob:image-${++urlIndex}`,
-    revokeObjectUrl: (url) => revoked.push(url)
-  });
-
-  const stale = session.load('asset-1', bytes.length, 'image/png');
-  await tick();
-  const current = session.load('asset-2', bytes.length, 'image/png');
-  await tick();
-  assert.deepEqual(revoked, ['blob:image-1']);
-  decodes[0].resolve();
-  await assert.rejects(stale, assertCode('IMAGE_READ_FAILED'));
-  decodes[1].resolve();
-  assert.equal((await current).objectUrl, 'blob:image-2');
-  session.dispose();
-  assert.deepEqual(revoked, ['blob:image-1', 'blob:image-2']);
+  assert.throws(
+    () => imageSession.createOnlyPreviewImageRender('asset', 0, 'image/png'),
+    assertCode('IMAGE_EMPTY')
+  );
 });
 
 test('media HEAD preflight requires exact readable range metadata and maps native errors', async () => {
@@ -401,6 +236,38 @@ test('media HEAD preflight requires exact readable range metadata and maps nativ
   ]);
 });
 
+test('media preflight accepts an absent Content-Length but still requires range support', async () => {
+  const size = 344_058;
+
+  // Same header rule as the image loader: absent means unknown, not zero.
+  const headerless = new mediaSession.OnlyPreviewMediaSession({
+    fetchImpl: async () =>
+      new Response(null, { status: 200, headers: { 'Accept-Ranges': 'bytes' } })
+  });
+  await headerless.prepare('onlypreview://asset/token', size);
+  headerless.dispose();
+
+  // A present but wrong length still fails.
+  const mismatched = new mediaSession.OnlyPreviewMediaSession({
+    fetchImpl: async () => mediaResponse(size, { contentLength: size + 1 })
+  });
+  await assert.rejects(
+    mismatched.prepare('onlypreview://asset/token', size),
+    assertCode('MEDIA_READ_FAILED')
+  );
+  mismatched.dispose();
+
+  // Range support stays required: seeking depends on it.
+  const noRanges = new mediaSession.OnlyPreviewMediaSession({
+    fetchImpl: async () => mediaResponse(size, { acceptRanges: false })
+  });
+  await assert.rejects(
+    noRanges.prepare('onlypreview://asset/token', size),
+    assertCode('MEDIA_READ_FAILED')
+  );
+  noRanges.dispose();
+});
+
 test('ImagePreview mounts only decoded content and enforces accessible fit, zoom, pan, and stale fences', async () => {
   const environment = installMediaPreviewDom();
   try {
@@ -411,11 +278,7 @@ test('ImagePreview mounts only decoded content and enforces accessible fit, zoom
     const root = environment.dom.window.document.createElement('div');
     environment.dom.window.document.body.append(root);
     const app = runtime.createApp(runtime.default, {
-      content: {
-        objectUrl: 'https://onlypreview.invalid/image.png',
-        naturalWidth: 1_000,
-        naturalHeight: 500
-      },
+      content: { src: 'https://onlypreview.invalid/image.png' },
       alt: 'Fixture image',
       reportingRevision: '41'
     });
@@ -428,7 +291,17 @@ test('ImagePreview mounts only decoded content and enforces accessible fit, zoom
     assert.ok(image);
     assert.equal(image.getAttribute('draggable'), 'false');
     assert.equal(image.getAttribute('alt'), 'Fixture image');
+    assert.equal(image.getAttribute('src'), 'https://onlypreview.invalid/image.png');
     assert.deepEqual(globalThis.__onlyPreviewMediaComponentHarness.ready, []);
+
+    // The intrinsic size only exists once the element has loaded, so nothing is measurable and
+    // nothing is reported ready before this point.
+    Object.defineProperty(image, 'naturalWidth', { configurable: true, value: 1_000 });
+    Object.defineProperty(image, 'naturalHeight', { configurable: true, value: 500 });
+    image.dispatchEvent(new environment.dom.window.Event('load'));
+    await runtime.nextTick();
+    await runtime.nextTick();
+    assert.deepEqual(globalThis.__onlyPreviewMediaComponentHarness.ready, [['41']]);
 
     FakeResizeObserver.instances.at(-1).emit(400, 300);
     await runtime.nextTick();
@@ -501,8 +374,11 @@ test('ImagePreview mounts only decoded content and enforces accessible fit, zoom
     assert.match(origin.style.transform, /translate\(0px, 100px\)/);
     image.dispatchEvent(new environment.dom.window.Event('load'));
     await runtime.nextTick();
-    await runtime.nextTick();
-    assert.deepEqual(globalThis.__onlyPreviewMediaComponentHarness.ready, [['41']]);
+    assert.deepEqual(
+      globalThis.__onlyPreviewMediaComponentHarness.ready,
+      [['41']],
+      'a repeated load must not report ready twice'
+    );
 
     app.unmount();
     image.dispatchEvent(new environment.dom.window.Event('error'));
@@ -513,11 +389,7 @@ test('ImagePreview mounts only decoded content and enforces accessible fit, zoom
     const failedRoot = environment.dom.window.document.createElement('div');
     environment.dom.window.document.body.append(failedRoot);
     const failedApp = runtime.createApp(runtime.default, {
-      content: {
-        objectUrl: 'https://onlypreview.invalid/broken.png',
-        naturalWidth: 10,
-        naturalHeight: 10
-      },
+      content: { src: 'https://onlypreview.invalid/broken.png' },
       alt: 'Broken fixture',
       reportingRevision: '42'
     });
@@ -529,8 +401,9 @@ test('ImagePreview mounts only decoded content and enforces accessible fit, zoom
     await runtime.nextTick();
     await runtime.nextTick();
     assert.equal(failedRoot.querySelector('[name="onlypreview__imageContent"]'), null);
+    // The element owns the request, so its `error` is a read failure, not a decode failure.
     assert.deepEqual(globalThis.__onlyPreviewMediaComponentHarness.errors, [
-      ['42', 'IMAGE_DECODE_FAILED']
+      ['42', 'IMAGE_READ_FAILED']
     ]);
     failedApp.unmount();
   } finally {

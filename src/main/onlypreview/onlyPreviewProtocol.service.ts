@@ -1,5 +1,6 @@
 import { protocol, type Session } from 'electron';
 import { ONLY_PREVIEW_SCHEME } from '@shared/onlypreview/onlyPreview.types';
+import { sanitizeErrorCauseChain } from '@shared/diagnostics/diagnostic.service';
 import { onlyPreviewAssetRegistry } from './onlyPreviewAsset.registry';
 import { onlyPreviewDocumentRegistry } from './onlyPreviewDocument.registry';
 
@@ -56,6 +57,23 @@ export const installOnlyPreviewProtocol = (): void => {
   handlerInstalled = true;
 };
 
+// A rejection raised here becomes a bare network error in the renderer, where it is reported as a
+// generic read failure with no cause. Naming it on this side is the only place the real reason —
+// a cancelled read, a changed source length, a revoked capability — still exists.
+const respondWithNamedFailure = async (
+  hostname: string,
+  respond: () => Promise<Response>
+): Promise<Response> => {
+  try {
+    return await respond();
+  } catch (error) {
+    console.warn(
+      `[onlypreview] event=protocol-failed target=${hostname} cause=${sanitizeErrorCauseChain(error) || 'unavailable'}`
+    );
+    throw error;
+  }
+};
+
 export const installOnlyPreviewSessionProtocol = (
   targetSession: Session,
   navigationUrl: string
@@ -74,9 +92,11 @@ export const installOnlyPreviewSessionProtocol = (
     if (!target || target.hostname !== scope.hostname || target.token !== scope.token) {
       return new Response(null, { status: 404 });
     }
-    return target.hostname === 'document'
-      ? await onlyPreviewDocumentRegistry.respond(request)
-      : await onlyPreviewAssetRegistry.respond(request);
+    return await respondWithNamedFailure(target.hostname, async () =>
+      target.hostname === 'document'
+        ? await onlyPreviewDocumentRegistry.respond(request)
+        : await onlyPreviewAssetRegistry.respond(request)
+    );
   });
   let installed = true;
   return () => {

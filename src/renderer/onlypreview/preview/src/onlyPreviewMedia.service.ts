@@ -17,6 +17,24 @@ export const mapOnlyPreviewMediaErrorCode = (
   return 'MEDIA_READ_FAILED';
 };
 
+// The media preflight and the image loader share exactly one check — an equality against
+// `content-length` — and both were rejecting valid files, which is what identifies that header as
+// the common cause. `Number(null)` is 0, so an absent header could never equal a non-empty file.
+// Range support stays required: seeking genuinely depends on it, and the reason token says so if it
+// is ever the blocker.
+type MediaReadReason =
+  | 'head-rejected'
+  | 'stale-before-headers'
+  | 'response-not-ok'
+  | 'content-length-mismatch'
+  | 'ranges-unsupported'
+  | 'stale-after-headers';
+
+const mediaReadFailure = (reason: MediaReadReason, message: string): OnlyPreviewContractError => {
+  console.warn(`[onlypreview] event=media-read-failed reason=${reason}`);
+  return new OnlyPreviewContractError('MEDIA_READ_FAILED', message);
+};
+
 export class OnlyPreviewMediaSession {
   private readonly fetchImpl: typeof fetch;
   private abortController: AbortController | null = null;
@@ -45,23 +63,28 @@ export class OnlyPreviewMediaSession {
       });
     } catch (error) {
       if (!this.isCurrent(generation)) throw error;
-      throw new OnlyPreviewContractError('MEDIA_READ_FAILED', 'The media stream is unavailable.');
+      throw mediaReadFailure('head-rejected', 'The media stream is unavailable.');
     }
     if (!this.isCurrent(generation)) {
-      throw new OnlyPreviewContractError(
-        'MEDIA_READ_FAILED',
-        'The media load is no longer current.'
+      throw mediaReadFailure('stale-before-headers', 'The media load is no longer current.');
+    }
+    if (!response.ok || response.status !== 200) {
+      throw mediaReadFailure('response-not-ok', 'The media stream did not match the selected file.');
+    }
+    const declaredLength = response.headers.get('content-length');
+    const contentLength = declaredLength === null ? null : Number(declaredLength);
+    if (
+      contentLength !== null &&
+      (!Number.isSafeInteger(contentLength) || contentLength !== expectedSize)
+    ) {
+      throw mediaReadFailure(
+        'content-length-mismatch',
+        'The media stream did not match the selected file.'
       );
     }
-    const contentLength = Number(response.headers.get('content-length'));
-    if (
-      !response.ok ||
-      response.status !== 200 ||
-      contentLength !== expectedSize ||
-      response.headers.get('accept-ranges')?.toLowerCase() !== 'bytes'
-    ) {
-      throw new OnlyPreviewContractError(
-        'MEDIA_READ_FAILED',
+    if (response.headers.get('accept-ranges')?.toLowerCase() !== 'bytes') {
+      throw mediaReadFailure(
+        'ranges-unsupported',
         'The media stream did not match the selected file.'
       );
     }

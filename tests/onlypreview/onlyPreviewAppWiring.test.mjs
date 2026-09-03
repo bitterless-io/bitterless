@@ -184,6 +184,9 @@ test('OnlyPreview XPC prototype exposes the exact renderer allowlist and capabil
     'closeWindow',
     'showFileContextMenu',
     'copyProjectItem',
+    'reportProjectIndexFailed',
+    'createProjectFolder',
+    'renameProjectItem',
     'showProjectRootContextMenu',
     'copyProjectRoot',
     'openExternally',
@@ -311,7 +314,7 @@ test('workspace updates have one authoritative event path and stale search snaps
   assert.match(initializeIndexBody, /await this\.applySearchSnapshot\(snapshot\)/);
 
   const refreshIndexBody = shellStore.slice(
-    shellStore.indexOf('private async refreshIndex()'),
+    shellStore.indexOf('async refreshIndex()'),
     shellStore.indexOf('private async applySearchSnapshot(')
   );
   assert.match(

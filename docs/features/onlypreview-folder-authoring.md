@@ -98,3 +98,5 @@ Automated coverage spans name validation on both platform rule sets, untitled se
 `EEXIST` advancement and exhaustion, containment and symlink refusal, generation fencing, the
 duplicate-name dialog and revert, edit-mode input sizing and key handling, and preview re-pointing.
 Electron E2E is excluded; the owner verifies the real tree.
+
+Delivery: [onlypreview-folder-authoring-112](../plan/tasks/onlypreview-folder-authoring-112.md).

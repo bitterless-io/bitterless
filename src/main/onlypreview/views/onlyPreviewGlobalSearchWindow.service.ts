@@ -35,6 +35,14 @@ export class OnlyPreviewGlobalSearchWindowService {
     });
   }
 
+  isActive(hostToken: string): boolean {
+    return onlyPreviewGlobalSearchViewService.isActive(hostToken);
+  }
+
+  preload(hostToken: string): void {
+    onlyPreviewGlobalSearchViewService.preload(hostToken);
+  }
+
   open(
     host: OnlyPreviewHostCapability,
     origin: OnlyPreviewGlobalSearchFocusOrigin | 'search',

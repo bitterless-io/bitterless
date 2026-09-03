@@ -10,6 +10,10 @@ import {
 
 const RECENT_DIRECTORY_KEY = 'onlypreview_workspace';
 const RECENT_DIRECTORY_SUB_KEY = 'last_directory';
+// A second sub-key rather than a field on the directory record: the directory record's shape is
+// validated exactly (two keys, version 1), so widening it would need a migration for a value that
+// is only a convenience.
+const RECENT_FILE_SUB_KEY = 'last_file';
 
 export type OnlyPreviewRecentDirectoryStorage = Pick<
   SettingDao,
@@ -21,6 +25,12 @@ interface RecentDirectoryValue {
   directoryPath: string;
 }
 
+interface RecentFileValue {
+  version: 1;
+  directoryPath: string;
+  relativePath: string;
+}
+
 interface RememberedDirectory {
   generation: number;
   directoryPath: string;
@@ -30,6 +40,20 @@ type StorageState = 'pending' | 'ready' | 'failed';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
+
+// The directory is part of the record so a file remembered in one Project can never be applied to
+// another: a restore that opened a different folder simply finds no match.
+export const parseOnlyPreviewRecentFile = (
+  value: unknown
+): { directoryPath: string; relativePath: string } | null => {
+  if (!isRecord(value)) return null;
+  if (Object.keys(value).length !== 3) return null;
+  if (value.version !== 1) return null;
+  if (typeof value.directoryPath !== 'string' || typeof value.relativePath !== 'string') return null;
+  if (!isAbsolute(value.directoryPath) || value.directoryPath.includes('\0')) return null;
+  if (!value.relativePath || value.relativePath.includes('\0')) return null;
+  return { directoryPath: value.directoryPath, relativePath: value.relativePath };
+};
 
 export const parseOnlyPreviewRecentDirectory = (value: unknown): string | null => {
   if (!isRecord(value)) return null;
@@ -56,6 +80,11 @@ export class OnlyPreviewRecentDirectoryService {
   private bindWorkspace:
     | ((hostToken: string, workspace: OnlyPreviewWorkspace) => Promise<void>)
     | null;
+  // A restored selection has to be presented by Main, exactly as an explicitly opened file is. The
+  // renderer cannot do it: it only learns the path, and the preview surface is Main's to attach.
+  private presentSelection:
+    | ((hostToken: string, workspace: OnlyPreviewWorkspace) => Promise<void>)
+    | null = null;
 
   constructor(
     private readonly hosts: OnlyPreviewHostRegistry,
@@ -85,12 +114,14 @@ export class OnlyPreviewRecentDirectoryService {
   configureTargetRuntime(params: {
     inspectTarget: (absoluteTarget: string) => Promise<OnlyPreviewValidatedTarget>;
     bindWorkspace: (hostToken: string, workspace: OnlyPreviewWorkspace) => Promise<void>;
+    presentSelection?: (hostToken: string, workspace: OnlyPreviewWorkspace) => Promise<void>;
   }): void {
     if (this.inspectTarget || this.bindWorkspace) {
       throw new Error('OnlyPreview target runtime is already configured.');
     }
     this.inspectTarget = params.inspectTarget;
     this.bindWorkspace = params.bindWorkspace;
+    this.presentSelection = params.presentSelection ?? null;
   }
 
   markStorageReady(): void {
@@ -168,6 +199,43 @@ export class OnlyPreviewRecentDirectoryService {
     }
   }
 
+  /**
+   * Remember the file the owner is previewing, so the next launch reopens it.
+   *
+   * Last write wins, deliberately: unlike the directory record — which gates whether a Project is
+   * restored at all — this is a convenience, and a lost write costs the owner one click. The
+   * directory is stored alongside so a stale selection cannot be applied to a different Project.
+   */
+  rememberSelectedFile(directoryPath: string, relativePath: string): void {
+    const storage = this.storage;
+    if (!storage || this.storageState !== 'ready') return;
+    if (!isAbsolute(directoryPath) || !relativePath) return;
+    const value: RecentFileValue = { version: 1, directoryPath, relativePath };
+    this.storageWriteChain = this.storageWriteChain
+      .then(async () => {
+        const stored = await storage.getStored({
+          key: RECENT_DIRECTORY_KEY,
+          sub_key: RECENT_FILE_SUB_KEY
+        });
+        if (!stored) return;
+        if (stored.exists && stored.serializedValue !== null) {
+          await storage.compareAndSet({
+            key: RECENT_DIRECTORY_KEY,
+            sub_key: RECENT_FILE_SUB_KEY,
+            expectedSerializedValue: stored.serializedValue,
+            value
+          });
+          return;
+        }
+        await storage.insertIfAbsent({
+          key: RECENT_DIRECTORY_KEY,
+          sub_key: RECENT_FILE_SUB_KEY,
+          value
+        });
+      })
+      .catch(() => undefined);
+  }
+
   clearTransientState(): void {
     this.mutationGeneration += 1;
     this.activeExplicitGeneration = null;
@@ -223,8 +291,41 @@ export class OnlyPreviewRecentDirectoryService {
         this.revokeWorkspaceIfCurrent(hostToken, workspace.workspaceId);
         return null;
       }
-      return workspace;
+      // The remembered file rides back on the workspace, which is the same channel an explicitly
+      // opened file already uses. A file that has since been deleted or renamed simply never
+      // appears in the index, and the tree opens with nothing selected.
+      const selectedRelativePath = await this.readSelectedFile(workspace.displayPath);
+      if (!this.canRestore(hostToken, generation, hostGeneration)) {
+        this.revokeWorkspaceIfCurrent(hostToken, workspace.workspaceId);
+        return null;
+      }
+      if (!selectedRelativePath) return workspace;
+      const restored = { ...workspace, selectedRelativePath };
+      // Best effort: a file that has been deleted or replaced by a directory since the last session
+      // leaves the Project open with nothing previewed, which is the right outcome.
+      await this.presentSelection?.(hostToken, restored).catch(() => undefined);
+      if (!this.canRestore(hostToken, generation, hostGeneration)) {
+        this.revokeWorkspaceIfCurrent(hostToken, workspace.workspaceId);
+        return null;
+      }
+      return restored;
     });
+  }
+
+  private async readSelectedFile(directoryPath: string): Promise<string | null> {
+    const storage = this.storage;
+    if (!storage || this.storageState !== 'ready') return null;
+    let stored: SettingStoredValue | null;
+    try {
+      stored =
+        (await storage.getStored({ key: RECENT_DIRECTORY_KEY, sub_key: RECENT_FILE_SUB_KEY })) ??
+        null;
+    } catch {
+      return null;
+    }
+    if (!stored?.exists || !stored.valid) return null;
+    const candidate = parseOnlyPreviewRecentFile(stored.value);
+    return candidate?.directoryPath === directoryPath ? candidate.relativePath : null;
   }
 
   private canRestore(hostToken: string, generation: number, hostGeneration: number): boolean {

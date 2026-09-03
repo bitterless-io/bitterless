@@ -148,7 +148,6 @@
       <ImagePreview
         v-else-if="
           onlyPreviewPreviewStore.descriptor?.kind === 'image' &&
-          onlyPreviewPreviewStore.imageSession &&
           onlyPreviewPreviewStore.imageContent
         "
         :key="selectionPreviewKey"
@@ -172,6 +171,24 @@
       />
 
       <div
+        v-else-if="!onlyPreviewPreviewStore.loading && onlyPreviewPreviewStore.projectIndexing"
+        name="onlypreview__previewIndexing"
+        class="onlypreview-preview__state"
+        role="status"
+      >
+        <span class="onlypreview-preview__state-mark" aria-hidden="true">
+          <IconFileSearch :size="25" />
+        </span>
+        <h1>{{ onlyPreviewI18n.preview.loadingProjectTitle }}</h1>
+        <p>{{ onlyPreviewI18n.preview.loadingProjectBody }}</p>
+        <span class="onlypreview-preview__index-rows" aria-hidden="true">
+          <span class="onlypreview-preview__index-row"></span>
+          <span class="onlypreview-preview__index-row onlypreview-preview__index-row--medium"></span>
+          <span class="onlypreview-preview__index-row onlypreview-preview__index-row--short"></span>
+        </span>
+      </div>
+
+      <div
         v-else-if="!onlyPreviewPreviewStore.loading"
         name="onlypreview__previewEmpty"
         class="onlypreview-preview__state"
@@ -181,6 +198,7 @@
         </span>
         <h1>{{ onlyPreviewI18n.preview.emptyTitle }}</h1>
         <p>{{ onlyPreviewI18n.preview.emptyBody }}</p>
+        <span class="onlypreview-preview__index-rows" aria-hidden="true"></span>
       </div>
 
       <div

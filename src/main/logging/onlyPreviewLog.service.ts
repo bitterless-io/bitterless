@@ -10,6 +10,7 @@ import {
 } from '@main/logging/logSanitizer.service';
 import {
   formatOnlyPreviewFailureLine,
+  isOnlyPreviewExpectedSupersede,
   type OnlyPreviewLogFailure
 } from '@main/logging/onlyPreviewLogRecord.service';
 
@@ -26,11 +27,12 @@ export class OnlyPreviewLogService {
   writeOperationFailure(failure: OnlyPreviewLogFailure): void {
     try {
       const line = formatOnlyPreviewFailureLine(failure);
+      const expected = isOnlyPreviewExpectedSupersede(failure);
       const profile = this.dependencies.getProfile();
       this.getLogger().processMessage({
         data: [line],
         date: new Date(),
-        level: 'error',
+        level: expected ? 'info' : 'error',
         variables: {
           profile: profile.id,
           channel: profile.releaseChannel,
@@ -38,7 +40,7 @@ export class OnlyPreviewLogService {
           world: 'main'
         }
       });
-      this.mirror(line);
+      this.mirror(line, expected);
     } catch {
       // Diagnostics are best effort and must never change an OnlyPreview result.
     }
@@ -66,9 +68,12 @@ export class OnlyPreviewLogService {
 
   // The dedicated file carries the detail; one mirrored line keeps the failure visible in main.log,
   // where triage starts.
-  private mirror(line: string): void {
+  private mirror(line: string, expected = false): void {
     try {
-      (this.dependencies.mirror ?? ((value: string) => console.error(value)))(line);
+      (
+        this.dependencies.mirror ??
+        ((value: string) => (expected ? console.info(value) : console.error(value)))
+      )(line);
     } catch {
       // The dedicated file already holds the record.
     }

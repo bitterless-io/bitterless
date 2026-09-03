@@ -162,6 +162,7 @@ const createFrameBroker = (sources, options = {}) => {
 const createModules = (broker) => {
   const assetModule = loadTypeScriptModule('src/main/onlypreview/onlyPreviewAsset.registry.ts', {
     '@main/fileSearch/fileSearchWindow.service': { fileSearchWindowService: broker },
+    '@shared/diagnostics/diagnostic.service': { sanitizeErrorCauseChain: () => 'test-cause' },
     '@shared/onlypreview/onlyPreview.contract': contracts,
     '@shared/onlypreview/onlyPreview.types': sharedTypes,
     '@shared/onlypreview/onlyPreviewPreviewReadRuntime.types': {},
@@ -513,6 +514,7 @@ test('session protocol keeps document routing scoped to the active Chrome token'
       electron: {
         protocol: { registerSchemesAsPrivileged: () => {}, handle: () => {}, unhandle: () => {} }
       },
+      '@shared/diagnostics/diagnostic.service': { sanitizeErrorCauseChain: () => 'test-cause' },
       '@shared/onlypreview/onlyPreview.types': { ONLY_PREVIEW_SCHEME: 'bitterless-preview' },
       './onlyPreviewAsset.registry': {
         onlyPreviewAssetRegistry: { respond: async () => new Response(null) }

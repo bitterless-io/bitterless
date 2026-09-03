@@ -198,8 +198,8 @@
                 : row.entry.relativePath
             "
             @focus="onlyPreviewShellStore.setFocusedPath(row.entry.relativePath)"
-            @click="onlyPreviewShellStore.handleTreeClick(row.entry, $event.detail)"
-            @dblclick.prevent="onlyPreviewShellStore.handleTreeDoubleClick(row.entry)"
+            @click="handleTreeRowClick(row.entry, $event.detail)"
+            @dblclick.prevent="handleTreeRowDoubleClick(row.entry)"
             @contextmenu.prevent.stop="onlyPreviewShellStore.showFileContextMenu(row.entry)"
           >
             <span
@@ -242,7 +242,23 @@
               aria-hidden="true"
             />
             <IconFile v-else class="onlypreview-shell__tree-icon" :size="14" aria-hidden="true" />
-            <span class="onlypreview-shell__tree-name">{{ row.entry.name }}</span>
+            <input
+              v-if="onlyPreviewProjectAuthoring.editing?.relativePath === row.entry.relativePath"
+              :ref="(element) => registerEditInput(element)"
+              name="onlypreview__treeNameInput"
+              class="onlypreview-shell__tree-name-input"
+              :style="{ width: `${editInputWidthCh}ch` }"
+              :value="onlyPreviewProjectAuthoring.editing.draft"
+              :aria-label="onlyPreviewI18n.project.editNameLabel"
+              spellcheck="false"
+              autocomplete="off"
+              @click.stop
+              @dblclick.stop
+              @input="onlyPreviewProjectAuthoring.updateDraft(($event.target as HTMLInputElement).value)"
+              @keydown.stop="handleEditKeydown"
+              @blur="onlyPreviewProjectAuthoring.commit()"
+            />
+            <span v-else class="onlypreview-shell__tree-name">{{ row.entry.name }}</span>
           </button>
         </div>
 
@@ -367,7 +383,13 @@ import { onlyPreviewEnv } from '../../common/contextBridge/onlyPreviewEnv.bridge
 import { onlyPreviewI18n } from '../../common/onlyPreviewI18n';
 import PreviewToolbar from './components/PreviewToolbar/PreviewToolbar.vue';
 import { onlyPreviewProjectWidthPersistence } from './onlyPreviewProjectWidthPersistence.service';
+import type { OnlyPreviewIndexEntry } from '@shared/onlypreview/onlyPreview.types';
 import { onlyPreviewShellStore } from './onlyPreviewShell.store';
+import { onlyPreviewEditInputWidthCh } from './onlyPreviewProjectAuthoring.service';
+import {
+  onlyPreviewProjectAuthoring,
+  subscribeOnlyPreviewProjectIntents
+} from './onlyPreviewProjectAuthoring.store';
 
 const previewHostRef = ref<HTMLElement | null>(null);
 const treeRef = ref<HTMLElement | null>(null);
@@ -475,6 +497,54 @@ const handleTreeKeydown = (event: KeyboardEvent): void => {
   void focusTreePath(onlyPreviewShellStore.moveTreeFocus(event.key));
 };
 
+// A click on the row being renamed blurs the input, which commits; re-activating the row on top of
+// that would re-preview a path that may be about to change. The edited row is inert until the edit
+// closes.
+const isEditing = (relativePath: string): boolean =>
+  onlyPreviewProjectAuthoring.editing?.relativePath === relativePath;
+
+const handleTreeRowClick = (entry: OnlyPreviewIndexEntry, clickCount: number): void => {
+  if (isEditing(entry.relativePath)) return;
+  onlyPreviewShellStore.handleTreeClick(entry, clickCount);
+};
+
+const handleTreeRowDoubleClick = (entry: OnlyPreviewIndexEntry): void => {
+  if (isEditing(entry.relativePath)) return;
+  onlyPreviewShellStore.handleTreeDoubleClick(entry);
+};
+
+let editInputElement: HTMLInputElement | null = null;
+
+const editInputWidthCh = computed(() =>
+  onlyPreviewEditInputWidthCh(onlyPreviewProjectAuthoring.editing?.draft ?? '')
+);
+
+// The input is created inside a `v-for`, so the row that owns it is identified by the store rather
+// than by a per-row ref. Selecting the stem is what a rename is for: the extension usually stays.
+const registerEditInput = (element: unknown): void => {
+  if (!(element instanceof HTMLInputElement) || element === editInputElement) return;
+  editInputElement = element;
+  void nextTick(() => {
+    if (editInputElement !== element || !element.isConnected) return;
+    element.focus();
+    const stem = element.value.lastIndexOf('.');
+    element.setSelectionRange(0, stem > 0 ? stem : element.value.length);
+  });
+};
+
+const handleEditKeydown = (event: KeyboardEvent): void => {
+  if (event.isComposing) return;
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    void onlyPreviewProjectAuthoring.commit();
+    return;
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    onlyPreviewProjectAuthoring.cancel();
+  }
+};
+
 const handleProjectItemCopyShortcut = (event: KeyboardEvent): boolean => {
   if (
     event.defaultPrevented ||
@@ -496,16 +566,12 @@ const handleProjectItemCopyShortcut = (event: KeyboardEvent): boolean => {
   }
   const relativePath = target.dataset.relativePath;
   if (relativePath === undefined) return false;
-  const copyKind = event.shiftKey
-    ? event.altKey
-      ? null
-      : 'absolute-path'
-    : event.altKey
-      ? 'name'
-      : 'item';
-  if (!copyKind) return false;
+  // Copy Path (Shift) and Copy Name (Alt) are Main-owned window shortcuts now, so they work with
+  // focus anywhere and must not also run here. Plain Cmd+C stays renderer-owned: inside a document
+  // it means "copy the selection", and Main must not take that key.
+  if (event.shiftKey || event.altKey) return false;
   event.preventDefault();
-  void onlyPreviewShellStore.copyProjectItem(relativePath, copyKind);
+  void onlyPreviewShellStore.copyProjectItem(relativePath, 'item');
   return true;
 };
 
@@ -519,6 +585,7 @@ const handleShellKeydown = (event: KeyboardEvent): void => {
 };
 
 onMounted(() => {
+  subscribeOnlyPreviewProjectIntents();
   window.addEventListener('pagehide', flushProjectWidth);
   void onlyPreviewShellStore.initialize();
 });

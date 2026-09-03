@@ -94,8 +94,13 @@ for (const [language, source, updateTitle] of [
 ]) {
   assert.match(
     source,
-    /menuBar:\s*\{[\s\S]*?restartToUpdate: 'update'/,
+    /menuBar:\s*\{[\s\S]*?restartToUpdate: 'Update'/,
     `${language} must expose the exact compact update label`
+  )
+  assert.match(
+    source,
+    /menuBar:\s*\{[\s\S]*?downloadingUpdate: 'Downloading'/,
+    `${language} must expose the exact compact downloading label`
   )
   assert(
     source.includes(`updateToVersion: '${updateTitle}'`),
@@ -103,9 +108,11 @@ for (const [language, source, updateTitle] of [
   )
 }
 
+// Home and Omni only ever render the ready state, so they keep the bare interpolation. Maestro is
+// the one surface that also shows the download in progress, so it selects between the two shared
+// labels instead.
 for (const [surface, path] of [
   ['Home', 'src/renderer/home/src/components/MenuBar/MenuBar.vue'],
-  ['Maestro', 'src/renderer/maestro/home/src/components/MenuBar/MenuBar.vue'],
   ['Omni', 'src/renderer/omni/omniWindow/src/App.vue']
 ]) {
   const source = readProject(path)
@@ -114,6 +121,13 @@ for (const [surface, path] of [
     `${surface} update action must use the shared compact label`
   )
 }
+
+const maestroMenuBar = readProject('src/renderer/maestro/home/src/components/MenuBar/MenuBar.vue')
+assert(
+  maestroMenuBar.includes('i18nHelper.menuBar.downloadingUpdate') &&
+    maestroMenuBar.includes('i18nHelper.menuBar.restartToUpdate'),
+  'Maestro update action must select between the two shared compact labels'
+)
 
 const omniMenuBar = readProject('src/renderer/omni/omniWindow/src/App.vue')
 assert(

@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
 import { fileSearchWindowService } from '@main/fileSearch/fileSearchWindow.service';
 import { OnlyPreviewContractError } from '@shared/onlypreview/onlyPreview.contract';
+import { sanitizeErrorCauseChain } from '@shared/diagnostics/diagnostic.service';
 import { ONLY_PREVIEW_SCHEME } from '@shared/onlypreview/onlyPreview.types';
 import type {
   OnlyPreviewPreviewReadChunkResult,
@@ -16,9 +17,15 @@ import {
 
 const MAX_ASSET_TOKENS = 512;
 export const ONLY_PREVIEW_ASSET_TOKEN_TTL_MS = 30 * 60 * 1000;
+// Wide open by owner decision: nothing about previewing a local file the owner already selected is
+// made safer by a CORS check, and a blocked request reaches the renderer with no status, which is
+// how a readable failure becomes an unnameable one.
 const ASSET_FETCH_RESPONSE_HEADERS = Object.freeze({
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Expose-Headers': 'Accept-Ranges'
+  'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+  'Access-Control-Allow-Headers': '*',
+  'Access-Control-Expose-Headers': '*',
+  'Access-Control-Max-Age': '600'
 });
 
 interface AssetTokenRecord {
@@ -44,6 +51,33 @@ export interface OnlyPreviewAssetIssueOptions {
 
 const isAssetExpired = (asset: AssetTokenRecord): boolean =>
   asset.lifetime === 'ttl' && Date.now() - asset.createdAt > ONLY_PREVIEW_ASSET_TOKEN_TTL_MS;
+
+type AssetRejectionReason =
+  | 'url-unparsed'
+  | 'url-not-canonical'
+  | 'token-unknown'
+  | 'name-mismatch'
+  | 'token-retired'
+  | 'read-refused';
+
+/**
+ * A rejection must stay readable from the renderer, and it must be named here.
+ *
+ * The CORS headers matter as much as the status: the preview page is a `file://` document, so a
+ * response without `Access-Control-Allow-Origin` fails the CORS check and reaches a `fetch` caller
+ * as a bare rejection with no status at all. Every distinct reason below then looked identical
+ * there, which is why an image failure could only ever be reported as "the fetch was rejected".
+ */
+const assetRejection = (
+  reason: AssetRejectionReason,
+  status: number,
+  error?: unknown
+): Response => {
+  const cause =
+    error === undefined ? '' : ` cause=${sanitizeErrorCauseChain(error) || 'unavailable'}`;
+  console.warn(`[onlypreview] event=asset-rejected reason=${reason} status=${status}${cause}`);
+  return new Response(null, { status, headers: { ...ASSET_FETCH_RESPONSE_HEADERS } });
+};
 
 export interface OnlyPreviewByteRange {
   start: number;
@@ -100,15 +134,24 @@ export const createOnlyPreviewReadResponse = async (params: {
   onSessionClosed?: (sessionId: string) => void;
   isSessionLive?: (sessionId: string) => boolean;
 }): Promise<Response> => {
+  if (params.request.method === 'OPTIONS') {
+    return new Response(null, {
+      status: 204,
+      headers: { Allow: 'GET, HEAD, OPTIONS', ...params.responseHeaders }
+    });
+  }
   if (params.request.method !== 'GET' && params.request.method !== 'HEAD') {
-    return new Response(null, { status: 405, headers: { Allow: 'GET, HEAD' } });
+    return new Response(null, {
+      status: 405,
+      headers: { Allow: 'GET, HEAD, OPTIONS', ...params.responseHeaders }
+    });
   }
   if (
     !Number.isSafeInteger(params.maxBytes) ||
     params.maxBytes < 0 ||
     params.fileSize > params.maxBytes
   ) {
-    return new Response(null, { status: 413 });
+    return new Response(null, { status: 413, headers: { ...params.responseHeaders } });
   }
   const parsedRange = parseOnlyPreviewRange(params.request.headers.get('range'), params.fileSize);
   const baseHeaders = {
@@ -301,12 +344,12 @@ export class OnlyPreviewAssetRegistry {
     const rawMatch = new RegExp(
       `^${ONLY_PREVIEW_SCHEME}:\\/\\/asset\\/([a-f0-9]{64})\\/([^/?#]+)$`
     ).exec(request.url);
-    if (!rawMatch) return new Response(null, { status: 404 });
+    if (!rawMatch) return assetRejection('url-not-canonical', 404);
     let url: URL;
     try {
       url = new URL(request.url);
     } catch {
-      return new Response(null, { status: 400 });
+      return assetRejection('url-unparsed', 400);
     }
     if (
       url.protocol !== `${ONLY_PREVIEW_SCHEME}:` ||
@@ -318,25 +361,25 @@ export class OnlyPreviewAssetRegistry {
       url.hash !== '' ||
       url.pathname !== `/${rawMatch[1]}/${rawMatch[2]}`
     ) {
-      return new Response(null, { status: 404 });
+      return assetRejection('url-not-canonical', 404);
     }
     const asset = this.assets.get(rawMatch[1]);
     let displayName: string;
     try {
       displayName = decodeURIComponent(rawMatch[2]);
     } catch {
-      return new Response(null, { status: 404 });
+      return assetRejection('name-mismatch', 404);
     }
     if (
       !asset ||
       rawMatch[2] !== encodeURIComponent(displayName) ||
       displayName !== basename(asset.relativePath)
     ) {
-      return new Response(null, { status: 404 });
+      return assetRejection(asset ? 'name-mismatch' : 'token-unknown', 404);
     }
     if (isAssetExpired(asset) || !this.hosts.isLive(asset.hostToken)) {
       this.revokeToken(asset.token);
-      return new Response(null, { status: 404 });
+      return assetRejection('token-retired', 404);
     }
     try {
       return await createOnlyPreviewReadResponse({
@@ -356,8 +399,8 @@ export class OnlyPreviewAssetRegistry {
           !isAssetExpired(asset) &&
           this.hosts.isLive(asset.hostToken)
       });
-    } catch {
-      return new Response(null, { status: 404 });
+    } catch (error) {
+      return assetRejection('read-refused', 404, error);
     }
   }
 

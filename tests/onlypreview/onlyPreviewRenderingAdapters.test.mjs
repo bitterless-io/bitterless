@@ -121,17 +121,19 @@ test('image Store truth stays loading through decode until the connected compone
     [101]
   );
 
-  const bufferedDescriptor = { ...descriptor };
-  delete bufferedDescriptor.assetUrl;
-  harness.presentation = { ...presentation, status: 'ready', descriptor: bufferedDescriptor };
+  // The `<img>` element is the only holder of the bytes now, so the asset URL has to survive
+  // ready: a re-attach or a re-mount re-requests it. Retiring the token there used to make every
+  // repeat request 404.
+  harness.presentation = { ...presentation, status: 'ready', descriptor: { ...descriptor } };
   harness.subscriptions.get('onlypreview/previewPresentation')({
     params: { hostId: 'host-for-tests' }
   });
   await new Promise((resolveWait) => setImmediate(resolveWait));
-  assert.equal(store.descriptor.assetUrl, undefined);
+  assert.equal(store.descriptor.assetUrl, descriptor.assetUrl);
+  assert.equal(store.imageContent.src, descriptor.assetUrl);
   assert.match(await renderPreviewSurface(store), /name="onlypreview__imagePreview"/);
   store.dispose();
-  assert.equal(harness.imageDisposals, 1);
+  assert.equal(store.imageContent, null);
 });
 
 test('media Store truth waits for metadata, demotes ready on error, and ignores old revision events', async () => {
@@ -361,4 +363,56 @@ test('Office surface errors install local truth and dispose before Main reportin
   store.reportOfficeReady(String(presentation.selectionRevision));
   await new Promise((resolveWait) => setImmediate(resolveWait));
   assert.equal(harness.ready.length, 0, 'stale ready must not clear a terminal local Office error');
+});
+
+test('the loading-project pane follows the Project index state on the presentation', async () => {
+  const descriptor = officeDescriptor('.png', 'image');
+  const presentation = {
+    ...officePresentation(descriptor, 301, 'image'),
+    fileRef: null,
+    descriptor: null,
+    status: 'empty',
+    projectIndexState: 'building'
+  };
+  const harness = createRendererStoreHarness(presentation);
+  globalThis.__onlyPreviewRendererStoreHarness = harness;
+  const previewStoreRuntime = await import(
+    `${pathToFileURL(join(buildRoot, 'previewStore.mjs')).href}?project=index-state`
+  );
+  const store = previewStoreRuntime.onlyPreviewPreviewStore;
+  await store.initialize();
+
+  // The state is pulled with the presentation, not pushed. A broadcast sent while the Vue view was
+  // still being created would be missed outright — the renderer is built lazily — and the pane would
+  // sit on "Select a file" for the whole build, which is the one case this exists for.
+  assert.equal(store.projectIndexing, true);
+  assert.match(await renderPreviewSurface(store), /name="onlypreview__previewIndexing"/);
+
+  const republish = async (projectIndexState) => {
+    harness.presentation = { ...presentation, projectIndexState };
+    harness.subscriptions.get('onlypreview/previewPresentation')({
+      params: { hostId: 'host-for-tests' }
+    });
+    await new Promise((resolveWait) => setImmediate(resolveWait));
+  };
+
+  await republish('reconciling');
+  assert.equal(store.projectIndexing, true, 'reconciling is still not a usable index');
+
+  await republish('ready');
+  assert.equal(store.projectIndexing, false);
+  const readyHtml = await renderPreviewSurface(store);
+  assert.match(readyHtml, /name="onlypreview__previewEmpty"/);
+  assert.doesNotMatch(readyHtml, /name="onlypreview__previewIndexing"/);
+
+  // A build that fails before an index exists emits no snapshot, so Main reports `failed` instead.
+  // It must read as not-loading: the Project rail already shows the error, and an animation that
+  // never ends beside it would be a lie.
+  await republish('failed');
+  assert.equal(store.projectIndexing, false);
+
+  // No Project bound, or a state Main scoped to another workspace, leaves the plain empty state.
+  await republish(null);
+  assert.equal(store.projectIndexing, false);
+  store.dispose();
 });

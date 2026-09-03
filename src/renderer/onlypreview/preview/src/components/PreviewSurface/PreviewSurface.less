@@ -47,6 +47,68 @@
   box-shadow: 6px 6px 0 #eceef4;
 }
 
+/* Three index rows filling in, rather than a spinner: the thing being waited on is a file listing,
+   and this reads as one. Widths descend so the group looks like a list rather than a progress bar,
+   and the staggered delays make it sweep instead of blinking in unison.
+
+   The mark itself is deliberately left untouched — same 52px box, same offset shadow, no pulse. It
+   is the one element both states share, so animating it is what would make the swap to "Select a
+   file" read as a different component rather than the same one finishing. The slot below is
+   reserved in both states for the same reason: the column is centred, so content that exists in
+   only one of them moves the mark and the heading when the index becomes ready. */
+.onlypreview-preview__index-rows {
+  height: 30px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin-top: 17px;
+}
+
+.onlypreview-preview__index-row {
+  width: 132px;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: oklch(94% 0.006 264);
+}
+
+.onlypreview-preview__index-row--medium {
+  width: 110px;
+}
+
+.onlypreview-preview__index-row--short {
+  width: 84px;
+}
+
+.onlypreview-preview__index-row::after {
+  content: '';
+  display: block;
+  width: 45%;
+  height: 100%;
+  animation: onlypreview-preview-index-sweep 1300ms ease-in-out infinite;
+  border-radius: 3px;
+  background: oklch(62% 0.12 264 / 55%);
+}
+
+.onlypreview-preview__index-row--medium::after {
+  animation-delay: 150ms;
+}
+
+.onlypreview-preview__index-row--short::after {
+  animation-delay: 300ms;
+}
+
+@keyframes onlypreview-preview-index-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(322%);
+  }
+}
+
 .onlypreview-preview__state--error .onlypreview-preview__state-mark {
   border-color: #ebcccc;
   color: var(--onlypreview-danger, #a13d3d);
@@ -199,6 +261,13 @@
 @media (prefers-reduced-motion: reduce) {
   .onlypreview-preview__loading-line::after {
     animation: none;
+    transform: translateX(0);
+  }
+
+  /* The rows stay, half filled: the state still reads as "in progress" without motion. */
+  .onlypreview-preview__index-row::after {
+    animation: none;
+    width: 55%;
     transform: translateX(0);
   }
 }

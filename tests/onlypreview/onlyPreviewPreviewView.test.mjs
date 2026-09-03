@@ -272,15 +272,13 @@ test('PDF readiness requires the exact document-frame finish event and reports a
     const navigationUrl = chrome.webContents.loadedUrls.at(-1);
     const attachNotifications = state.activeViewAttachNotifications;
 
-    // Main-frame completion and mere matching-frame existence cannot publish PDFium readiness.
+    // Main-frame completion and mere frame existence cannot publish PDFium readiness.
     chrome.webContents.emit('did-finish-load');
     assert.equal(service.snapshot(host.hostToken).status, 'loading');
     const documentFrame = chrome.webContents.addSubframe(navigationUrl);
     assert.equal(service.snapshot(host.hostToken).status, 'loading');
 
-    const foreignFrame = chrome.webContents.addSubframe(
-      'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html'
-    );
+    // A main-frame-flagged completion is still ignored even for a real frame.
     chrome.webContents.emit(
       'did-frame-finish-load',
       {},
@@ -288,21 +286,20 @@ test('PDF readiness requires the exact document-frame finish event and reports a
       documentFrame.processId,
       documentFrame.routingId
     );
-    chrome.webContents.emit(
-      'did-frame-finish-load',
-      {},
-      false,
-      foreignFrame.processId,
-      foreignFrame.routingId
-    );
     assert.equal(service.snapshot(host.hostToken).status, 'loading');
 
+    // Chromium hosts the PDF in its viewer extension frame, whose URL is NOT the navigation URL.
+    // Requiring that equality is what made the surface unreachable: it recorded zero ready
+    // outcomes and timed out at 8s on every PDF.
+    const viewerFrame = chrome.webContents.addSubframe(
+      'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html'
+    );
     chrome.webContents.emit(
       'did-frame-finish-load',
       {},
       false,
-      documentFrame.processId,
-      documentFrame.routingId
+      viewerFrame.processId,
+      viewerFrame.routingId
     );
     const ready = service.snapshot(host.hostToken);
     assert.equal(ready.status, 'ready');
@@ -327,6 +324,29 @@ test('PDF readiness requires the exact document-frame finish event and reports a
     const pending = timers.find((timer) => timer.active);
     assert.ok(pending, 'a bounded document-frame deadline must be scheduled');
     assert.equal(pending.delay, 8_000);
+    pending.active = false;
+    pending.callback(...pending.args);
+
+    // The deadline is not a verdict on its own: the viewer built a document frame, so the PDF on
+    // screen must not be replaced by a failure card.
+    const snapshot = service.snapshot(host.hostToken);
+    assert.equal(snapshot.status, 'ready');
+    assert.equal(snapshot.adapterId, 'chromium-pdf');
+    assert.equal(snapshot.error, null);
+    assert.equal(chrome.webContents.listenerCount('did-frame-finish-load'), 0);
+  });
+
+  await withFakeTimeouts(async (timers) => {
+    const { service } = createHarness();
+    service.updateBounds(host.hostToken, bounds);
+    state.describe = async () => descriptorFor('paper.pdf', 'pdf');
+    await service.present(host.hostToken, fileRef('paper.pdf'));
+    const chrome = state.chromeViews.at(-1);
+    chrome.webContents.emit('did-finish-load');
+
+    // No document frame at all is the one genuine failure.
+    const pending = timers.find((timer) => timer.active);
+    assert.ok(pending, 'a bounded document-frame deadline must be scheduled');
     pending.active = false;
     pending.callback(...pending.args);
 

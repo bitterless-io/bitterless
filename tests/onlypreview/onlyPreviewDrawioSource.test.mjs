@@ -45,11 +45,11 @@ test('pins the official local viewer and license with a remote-free iframe-free 
   assert.match(controller, /mountAbortController\?\.abort\(\)/);
   assert.match(controller, /signal: abortController\.signal/);
 
+  // Content-loading directives are open by owner decision, so the Draw.io guard here is the one
+  // that still matters: the viewer is bundled, and the page must not be able to run foreign script.
   const html = source('src/renderer/onlypreview/preview/index.html');
-  assert.match(html, /frame-src 'none'/);
-  assert.match(html, /object-src 'none'/);
-  assert.doesNotMatch(html, /img-src[^;]*https?:/u);
-  assert.doesNotMatch(html, /connect-src[^;]*https?:/u);
+  assert.match(html, /script-src 'self' 'wasm-unsafe-eval'/);
+  assert.doesNotMatch(html, /script-src[^;]*https?:/u);
 });
 
 test('uses one typed size-policy dictionary with 10 MiB fallback and 20 MiB Draw.io override', () => {

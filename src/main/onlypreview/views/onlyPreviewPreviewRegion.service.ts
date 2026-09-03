@@ -29,6 +29,7 @@ import type { OnlyPreviewPreviewReadPreparedSelection } from '@shared/onlyprevie
 import { onlyPreviewAssetRegistry } from '@main/onlypreview/onlyPreviewAsset.registry';
 import { onlyPreviewDocumentRegistry } from '@main/onlypreview/onlyPreviewDocument.registry';
 import { onlyPreviewHostRegistry } from '@main/onlypreview/onlyPreviewHost.registry';
+import { onlyPreviewProjectIndexStateService } from '@main/onlypreview/onlyPreviewProjectIndexState.service';
 import {
   onlyPreviewWorkspaceRegistry,
   type OnlyPreviewPreviewAuthorityRef
@@ -798,7 +799,10 @@ export class OnlyPreviewPreviewRegionService {
       ...this.presentation,
       fileRef: this.presentation.fileRef ? { ...this.presentation.fileRef } : null,
       descriptor,
-      error: this.presentation.error ? { ...this.presentation.error } : null
+      error: this.presentation.error ? { ...this.presentation.error } : null,
+      // Derived here, never read from `this.presentation`: every path that binds a Project clears
+      // the presentation immediately afterwards, which would erase a stored value.
+      projectIndexState: onlyPreviewProjectIndexStateService.get(this.presentation.workspaceId)
     };
   }
 

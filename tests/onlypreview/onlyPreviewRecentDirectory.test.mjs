@@ -609,3 +609,34 @@ test('storage failures never reject explicit opens or log private paths and erro
     assert.deepEqual(captured, []);
   });
 });
+
+test('the remembered file record is strict and is scoped to its own Project directory', () => {
+  const directoryPath = process.platform === 'win32' ? 'C:\\projects\\overmind' : '/projects/overmind';
+  assert.deepEqual(
+    runtime.parseOnlyPreviewRecentFile({ version: 1, directoryPath, relativePath: 'docs/plan.md' }),
+    { directoryPath, relativePath: 'docs/plan.md' }
+  );
+  for (const invalid of [
+    null,
+    undefined,
+    'docs/plan.md',
+    [],
+    // The directory is part of the record precisely so a stale selection cannot be applied to a
+    // different Project; a record without it is unusable, not merely incomplete.
+    { version: 1, relativePath: 'docs/plan.md' },
+    { version: 1, directoryPath },
+    { version: 2, directoryPath, relativePath: 'docs/plan.md' },
+    { version: 1, directoryPath, relativePath: '' },
+    { version: 1, directoryPath: 'relative/path', relativePath: 'docs/plan.md' },
+    { version: 1, directoryPath, relativePath: 'docs/pl\u0000an.md' },
+    { version: 1, directoryPath: `${directoryPath}\u0000`, relativePath: 'docs/plan.md' },
+    // An extra key means the record was written by something other than this service.
+    { version: 1, directoryPath, relativePath: 'docs/plan.md', extra: true }
+  ]) {
+    assert.equal(
+      runtime.parseOnlyPreviewRecentFile(invalid),
+      null,
+      `${JSON.stringify(invalid)} must be refused`
+    );
+  }
+});

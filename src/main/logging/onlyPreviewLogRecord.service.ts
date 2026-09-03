@@ -6,6 +6,21 @@ export interface OnlyPreviewLogFailure {
   error: unknown;
 }
 
+// Renderer observation acknowledgements. Their failure is a supersede, not a fault: the preview
+// renderer reports a ready/reset/error observation for a selection that a faster file switch has
+// already replaced, Main correctly rejects it as stale, and the renderer swallows the rejection
+// without surfacing anything. Recording those at `error` buried the real failures in noise and made
+// a routine race look like a defect.
+export const ONLY_PREVIEW_ACKNOWLEDGEMENT_OPERATIONS: ReadonlySet<string> = new Set([
+  'reportPreviewReady',
+  'reportPreviewReset',
+  'reportPreviewError'
+]);
+
+export const isOnlyPreviewExpectedSupersede = (failure: OnlyPreviewLogFailure): boolean =>
+  ONLY_PREVIEW_ACKNOWLEDGEMENT_OPERATIONS.has(failure.operation) &&
+  failure.code === 'INVALID_INPUT';
+
 // 23 is the shared diagnostics ceiling: the application sanitizer replaces any run of 24 or more
 // token characters with `***`, so a longer operation name or error code would be erased entirely.
 // All 40 Main operation names and all 47 OnlyPreview error codes stay unique at this width.

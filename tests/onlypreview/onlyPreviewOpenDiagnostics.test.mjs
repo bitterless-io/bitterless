@@ -301,6 +301,27 @@ test('OnlyPreview Shell alone runs unthrottled until a current successful render
   assert.match(helper, /windowOpenTraces\.supersede\(\)[\s\S]*settleShellStartupLease\(this\.standaloneHost\.hostToken, window, shellView\)/);
 });
 
+test('a restored window lays its content out after the persisted bounds are applied', () => {
+  const helper = readFileSync('src/main/windows/onlyPreviewWindow.helper.ts', 'utf8');
+  const create = helper.slice(
+    helper.indexOf('private async createStandaloneWindow('),
+    helper.indexOf('private async loadView(')
+  );
+  assert.ok(create.length > 0);
+
+  const listener = create.indexOf("window.on('resize'");
+  const initial = create.indexOf('this.applyInitialBounds();');
+  const show = create.indexOf('this.show();');
+  const reapply = create.indexOf('this.applyInitialBounds();', show);
+
+  // The constructor is not the authoritative restore: WindowStateController.show() applies the
+  // persisted bounds and any saved maximize/full-screen. A listener registered after show() misses
+  // that resize entirely and the content keeps the constructor-time layout.
+  assert.ok(listener > 0 && listener < show, 'resize listener must be registered before show()');
+  assert.ok(initial > listener && initial < show, 'first layout must precede show()');
+  assert.ok(reapply > show, 'layout must be re-applied after show()');
+});
+
 test('restored Project dispatches its initial index without a renderer timer', () => {
   const store = readFileSync(
     'src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts',
@@ -317,11 +338,22 @@ test('restored Project dispatches its initial index without a renderer timer', (
 
   assert.match(initialize, /this\.restoreWorkspace\(true\)/);
   assert.match(restore, /applyWorkspace\(workspace, deferInitialIndex\)[\s\S]*deferredIndex\.run\([\s\S]*deferInitialIndex[\s\S]*generation === this\.workspaceGeneration[\s\S]*initializeIndex\(\)/);
-  assert.match(deferred, /scheduleMicrotask\(\(\) => \{[\s\S]*this\.generation !== generation[\s\S]*this\.pending = false[\s\S]*if \(!isCurrent\(\)\)[\s\S]*phase: 'cancel'[\s\S]*phase: 'start'[\s\S]*run\(\)/);
+  assert.match(deferred, /globalThis\.queueMicrotask\(run\)[\s\S]*scheduleMicrotask\(\(\) => this\.drain\(generation, 'start'\)\)/);
+  assert.match(deferred, /entry\.generation !== generation[\s\S]*phase: 'superseded'[\s\S]*if \(!isCurrent\(\)\)[\s\S]*phase: 'cancel'[\s\S]*action\(\)/);
   assert.doesNotMatch(deferred, /setTimeout|clearTimeout|RESTORED_INDEX_GRACE_MS/);
   assert.match(refresh, /deferredIndex\.cancel\(\) \? this\.initializeIndex\(\) : this\.refreshIndex\(\)/);
   assert.match(subscribe, /refresh: \(\) => void this\.refresh\(\)/);
   assert.doesNotMatch(subscribe, /refresh: \(\)[\s\S]{0,80}refreshIndex\(\)/);
   assert.match(deferred, /if \(!deferred\)[\s\S]*this\.cancel\(\)[\s\S]*await action\(\)[\s\S]*this\.schedule\(isCurrent/);
-  assert.match(deferred, /this\.pending = false[\s\S]*this\.generation \+= 1[\s\S]*phase: 'cancel'/);
+  assert.match(deferred, /this\.entry = null;[\s\S]*this\.generation \+= 1[\s\S]*phase: 'cancel'/);
+
+  // A microtask alone is not a guarantee: a shell frozen right after `interactive` never drains it,
+  // which is what left a restored Project with a MenuBar path and an empty tree. The store must
+  // re-arm the pending index from a visible, interactive signal.
+  assert.match(deferred, /resume\(\): void \{[\s\S]*this\.drain\(entry\.generation, 'resumed'\)/);
+  // The service arms its own signals: the store had no part in the decision, and keeping the wiring
+  // beside `resume()` is what makes the two impossible to drift apart.
+  assert.match(deferred, /addEventListener\?\.\('focus', resume\)/);
+  assert.match(deferred, /'visibilitychange'[\s\S]*visibilityState === 'visible'[\s\S]*resume\(\)/);
+  assert.doesNotMatch(subscribe, /setTimeout|setInterval/);
 });

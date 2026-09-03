@@ -14,6 +14,7 @@ import type {
   OnlyPreviewGlobalSearchFocusOrigin
 } from '@shared/onlypreview/onlyPreview.types';
 import {
+  ONLY_PREVIEW_COPY_PROJECT_ITEM_EVENT,
   ONLY_PREVIEW_FIND_FOCUS_EVENT,
   ONLY_PREVIEW_FOCUS_PROJECT_EVENT
 } from '@shared/onlypreview/onlyPreview.types';
@@ -25,6 +26,7 @@ import {
 } from '@main/onlypreview/onlyPreviewHost.registry';
 import { resolveOnlyPreviewSettingsBounds } from '@main/onlypreview/onlyPreviewWindowBounds.service';
 import { onlyPreviewSearchBootstrapRegistry } from '@main/onlypreview/onlyPreviewSearchBootstrap.registry';
+import { onlyPreviewProjectIndexStateService } from '@main/onlypreview/onlyPreviewProjectIndexState.service';
 import { fileSearchWindowService } from '@main/fileSearch/fileSearchWindow.service';
 import { onlyPreviewPreviewRegionService } from '@main/onlypreview/views/onlyPreviewPreviewRegion.service';
 import { onlyPreviewGlobalSearchFocusService } from '@main/onlypreview/onlyPreviewGlobalSearchFocus.service';
@@ -35,7 +37,9 @@ import {
   getOnlyPreviewRendererTarget
 } from '@main/onlypreview/views/onlyPreviewRendererTarget.service';
 import {
+  ONLY_PREVIEW_SEARCH_SNAPSHOT_EVENT,
   ONLY_PREVIEW_SEARCH_WATCH_COMMIT_EVENT,
+  type OnlyPreviewSearchSnapshotEvent,
   type OnlyPreviewSearchWatchCommitEvent
 } from '@shared/onlypreview/onlyPreviewSearch.type';
 import '@main/xpc/onlyPreviewSearchRuntime.handler';
@@ -68,7 +72,9 @@ type OnlyPreviewNativeCommand =
   | 'focus-project'
   | 'focus-search'
   | 'find-in-file'
-  | 'close-find-in-file';
+  | 'close-find-in-file'
+  | 'copy-project-path'
+  | 'copy-project-name';
 
 interface OnlyPreviewNativeCommandPayload {
   hostToken: string;
@@ -101,6 +107,29 @@ const isGlobalSearchShortcut = (input: Input): boolean => {
   return process.platform === 'darwin' ? !input.control : !input.meta;
 };
 
+/**
+ * Copy Path (Shift) and Copy Name (Alt), as window-wide shortcuts.
+ *
+ * They used to exist only as a DOM handler in the shell renderer, which required the tree row to
+ * hold DOM focus. Every other OnlyPreview shortcut is Main-owned through `before-input-event` on
+ * all four views precisely so it survives focus living anywhere, and these two were simply never
+ * given that treatment. Plain Cmd+C is deliberately excluded: inside a document it means "copy the
+ * selected text", and taking it here would break that.
+ */
+const isProjectItemCopyShortcut = (input: Input): boolean => {
+  if (
+    input.type !== 'keyDown' ||
+    input.isAutoRepeat ||
+    input.key.toLowerCase() !== 'c' ||
+    !isCommandModifier(input) ||
+    // Exactly one of Shift/Alt, matching the renderer's XOR: Shift+Alt+Cmd+C is not a copy.
+    input.shift === input.alt
+  ) {
+    return false;
+  }
+  return process.platform === 'darwin' ? !input.control : !input.meta;
+};
+
 const isCurrentFileFindShortcut = (input: Input): boolean => {
   if (
     input.type !== 'keyDown' ||
@@ -118,8 +147,12 @@ const isCurrentFileFindShortcut = (input: Input): boolean => {
 const shouldAutoOpenOnlyPreviewDevTools = (): boolean =>
   import.meta.env.VITE_MODE === 'debug' && process.env.BITTERLESS_E2E !== '1';
 
+// Preview is the owner-facing test channel, so it carries the DevTools shortcut even though it is a
+// packaged release build. Stable keeps DevTools closed. Auto-open stays debug-only either way.
 const isOnlyPreviewDevToolsEnabled = (): boolean =>
-  import.meta.env.VITE_MODE === 'debug' || (process.env.BITTERLESS_E2E === '1' && !app.isPackaged);
+  import.meta.env.VITE_MODE === 'debug' ||
+  import.meta.env.VITE_RELEASE_CHANNEL === 'preview' ||
+  (process.env.BITTERLESS_E2E === '1' && !app.isPackaged);
 
 const isOnlyPreviewDevToolsShortcut = (input: Input): boolean => {
   if (input.type !== 'keyDown' || input.isAutoRepeat) return false;
@@ -236,6 +269,14 @@ export class OnlyPreviewWindowHelper {
           this.shellView.webContents.focus();
         }
         xpcMain.broadcast(ONLY_PREVIEW_FIND_FOCUS_EVENT, { hostId: host.hostId });
+        return;
+      }
+      if (command === 'copy-project-path' || command === 'copy-project-name') {
+        // No focus move: a copy must not pull the owner out of the document they are reading.
+        xpcMain.broadcast(ONLY_PREVIEW_COPY_PROJECT_ITEM_EVENT, {
+          hostId: host.hostId,
+          copyKind: command === 'copy-project-path' ? 'absolute-path' : 'name'
+        });
         return;
       }
       if (command === 'close-find-in-file') {
@@ -368,6 +409,17 @@ export class OnlyPreviewWindowHelper {
         outcome,
         outcome === 'failure' ? 'bootstrap-fail' : 'none'
       );
+      // The shell is interactive, so its first paint is no longer at stake and the search overlay's
+      // renderer can be built now instead of on the first Shift+Cmd+F. Building it earlier — in
+      // `start()`, before the shell's own load — would contend with exactly what `first-visible`
+      // exists to protect.
+      if (outcome === 'success') {
+        try {
+          onlyPreviewGlobalSearchWindowService.preload(hostToken);
+        } catch {
+          // A host that was revoked between the receipt and here simply gets no warm overlay.
+        }
+      }
     }
   }
 
@@ -683,6 +735,19 @@ export class OnlyPreviewWindowHelper {
               .catch(() => undefined);
           }
         }
+        // Main sees every snapshot before the renderers do, and the relay has already validated its
+        // shape and fenced it on the active workspace generation, so this is the authoritative
+        // point to record whether the Project index is finished.
+        if (eventName === ONLY_PREVIEW_SEARCH_SNAPSHOT_EVENT) {
+          const event = params as OnlyPreviewSearchSnapshotEvent;
+          if (event.hostId === host.hostId) {
+            onlyPreviewProjectIndexStateService.markObserved(
+              host.hostId,
+              event.snapshot.workspaceId,
+              event.snapshot.state
+            );
+          }
+        }
         xpcMain.broadcast(eventName, params);
       },
       onUnexpectedExit: (reason) => {
@@ -719,8 +784,30 @@ export class OnlyPreviewWindowHelper {
     this.shellView = shellView;
     this.shellStartupLease = { hostToken: host.hostToken, window, view: shellView };
     window.contentView.addChildView(shellView);
+    // The constructor only carries width/height/x/y. WindowStateController.show() is what applies
+    // the persisted bounds and any saved maximize/full-screen, so the listener has to exist before
+    // show() or that restore resize lands with nothing watching and the content keeps the
+    // constructor-time layout for the whole session.
+    window.on('resize' as any, () => {
+      if (this.baseWindow !== window) return;
+      const [width, height] = window.getContentSize();
+      shellView.setBounds({ x: 0, y: 0, width, height });
+      const currentBounds = onlyPreviewPreviewRegionService.getBounds();
+      if (currentBounds) {
+        const bounds = clampPreviewBounds(currentBounds, width, height);
+        onlyPreviewPreviewRegionService.updateBounds(host.hostToken, bounds);
+        onlyPreviewGlobalSearchWindowService.updateBounds(
+          host.hostToken,
+          { x: 0, y: 0, width, height },
+          bounds
+        );
+      }
+    });
     this.applyInitialBounds();
     this.show();
+    // maximize() and setFullScreen(true) settle asynchronously on macOS: this covers the first
+    // frame, the listener above covers the settle.
+    this.applyInitialBounds();
     openTrace.mark({
       phase: 'show',
       role: 'base',
@@ -800,21 +887,6 @@ export class OnlyPreviewWindowHelper {
       if (!this.isCurrentShell(host.hostToken, window, shellView)) return;
       this.settleShellStartupLease(host.hostToken, window, shellView);
       this.finishShellOpenTrace(openTrace.tag, 'failure', 'unresponsive');
-    });
-    window.on('resize' as any, () => {
-      if (this.baseWindow !== window) return;
-      const [width, height] = window.getContentSize();
-      shellView.setBounds({ x: 0, y: 0, width, height });
-      const currentBounds = onlyPreviewPreviewRegionService.getBounds();
-      if (currentBounds) {
-        const bounds = clampPreviewBounds(currentBounds, width, height);
-        onlyPreviewPreviewRegionService.updateBounds(host.hostToken, bounds);
-        onlyPreviewGlobalSearchWindowService.updateBounds(
-          host.hostToken,
-          { x: 0, y: 0, width, height },
-          bounds
-        );
-      }
     });
     window.once('closed' as any, () => {
       if (
@@ -965,6 +1037,14 @@ export class OnlyPreviewWindowHelper {
     }
     if (isGlobalSearchShortcut(input)) return 'focus-search';
     if (isCurrentFileFindShortcut(input)) return 'find-in-file';
+    if (
+      isProjectItemCopyShortcut(input) &&
+      this.standaloneHost?.hostToken === host.hostToken &&
+      // A keystroke typed into the Global Search field belongs to that field, not to the tree.
+      !onlyPreviewGlobalSearchWindowService.isActive(host.hostToken)
+    ) {
+      return input.shift ? 'copy-project-path' : 'copy-project-name';
+    }
     if (
       input.type === 'keyDown' &&
       !input.isAutoRepeat &&

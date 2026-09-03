@@ -3,7 +3,8 @@ import { basename } from 'node:path';
 import { OnlyPreviewContractError } from '@shared/onlypreview/onlyPreview.contract';
 import type {
   OnlyPreviewFileRef,
-  OnlyPreviewHostRequest
+  OnlyPreviewHostRequest,
+  OnlyPreviewProjectEntry
 } from '@shared/onlypreview/onlyPreview.types';
 import { fileSearchWindowService } from '@main/fileSearch/fileSearchWindow.service';
 import { i18nHelper } from '@main/i18n/i18n.helper';
@@ -11,13 +12,21 @@ import {
   onlyPreviewClipboardService,
   type OnlyPreviewClipboardCopyKind
 } from './onlyPreviewClipboard.service';
+import {
+  ONLY_PREVIEW_UNTITLED_FOLDER_MAX_INDEX,
+  onlyPreviewUntitledFolderName
+} from '@shared/onlypreview/onlyPreviewEntryName.shared';
 import { onlyPreviewSelectionCoordinator } from './onlyPreviewSelectionCoordinator.service';
 import {
   onlyPreviewWorkspaceRegistry,
   type OnlyPreviewProjectAuthorityRef
 } from './onlyPreviewWorkspace.registry';
 import { onlyPreviewPreviewRegionService } from './views/onlyPreviewPreviewRegion.service';
-import { ONLY_PREVIEW_SELECTION_CHANGED_EVENT } from '@shared/onlypreview/onlyPreview.types';
+import {
+  ONLY_PREVIEW_PROJECT_NEW_FOLDER_EVENT,
+  ONLY_PREVIEW_PROJECT_RENAME_EVENT,
+  ONLY_PREVIEW_SELECTION_CHANGED_EVENT
+} from '@shared/onlypreview/onlyPreview.types';
 import { xpcMain } from 'electron-xpc/main';
 
 type ProjectItemRequest = OnlyPreviewHostRequest & OnlyPreviewFileRef;
@@ -91,6 +100,27 @@ export class OnlyPreviewProjectNativeActionService {
       label: labels.revealInFolder,
       click: () => actions.revealInFolder(currentRequest)
     });
+    template.push({ type: 'separator' });
+    // New Folder is deliberately absent from a file row (owner decision 2026-09-02): creating
+    // "inside" a file has no meaning, and the folder and root menus already cover every location.
+    if (item.nodeKind === 'directory') {
+      template.push({
+        id: 'onlypreview-new-folder',
+        label: labels.newFolder,
+        click: () =>
+          this.requestNewFolder(authority.host.hostId, currentRequest.workspaceId, {
+            parentRelativePath: item.relativePath
+          })
+      });
+    }
+    // Rename covers files as well as folders, so the menu does not offer an action that silently
+    // applies to only half the rows.
+    template.push({
+      id: 'onlypreview-rename',
+      label: labels.rename,
+      click: () =>
+        this.requestRename(authority.host.hostId, currentRequest.workspaceId, item.relativePath)
+    });
     template.push(
       { type: 'separator' },
       {
@@ -147,6 +177,15 @@ export class OnlyPreviewProjectNativeActionService {
         id: 'onlypreview-reveal-project-root',
         label: labels.revealInFolder,
         click: () => void this.revealProjectRootFromUi(request)
+      },
+      { type: 'separator' },
+      {
+        id: 'onlypreview-new-folder-project-root',
+        label: labels.newFolder,
+        click: () =>
+          this.requestNewFolder(authority.host.hostId, request.workspaceId, {
+            parentRelativePath: ''
+          })
       },
       { type: 'separator' },
       {
@@ -232,6 +271,154 @@ export class OnlyPreviewProjectNativeActionService {
     } catch {
       await this.showCopyFailure(window).catch(() => undefined);
     }
+  }
+
+  /**
+   * Create `untitled folder`, or the first free `untitled folder N`.
+   *
+   * The sequence is driven by `mkdir` failing with NAME_EXISTS rather than by listing the directory
+   * first: `mkdir` without `recursive` is atomic, so it cannot hand the same name to two attempts
+   * the way a pre-scan can. Only a collision advances the index — any other failure stops, so one
+   * refused click cannot become a thousand round trips.
+   */
+  async createUntitledProjectFolder(request: {
+    hostToken: string;
+    workspaceId: string;
+    parentRelativePath: string;
+  }): Promise<OnlyPreviewProjectEntry> {
+    let lastError: unknown = null;
+    for (let index = 1; index <= ONLY_PREVIEW_UNTITLED_FOLDER_MAX_INDEX; index += 1) {
+      try {
+        return await this.createProjectFolder({
+          ...request,
+          name: onlyPreviewUntitledFolderName(index)
+        });
+      } catch (error) {
+        if (!(error instanceof OnlyPreviewContractError) || error.code !== 'NAME_EXISTS') throw error;
+        lastError = error;
+      }
+    }
+    throw lastError instanceof Error
+      ? lastError
+      : new OnlyPreviewContractError('NAME_EXISTS', 'Too many untitled folders already exist here.');
+  }
+
+  async createProjectFolder(request: {
+    hostToken: string;
+    workspaceId: string;
+    parentRelativePath: string;
+    name: string;
+  }): Promise<OnlyPreviewProjectEntry> {
+    // The parent is authorized as an item, or as the root when the path is empty. Both fences are
+    // re-checked after the authority call so a workspace swap mid-flight cannot land the folder in
+    // a Project the owner is no longer looking at.
+    const authority = request.parentRelativePath
+      ? onlyPreviewWorkspaceRegistry.getProjectAuthorityItemRef(request.hostToken, {
+          workspaceId: request.workspaceId,
+          relativePath: request.parentRelativePath
+        })
+      : onlyPreviewWorkspaceRegistry.getProjectAuthorityRootRef(
+          request.hostToken,
+          request.workspaceId
+        );
+    this.requireCurrentAuthority(authority);
+    const created = await fileSearchWindowService.createProjectDirectory({
+      workspaceId: authority.workspaceId,
+      workspaceGeneration: authority.workspaceGeneration,
+      parentRelativePath: authority.relativePath,
+      name: request.name
+    });
+    this.requireCurrentAuthority(authority);
+    return {
+      relativePath: created.relativePath,
+      name: created.name,
+      nodeKind: created.nodeKind
+    };
+  }
+
+  // The owner asked for a dialog on a duplicate name, and every other Project failure in this menu
+  // is already a native message box, so the dialog belongs here rather than in the renderer. The
+  // error is rethrown so the tree still reverts the row to its previous name.
+  async renameProjectItemFromUi(
+    window: BaseWindow,
+    request: {
+      hostToken: string;
+      workspaceId: string;
+      relativePath: string;
+      name: string;
+    }
+  ): Promise<OnlyPreviewProjectEntry> {
+    try {
+      return await this.renameProjectItem(request);
+    } catch (error) {
+      await this.showRenameFailure(window, error).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async renameProjectItem(request: {
+    hostToken: string;
+    workspaceId: string;
+    relativePath: string;
+    name: string;
+  }): Promise<OnlyPreviewProjectEntry> {
+    const authority = onlyPreviewWorkspaceRegistry.getProjectAuthorityItemRef(request.hostToken, {
+      workspaceId: request.workspaceId,
+      relativePath: request.relativePath
+    });
+    this.requireCurrentItem(authority);
+    const renamed = await fileSearchWindowService.renameProjectEntry({
+      workspaceId: authority.workspaceId,
+      workspaceGeneration: authority.workspaceGeneration,
+      relativePath: authority.relativePath,
+      name: request.name
+    });
+    this.requireCurrentItem(authority);
+    this.followRenamedSelection(authority, renamed.relativePath, renamed.nodeKind);
+    return {
+      relativePath: renamed.relativePath,
+      name: renamed.name,
+      nodeKind: renamed.nodeKind
+    };
+  }
+
+  /**
+   * Keep the preview honest across a rename.
+   *
+   * Renaming the previewed file must re-point the preview at the new path, and renaming any ancestor
+   * of it must clear the preview — the old path no longer exists on disk, and a preview showing a
+   * path that is gone is worse than an empty one. Both are decided from the selection Main already
+   * holds, so neither needs a filesystem read.
+   */
+  private followRenamedSelection(
+    authority: OnlyPreviewProjectAuthorityRef,
+    newRelativePath: string,
+    nodeKind: 'file' | 'directory'
+  ): void {
+    const hostToken = authority.host.hostToken;
+    const selected = onlyPreviewWorkspaceRegistry.restore(hostToken)?.selectedRelativePath;
+    const renamedFile = nodeKind === 'file' && selected === authority.relativePath;
+    const renamedAncestor = selected?.startsWith(`${authority.relativePath}/`) ?? false;
+    if (!renamedFile && !renamedAncestor) return;
+    onlyPreviewSelectionCoordinator.invalidatePendingSelection(hostToken, {
+      workspaceId: authority.workspaceId,
+      relativePath: authority.relativePath
+    });
+    if (renamedFile) {
+      onlyPreviewWorkspaceRegistry.select(hostToken, {
+        workspaceId: authority.workspaceId,
+        relativePath: newRelativePath
+      });
+      void onlyPreviewPreviewRegionService
+        .present(hostToken, { workspaceId: authority.workspaceId, relativePath: newRelativePath })
+        .catch(() => undefined);
+    } else {
+      // The previewed file moved with its folder; its indexed path is stale either way, so the
+      // preview is cleared rather than guessed at.
+      onlyPreviewWorkspaceRegistry.clearProjectSelection(hostToken);
+      onlyPreviewPreviewRegionService.clearWorkspace(hostToken, authority.workspaceId);
+    }
+    xpcMain.broadcast(ONLY_PREVIEW_SELECTION_CHANGED_EVENT, { hostId: authority.host.hostId });
   }
 
   async openExternally(request: ProjectItemRequestInput): Promise<void> {
@@ -374,6 +561,30 @@ export class OnlyPreviewProjectNativeActionService {
     if (!sameAuthority(current, expected)) this.throwAuthorityChanged();
   }
 
+  // The menu click cannot create the folder or open the editor itself: the row that has to become
+  // editable only exists in the shell renderer's tree, so Main delivers the intent and the renderer
+  // performs the create and the inline edit against the row it owns.
+  private requestNewFolder(
+    hostId: string,
+    workspaceId: string,
+    params: { parentRelativePath: string }
+  ): void {
+    xpcMain.broadcast(ONLY_PREVIEW_PROJECT_NEW_FOLDER_EVENT, {
+      hostId,
+      workspaceId,
+      parentRelativePath: params.parentRelativePath
+    });
+  }
+
+  private requestRename(hostId: string, workspaceId: string, relativePath: string): void {
+    xpcMain.broadcast(ONLY_PREVIEW_PROJECT_RENAME_EVENT, { hostId, workspaceId, relativePath });
+  }
+
+  private requireCurrentAuthority(expected: OnlyPreviewProjectAuthorityRef): void {
+    if (expected.relativePath) this.requireCurrentItem(expected);
+    else this.requireCurrentRoot(expected);
+  }
+
   private requireCurrentRoot(expected: OnlyPreviewProjectAuthorityRef): void {
     const current = onlyPreviewWorkspaceRegistry.getProjectAuthorityRootRef(
       expected.host.hostToken,
@@ -410,6 +621,25 @@ export class OnlyPreviewProjectNativeActionService {
       title: labels.deleteFailureTitle,
       message: labels.deleteFailureMessage,
       buttons: [labels.deleteFailureOk],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true
+    });
+  }
+
+  private async showRenameFailure(window: BaseWindow, error: unknown): Promise<void> {
+    const labels = i18nHelper.getMessages().app.onlyPreviewFileMenu;
+    const code = error instanceof OnlyPreviewContractError ? error.code : null;
+    await dialog.showMessageBox(window, {
+      type: 'error',
+      title: labels.renameFailureTitle,
+      message:
+        code === 'NAME_EXISTS'
+          ? labels.renameExistsMessage
+          : code === 'NAME_INVALID'
+            ? labels.renameInvalidMessage
+            : labels.renameFailureMessage,
+      buttons: [labels.renameFailureOk],
       defaultId: 0,
       cancelId: 0,
       noLink: true

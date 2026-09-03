@@ -1,7 +1,7 @@
 ---
 id: onlypreview-folder-authoring-112
 scope: New Folder and in-place Rename in the OnlyPreview Project tree, with union Win/macOS name rules and untitled sequencing
-status: pending
+status: implemented; owner verification pending
 depends-on: [onlypreview-permanent-delete-029, onlypreview-main-fs-boundary-audit-087, onlypreview-project-authority-preload-084]
 ---
 
@@ -24,9 +24,17 @@ Contract: [`features/onlypreview-folder-authoring.md`](../../features/onlyprevie
 2. **Preload** gains `createDirectory` and `renameEntry` on the project authority. Both resolve the
    parent through the existing authorized workspace binding, refuse to leave containment, refuse a
    symlinked parent, re-validate the name, and fence on `workspaceGeneration`.
-   `createDirectory` picks the next free `untitled folder` name itself, treats `EEXIST` as
-   "advance to the next candidate", and fails typed at
-   `ONLY_PREVIEW_UNTITLED_FOLDER_MAX_INDEX`. `renameEntry` fails typed and distinctly on `EEXIST`.
+   `createDirectory` takes an explicit name and treats `EEXIST` as `NAME_EXISTS`; `renameEntry`
+   fails the same way, and additionally allows a case-only change on a case-insensitive volume by
+   comparing the destination's inode against the source's.
+
+   **Divergence from the original contract, deliberate:** the untitled sequence loops in Main
+   (`createUntitledProjectFolder`), not in the preload. Main validates every authority response
+   against the *exact* relative path it asked for, which is how a compromised or drifting response
+   is caught; a preload that chose the name itself would leave Main unable to predict that path and
+   would weaken the check for every create. The loop still relies on the preload's non-recursive
+   `mkdir` being atomic, so it cannot hand the same name to two attempts, and only `NAME_EXISTS`
+   advances the index — any other failure stops immediately.
 3. **Main** adds `createProjectDirectory` and `renameProjectEntry` to `fileSearchWindowService` with
    the same exact-key response validation the delete grant uses, plus
    `NAME_EXISTS` / `NAME_INVALID` error codes in the OnlyPreview contract.
@@ -37,8 +45,11 @@ Contract: [`features/onlypreview-folder-authoring.md`](../../features/onlyprevie
 5. **XPC**: two new named `runOperation` entries so the renderer can request a create and commit a
    rename. Both go through `onlyPreviewWorkspaceRegistry` authority resolution and stay inside the
    existing capability/revision fencing.
-6. **Renderer**: `onlyPreviewShellStore` owns one `editingRelativePath` plus its draft, and the tree
-   row renders an auto-sized input when it is the edited row. Enter and blur commit, Escape cancels,
+6. **Renderer**: the edit state lives in `OnlyPreviewProjectAuthoringController`
+   (`onlyPreviewProjectAuthoring.store.ts`) rather than directly on `onlyPreviewShellStore`, which
+   is at its 800-line budget; the controller is constructed from the store *proxy* so its writes to
+   tree selection and the error banner reach the view. The tree row renders an auto-sized input when
+   it is the edited row. Enter and blur commit, Escape cancels,
    an unchanged name is a no-op, and every rejection restores the previous name. Tree keyboard
    navigation, click selection, and double-click activation are suppressed for the edited row.
 7. **Preview continuity**: a successful rename of the previewed file re-points the preview to the

@@ -49,7 +49,10 @@ const loadTypeScriptModule = (relativePath, dependencies = {}) => {
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 const sharedTypes = loadTypeScriptModule('src/shared/onlypreview/onlyPreview.types.ts');
-const contract = loadTypeScriptModule('src/shared/onlypreview/onlyPreview.contract.ts');
+const entryName = loadTypeScriptModule('src/shared/onlypreview/onlyPreviewEntryName.shared.ts');
+const contract = loadTypeScriptModule('src/shared/onlypreview/onlyPreview.contract.ts', {
+  './onlyPreviewEntryName.shared': entryName
+});
 const registry = loadTypeScriptModule('src/shared/onlypreview/onlyPreviewFind.registry.ts');
 
 const hostToken = 'host-token-123456789';

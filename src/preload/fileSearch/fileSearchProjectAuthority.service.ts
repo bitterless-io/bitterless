@@ -19,6 +19,7 @@ import {
   normalizeOnlyPreviewRelativePath,
   OnlyPreviewContractError
 } from '@shared/onlypreview/onlyPreview.contract';
+import { validateOnlyPreviewEntryName } from '@shared/onlypreview/onlyPreviewEntryName.shared';
 import type {
   OnlyPreviewFileAuthorityDeleteGrant,
   OnlyPreviewFileAuthorityDeleteResult,
@@ -104,14 +105,18 @@ const sameIdentity = (left: ProjectFileIdentity, right: ProjectFileIdentity): bo
   left.size === right.size &&
   left.modifiedTimeNanoseconds === right.modifiedTimeNanoseconds;
 
-const toSafeProjectError = (error: unknown, action: 'read' | 'delete'): never => {
+type ProjectAuthorityAction = 'read' | 'delete' | 'author';
+
+const toSafeProjectError = (error: unknown, action: ProjectAuthorityAction): never => {
   if (error instanceof OnlyPreviewContractError) throw error;
   if (isOnlyPreviewPermissionError(error)) {
     throw new OnlyPreviewContractError(
       'PATH_PERMISSION_DENIED',
       action === 'delete'
         ? 'Bitterless does not have permission to delete this file.'
-        : 'Bitterless does not have permission to read this file or folder.'
+        : action === 'author'
+          ? 'Bitterless does not have permission to change this folder.'
+          : 'Bitterless does not have permission to read this file or folder.'
     );
   }
   const code = (error as NodeJS.ErrnoException | null)?.code;
@@ -120,15 +125,38 @@ const toSafeProjectError = (error: unknown, action: 'read' | 'delete'): never =>
       'PATH_NOT_FOUND',
       action === 'delete'
         ? 'The selected file is no longer available.'
-        : 'The selected Project item is no longer available.'
+        : action === 'author'
+          ? 'The Project item being renamed is no longer available.'
+          : 'The selected Project item is no longer available.'
     );
   }
   throw new OnlyPreviewContractError(
     'OPERATION_FAILED',
     action === 'delete'
       ? 'The selected file could not be deleted safely.'
-      : 'The selected Project item could not be authorized safely.'
+      : action === 'author'
+        ? 'The Project item could not be created or renamed safely.'
+        : 'The selected Project item could not be authorized safely.'
   );
+};
+
+// The renderer validates the same rules for immediate feedback, but the renderer is not the
+// contract: this is the last check before the syscall, so it runs again here on a value the
+// renderer could have skipped.
+const requireValidEntryName = (name: unknown): string => {
+  const result = validateOnlyPreviewEntryName(name);
+  if (!result.ok) {
+    throw new OnlyPreviewContractError('NAME_INVALID', `The name is not usable: ${result.reason}.`);
+  }
+  return result.name;
+};
+
+const joinRelativePath = (parentRelativePath: string, name: string): string =>
+  parentRelativePath ? `${parentRelativePath}/${name}` : name;
+
+const parentRelativePathOf = (relativePath: string): string => {
+  const separator = relativePath.lastIndexOf('/');
+  return separator === -1 ? '' : relativePath.slice(0, separator);
 };
 
 export const inspectOnlyPreviewProjectTarget = async (
@@ -296,6 +324,102 @@ export class FileSearchProjectAuthority {
       };
     } catch (error) {
       return toSafeProjectError(error, 'read');
+    }
+  }
+
+  async createDirectory(
+    runtimeInstanceId: string,
+    workspaceId: string,
+    workspaceGeneration: number,
+    parentRelativePath: string,
+    name: string
+  ): Promise<OnlyPreviewFileAuthorityTarget> {
+    try {
+      const entryName = requireValidEntryName(name);
+      const operation = this.authorityOperation;
+      const workspace = this.requireWorkspace(workspaceId, workspaceGeneration);
+      const parent = await this.resolveDirectory(workspace, parentRelativePath, operation);
+      const canonicalTarget = join(parent.canonicalPath, entryName);
+      if (!isContainedPath(workspace.rootRealPath, canonicalTarget)) {
+        throw new OnlyPreviewContractError(
+          'PATH_OUTSIDE_WORKSPACE',
+          'The new folder would be outside its workspace.'
+        );
+      }
+      this.requireActiveWorkspace(workspace, operation);
+      try {
+        await this.fileOperations.mkdir(canonicalTarget, 0o777);
+      } catch (error) {
+        // `mkdir` without `recursive` is the collision check: it is atomic, so it cannot be raced
+        // the way a separate existence probe can.
+        if ((error as NodeJS.ErrnoException | null)?.code === 'EEXIST') {
+          throw new OnlyPreviewContractError(
+            'NAME_EXISTS',
+            'An item with this name already exists in this folder.'
+          );
+        }
+        throw error;
+      }
+      const created = await this.resolveItem(
+        workspace,
+        joinRelativePath(parent.relativePath, entryName),
+        operation
+      );
+      return this.toTarget(runtimeInstanceId, workspace, created);
+    } catch (error) {
+      return toSafeProjectError(error, 'author');
+    }
+  }
+
+  async renameEntry(
+    runtimeInstanceId: string,
+    workspaceId: string,
+    workspaceGeneration: number,
+    relativePath: string,
+    name: string
+  ): Promise<OnlyPreviewFileAuthorityTarget> {
+    try {
+      const entryName = requireValidEntryName(name);
+      const operation = this.authorityOperation;
+      const workspace = this.requireWorkspace(workspaceId, workspaceGeneration);
+      const item = await this.resolveItem(workspace, relativePath, operation);
+      if (!item.relativePath) {
+        throw new OnlyPreviewContractError(
+          'PATH_OUTSIDE_WORKSPACE',
+          'The Project root cannot be renamed from here.'
+        );
+      }
+      if (item.name === entryName) return this.toTarget(runtimeInstanceId, workspace, item);
+      const canonicalTarget = join(dirname(item.canonicalPath), entryName);
+      if (!isContainedPath(workspace.rootRealPath, canonicalTarget)) {
+        throw new OnlyPreviewContractError(
+          'PATH_OUTSIDE_WORKSPACE',
+          'The renamed item would be outside its workspace.'
+        );
+      }
+      // `rename` overwrites silently, so the destination has to be checked. A case-only change on a
+      // case-insensitive filesystem resolves to the item itself, and that is a legitimate rename —
+      // only a *different* entry is a collision.
+      const existing = await this.fileOperations.lstat(canonicalTarget).catch(() => null);
+      if (
+        existing &&
+        (existing.dev !== item.identity.deviceId || existing.ino !== item.identity.inode)
+      ) {
+        throw new OnlyPreviewContractError(
+          'NAME_EXISTS',
+          'An item with this name already exists in this folder.'
+        );
+      }
+      this.requireActiveWorkspace(workspace, operation);
+      await this.fileOperations.rename(item.canonicalPath, canonicalTarget);
+      const renamed = await this.resolveItem(
+        workspace,
+        joinRelativePath(parentRelativePathOf(item.relativePath), entryName),
+        operation
+      );
+      return this.toTarget(runtimeInstanceId, workspace, renamed);
+    } catch (error) {
+      return toSafeProjectError(error, 'author');
     }
   }
 
@@ -485,6 +609,29 @@ export class FileSearchProjectAuthority {
     }
     this.requireActiveWorkspace(workspace, operation);
     return rootStats;
+  }
+
+  private async resolveDirectory(
+    workspace: ProjectWorkspaceAuthority,
+    parentRelativePath: unknown,
+    operation: number
+  ): Promise<{ relativePath: string; canonicalPath: string }> {
+    if (typeof parentRelativePath !== 'string') {
+      throw new OnlyPreviewContractError('INVALID_INPUT', 'The parent folder is invalid.');
+    }
+    if (!normalizeOnlyPreviewRelativePath(parentRelativePath)) {
+      await this.requireCurrentRoot(workspace, operation);
+      this.requireActiveWorkspace(workspace, operation);
+      return { relativePath: '', canonicalPath: workspace.rootRealPath };
+    }
+    const parent = await this.resolveItem(workspace, parentRelativePath, operation);
+    if (parent.nodeKind !== 'directory') {
+      throw new OnlyPreviewContractError(
+        'PATH_NOT_REGULAR_FILE',
+        'A new folder can only be created inside a folder.'
+      );
+    }
+    return { relativePath: parent.relativePath, canonicalPath: parent.canonicalPath };
   }
 
   private async resolveItem(

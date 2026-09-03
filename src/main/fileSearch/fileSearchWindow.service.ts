@@ -31,6 +31,7 @@ import {
   type OnlyPreviewPreviewReadPreparedSelection
 } from '@shared/onlypreview/onlyPreviewPreviewReadRuntime.types';
 import { OnlyPreviewContractError } from '@shared/onlypreview/onlyPreview.contract';
+import { validateOnlyPreviewEntryName } from '@shared/onlypreview/onlyPreviewEntryName.shared';
 import {
   OnlyPreviewProjectAuthorityProtocolError,
   unwrapOnlyPreviewProjectAuthorityResponse
@@ -45,6 +46,14 @@ import {
   createOnlyPreviewSearchDiagnostics,
   type OnlyPreviewSearchDiagnostics
 } from '@shared/onlypreview/onlyPreviewSearchDiagnostics.mjs';
+
+const requireProjectEntryName = (value: unknown): string => {
+  const result = validateOnlyPreviewEntryName(value);
+  if (!result.ok) {
+    throw new OnlyPreviewContractError('NAME_INVALID', `The name is not usable: ${result.reason}.`);
+  }
+  return result.name;
+};
 
 const PROJECT_AUTHORITY_TIMEOUT_MS = 10_000;
 const INSTANCE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -382,6 +391,49 @@ export class FileSearchWindowService {
       return this.rejectProjectProtocol('Project root authorization response is invalid.');
     }
     return root;
+  }
+
+  async createProjectDirectory(params: {
+    workspaceId: string;
+    workspaceGeneration: number;
+    parentRelativePath: string;
+    name: string;
+  }): Promise<OnlyPreviewFileAuthorityTarget> {
+    // Both sides must agree on the exact name before the call. The authority trims and re-validates
+    // it, and the response is checked for an exact relative-path match — a disagreement here would
+    // be read as a protocol violation and tear down the privileged runtime over a stray space.
+    const name = requireProjectEntryName(params.name);
+    const value = await this.callProjectAuthority(
+      (client, identity) => client.createDirectory({ ...identity, ...params, name }),
+      PROJECT_AUTHORITY_TIMEOUT_MS
+    );
+    // The created folder's own relative path is derived by the authority, not supplied here, so the
+    // response is validated against the parent it was created in rather than an expected path.
+    return this.validateProjectTarget(value, {
+      workspaceId: params.workspaceId,
+      workspaceGeneration: params.workspaceGeneration,
+      relativePath: params.parentRelativePath ? `${params.parentRelativePath}/${name}` : name
+    });
+  }
+
+  async renameProjectEntry(params: {
+    workspaceId: string;
+    workspaceGeneration: number;
+    relativePath: string;
+    name: string;
+  }): Promise<OnlyPreviewFileAuthorityTarget> {
+    const name = requireProjectEntryName(params.name);
+    const value = await this.callProjectAuthority(
+      (client, identity) => client.renameEntry({ ...identity, ...params, name }),
+      PROJECT_AUTHORITY_TIMEOUT_MS
+    );
+    const separator = params.relativePath.lastIndexOf('/');
+    const parentRelativePath = separator === -1 ? '' : params.relativePath.slice(0, separator);
+    return this.validateProjectTarget(value, {
+      workspaceId: params.workspaceId,
+      workspaceGeneration: params.workspaceGeneration,
+      relativePath: parentRelativePath ? `${parentRelativePath}/${name}` : name
+    });
   }
 
   async prepareProjectDelete(params: {
