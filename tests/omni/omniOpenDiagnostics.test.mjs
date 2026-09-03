@@ -67,7 +67,6 @@ test('Omni renderer diagnostics cover fixed lifecycle/bootstrap phases', () => {
     'renderer-language',
     'renderer-import',
     'renderer-mount',
-    'renderer-receipt',
     'layout-ready',
   ];
   const trace = diagnostics.trace('renderer', {
@@ -75,12 +74,46 @@ test('Omni renderer diagnostics cover fixed lifecycle/bootstrap phases', () => {
     role: 'control',
     generation: 2,
   }, 'r');
-  for (const phase of phases) trace.mark({ phase, role: 'control' });
+  for (const phase of phases) trace.mark({ phase, role: 'control', outcome: 'success' });
   trace.end({ outcome: 'ready', reason: 'none', role: 'control' });
 
   assert.equal(lines.length, phases.length + 2);
   for (const phase of phases) assert.match(lines.join('\n'), new RegExp(`phase=${phase}`));
   assert.match(lines.at(-1), /event=renderer-terminal tag=r1 role=control outcome=ready reason=none/);
+});
+
+test('Omni renderer receipts are fixed-schema Main acceptance outcomes', () => {
+  const lines = [];
+  const diagnostics = createOmniOpenDiagnostics({
+    clock: () => 1,
+    write: (line) => lines.push(line),
+  });
+  assert.equal(diagnostics.receipt({ parentTag: 'r1', role: 'browser', outcome: 'accepted' }), true);
+  assert.equal(diagnostics.receipt({ role: 'unknown', outcome: 'rejected' }), true);
+  assert.equal(diagnostics.receipt({ role: 'browser', outcome: 'success' }), false);
+  assert.match(lines[0], /event=renderer-receipt tag=q1 parentTag=r1 role=browser outcome=accepted/);
+  assert.match(lines[1], /event=renderer-receipt tag=q2 role=unknown outcome=rejected/);
+  assert.doesNotMatch(lines.join('\n'), /token|cellId|url|path|error/i);
+});
+
+test('Omni diagnostics reject invalid enum values without writing partial events', () => {
+  const lines = [];
+  const diagnostics = createOmniOpenDiagnostics({
+    clock: () => 1,
+    write: (line) => lines.push(line),
+  });
+  const trace = diagnostics.trace('renderer', {
+    parentTag: 'o1',
+    role: 'top',
+    generation: 1,
+  }, 'r');
+  assert.equal(trace.mark({
+    role: 'top',
+    phase: 'url=https://private.example',
+    outcome: 'success',
+  }), false);
+  assert.equal(lines.length, 1);
+  assert.doesNotMatch(lines.join('\n'), /private|url/i);
 });
 
 test('Omni timeout summaries clamp counts and traces terminate once', () => {

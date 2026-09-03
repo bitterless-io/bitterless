@@ -1,7 +1,6 @@
 import { h } from 'vue';
 import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-router';
 import MiniApp from '@/views/miniApp/MiniApp.vue';
-import Setting from '@/views/setting/Setting.vue';
 
 const AuthGateRoute = {
   name: 'AuthGateRoute',
@@ -14,7 +13,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/setting',
     name: 'setting',
-    component: Setting,
+    component: () => import('@/views/setting/Setting.vue'),
     props: { showChatMenuControl: false }
   },
   { path: '/:pathMatch(.*)*', name: 'auth-gate-fallback', component: AuthGateRoute }

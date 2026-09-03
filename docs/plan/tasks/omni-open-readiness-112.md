@@ -1,7 +1,7 @@
 ---
 id: omni-open-readiness-112
 scope: Omni Browser single-flight readiness, Open feedback, and single Enter navigation
-status: in-progress; adding diagnostics and optimizing packaged first paint
+status: implemented; Preview 0.0.86 rebuilt; owner runtime verification pending
 depends-on: [omni-miniapp-cells-001]
 verify: node --test tests/omni/*.test.mjs && yarn typecheck:node && yarn vue-tsc --noEmit --noCheck -p tsconfig.web.json --composite false && git diff --check
 ---
@@ -106,3 +106,26 @@ Ral now requires a near-one-second visible and searchable first surface.
 - Retain fixed privacy-safe timings for first-visible/first-interactive, restored cell counts,
   deferred navigation start/terminal, Control startup, pending readiness categories, and failures.
   Never log URLs, cell IDs, tokens/capabilities, queries, page content, or raw errors.
+
+## Near-instant open delivery
+
+- Top and every initial browser-cell chrome renderer start locally unthrottled and retain the
+  existing load + post-`nextTick` mount gate. Exact generation/token/role/current-view fences restore
+  normal throttling and remove lifecycle listeners on success, failure, timeout, or cleanup.
+- The native window is shown/focused and Open resolves before a generation-owned 16ms timer turn
+  starts browser/mini-app content or nonessential Control. Same-generation reopen reuses the pending
+  batch, while cleanup cancels it without running stale work.
+- Every initial browser and mini-app content load records one privacy-safe scheduled/start/terminal
+  timeline. Timers, WebContents listeners, and browser semaphore permits use exact-once cleanup;
+  queued and active work cannot over-release into a replacement generation.
+- Control starts after first-visible, reports Vue mount separately from async layout readiness, and
+  has a non-gating 30-second diagnostic cleanup deadline. Manual Control remains lazily creatable.
+- `[omni-open]` records cover native/restore/first-visible/interactive/ready, local renderer
+  lifecycle/bootstrap, accepted/rejected receipts, deferred navigation, bounded pending counts, and
+  terminal cause. Fixed runtime allowlists omit URL, cell identity, token/capability, query/content,
+  path, and raw error values.
+- Focused tests, Node typecheck, and directed Web typecheck passed. After resolving each concurrency
+  finding, [independent review 2](../reviews/omni-open-readiness-112-2.md) passed with no P0-P2 and
+  one non-blocking P3 coverage note.
+- Rebuilt the notarized macOS ARM Preview `0.0.86` package. Codesign and stapler validation passed;
+  Electron/E2E and packaged runtime launch were not run, so live latency remains owner verification.

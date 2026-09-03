@@ -342,18 +342,6 @@ export class OnlyPreviewWindowHelper {
       !this.isCurrentShell(hostToken, window, shellView)
     ) return;
     if (phase === 'renderer-receipt' && outcome) {
-      const wasVisible = window.isVisible();
-      if (outcome === 'success') this.show();
-      if (outcome === 'success' && !wasVisible && this.windowOpenTraces.isActive(openTag)) {
-        this.windowOpenTraces.mark(openTag, {
-          phase: 'first-visible',
-          role: 'base',
-          lifecycle: 'shown',
-          visible: window.isVisible(),
-          focused: window.isFocused(),
-          backgroundThrottling: shellView.webContents.getBackgroundThrottling()
-        });
-      }
       this.settleShellStartupLease(hostToken, window, shellView);
     }
     if (this.windowOpenTraces.isActive(openTag)) this.windowOpenTraces.mark(openTag, {
@@ -732,6 +720,23 @@ export class OnlyPreviewWindowHelper {
     this.shellStartupLease = { hostToken: host.hostToken, window, view: shellView };
     window.contentView.addChildView(shellView);
     this.applyInitialBounds();
+    this.show();
+    openTrace.mark({
+      phase: 'show',
+      role: 'base',
+      lifecycle: 'shown',
+      visible: window.isVisible(),
+      focused: window.isFocused(),
+      backgroundThrottling: shellView.webContents.getBackgroundThrottling()
+    });
+    openTrace.mark({
+      phase: 'first-visible',
+      role: 'base',
+      lifecycle: 'shown',
+      visible: window.isVisible(),
+      focused: window.isFocused(),
+      backgroundThrottling: shellView.webContents.getBackgroundThrottling()
+    });
     onlyPreviewGlobalSearchWindowService.start({
       window,
       host,
@@ -785,16 +790,6 @@ export class OnlyPreviewWindowHelper {
     shellView.webContents.once('did-finish-load', () => {
       if (this.baseWindow !== window || this.shellView !== shellView) return;
       openTrace.mark({ phase: 'shell-did-finish', role: 'shell', lifecycle: 'did-finish' });
-      this.baseWindowState?.show();
-      window.focus();
-      openTrace.mark({
-        phase: 'first-visible',
-        role: 'base',
-        lifecycle: 'shown',
-        visible: window.isVisible(),
-        focused: window.isFocused(),
-        backgroundThrottling: shellView.webContents.getBackgroundThrottling()
-      });
     });
     shellView.webContents.once('did-fail-load', () => {
       if (!this.isCurrentShell(host.hostToken, window, shellView)) return;
@@ -851,14 +846,6 @@ export class OnlyPreviewWindowHelper {
       tag: diagnostic.tag,
       phase: 'renderer-loaded',
       elapsedMs: this.diagnostics.elapsed(diagnostic.startedAt)
-    });
-    openTrace.mark({
-      phase: 'show',
-      role: 'base',
-      lifecycle: 'shown',
-      visible: window.isVisible(),
-      focused: window.isFocused(),
-      backgroundThrottling: shellView.webContents.getBackgroundThrottling()
     });
     const previewView = onlyPreviewPreviewRegionService.getVuePreviewView();
     if (

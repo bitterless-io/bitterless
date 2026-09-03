@@ -265,16 +265,29 @@ test('OnlyPreview Shell alone runs unthrottled until a current successful render
   const helper = readFileSync('src/main/windows/onlyPreviewWindow.helper.ts', 'utf8');
   const createView = helper.slice(helper.indexOf('private createView('), helper.indexOf('private async loadView('));
   const report = helper.slice(helper.indexOf('reportShellMounted('), helper.indexOf('minimizeWindow('));
-  const didFinish = helper.slice(
-    helper.indexOf("shellView.webContents.once('did-finish-load'"),
-    helper.indexOf("shellView.webContents.once('did-fail-load'")
+  const standalone = helper.slice(
+    helper.indexOf('private async createStandaloneWindow('),
+    helper.indexOf('private createView(')
   );
+  const attach = standalone.indexOf('window.contentView.addChildView(shellView)');
+  const bounds = standalone.indexOf('this.applyInitialBounds()', attach);
+  const show = standalone.indexOf('this.show()', bounds);
+  const load = standalone.indexOf("await this.loadView(shellView, 'shell')", show);
 
   assert.match(createView, /backgroundThrottling: mode !== 'shell'/);
   assert.match(report, /shellView\.webContents\.isDestroyed\(\)[\s\S]*isCurrentShell\(hostToken, window, shellView\)/);
   assert.doesNotMatch(report.slice(0, report.indexOf(') return;')), /windowOpenTraces\.isActive/);
-  assert.match(report, /phase === 'renderer-receipt' && outcome[\s\S]*outcome === 'success'\) this\.show\(\)[\s\S]*outcome === 'success' && !wasVisible[\s\S]*phase: 'first-visible'[\s\S]*settleShellStartupLease\(hostToken, window, shellView\)[\s\S]*phase,[\s\S]*getBackgroundThrottling\(\)[\s\S]*phase: 'interactive'/);
-  assert.match(didFinish, /baseWindowState\?\.show\(\)[\s\S]*window\.focus\(\)[\s\S]*phase: 'first-visible'/);
+  assert.match(report, /phase === 'renderer-receipt' && outcome[\s\S]*settleShellStartupLease\(hostToken, window, shellView\)[\s\S]*phase,[\s\S]*getBackgroundThrottling\(\)[\s\S]*phase: 'interactive'/);
+  assert.doesNotMatch(report, /this\.show\(\)|phase: 'first-visible'|wasVisible/);
+  assert.ok(attach < bounds && bounds < show && show < load);
+  assert.match(standalone.slice(show, load), /phase: 'first-visible'/);
+  assert.doesNotMatch(
+    standalone.slice(
+      standalone.indexOf("shellView.webContents.once('did-finish-load'"),
+      standalone.indexOf("shellView.webContents.once('did-fail-load'")
+    ),
+    /\.show\(\)|window\.focus\(\)|phase: 'first-visible'/
+  );
   assert.match(report, /phase === 'renderer-receipt' && outcome[\s\S]*settleShellStartupLease\(hostToken, window, shellView\)/);
   assert.doesNotMatch(report, /outcome === 'failure'\) this\.show\(\)/);
   assert.match(helper, /shellStartupLease = \{ hostToken: host\.hostToken, window, view: shellView \}/);
@@ -288,7 +301,7 @@ test('OnlyPreview Shell alone runs unthrottled until a current successful render
   assert.match(helper, /windowOpenTraces\.supersede\(\)[\s\S]*settleShellStartupLease\(this\.standaloneHost\.hostToken, window, shellView\)/);
 });
 
-test('restored Project defers one initial index while manual restore and refresh cancel it', () => {
+test('restored Project dispatches its initial index without a renderer timer', () => {
   const store = readFileSync(
     'src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts',
     'utf8'
@@ -304,11 +317,11 @@ test('restored Project defers one initial index while manual restore and refresh
 
   assert.match(initialize, /this\.restoreWorkspace\(true\)/);
   assert.match(restore, /applyWorkspace\(workspace, deferInitialIndex\)[\s\S]*deferredIndex\.run\([\s\S]*deferInitialIndex[\s\S]*generation === this\.workspaceGeneration[\s\S]*initializeIndex\(\)/);
-  assert.match(deferred, /const RESTORED_INDEX_GRACE_MS = 750/);
-  assert.match(deferred, /setTimeout\([\s\S]*this\.generation !== generation[\s\S]*this\.timer = null[\s\S]*if \(!isCurrent\(\)\)[\s\S]*phase: 'cancel'[\s\S]*phase: 'start'[\s\S]*run\(\)[\s\S]*RESTORED_INDEX_GRACE_MS/);
+  assert.match(deferred, /scheduleMicrotask\(\(\) => \{[\s\S]*this\.generation !== generation[\s\S]*this\.pending = false[\s\S]*if \(!isCurrent\(\)\)[\s\S]*phase: 'cancel'[\s\S]*phase: 'start'[\s\S]*run\(\)/);
+  assert.doesNotMatch(deferred, /setTimeout|clearTimeout|RESTORED_INDEX_GRACE_MS/);
   assert.match(refresh, /deferredIndex\.cancel\(\) \? this\.initializeIndex\(\) : this\.refreshIndex\(\)/);
   assert.match(subscribe, /refresh: \(\) => void this\.refresh\(\)/);
   assert.doesNotMatch(subscribe, /refresh: \(\)[\s\S]{0,80}refreshIndex\(\)/);
   assert.match(deferred, /if \(!deferred\)[\s\S]*this\.cancel\(\)[\s\S]*await action\(\)[\s\S]*this\.schedule\(isCurrent/);
-  assert.match(deferred, /clearTimeout\(this\.timer\)[\s\S]*this\.generation \+= 1[\s\S]*phase: 'cancel'/);
+  assert.match(deferred, /this\.pending = false[\s\S]*this\.generation \+= 1[\s\S]*phase: 'cancel'/);
 });

@@ -1,6 +1,7 @@
 const SCOPE = '[omni-open]';
 const MAX_COUNT = 1_000_000;
 const MAX_ELAPSED_MS = 86_400_000;
+const MAX_RECEIPT_EVENTS = 1_024;
 
 const schemas = Object.freeze({
   'open-start': {
@@ -62,7 +63,6 @@ const schemas = Object.freeze({
       'renderer-language',
       'renderer-import',
       'renderer-mount',
-      'renderer-receipt',
       'layout-ready',
     ],
     outcome: ['success', 'failure'],
@@ -73,8 +73,16 @@ const schemas = Object.freeze({
   'renderer-terminal': {
     tag: 'tag',
     role: ['top', 'browser', 'control'],
-    outcome: ['ready', 'failure', 'superseded'],
-    reason: ['none', 'load-fail', 'unresponsive', 'process-gone', 'renderer-fail', 'invalidated'],
+    outcome: ['ready', 'failure', 'timeout', 'superseded'],
+    reason: [
+      'none',
+      'load-fail',
+      'unresponsive',
+      'process-gone',
+      'renderer-fail',
+      'invalidated',
+      'diagnostic-timeout',
+    ],
     elapsedMs: 'elapsed',
   },
   'navigation-start': {
@@ -93,6 +101,24 @@ const schemas = Object.freeze({
     outcome: ['success', 'failure', 'timeout', 'superseded'],
     elapsedMs: 'elapsed',
   },
+  'renderer-receipt': {
+    tag: 'tag',
+    parentTag: 'tag',
+    role: ['top', 'browser', 'control', 'unknown'],
+    outcome: ['accepted', 'rejected'],
+  },
+});
+
+const requiredEnumKeys = Object.freeze({
+  'open-start': ['route', 'mode'],
+  'open-stage': ['phase'],
+  'open-terminal': ['outcome', 'reason'],
+  'renderer-start': ['role'],
+  'renderer-stage': ['role', 'phase', 'outcome'],
+  'renderer-terminal': ['role', 'outcome', 'reason'],
+  'navigation-stage': ['phase'],
+  'navigation-terminal': ['outcome'],
+  'renderer-receipt': ['role', 'outcome'],
 });
 
 const boundedInteger = (value, maximum) =>
@@ -112,6 +138,7 @@ export const createOmniOpenDiagnostics = ({
   write = (line) => console.info(line),
 } = {}) => {
   let sequence = 0;
+  let receiptCount = 0;
   let lastNow = 0;
   const now = () => {
     lastNow = Math.max(lastNow, readClock(clock));
@@ -127,6 +154,10 @@ export const createOmniOpenDiagnostics = ({
     try {
       const schema = schemas[event];
       if (!schema) return false;
+      for (const key of requiredEnumKeys[event] ?? []) {
+        const allowlist = schema[key];
+        if (!Array.isArray(allowlist) || !allowlist.includes(fields[key])) return false;
+      }
       const parts = [`${SCOPE} event=${event}`];
       for (const [key, kind] of Object.entries(schema)) {
         const value = fields[key];
@@ -177,5 +208,11 @@ export const createOmniOpenDiagnostics = ({
       },
     });
   };
-  return Object.freeze({ emit, elapsed, nextTag, now, trace });
+  const receipt = (fields) => {
+    if (receiptCount >= MAX_RECEIPT_EVENTS) return false;
+    const written = emit('renderer-receipt', { tag: nextTag('q'), ...fields });
+    if (written) receiptCount += 1;
+    return written;
+  };
+  return Object.freeze({ emit, elapsed, nextTag, now, receipt, trace });
 };

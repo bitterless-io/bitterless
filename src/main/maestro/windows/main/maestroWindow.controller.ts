@@ -235,6 +235,7 @@ class MaestroWindowController
   opBounds: ViewRect | null = null
   currentUrl = DEFAULT_COACH_START_URL
   private initialReady: Promise<void> = Promise.resolve()
+  private backgroundReady: Promise<void> = Promise.resolve()
   private homeRendererReady: Promise<void> = Promise.resolve()
   private resolveHomeRendererReady: (() => void) | null = null
   private homeRendererReadyToken: string | null = null
@@ -440,16 +441,6 @@ class MaestroWindowController
         this.emit({ kind: 'error', msg: 'home load: ' + (err as Error).message, ts: Date.now() })
         throw err
       })
-    const workbenchStartedAt = diagnostics?.mark()
-    const workbenchReady = this.traceOpenStage(
-      this.workbenchView.create(),
-      diagnostics,
-      'workbench',
-      workbenchStartedAt
-    )
-    // Stay hidden until the local entry has painted. The white Layout placeholder covers the
-    // operation area during this short load and prevents a pre-paint flash.
-
     const controlStartedAt = diagnostics?.mark()
     const controlReady = this.traceOpenStage(
       this.controlView.create(),
@@ -462,7 +453,7 @@ class MaestroWindowController
     win.on('resize', () => this.layout())
 
     const pinnedHomeStartedAt = diagnostics?.mark()
-    this.initialReady = this.traceOpenStage(
+    const operationReady = this.traceOpenStage(
       this.browserView.loadPinnedHomeTab(),
       diagnostics,
       'home-tab',
@@ -486,21 +477,45 @@ class MaestroWindowController
           startupTabStartedAt
         )
       })
-    const operationReady = this.initialReady
+    const workbenchReady = homeReady.then(() => {
+      const workbenchStartedAt = diagnostics?.mark()
+      return this.traceOpenStage(
+        this.workbenchView.create(),
+        diagnostics,
+        'workbench',
+        workbenchStartedAt
+      )
+    })
+    const spareReady = homeReady.then(() => this.browserView.prewarmSpare())
+
+    // The BrowserWindow Shell plus its Home host is the first-visible contract. Pinned Home,
+    // Control, hidden Workbench, startup navigation, and spare-view prewarming are useful
+    // background work, but none may hold the native window hidden or fail the usable primary.
+    this.initialReady = homeReady
     const allReadyStartedAt = diagnostics?.mark()
-    this.initialReady = this.traceOpenStage(
-      Promise.all([homeReady, controlReady, workbenchReady, operationReady]).then(() => undefined),
+    this.backgroundReady = this.traceOpenStage(
+      Promise.allSettled([controlReady, workbenchReady, operationReady, spareReady])
+        .then((results) => {
+          if (results.some((result) => result.status === 'rejected')) {
+            throw new Error('[maestro] background window startup failed')
+          }
+        }),
       diagnostics,
       'all-ready',
       allReadyStartedAt
     )
-    // Pre-warm one spare view so warming a tab (new open / switching to a cold tab) is instant.
-    void this.browserView.prewarmSpare()
+    // The Open handler observes the same promise after first-visible. Attach a rejection handler
+    // now so a very fast optional failure cannot become an unhandled rejection before show().
+    void this.backgroundReady.catch(() => undefined)
     return win
   }
 
   async whenReady(): Promise<void> {
     await this.initialReady
+  }
+
+  async whenBackgroundReady(): Promise<void> {
+    await this.backgroundReady
   }
 
   async getSettings(): Promise<CoachSettings> {
@@ -1702,6 +1717,7 @@ class MaestroWindowController
     super.destroy()
 
     this.initialReady = Promise.resolve()
+    this.backgroundReady = Promise.resolve()
     this.activeBootForcePinnedHomeIntentVersion = 0
     this.workspaceFile.reset()
     this.skillGenerator = null

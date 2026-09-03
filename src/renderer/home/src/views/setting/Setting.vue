@@ -78,20 +78,25 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue';
-import LLMSetting from './components/LLMSetting/LLMSetting.vue';
-import SystemPromptSetting from './components/SystemPromptSetting/SystemPromptSetting.vue';
-import ProxySetting from './components/ProxySetting/ProxySetting.vue';
-import GeneralSetting from './components/GeneralSetting/GeneralSetting.vue';
-import AccountSetting from './components/AccountSetting/AccountSetting.vue';
-import About from './components/About/About.vue';
-import NotificationSetting from './components/NotificationSetting/NotificationSetting.vue';
-import LogSetting from './components/LogSetting/LogSetting.vue';
+import { defineAsyncComponent, onMounted } from 'vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { loadProxySetting } from './components/ProxySetting/proxySetting.store';
 import { loadSystemPromptSetting } from './components/SystemPromptSetting/systemPromptSetting.store';
 import type { SettingTab } from '@shared/setting/settingNavigation.contract';
 import { settingNavStore } from './store/settingNav.store';
+
+const ProxySetting = defineAsyncComponent(() => import('./components/ProxySetting/ProxySetting.vue'));
+const GeneralSetting = defineAsyncComponent(() => import('./components/GeneralSetting/GeneralSetting.vue'));
+const AccountSetting = defineAsyncComponent(() => import('./components/AccountSetting/AccountSetting.vue'));
+const LLMSetting = defineAsyncComponent(() => import('./components/LLMSetting/LLMSetting.vue'));
+const SystemPromptSetting = defineAsyncComponent(
+  () => import('./components/SystemPromptSetting/SystemPromptSetting.vue')
+);
+const NotificationSetting = defineAsyncComponent(
+  () => import('./components/NotificationSetting/NotificationSetting.vue')
+);
+const LogSetting = defineAsyncComponent(() => import('./components/LogSetting/LogSetting.vue'));
+const About = defineAsyncComponent(() => import('./components/About/About.vue'));
 
 withDefaults(defineProps<{
   showChatMenuControl?: boolean;

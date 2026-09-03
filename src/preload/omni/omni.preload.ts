@@ -10,7 +10,7 @@ export interface OmniCellEnvApi {
   contentMode: OmniContentMode;
   readyToken: string | null;
   readyGeneration: number | null;
-  readyRole: 'window' | 'browser-cell' | null;
+  readyRole: 'window' | 'browser-cell' | 'control' | null;
 }
 
 const readArgument = (name: string): string | null => {
@@ -40,7 +40,9 @@ const readyGeneration = Number.isSafeInteger(readyGenerationValue) && readyGener
   ? readyGenerationValue
   : null;
 const readyRoleValue = readArgument('omni-ready-role');
-const readyRole = readyRoleValue === 'window' || readyRoleValue === 'browser-cell'
+const readyRole = readyRoleValue === 'window' ||
+  readyRoleValue === 'browser-cell' ||
+  readyRoleValue === 'control'
   ? readyRoleValue
   : null;
 

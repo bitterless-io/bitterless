@@ -77,9 +77,10 @@ design document.
   implemented; owner verification pending: Maestro is the sole visible primary across startup,
   HMR, activation, logout, and invalidation; legacy Home is a hidden-only compatibility runtime.
 - [Maestro window reopen performs a full cold boot](issues/maestro-window-reopen-cold-boot.md) -
-  implemented; owner packaged verification pending: normal native close hides the live runtime,
-  while correlated Main stages distinguish reuse, joined boot, cold boot, renderer readiness, and
-  final show; [review 1](plan/reviews/maestro-open-diagnostics-113-1.md) passed.
+  implemented; owner packaged verification pending: normal close reuse remains fast, cold Open now
+  shows at primary Shell/Home host mount, optional startup is non-destructive, and Settings-only
+  Monaco stays out of startup; [task 117 review 1](plan/reviews/desktop-first-visible-performance-117-1.md)
+  passed.
 - [OnlyPreview sub-application](features/onlypreview.md) - capability-scoped local indexing,
   standalone-only multi-view preview, EyesOnAgents-style MenuBar, settings, and OS file-open routing.
 - [OnlyPreview Main filesystem I/O](issues/onlypreview-main-filesystem-io.md) - implemented; owner
@@ -129,10 +130,10 @@ design document.
   a dedicated per-profile `onlypreview/onlypreview.log`, so a generic
   `OnlyPreview could not complete this action.` is triageable instead of evidence-free.
 - [OnlyPreview open latency is not fully traceable](issues/onlypreview-open-latency-is-not-traceable.md) -
-  implemented; Preview rebuild and owner runtime verification pending: repaired correlated
-  privacy-safe lifecycle/target traces, kept the Shell runnable through hidden startup, and moved
-  restored-Project indexing behind a cancellable 750ms grace so first-visible/interactive no longer
-  waits for reconciliation; [review 4](plan/reviews/onlypreview-open-diagnostics-114-4.md) passed.
+  implemented; owner packaged verification pending: the native graph shows after Shell attachment
+  and restored-Project initialization uses a cancelable microtask instead of the suppressed 750ms
+  renderer timer, so root listing is deterministic; [task 117 review 1](plan/reviews/desktop-first-visible-performance-117-1.md)
+  passed.
 - [OnlyPreview holds a rendered document behind full pagination](issues/onlypreview-docx-waits-for-full-pagination.md) -
   fixed; owner verification pending: present DOCX/PPTX at the first laid-out unit and keep the
   remaining pagination behind the visible preview, with the full-document barrier retained as the
@@ -202,10 +203,10 @@ design document.
   or local Todo/EyesOnAgents/Translator/Motto/Trench/Submodules operation views with development and
   packaged runtime mapping.
 - [Omni Open returns before the browser is ready](issues/omni-open-readiness-and-double-navigation.md) -
-  in progress after Preview 0.0.86 evidence: join concurrent Open calls through
-  post-mount initial-view readiness, keep card loading until feedback, and dispatch one Enter
-  navigation; add lifecycle and pending-stage logs for the observed 30-second timeout and 89.5-second
-  Control renderer delay.
+  implemented; owner packaged verification pending: the sub-100ms restored native graph now shows
+  before renderer readiness while the shared Open promise, progressive content, focus behavior, and
+  exact-once cleanup remain intact; [task 117 review 1](plan/reviews/desktop-first-visible-performance-117-1.md)
+  passed.
 - [Shared model providers](features/model-provider.md) - SQLite-backed Codex configuration,
   cross-renderer XPC status, login synchronization, and persisted credential invalidation.
 - [Claude subscription accounts](features/claude-subscription-accounts.md) - Main-owned local

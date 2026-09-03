@@ -40,8 +40,21 @@ import {
 import {
   OmniGenerationReadyCollector,
   OmniOpenCoordinator,
+  OMNI_OPEN_READY_TIMEOUT_MS,
+  OmniOpenTimeoutError,
 } from './omniOpenCoordinator.service';
 import { OMNI_MINI_APP_RUNTIME } from './omniMiniAppRuntime.service';
+import { createOmniOpenDiagnostics } from '@shared/omni/omniOpenDiagnostics.mjs';
+import { createOmniDeferredStartupRegistry } from '@shared/omni/omniDeferredStartup.scheduler.mjs';
+import { createOmniExactOnceResource } from '@shared/omni/omniExactOnceResource.mjs';
+import type {
+  OmniNavigationTrace,
+  OmniOpenTrace,
+  OmniRendererBootstrapPhase,
+  OmniRendererDiagnosticPhase,
+  OmniRendererDiagnosticRole,
+  OmniRendererTrace,
+} from '@shared/omni/omniOpenDiagnostics.mjs';
 
 const LAYOUT_KEY = 'omni_layout';
 const WINDOW_LAYOUT_KEY = 'window_layout';
@@ -85,6 +98,13 @@ type OmniCellActiveFrameRegion =
   | 'miniapp-content';
 
 const OMNI_ACTIVE_FRAME_ELEMENT_ID = 'bitterless-omni-active-cell-frame';
+const OMNI_RENDERER_BOOTSTRAP_PHASES = new Set<OmniRendererOpenStagePhase>([
+  'renderer-script',
+  'renderer-language',
+  'renderer-import',
+  'renderer-mount',
+  'layout-ready',
+]);
 
 const createOmniCellActiveFrameArguments = (
   cellId: string,
@@ -162,7 +182,9 @@ type OmniViewLoadResult =
   | { ok: true }
   | { ok: false; error: Error };
 
-export type OmniRendererReadyRole = 'window' | 'browser-cell';
+export type OmniRendererReadyRole = 'window' | 'browser-cell' | 'control';
+
+export type OmniRendererOpenStagePhase = OmniRendererBootstrapPhase;
 
 export interface OmniRendererMountedReadyParams {
   token: string;
@@ -175,12 +197,54 @@ export interface OmniRendererMountedReadyResult {
   accepted: boolean;
 }
 
+export interface OmniRendererOpenStageParams extends OmniRendererMountedReadyParams {
+  phase: OmniRendererOpenStagePhase;
+  outcome: 'success' | 'failure';
+}
+
 interface OmniRendererReadyFence extends OmniRendererMountedReadyParams {
   promise: Promise<void>;
   resolve: () => void;
   reject: (error: Error) => void;
   settled: boolean;
   view: WebContentsView | null;
+  loadPending: boolean;
+  mountPending: boolean;
+  lifecycleDisposer: (() => void) | null;
+  timeoutHandle: ReturnType<typeof setTimeout> | null;
+  diagnosticTrace: OmniRendererTrace;
+  reportedStages: Set<string>;
+}
+
+type OmniOpenFailureReason =
+  | 'none'
+  | 'create-fail'
+  | 'load-fail'
+  | 'unresponsive'
+  | 'process-gone'
+  | 'renderer-fail'
+  | 'closed'
+  | 'invalidated'
+  | 'diagnostic-timeout';
+
+type OmniRendererFailureReason =
+  | 'load-fail'
+  | 'unresponsive'
+  | 'process-gone'
+  | 'renderer-fail'
+  | 'invalidated'
+  | 'diagnostic-timeout';
+
+interface OmniOpenDiagnosticState {
+  trace: OmniOpenTrace;
+  firstVisible: boolean;
+  failureReason: OmniOpenFailureReason;
+}
+
+interface OmniDeferredNavigation {
+  trace: OmniNavigationTrace;
+  timeoutHandle: ReturnType<typeof setTimeout> | null;
+  dispose: (() => void) | null;
 }
 
 export class OmniWindowHelper {
@@ -199,56 +263,65 @@ export class OmniWindowHelper {
   private readonly layoutCommitQueue = new OmniLayoutCommitQueue();
   private readonly viewLoadResults = new WeakMap<WebContentsView, Promise<OmniViewLoadResult>>();
   private readonly rendererReadyFences = new Map<string, OmniRendererReadyFence>();
+  private readonly rendererReceiptOutcomes = new Map<string, 'accepted' | 'rejected'>();
   private readonly initialRendererReadyCollector = new OmniGenerationReadyCollector();
   private readonly deferredInitialContent = new Map<number, Array<() => void>>();
+  private readonly deferredStartupRegistry = createOmniDeferredStartupRegistry();
+  private readonly openDiagnostics = createOmniOpenDiagnostics();
+  private readonly openDiagnosticStates = new Map<number, OmniOpenDiagnosticState>();
+  private readonly deferredNavigationDiagnostics = new Set<OmniDeferredNavigation>();
+  private readonly browserLoadResources = new Set<
+    ReturnType<typeof createOmniExactOnceResource>
+  >();
   private _loadSemaphore = new Semaphore(3);
   private _abortTokens = new Set<{ abort: () => void }>();
   private windowStateController: WindowStateController | null = null;
-  private readonly openStartedAt = new Map<number, number>();
   private readonly openCoordinator = new OmniOpenCoordinator<BaseWindow>({
     getReady: () => {
       const window = this.baseWindow;
       return window && !window.isDestroyed() ? window : null;
     },
     create: (generation) => {
+      this.beginOpenDiagnostic(generation, 'cold');
       this.cleanupAllViews();
-      const startedAt = Date.now();
-      this.openStartedAt.set(generation, startedAt);
-      console.log('[OmniWindowHelper] open started, generation:', generation);
       return this.createWindow(generation);
     },
     present: (window, generation) => {
+      const state = this.openDiagnosticStates.get(generation) ??
+        this.beginOpenDiagnostic(generation, 'existing');
       this.assertCreationActive(generation, window);
-      this.show();
-      this.assertCreationActive(generation, window);
-      this.startDeferredInitialContent(generation);
-      const startedAt = this.openStartedAt.get(generation);
-      if (startedAt === undefined) {
-        console.log('[OmniWindowHelper] ready window exists, focused');
-      } else {
-        console.log(
-          '[OmniWindowHelper] open ready and shown, generation:',
-          generation,
-          'elapsedMs:',
-          Date.now() - startedAt,
-        );
-        this.openStartedAt.delete(generation);
+      if (!state.firstVisible) {
+        this.show();
+        this.assertCreationActive(generation, window);
+        this.markOpenFirstVisible(state, window);
       }
+      state.trace.mark({
+        phase: 'interactive',
+        ...this.getRestoredCounts(),
+        visible: window.isVisible(),
+        focused: window.isFocused(),
+      });
+      this.startDeferredInitialContent(generation, state.trace.tag);
+      state.trace.mark({
+        phase: 'ready',
+        ...this.getRestoredCounts(),
+        visible: window.isVisible(),
+        focused: window.isFocused(),
+      });
+      this.finishOpenDiagnostic(generation, 'success', 'none');
     },
     cleanupIncomplete: (generation, error) => {
-      const startedAt = this.openStartedAt.get(generation);
-      console.error(
-        '[OmniWindowHelper] open failed, generation:',
+      const timeout = error instanceof OmniOpenTimeoutError;
+      this.finishOpenDiagnostic(
         generation,
-        'elapsedMs:',
-        startedAt === undefined ? null : Date.now() - startedAt,
-        error,
+        timeout ? 'timeout' : 'failure',
+        timeout ? 'diagnostic-timeout' : this.getOpenFailureReason(generation),
       );
-      this.openStartedAt.delete(generation);
+      console.error('[OmniWindowHelper] open failed');
       this.cleanupAllViews();
     },
     onInvalidate: (generation) => {
-      this.openStartedAt.delete(generation);
+      this.finishOpenDiagnostic(generation, 'superseded', 'invalidated');
     },
   });
 
@@ -282,6 +355,113 @@ export class OmniWindowHelper {
       window.show();
     }
     window.focus();
+  }
+
+  private beginOpenDiagnostic(
+    generation: number,
+    mode: 'cold' | 'existing',
+  ): OmniOpenDiagnosticState {
+    const existing = this.openDiagnosticStates.get(generation);
+    if (existing) return existing;
+    const state: OmniOpenDiagnosticState = {
+      trace: this.openDiagnostics.trace('open', {
+        route: 'api',
+        mode,
+        generation,
+      }),
+      firstVisible: false,
+      failureReason: 'none',
+    };
+    this.openDiagnosticStates.set(generation, state);
+    return state;
+  }
+
+  private getRestoredCounts(): {
+    totalCount: number;
+    browserCount: number;
+    miniAppCount: number;
+  } {
+    let browserCount = 0;
+    let miniAppCount = 0;
+    for (const cell of this.currentLayout) {
+      if (cell.contentMode === 'browser') browserCount += 1;
+      else miniAppCount += 1;
+    }
+    return {
+      totalCount: this.currentLayout.length,
+      browserCount,
+      miniAppCount,
+    };
+  }
+
+  private markOpenFirstVisible(
+    state: OmniOpenDiagnosticState,
+    window: BaseWindow,
+  ): void {
+    if (state.firstVisible) return;
+    state.firstVisible = true;
+    state.trace.mark({
+      phase: 'first-visible',
+      ...this.getRestoredCounts(),
+      visible: window.isVisible(),
+      focused: window.isFocused(),
+    });
+  }
+
+  private markOpenFailure(
+    generation: number,
+    reason: Exclude<OmniOpenFailureReason, 'none'>,
+  ): void {
+    const state = this.openDiagnosticStates.get(generation);
+    if (state && state.failureReason === 'none') state.failureReason = reason;
+  }
+
+  private getOpenFailureReason(generation: number): OmniOpenFailureReason {
+    const reason = this.openDiagnosticStates.get(generation)?.failureReason;
+    return reason && reason !== 'none' ? reason : 'create-fail';
+  }
+
+  private getPendingRendererCounts(generation: number): {
+    pendingTopLoad: number;
+    pendingTopMount: number;
+    pendingBrowserLoad: number;
+    pendingBrowserMount: number;
+  } {
+    let pendingTopLoad = 0;
+    let pendingTopMount = 0;
+    let pendingBrowserLoad = 0;
+    let pendingBrowserMount = 0;
+    for (const fence of this.rendererReadyFences.values()) {
+      if (fence.generation !== generation || fence.settled) continue;
+      if (fence.role === 'window') {
+        if (fence.loadPending) pendingTopLoad += 1;
+        if (fence.mountPending) pendingTopMount += 1;
+      } else if (fence.role === 'browser-cell') {
+        if (fence.loadPending) pendingBrowserLoad += 1;
+        if (fence.mountPending) pendingBrowserMount += 1;
+      }
+    }
+    return {
+      pendingTopLoad,
+      pendingTopMount,
+      pendingBrowserLoad,
+      pendingBrowserMount,
+    };
+  }
+
+  private finishOpenDiagnostic(
+    generation: number,
+    outcome: 'success' | 'failure' | 'timeout' | 'superseded',
+    reason: OmniOpenFailureReason,
+  ): void {
+    const state = this.openDiagnosticStates.get(generation);
+    if (!state) return;
+    state.trace.end({
+      outcome,
+      reason,
+      ...this.getPendingRendererCounts(generation),
+    });
+    this.openDiagnosticStates.delete(generation);
   }
 
   private throttledApplyLayout(): void {
@@ -335,6 +515,12 @@ export class OmniWindowHelper {
     this.rejectRendererReadyFences(new Error('[OmniWindowHelper] Renderer readiness cancelled'));
     this.initialRendererReadyCollector.invalidate();
     this.deferredInitialContent.clear();
+    this.deferredStartupRegistry.cancelAll();
+    for (const navigation of [...this.deferredNavigationDiagnostics]) {
+      this.finishDeferredNavigationDiagnostic(navigation, 'superseded');
+    }
+    for (const resource of [...this.browserLoadResources]) resource.close();
+    this.browserLoadResources.clear();
 
     // Abort all pending loadURL acquire() calls and flush the semaphore queue
     for (const token of this._abortTokens) token.abort();
@@ -387,6 +573,7 @@ export class OmniWindowHelper {
     generation: number;
     role: OmniRendererReadyRole;
     cellId: string | null;
+    parentTag?: string;
   }): OmniRendererReadyFence {
     const token = randomUUID();
     let resolve!: () => void;
@@ -398,6 +585,11 @@ export class OmniWindowHelper {
     // A synchronous constructor failure can invalidate the fence before createWindow reaches
     // Promise.all. Mark it handled while preserving its rejection for the eventual await.
     void promise.catch(() => {});
+    const diagnosticRole: OmniRendererDiagnosticRole = params.role === 'window'
+      ? 'top'
+      : params.role === 'browser-cell'
+        ? 'browser'
+        : 'control';
     const fence: OmniRendererReadyFence = {
       ...params,
       token,
@@ -406,6 +598,17 @@ export class OmniWindowHelper {
       reject,
       settled: false,
       view: null,
+      loadPending: true,
+      mountPending: true,
+      lifecycleDisposer: null,
+      timeoutHandle: null,
+      diagnosticTrace: this.openDiagnostics.trace('renderer', {
+        parentTag: params.parentTag ??
+          this.openDiagnosticStates.get(params.generation)?.trace.tag,
+        role: diagnosticRole,
+        generation: params.generation,
+      }, 'r'),
+      reportedStages: new Set<string>(),
     };
     this.rendererReadyFences.set(token, fence);
     return fence;
@@ -419,37 +622,208 @@ export class OmniWindowHelper {
     ];
   }
 
-  private rejectRendererReadyFence(fence: OmniRendererReadyFence, error: Error): void {
+  private getRendererDiagnosticRole(
+    role: OmniRendererReadyRole,
+  ): OmniRendererDiagnosticRole {
+    if (role === 'window') return 'top';
+    if (role === 'browser-cell') return 'browser';
+    return 'control';
+  }
+
+  private markRendererDiagnosticStage(
+    fence: OmniRendererReadyFence,
+    phase: OmniRendererDiagnosticPhase,
+    outcome: 'success' | 'failure' = 'success',
+    backgroundThrottling?: boolean,
+  ): void {
+    if (fence.settled) return;
+    const stageKey = `${phase}:${outcome}`;
+    if (fence.reportedStages.has(stageKey)) return;
+    fence.reportedStages.add(stageKey);
+    fence.diagnosticTrace.mark({
+      role: this.getRendererDiagnosticRole(fence.role),
+      phase,
+      outcome,
+      backgroundThrottling,
+    });
+  }
+
+  private disposeRendererReadyFenceLifecycle(fence: OmniRendererReadyFence): void {
+    const dispose = fence.lifecycleDisposer;
+    fence.lifecycleDisposer = null;
+    dispose?.();
+  }
+
+  private clearRendererReadyFenceTimeout(fence: OmniRendererReadyFence): void {
+    if (fence.timeoutHandle === null) return;
+    clearTimeout(fence.timeoutHandle);
+    fence.timeoutHandle = null;
+  }
+
+  private rejectRendererReadyFence(
+    fence: OmniRendererReadyFence,
+    error: Error,
+    reason: OmniRendererFailureReason = 'renderer-fail',
+  ): void {
     if (fence.settled) return;
     fence.settled = true;
+    this.markOpenFailure(fence.generation, reason);
+    this.clearRendererReadyFenceTimeout(fence);
+    this.disposeRendererReadyFenceLifecycle(fence);
     this.rendererReadyFences.delete(fence.token);
     if (fence.view && this.isWebContentsAlive(fence.view.webContents)) {
       fence.view.webContents.setBackgroundThrottling(true);
     }
+    fence.diagnosticTrace.end({
+      role: this.getRendererDiagnosticRole(fence.role),
+      outcome: reason === 'invalidated'
+        ? 'superseded'
+        : reason === 'diagnostic-timeout'
+          ? 'timeout'
+          : 'failure',
+      reason,
+    });
     fence.reject(error);
   }
 
-  private rejectRendererReadyFences(error: Error): void {
-    for (const fence of this.rendererReadyFences.values()) {
-      if (fence.settled) continue;
-      fence.settled = true;
-      if (fence.view && this.isWebContentsAlive(fence.view.webContents)) {
-        fence.view.webContents.setBackgroundThrottling(true);
-      }
-      fence.reject(error);
+  private rejectRendererReadyFences(
+    error: Error,
+    reason: OmniRendererFailureReason = 'invalidated',
+  ): void {
+    for (const fence of [...this.rendererReadyFences.values()]) {
+      this.rejectRendererReadyFence(fence, error, reason);
     }
-    this.rendererReadyFences.clear();
   }
 
   private bindRendererReadyFenceView(fence: OmniRendererReadyFence, view: WebContentsView): void {
     fence.view = view;
-    const rejectCurrent = (): void => {
-      if (fence.view !== view || fence.settled) return;
-      this.rejectRendererReadyFence(fence, new Error('[OmniWindowHelper] Local renderer failed'));
+    const isCurrent = (): boolean =>
+      fence.view === view &&
+      !fence.settled &&
+      this.isRendererReadyFenceCurrent(fence);
+    const failCurrent = (
+      phase: 'load-fail' | 'unresponsive' | 'process-gone',
+      reason: 'load-fail' | 'unresponsive' | 'process-gone',
+    ): void => {
+      if (!isCurrent()) return;
+      if (phase === 'load-fail') fence.loadPending = false;
+      this.markRendererDiagnosticStage(fence, phase, 'failure');
+      this.rejectRendererReadyFence(
+        fence,
+        new Error('[OmniWindowHelper] Local renderer failed'),
+        reason,
+      );
     };
-    view.webContents.once('did-fail-load', rejectCurrent);
-    view.webContents.once('unresponsive', rejectCurrent);
-    view.webContents.once('render-process-gone', rejectCurrent);
+    const onDomReady = (): void => {
+      if (!isCurrent()) return;
+      this.markRendererDiagnosticStage(fence, 'dom-ready');
+    };
+    const onDidFinishLoad = (): void => {
+      if (!isCurrent()) return;
+      fence.loadPending = false;
+      this.markRendererDiagnosticStage(fence, 'load-finish');
+      this.settleRendererReadyFenceIfReady(fence);
+    };
+    const onDidFailLoad = (): void => failCurrent('load-fail', 'load-fail');
+    const onUnresponsive = (): void => failCurrent('unresponsive', 'unresponsive');
+    const onResponsive = (): void => {
+      if (!isCurrent()) return;
+      this.markRendererDiagnosticStage(fence, 'responsive');
+    };
+    const onRenderProcessGone = (): void => failCurrent('process-gone', 'process-gone');
+    view.webContents.on('dom-ready', onDomReady);
+    view.webContents.on('did-finish-load', onDidFinishLoad);
+    view.webContents.on('did-fail-load', onDidFailLoad);
+    view.webContents.on('unresponsive', onUnresponsive);
+    view.webContents.on('responsive', onResponsive);
+    view.webContents.on('render-process-gone', onRenderProcessGone);
+    fence.lifecycleDisposer = () => {
+      if (view.webContents.isDestroyed()) return;
+      view.webContents.removeListener('dom-ready', onDomReady);
+      view.webContents.removeListener('did-finish-load', onDidFinishLoad);
+      view.webContents.removeListener('did-fail-load', onDidFailLoad);
+      view.webContents.removeListener('unresponsive', onUnresponsive);
+      view.webContents.removeListener('responsive', onResponsive);
+      view.webContents.removeListener('render-process-gone', onRenderProcessGone);
+    };
+    this.markRendererDiagnosticStage(
+      fence,
+      'create',
+      'success',
+      view.webContents.getBackgroundThrottling(),
+    );
+  }
+
+  private isRendererReadyFenceCurrent(fence: OmniRendererReadyFence): boolean {
+    if (
+      fence.settled ||
+      !this.isCreationActive(fence.generation) ||
+      !fence.view ||
+      !this.isWebContentsAlive(fence.view.webContents)
+    ) {
+      return false;
+    }
+    if (fence.role === 'window') return this.menubarView === fence.view;
+    if (fence.role === 'control') return this.controlView === fence.view;
+    return this.cells.some((cell) =>
+      cell.id === fence.cellId &&
+      cell.contentMode === 'browser' &&
+      cell.menubar === fence.view
+    );
+  }
+
+  private settleRendererReadyFenceIfReady(fence: OmniRendererReadyFence): boolean {
+    if (
+      fence.settled ||
+      fence.loadPending ||
+      fence.mountPending ||
+      !this.isRendererReadyFenceCurrent(fence) ||
+      !fence.view
+    ) {
+      return false;
+    }
+    fence.settled = true;
+    this.clearRendererReadyFenceTimeout(fence);
+    this.disposeRendererReadyFenceLifecycle(fence);
+    this.rendererReadyFences.delete(fence.token);
+    fence.view.webContents.setBackgroundThrottling(true);
+    fence.diagnosticTrace.end({
+      role: this.getRendererDiagnosticRole(fence.role),
+      outcome: 'ready',
+      reason: 'none',
+    });
+    fence.resolve();
+    return true;
+  }
+
+  markRendererOpenStage(
+    params: OmniRendererOpenStageParams,
+  ): OmniRendererMountedReadyResult {
+    const fence = typeof params?.token === 'string'
+      ? this.rendererReadyFences.get(params.token)
+      : null;
+    if (
+      !fence ||
+      !Number.isSafeInteger(params.generation) ||
+      params.generation !== fence.generation ||
+      params.role !== fence.role ||
+      params.cellId !== fence.cellId ||
+      !OMNI_RENDERER_BOOTSTRAP_PHASES.has(params.phase) ||
+      (params.outcome !== 'success' && params.outcome !== 'failure') ||
+      !this.isRendererReadyFenceCurrent(fence)
+    ) {
+      return { accepted: false };
+    }
+    const outcome = params.outcome === 'failure' ? 'failure' : 'success';
+    this.markRendererDiagnosticStage(fence, params.phase, outcome);
+    if (outcome === 'failure') {
+      this.rejectRendererReadyFence(
+        fence,
+        new Error('[OmniWindowHelper] Renderer bootstrap failed'),
+        'renderer-fail',
+      );
+    }
+    return { accepted: true };
   }
 
   markRendererMountedReady(
@@ -458,35 +832,33 @@ export class OmniWindowHelper {
     const fence = typeof params?.token === 'string'
       ? this.rendererReadyFences.get(params.token)
       : null;
-    if (
-      !fence ||
-      fence.settled ||
-      !Number.isSafeInteger(params.generation) ||
-      params.generation !== fence.generation ||
-      params.role !== fence.role ||
-      params.cellId !== fence.cellId ||
-      !this.isCreationActive(fence.generation) ||
-      !fence.view ||
-      !this.isWebContentsAlive(fence.view.webContents) ||
-      (fence.role === 'window' && this.menubarView !== fence.view) ||
-      (fence.role === 'browser-cell' && !this.currentLayout.some((cell) =>
-        cell.id === fence.cellId && cell.contentMode === 'browser'
-      ))
-    ) {
+    const accepted = Boolean(
+      fence &&
+      Number.isSafeInteger(params.generation) &&
+      params.generation === fence.generation &&
+      params.role === fence.role &&
+      params.cellId === fence.cellId &&
+      this.isRendererReadyFenceCurrent(fence),
+    );
+    const receiptKey = typeof params?.token === 'string' ? params.token : '';
+    if (receiptKey && !this.rendererReceiptOutcomes.has(receiptKey)) {
+      const outcome = accepted ? 'accepted' : 'rejected';
+      this.rendererReceiptOutcomes.set(receiptKey, outcome);
+      if (this.rendererReceiptOutcomes.size > 256) {
+        const oldest = this.rendererReceiptOutcomes.keys().next().value;
+        if (oldest) this.rendererReceiptOutcomes.delete(oldest);
+      }
+      this.openDiagnostics.receipt({
+        parentTag: fence?.diagnosticTrace.tag,
+        role: fence ? this.getRendererDiagnosticRole(fence.role) : 'unknown',
+        outcome,
+      });
+    }
+    if (!accepted || !fence) {
       return { accepted: false };
     }
-    fence.settled = true;
-    this.rendererReadyFences.delete(fence.token);
-    fence.view.webContents.setBackgroundThrottling(true);
-    fence.resolve();
-    console.log(
-      '[OmniWindowHelper] renderer mounted, generation:',
-      fence.generation,
-      'role:',
-      fence.role,
-      'cellId:',
-      fence.cellId,
-    );
+    fence.mountPending = false;
+    this.settleRendererReadyFenceIfReady(fence);
     return { accepted: true };
   }
 
@@ -547,7 +919,12 @@ export class OmniWindowHelper {
     this.baseWindow = createdWindow;
     const stateController = windowStateService.register('omni', createdWindow);
     this.windowStateController = stateController;
-    console.log('[OmniWindowHelper] BaseWindow created');
+    this.openDiagnosticStates.get(creationGeneration)?.trace.mark({
+      phase: 'native',
+      ...this.getRestoredCounts(),
+      visible: createdWindow.isVisible(),
+      focused: createdWindow.isFocused(),
+    });
 
     // Create top menubar view. Loading its HTML is not enough: the renderer explicitly reports
     // after language initialization, dynamic import, Vue mount, and nextTick.
@@ -560,14 +937,15 @@ export class OmniWindowHelper {
       'omniWindow',
       this.getRendererReadyArguments(topRendererReady),
       true,
+      topRendererReady,
     );
-    this.bindRendererReadyFenceView(topRendererReady, menubarView);
     this.menubarView = menubarView;
     createdWindow.contentView.addChildView(menubarView);
     console.log('[OmniWindowHelper] menubarView added');
 
-    // BaseWindow does not emit 'ready-to-show' (that is a BrowserWindow event).
-    // The complete initial browser chrome gate below owns the first show.
+    // BaseWindow does not emit 'ready-to-show' (that is a BrowserWindow event). The restored
+    // native graph is shown below as soon as all local views are safely attached and bounded;
+    // renderer readiness remains the shared Open-flight/interaction boundary after first-visible.
     menubarView.webContents.on('did-finish-load', () => {
       if (!this.isCreationActive(creationGeneration, createdWindow)) return;
       console.log('[OmniWindowHelper] top menubar did-finish-load');
@@ -576,6 +954,7 @@ export class OmniWindowHelper {
     createdWindow.on('closed' as any, () => {
       console.log('[OmniWindowHelper] baseWindow closed, cleaning up');
       if (this.baseWindow === createdWindow) {
+        this.finishOpenDiagnostic(creationGeneration, 'failure', 'closed');
         this.openCoordinator.invalidate();
         this.cleanupAllViews();
       }
@@ -632,6 +1011,12 @@ export class OmniWindowHelper {
       this.initialRendererReadyCollector.finish(initialRendererReadyBatch);
     }
     this.assertCreationActive(creationGeneration, createdWindow);
+    this.openDiagnosticStates.get(creationGeneration)?.trace.mark({
+      phase: 'restore',
+      ...this.getRestoredCounts(),
+      visible: createdWindow.isVisible(),
+      focused: createdWindow.isFocused(),
+    });
     const initialBrowserRendererReady = initialRendererReadyBatch.promises;
 
     const initialBrowserMenubars = this.currentLayout
@@ -649,6 +1034,10 @@ export class OmniWindowHelper {
       '[OmniWindowHelper] waiting for initial mounted chrome, browser cells:',
       initialBrowserMenubars.length,
     );
+    this.show();
+    this.assertCreationActive(creationGeneration, createdWindow);
+    const openState = this.openDiagnosticStates.get(creationGeneration);
+    if (openState) this.markOpenFirstVisible(openState, createdWindow);
     await Promise.all([
       this.requireViewLoad(menubarView, 'top menubar'),
       ...initialBrowserMenubars,
@@ -699,11 +1088,51 @@ export class OmniWindowHelper {
     this.setControlVisible(!this.controlVisible);
   }
 
-  private createControlView(): void {
-    this.controlView = this.createWebContentsView('omniControl');
-    this.controlView.setBackgroundColor('#00000000');
-    this.controlView.webContents.on('did-finish-load', () => this.replayControlState());
-    this.controlView.webContents.on('before-input-event', (event, input) => {
+  private createControlView(startupGeneration?: number, parentTag?: string): void {
+    const rendererReadyFence = startupGeneration !== undefined &&
+      this.openCoordinator.isCurrent(startupGeneration)
+      ? this.createRendererReadyFence({
+          generation: startupGeneration,
+          role: 'control',
+          cellId: null,
+          parentTag,
+        })
+      : null;
+    let controlView: WebContentsView;
+    try {
+      controlView = this.createWebContentsView(
+        'omniControl',
+        rendererReadyFence ? this.getRendererReadyArguments(rendererReadyFence) : [],
+        Boolean(rendererReadyFence),
+        rendererReadyFence ?? undefined,
+      );
+    } catch (error) {
+      if (rendererReadyFence) {
+        this.rejectRendererReadyFence(
+          rendererReadyFence,
+          error instanceof Error ? error : new Error(String(error)),
+          'renderer-fail',
+        );
+      }
+      throw error;
+    }
+    this.controlView = controlView;
+    if (rendererReadyFence && !rendererReadyFence.settled) {
+      rendererReadyFence.timeoutHandle = setTimeout(() => {
+        if (
+          rendererReadyFence.settled ||
+          this.rendererReadyFences.get(rendererReadyFence.token) !== rendererReadyFence
+        ) return;
+        this.rejectRendererReadyFence(
+          rendererReadyFence,
+          new Error('[OmniWindowHelper] Control renderer readiness timed out'),
+          'diagnostic-timeout',
+        );
+      }, OMNI_OPEN_READY_TIMEOUT_MS);
+    }
+    controlView.setBackgroundColor('#00000000');
+    controlView.webContents.on('did-finish-load', () => this.replayControlState());
+    controlView.webContents.on('before-input-event', (event, input) => {
       if (input.type !== 'keyDown' || input.key !== 'Escape') return;
       event.preventDefault();
       this.setControlVisible(false);
@@ -711,17 +1140,67 @@ export class OmniWindowHelper {
     this.updateControlBounds();
   }
 
-  private startDeferredInitialContent(generation: number): void {
+  private startDeferredInitialContent(generation: number, parentTag: string): void {
     if (!this.openCoordinator.isCurrent(generation)) return;
     const tasks = this.deferredInitialContent.get(generation) ?? [];
-    this.deferredInitialContent.delete(generation);
-    queueMicrotask(() => {
+    const scheduled = this.deferredStartupRegistry.schedule(generation, () => {
       if (!this.openCoordinator.isCurrent(generation)) return;
-      for (const task of tasks) task();
+      for (const task of tasks) {
+        try {
+          task();
+        } catch {
+          console.error('[OmniWindowHelper] deferred initial content failed');
+        }
+      }
       if (!this.controlView || !this.isWebContentsAlive(this.controlView.webContents)) {
-        this.createControlView();
+        try {
+          this.createControlView(generation, parentTag);
+        } catch {
+          console.error('[OmniWindowHelper] deferred control creation failed');
+        }
       }
     });
+    if (scheduled) this.deferredInitialContent.delete(generation);
+  }
+
+  private beginDeferredNavigationDiagnostic(
+    generation: number,
+  ): OmniDeferredNavigation {
+    const navigation: OmniDeferredNavigation = {
+      trace: this.openDiagnostics.trace('navigation', {
+        parentTag: this.openDiagnosticStates.get(generation)?.trace.tag,
+        generation,
+      }, 'n'),
+      timeoutHandle: null,
+      dispose: null,
+    };
+    this.deferredNavigationDiagnostics.add(navigation);
+    navigation.trace.mark({ phase: 'scheduled' });
+    return navigation;
+  }
+
+  private startDeferredNavigationDiagnostic(navigation: OmniDeferredNavigation | null): void {
+    if (!navigation || !this.deferredNavigationDiagnostics.has(navigation)) return;
+    navigation.trace.mark({ phase: 'start' });
+  }
+
+  private armDeferredNavigationTimeout(navigation: OmniDeferredNavigation | null): void {
+    if (!navigation || !this.deferredNavigationDiagnostics.has(navigation)) return;
+    navigation.timeoutHandle = setTimeout(() => {
+      this.finishDeferredNavigationDiagnostic(navigation, 'timeout');
+    }, 30_000);
+  }
+
+  private finishDeferredNavigationDiagnostic(
+    navigation: OmniDeferredNavigation | null,
+    outcome: 'success' | 'failure' | 'timeout' | 'superseded',
+  ): void {
+    if (!navigation || !this.deferredNavigationDiagnostics.delete(navigation)) return;
+    if (navigation.timeoutHandle) clearTimeout(navigation.timeoutHandle);
+    navigation.timeoutHandle = null;
+    navigation.dispose?.();
+    navigation.dispose = null;
+    navigation.trace.end({ outcome });
   }
 
   getLayoutConfig(): OmniLayoutConfig | null {
@@ -992,6 +1471,7 @@ export class OmniWindowHelper {
       miniAppId: OmniMiniAppId;
       target: OmniMiniAppRendererTarget;
     },
+    onTerminal?: (outcome: 'success' | 'failure') => void,
   ): void {
     const { cellId, miniAppId, target } = params;
     let loadPromise: Promise<void>;
@@ -1000,6 +1480,7 @@ export class OmniWindowHelper {
         ? content.webContents.loadFile(target.filePath)
         : content.webContents.loadURL(target.url);
     } catch (error) {
+      onTerminal?.('failure');
       const cell = this.cells.find(
         (candidate) => candidate.id === cellId && candidate.content === content,
       );
@@ -1017,12 +1498,14 @@ export class OmniWindowHelper {
       return;
     }
     loadPromise.then(() => {
+      onTerminal?.('success');
       const cell = this.cells.find(
         (candidate) => candidate.id === cellId && candidate.content === content,
       );
       if (!cell) return;
       this.broadcastMiniAppLoadState({ cellId, miniAppId, status: 'ready' });
     }).catch((error) => {
+      onTerminal?.('failure');
       const cell = this.cells.find(
         (candidate) => candidate.id === cellId && candidate.content === content,
       );
@@ -1086,10 +1569,9 @@ export class OmniWindowHelper {
           `--contentMode=${contentMode}`,
           ...createOmniCellActiveFrameArguments(id, 'browser-menubar'),
           ...(rendererReadyFence ? this.getRendererReadyArguments(rendererReadyFence) : []),
-        ], true)
+        ], true, rendererReadyFence ?? undefined)
         : null;
       if (menubar) {
-        if (rendererReadyFence) this.bindRendererReadyFenceView(rendererReadyFence, menubar);
         this.bindCellActiveFrameLifecycle(id, menubar);
         this.baseWindow.contentView.addChildView(menubar);
       }
@@ -1203,12 +1685,20 @@ export class OmniWindowHelper {
     this.cells.push(cell);
     this.applyActiveCellFrameState();
 
+    const hasInitialNavigation = contentMode === 'miniapp' ? Boolean(miniAppRuntime) : Boolean(url);
+    const deferredNavigation = hasInitialNavigation && initialRendererReadyBatch
+      ? this.beginDeferredNavigationDiagnostic(initialRendererReadyBatch.generation)
+      : null;
     const startContent = (): void => {
     if (contentMode === 'miniapp' && miniAppRuntime) {
+      this.startDeferredNavigationDiagnostic(deferredNavigation);
+      this.armDeferredNavigationTimeout(deferredNavigation);
       this.loadMiniAppCellContent(content, {
         cellId: id,
         miniAppId,
         target: miniAppRuntime.rendererTarget,
+      }, (outcome) => {
+        this.finishDeferredNavigationDiagnostic(deferredNavigation, outcome);
       });
     } else if (url) {
       // Semaphore (capacity 3): stagger concurrent URL loads to avoid overwhelming the shared session.
@@ -1219,22 +1709,52 @@ export class OmniWindowHelper {
 
       this._loadSemaphore.acquire().then(() => {
         this._abortTokens.delete(abortToken);
-        if (aborted || !this.isWebContentsAlive(content.webContents)) {
-          this._loadSemaphore.release();
+        if (aborted) {
+          this.finishDeferredNavigationDiagnostic(deferredNavigation, 'superseded');
           return;
         }
-        let released = false;
-        const releaseOnce = () => {
-          if (released) return;
-          released = true;
-          setTimeout(() => this._loadSemaphore.release(), 1000);
+        if (!this.isWebContentsAlive(content.webContents)) {
+          this._loadSemaphore.release();
+          this.finishDeferredNavigationDiagnostic(deferredNavigation, 'superseded');
+          return;
+        }
+        const resources = createOmniExactOnceResource();
+        this.browserLoadResources.add(resources);
+        resources.add(() => this.browserLoadResources.delete(resources));
+        resources.add(() => this._loadSemaphore.release());
+        const finishLoad = (
+          outcome: 'success' | 'failure' | 'timeout' | 'superseded',
+        ): void => {
+          resources.close();
+          this.finishDeferredNavigationDiagnostic(deferredNavigation, outcome);
         };
-        const timeoutId = setTimeout(releaseOnce, 30_000);
-        content.webContents.once('did-finish-load', () => { clearTimeout(timeoutId); releaseOnce(); });
-        content.webContents.once('did-fail-load', () => { clearTimeout(timeoutId); releaseOnce(); });
-        content.webContents.once('did-fail-provisional-load', () => { clearTimeout(timeoutId); releaseOnce(); });
-        content.webContents.once('render-process-gone', () => { clearTimeout(timeoutId); releaseOnce(); });
-        content.webContents.loadURL(url).catch(() => {
+        const timeoutId = setTimeout(() => finishLoad('timeout'), 30_000);
+        resources.add(() => clearTimeout(timeoutId));
+        const listeners = [
+          ['did-finish-load', () => finishLoad('success')],
+          ['did-fail-load', () => finishLoad('failure')],
+          ['did-fail-provisional-load', () => finishLoad('failure')],
+          ['render-process-gone', () => finishLoad('failure')],
+        ] as const;
+        for (const [event, listener] of listeners) {
+          content.webContents.on(event, listener);
+          resources.add(() => {
+            if (!content.webContents.isDestroyed()) {
+              content.webContents.removeListener(event, listener);
+            }
+          });
+        }
+        if (deferredNavigation) deferredNavigation.dispose = () => resources.close();
+        let loadPromise: Promise<void>;
+        try {
+          this.startDeferredNavigationDiagnostic(deferredNavigation);
+          loadPromise = content.webContents.loadURL(url);
+        } catch {
+          finishLoad('failure');
+          return;
+        }
+        loadPromise.catch(() => {
+          finishLoad('failure');
           const currentCell = this.cells.find((candidate) => candidate.id === id);
           if (currentCell?.content !== content) return;
           this.clearActiveCellIfMatching(id);
@@ -1612,17 +2132,41 @@ export class OmniWindowHelper {
     rendererName: string,
     additionalArguments: string[] = [],
     startupUnthrottled = false,
+    rendererReadyFence?: OmniRendererReadyFence,
   ): WebContentsView {
-    const view = new WebContentsView({
-      webPreferences: {
-        preload: join(__dirname, '../preload/omni.js'),
-        sandbox: false,
-        contextIsolation: true,
-        nodeIntegration: false,
-        backgroundThrottling: !startupUnthrottled,
-        additionalArguments,
-      },
-    });
+    let view: WebContentsView;
+    try {
+      view = new WebContentsView({
+        webPreferences: {
+          preload: join(__dirname, '../preload/omni.js'),
+          sandbox: false,
+          contextIsolation: true,
+          nodeIntegration: false,
+          backgroundThrottling: !startupUnthrottled,
+          additionalArguments,
+        },
+      });
+    } catch (error) {
+      if (rendererReadyFence) {
+        this.markOpenFailure(rendererReadyFence.generation, 'create-fail');
+        this.markRendererDiagnosticStage(rendererReadyFence, 'create', 'failure');
+        this.rejectRendererReadyFence(
+          rendererReadyFence,
+          error instanceof Error ? error : new Error(String(error)),
+          'renderer-fail',
+        );
+      }
+      throw error;
+    }
+    if (rendererReadyFence) {
+      this.bindRendererReadyFenceView(rendererReadyFence, view);
+      this.markRendererDiagnosticStage(
+        rendererReadyFence,
+        'load-start',
+        'success',
+        view.webContents.getBackgroundThrottling(),
+      );
+    }
 
     const rendererPath = `omni/${rendererName}/index.html`;
 
@@ -1633,17 +2177,34 @@ export class OmniWindowHelper {
         : view.webContents.loadFile(join(__dirname, `../renderer/${rendererPath}`));
     } catch (error) {
       const normalized = error instanceof Error ? error : new Error(String(error));
+      if (rendererReadyFence) {
+        rendererReadyFence.loadPending = false;
+        this.markRendererDiagnosticStage(rendererReadyFence, 'load-fail', 'failure');
+        this.rejectRendererReadyFence(rendererReadyFence, normalized, 'load-fail');
+      }
       this.viewLoadResults.set(view, Promise.resolve({ ok: false, error: normalized }));
       return view;
     }
     this.viewLoadResults.set(
       view,
       loadPromise.then<OmniViewLoadResult, OmniViewLoadResult>(
-        () => ({ ok: true }),
-        (error) => ({
-          ok: false,
-          error: error instanceof Error ? error : new Error(String(error)),
-        }),
+        () => {
+          if (rendererReadyFence && !rendererReadyFence.settled) {
+            rendererReadyFence.loadPending = false;
+            this.markRendererDiagnosticStage(rendererReadyFence, 'load-finish');
+            this.settleRendererReadyFenceIfReady(rendererReadyFence);
+          }
+          return { ok: true };
+        },
+        (error) => {
+          const normalized = error instanceof Error ? error : new Error(String(error));
+          if (rendererReadyFence && !rendererReadyFence.settled) {
+            rendererReadyFence.loadPending = false;
+            this.markRendererDiagnosticStage(rendererReadyFence, 'load-fail', 'failure');
+            this.rejectRendererReadyFence(rendererReadyFence, normalized, 'load-fail');
+          }
+          return { ok: false, error: normalized };
+        },
       ),
     );
 
