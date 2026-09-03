@@ -62,6 +62,12 @@ Non-blocking review findings are recorded here after task verification.
   `getClaudeInventoryBridgeEndpoint` produces two distinct socket/named-pipe paths for them — the
   fix is verified correct by diff/grep inspection, but only exercised indirectly through mocked
   watchers. Add a direct two-id endpoint-distinctness test if this function is touched again.
+- Task 086 review: a stray blank-line insertion in `src/main/xpc/eyesOnAgents.handler.ts` with no
+  functional effect. Cosmetic; fold into the next touch of that file.
+- Task 086 review: `claude-environment-plugin-install.test.mjs` never directly exercises the
+  `plugin enable` CLI branch (source-level correctness was confirmed independently via a call-site
+  scan showing all 16 `this.command()` sites thread `configDirectory`, but no test pins the enable
+  branch specifically). Add direct coverage if this area is touched again.
 - Pre-existing, unrelated to the iTerm2 Open feature: `yarn check:renderer-i18n` crashes on
   `assert(trayCreateIndex > homeCreateIndex, 'Tray must follow Home creation')`
   (`scripts/renderer-i18n/check-renderer-i18n.mjs:172`) because commit `c67ac21` changed

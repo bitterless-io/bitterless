@@ -46,13 +46,30 @@ section (excluding the owner-only manual two-environment check) should be fully 
   interface-satisfaction step, not new business logic). Do this first, before writing any Vue/store
   code that depends on it.
 
-- **Also extend the 4 pre-existing bridge methods' signatures.** Task 086 added an optional
-  `{ environmentId }` parameter to `installClaudeBridge`, `getClaudeBridgeStatus`,
-  `refreshClaudeBridgeStatus`, `removeClaudeBridge`'s main-process implementations, but could not
-  update `EyesOnAgentsApi`'s declared (parameterless) signatures for these same methods without
-  rippling into `eyesOnAgents.type.ts`, which was out of its declared Path. Update those 4 signatures
-  in the same interface-extension pass as the 7 new methods above — otherwise the renderer can only
-  ever manage the default environment's plugin install/status, which defeats this task's purpose.
+- **Also extend the 4 pre-existing bridge methods' signatures — and mind the real conflict this
+  creates.** Task 086 added `params?: { environmentId?: string }` to `installClaudeBridge`,
+  `getClaudeBridgeStatus`, `refreshClaudeBridgeStatus`, `removeClaudeBridge` on
+  `EyesOnAgentsHandler` (`src/main/xpc/eyesOnAgents.handler.ts`) only. `EyesOnAgentsApi` still
+  declares these 4 as zero-arg, and — this is the part task 086's own review caught as a real,
+  documented gap, not a hypothetical one — **both** `EyesOnAgentsHandler` (`implements
+  EyesOnAgentsApi`) **and** `EyesOnAgentsService` (also `implements EyesOnAgentsApi`,
+  `src/main/eyesOnAgents/eyesOnAgents.service.ts:663`) must satisfy whatever shape you give the
+  interface. `EyesOnAgentsHandler`'s shape (`params?: { environmentId?: string }`) already matches
+  what you'd want to widen the interface to. `EyesOnAgentsService`'s 3 bridge methods currently take
+  a raw `configDirectory?: string` (not `{ environmentId }`) — widening the interface to
+  `{ environmentId }` without also changing `EyesOnAgentsService`'s parameter shape produces a real
+  `TS2416` (`EyesOnAgentsService` no longer assignable to `EyesOnAgentsApi`), not a hypothetical one.
+  Fix: change `EyesOnAgentsService.installClaudeBridge`/`refreshClaudeBridgeStatus`/
+  `removeClaudeBridge`'s parameter from `configDirectory?: string` to
+  `params?: { environmentId?: string }`, importing `claudeDirectoryConfig` (singleton,
+  `src/main/eyesOnAgents/claudeDirectoryConfig.service.ts`) and the existing
+  `resolveClaudeBridgeEnvironment` helper (`src/main/eyesOnAgents/claudeBridgeEnvironment.resolver.ts`
+  — neither is currently imported by this file) to resolve `environmentId` to a `configDirectory`
+  internally, then proceed with the method's existing, otherwise-unchanged body. `getClaudeBridgeStatus`
+  needs the same interface/renderer-facing shape for consistency even though it does not currently
+  use `configDirectory` at all. This is real, if small, additional surface in
+  `eyesOnAgents.service.ts` beyond "thin delegation" — it is still only these 4 methods' parameter
+  lists and internal resolution step, nothing else in this ~3,700-line file.
 
 - `ClaudeObservationCard.vue`'s current single directory block (path/mode/state/last-scan/actions)
   becomes a list, one row per `EyesOnAgentsClaudeEnvironment`/`EyesOnAgentsClaudeEnvironmentStatus`

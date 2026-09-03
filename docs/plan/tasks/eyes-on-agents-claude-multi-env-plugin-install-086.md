@@ -1,7 +1,7 @@
 ---
 id: eyes-on-agents-claude-multi-env-plugin-install-086
 scope: Run the existing Claude plugin/hook install-enable-remove flow against a chosen environment's CLAUDE_CONFIG_DIR
-status: in-progress
+status: done
 depends-on: [eyes-on-agents-claude-multi-env-data-model-084]
 verify: focused EyesOnAgents plugin-bridge unit tests, Core strict typecheck; no Electron
 ---
@@ -320,3 +320,17 @@ imports, matching the established pattern in `claude-inventory.test.mjs`/
   `claude` CLI, real spawns, entirely under this session's own scratchpad, deleted immediately after
   use) — a research probe verifying the task's core assumption, not an E2E/Playwright suite, and it
   never touched this machine's real `~/.claude` or any Bitterless-managed Claude installation.
+
+## Review
+
+[Independent review 1](../reviews/eyes-on-agents-claude-multi-env-plugin-install-086-1.md) passed
+with no blocking findings. It independently re-ran the core `CLAUDE_CONFIG_DIR` assumption probe
+with a fresh disposable directory and fresh names, checking absence in both this sandbox's own
+ambient `CLAUDE_CONFIG_DIR` and the true real `~/.claude` — same conclusion as the original probe,
+now doubly-verified since this is the highest-risk assumption in the whole plan. It also caught a
+real internal inconsistency in task 088's plan (widening `EyesOnAgentsApi`'s 4 pre-existing bridge
+methods to `{ environmentId }` would break `EyesOnAgentsService`'s `implements EyesOnAgentsApi`
+unless that service's own bridge-method signatures are updated too) — task 088's file has been
+corrected with the exact fix. Two P3 non-blocking notes (a stray blank-line insertion, and the new
+test harness not directly exercising the `plugin enable` CLI branch even though the call-site scan
+confirmed it's threaded correctly) are recorded in `docs/plan/backlog.md`.
