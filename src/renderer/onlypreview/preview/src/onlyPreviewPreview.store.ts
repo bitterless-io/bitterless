@@ -33,7 +33,10 @@ import {
 } from '../../common/onlyPreviewPresentation.service';
 import type { OnlyPreviewDrawioContent } from './onlyPreviewDrawio.service';
 import { OnlyPreviewDrawioSelectionStore } from './onlyPreviewDrawioSelection.store';
-import { OnlyPreviewImageSession, type OnlyPreviewImageRender } from './onlyPreviewImage.service';
+import {
+  createOnlyPreviewImageRender,
+  type OnlyPreviewImageRender
+} from './onlyPreviewImage.service';
 import { OnlyPreviewMediaSession } from './onlyPreviewMedia.service';
 import { onlyPreviewFindAdapterBridge } from './onlyPreviewFindAdapter.service';
 import { OnlyPreviewOfficeSession } from './onlyPreviewOfficeSession.service';
@@ -65,7 +68,6 @@ class OnlyPreviewPreviewStore {
   textContent: OnlyPreviewTextContent | null = null;
   officeSession: OnlyPreviewOfficeSession | null = null;
   drawioContent: OnlyPreviewDrawioContent | null = null;
-  imageSession: OnlyPreviewImageSession | null = null;
   imageContent: OnlyPreviewImageRender | null = null;
   mediaSession: OnlyPreviewMediaSession | null = null;
   mediaPrepared = false;
@@ -276,6 +278,15 @@ class OnlyPreviewPreviewStore {
       hostId,
       revision: reportingRevision
     });
+  }
+
+  // True from the moment a Project is bound until its index is usable. Main derives the value per
+  // snapshot and scopes it to the presentation's workspace, so a state left over from a previous
+  // Project can never be applied here. `failed` reads as not-loading: the Project rail already
+  // reports the failure, and an endless animation beside it would be a lie.
+  get projectIndexing(): boolean {
+    const state = this.presentation?.projectIndexState ?? null;
+    return state === 'building' || state === 'reconciling';
   }
 
   private subscribe(): void {
@@ -579,17 +590,12 @@ class OnlyPreviewPreviewStore {
             'Image preview is missing its revision-bound asset.'
           );
         }
-        const session = markRaw(new OnlyPreviewImageSession());
-        this.imageSession = session;
-        const content = await session.load(
+        const content = createOnlyPreviewImageRender(
           assetUrl,
           presentation.descriptor.size,
           presentation.descriptor.mimeType
         );
-        if (!this.isCurrent(generation, revision)) {
-          session.dispose();
-          return;
-        }
+        if (!this.isCurrent(generation, revision)) return;
         this.imageContent = markRaw(content);
         await nextTick();
         return;
@@ -740,8 +746,6 @@ class OnlyPreviewPreviewStore {
   }
 
   private disposeImageSession(): void {
-    this.imageSession?.dispose();
-    this.imageSession = null;
     this.imageContent = null;
   }
 

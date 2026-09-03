@@ -9,6 +9,7 @@ import { existsSync, readFileSync, writeFileSync } from 'fs';
 import JSON5 from 'json5';
 import { build as esbuild } from 'esbuild';
 import { createHash } from 'crypto';
+import { transformPrivilegedRendererHtml } from './src/shared/security/blankPrivilegedRendererHtml.service';
 
 const nodeRequire = createRequire(import.meta.url);
 const { loadCanonicalRigEnvironment } = nodeRequire(
@@ -203,22 +204,28 @@ const trenchSandboxPreloadPlugin = {
   }
 };
 
-const trenchIoBlankHtmlPlugin = {
-  name: 'bitterless:trench-io-blank-html',
+const privilegedRuntimeBlankHtmlPlugin = {
+  name: 'bitterless:privileged-runtime-blank-html',
   transformIndexHtml: {
     order: 'post' as const,
     handler(html: string, context: { path: string }) {
-      if (!context.path.includes('/trench-io/')) return html;
-      return html.replace(/\s*<script(?:\s[^>]*)?>[\s\S]*?<\/script>\s*/gi, '\n');
+      return transformPrivilegedRendererHtml(html, context.path);
     }
-  },
+  }
+};
+
+const privilegedRuntimeBlankHtmlAuditPlugin = {
+  name: 'bitterless:privileged-runtime-blank-html-audit',
+  apply: 'build' as const,
   closeBundle() {
-    const html = readFileSync(resolve('out/renderer/trench-io/index.html'), 'utf8');
-    if (!/default-src 'none'/.test(html) || !/<body>\s*<\/body>/.test(html)) {
-      throw new Error('trench-io output must retain its restrictive CSP and empty body');
-    }
-    if (/<(?:script|link|style|img|iframe)\b/i.test(html)) {
-      throw new Error('trench-io output must not import or execute page resources');
+    for (const rendererPath of ['trench-io', 'fileSearch']) {
+      const html = readFileSync(resolve(`out/renderer/${rendererPath}/index.html`), 'utf8');
+      if (!/default-src 'none'/.test(html) || !/<body>\s*<\/body>/.test(html)) {
+        throw new Error(`${rendererPath} output must retain its restrictive CSP and empty body`);
+      }
+      if (/<(?:script|link|style|img|iframe)\b/i.test(html)) {
+        throw new Error(`${rendererPath} output must not import or execute page resources`);
+      }
     }
   }
 };
@@ -558,7 +565,8 @@ export default defineConfig({
       monacoEditorPlugin({
         customDistPath: (_root, outDir) => resolve(outDir, 'monacoeditorwork')
       }),
-      trenchIoBlankHtmlPlugin,
+      privilegedRuntimeBlankHtmlPlugin,
+      privilegedRuntimeBlankHtmlAuditPlugin,
       onlyPreviewHtmlSecurityPlugin,
       coinHtmlSecurityPlugin
     ],

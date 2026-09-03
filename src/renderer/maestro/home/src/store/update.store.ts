@@ -24,8 +24,9 @@ const parseUpdateInfo = (value: unknown): UpdateInfo | null => {
  *
  * Silent background download: UpdateService (main) broadcasts update-available after both the
  * versionCode and platform-updater gates confirm availability, then downloads in the background.
- * The compact "update" label stays unchanged: the button is disabled while downloading and becomes
- * enabled when 'coach/update-downloaded' arrives.
+ * The compact label names its state — Downloading while the build is fetched, Update once it is
+ * ready — and the button is disabled while downloading, becoming enabled when
+ * 'coach/update-downloaded' arrives.
  */
 class UpdateState {
   /** True once update UI should show (downloading or ready). */

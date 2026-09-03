@@ -57,6 +57,16 @@ export interface OnlyPreviewFileAuthorityTarget {
   modifiedAt: number;
 }
 
+export interface OnlyPreviewFileAuthorityCreateDirectoryRequest
+  extends OnlyPreviewFileAuthorityWorkspaceRef {
+  parentRelativePath: string;
+  name: string;
+}
+
+export interface OnlyPreviewFileAuthorityRenameRequest extends OnlyPreviewFileAuthorityItemRequest {
+  name: string;
+}
+
 export interface OnlyPreviewFileAuthorityDeleteGrant {
   runtimeInstanceId: string;
   workspaceId: string;
@@ -99,6 +109,12 @@ export interface OnlyPreviewFileAuthorityRuntimePrivateApi {
   ): Promise<OnlyPreviewResult<OnlyPreviewFileAuthorityTarget>>;
   authorizeRoot(
     request: OnlyPreviewFileAuthorityWorkspaceRef
+  ): Promise<OnlyPreviewResult<OnlyPreviewFileAuthorityTarget>>;
+  createDirectory(
+    request: OnlyPreviewFileAuthorityCreateDirectoryRequest
+  ): Promise<OnlyPreviewResult<OnlyPreviewFileAuthorityTarget>>;
+  renameEntry(
+    request: OnlyPreviewFileAuthorityRenameRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewFileAuthorityTarget>>;
   prepareDelete(
     request: OnlyPreviewFileAuthorityItemRequest

@@ -143,9 +143,11 @@ test('Project selection owns Current directory and native folder reveal centers 
 
 test('native shortcuts reserve only Shift+Cmd/Ctrl+F for Global Search', () => {
   const helper = source('src/main/windows/onlyPreviewWindow.helper.ts');
+  // Scoped to the predicate itself: the region between it and the bounds helper now holds the other
+  // shortcut matchers, whose modifier rules are their own and are asserted with them.
   const globalShortcut = helper.slice(
     helper.indexOf('const isGlobalSearchShortcut'),
-    helper.indexOf('const isHiddenPreviewBounds')
+    helper.indexOf('const isProjectItemCopyShortcut')
   );
   assert.match(globalShortcut, /!input\.shift/);
   assert.match(globalShortcut, /input\.alt/);

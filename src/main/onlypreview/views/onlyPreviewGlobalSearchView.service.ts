@@ -77,6 +77,10 @@ export class OnlyPreviewGlobalSearchViewService {
   private view: WebContentsView | null = null;
   private bounds: Rectangle | null = null;
   private loadGeneration = 0;
+  // The overlay is transparent and covers the whole window, so an unloaded one is an invisible
+  // click-and-keystroke sink over the shell and the preview. It stays out of the child list until
+  // its page has loaded.
+  private ready = false;
   private context: OnlyPreviewGlobalSearchContextSnapshot = {
     revision: 0,
     active: false,
@@ -92,6 +96,18 @@ export class OnlyPreviewGlobalSearchViewService {
 
   isActive(hostToken: string): boolean {
     return this.runtime?.host.hostToken === hostToken && this.context.active;
+  }
+
+  /**
+   * Build the overlay before it is first needed.
+   *
+   * Spawning a renderer process, loading its bundle and mounting Vue is the whole cost of the first
+   * Shift+Cmd+F. Paying it once, off the keystroke, is the difference between an instant panel and
+   * a window that appears to hang. Idempotent: `ensureView()` returns a live view unchanged.
+   */
+  preload(hostToken: string): void {
+    this.requireRuntime(hostToken);
+    this.ensureView();
   }
 
   getView(): WebContentsView | null {
@@ -256,6 +272,7 @@ export class OnlyPreviewGlobalSearchViewService {
     this.resolvePendingReveal(false);
     this.detachView();
     this.view = null;
+    this.ready = false;
     closeContentView(view);
     this.runtime = null;
     this.bounds = null;
@@ -269,14 +286,27 @@ export class OnlyPreviewGlobalSearchViewService {
     const view = runtime.createView();
     const generation = ++this.loadGeneration;
     this.view = view;
+    this.ready = false;
     view.webContents.once('render-process-gone', () => {
       if (this.view !== view) return;
       this.failOverlay(view, runtime);
     });
-    void runtime.loadView(view).catch(() => {
+    // The load resolve is the only signal the overlay itself produces. Without it the overlay keeps
+    // whatever stacking it was given while blank, and nothing ever revisits that.
+    const settle = (): void => {
       if (this.view !== view || generation !== this.loadGeneration) return;
-      this.failOverlay(view, runtime);
-    });
+      this.ready = true;
+      if (!this.context.active) return;
+      this.attachTopmost();
+      if (!view.webContents.isDestroyed()) view.webContents.focus();
+    };
+    void runtime
+      .loadView(view)
+      .then(settle)
+      .catch(() => {
+        if (this.view !== view || generation !== this.loadGeneration) return;
+        this.failOverlay(view, runtime);
+      });
     return view;
   }
 
@@ -286,6 +316,7 @@ export class OnlyPreviewGlobalSearchViewService {
     const bounds = this.bounds;
     if (
       !this.context.active ||
+      !this.ready ||
       !runtime ||
       runtime.window.isDestroyed() ||
       !view ||
@@ -295,6 +326,14 @@ export class OnlyPreviewGlobalSearchViewService {
       return;
     }
     view.setBounds({ ...bounds });
+    // Detach before re-attaching. Re-adding an already-attached child reorders it in the views tree,
+    // but a real detach also drives the native host's attach path, which is what restacks the AppKit
+    // subviews on macOS. Over a Chromium PDF the views-level reorder alone has not been enough.
+    try {
+      runtime.window.contentView.removeChildView(view);
+    } catch {
+      // Not attached yet; the add below is the first attach.
+    }
     runtime.window.contentView.addChildView(view);
   }
 
@@ -315,6 +354,7 @@ export class OnlyPreviewGlobalSearchViewService {
     this.setActive(false);
     this.detachView();
     this.view = null;
+    this.ready = false;
     closeContentView(view);
     this.resolvePendingReveal(false);
     this.broadcastVisibility(runtime);

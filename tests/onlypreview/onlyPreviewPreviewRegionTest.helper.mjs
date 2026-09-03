@@ -688,6 +688,11 @@ const regionModule = loadTypeScriptModule(
     '@main/onlypreview/onlyPreviewDocument.registry': {
       onlyPreviewDocumentRegistry: documentRegistry
     },
+    '@main/onlypreview/onlyPreviewProjectIndexState.service': {
+      onlyPreviewProjectIndexStateService: {
+        get: (workspaceId) => state.projectIndexState?.[workspaceId] ?? null
+      }
+    },
     '@main/onlypreview/onlyPreviewHost.registry': {
       onlyPreviewHostRegistry: hostRegistry
     },
@@ -741,8 +746,7 @@ const regionModule = loadTypeScriptModule(
             assetUrl: assetRegistry.issue(hostToken, prepared, descriptor.mimeType, {
               selectionRevision,
               maxBytes: Math.min(descriptor.size, limit ?? descriptor.size),
-              lifetime:
-                adapter.adapterId === 'audio' || adapter.adapterId === 'video' ? 'selection' : 'ttl'
+              lifetime: 'selection'
             })
           };
           assetIssued = true;

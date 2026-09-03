@@ -134,6 +134,9 @@ design document.
   and restored-Project initialization uses a cancelable microtask instead of the suppressed 750ms
   renderer timer, so root listing is deterministic; [task 117 review 1](plan/reviews/desktop-first-visible-performance-117-1.md)
   passed.
+- [OnlyPreview restored Project index is scheduled but never starts](issues/onlypreview-restored-project-index-never-starts.md) -
+  fixed in source; owner verification pending: bind the deferred microtask through a valid browser receiver, record schedule/action
+  failures, and remove the unrelated hidden `fileSearch` Vite/CSP false alarm without weakening CSP.
 - [OnlyPreview holds a rendered document behind full pagination](issues/onlypreview-docx-waits-for-full-pagination.md) -
   fixed; owner verification pending: present DOCX/PPTX at the first laid-out unit and keep the
   remaining pagination behind the visible preview, with the full-document barrier retained as the

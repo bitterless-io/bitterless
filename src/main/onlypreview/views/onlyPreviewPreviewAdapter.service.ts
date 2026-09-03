@@ -46,7 +46,10 @@ export const createEmptyOnlyPreviewPresentation = (
   fileRef: null,
   descriptor: null,
   error: null,
-  selectedTextAvailable: false
+  selectedTextAvailable: false,
+  // Placeholder only. `snapshotInternal` overrides it on the way out, so a cleared presentation
+  // cannot erase the Project's index state.
+  projectIndexState: null
 });
 
 export const getOnlyPreviewDescriptorAdapter = (
@@ -82,10 +85,17 @@ export const onlyPreviewAdapterProvidesSelectedText = (
 
 export const onlyPreviewAdapterUsesOneShotAsset = (
   adapterId: OnlyPreviewPreviewAdapterId
-): boolean => adapterId === 'image' || adapterId === 'drawio-viewer';
+): boolean => adapterId === 'drawio-viewer';
 
+// A one-shot asset is one the renderer copies into its own memory before reporting ready, so its
+// token can be retired at that point. `drawio-viewer` reads the file into a document; the other
+// three keep the URL on the element itself and are the only holders of the bytes, so their token
+// has to survive ready — a re-attach or a re-mount re-requests it.
 export const onlyPreviewAdapterUsesVueAsset = (adapterId: OnlyPreviewPreviewAdapterId): boolean =>
-  onlyPreviewAdapterUsesOneShotAsset(adapterId) || adapterId === 'audio' || adapterId === 'video';
+  onlyPreviewAdapterUsesOneShotAsset(adapterId) ||
+  adapterId === 'image' ||
+  adapterId === 'audio' ||
+  adapterId === 'video';
 
 export const getOnlyPreviewDescriptorErrorCode = (
   descriptor: OnlyPreviewDescriptor | null

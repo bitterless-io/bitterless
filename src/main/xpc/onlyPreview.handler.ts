@@ -13,7 +13,9 @@ import {
   parseOnlyPreviewPreviewRevisionRequest,
   parseOnlyPreviewProjectItemCopyRequest,
   parseOnlyPreviewProjectRootCopyRequest,
+  parseOnlyPreviewCreateProjectFolderRequest,
   parseOnlyPreviewProjectRootRequest,
+  parseOnlyPreviewRenameProjectItemRequest,
   toOnlyPreviewErrorPayload
 } from '@shared/onlypreview/onlyPreview.contract';
 import {
@@ -46,6 +48,8 @@ import { onlyPreviewSettingsService } from '@main/onlypreview/onlyPreviewSetting
 import { onlyPreviewAssetRegistry } from '@main/onlypreview/onlyPreviewAsset.registry';
 import { onlyPreviewDocumentRegistry } from '@main/onlypreview/onlyPreviewDocument.registry';
 import { onlyPreviewSelectionCoordinator } from '@main/onlypreview/onlyPreviewSelectionCoordinator.service';
+import { presentOnlyPreviewRestoredSelection } from '@main/onlypreview/onlyPreviewRestoreSelection.service';
+import * as projectIndex from '@main/onlypreview/onlyPreviewProjectIndexState.service';
 import { onlyPreviewPreviewRegionService } from '@main/onlypreview/views/onlyPreviewPreviewRegion.service';
 import { onlyPreviewGlobalSearchXpcService } from '@main/onlypreview/views/onlyPreviewGlobalSearchXpc.service';
 import { onlyPreviewWindowHelper } from '@main/windows/onlyPreviewWindow.helper';
@@ -104,6 +108,7 @@ onlyPreviewRecentDirectoryService.configureTargetRuntime({
         workspace.workspaceId,
         binding.workspaceGeneration
       );
+      projectIndex.markOnlyPreviewProjectBound(hostToken, workspace.workspaceId);
     } catch (error) {
       await fileSearchWindowService
         .revokeProjectWorkspace({
@@ -113,7 +118,8 @@ onlyPreviewRecentDirectoryService.configureTargetRuntime({
         .catch(() => undefined);
       throw error;
     }
-  }
+  },
+  presentSelection: presentOnlyPreviewRestoredSelection
 });
 
 onlyPreviewHostRegistry.onRevoke((host) => {
@@ -293,6 +299,15 @@ class OnlyPreviewHandler
           relativePath: file.relativePath
         });
         if (!onlyPreviewSelectionCoordinator.isCurrent(host.hostToken, generation)) return;
+        // Remembered only once the selection has actually presented and is still current, so a
+        // superseded click never becomes the file the next launch reopens.
+        const workspace = onlyPreviewWorkspaceRegistry.restore(host.hostToken);
+        if (workspace?.displayPath) {
+          onlyPreviewRecentDirectoryService.rememberSelectedFile(
+            workspace.displayPath,
+            file.relativePath
+          );
+        }
         xpcMain.broadcast(ONLY_PREVIEW_SELECTION_CHANGED_EVENT, { hostId: host.hostId });
       } finally {
         onlyPreviewSelectionCoordinator.finishSelection(host.hostToken, generation);
@@ -580,6 +595,33 @@ class OnlyPreviewHandler
         request,
         request.copyKind
       );
+    });
+  }
+
+  async reportProjectIndexFailed(
+    params: ApiParams<'reportProjectIndexFailed'>
+  ): ReturnType<OnlyPreviewApi['reportProjectIndexFailed']> {
+    return await runOperation('reportProjectIndexFailed', async () =>
+      projectIndex.reportOnlyPreviewProjectIndexFailure(parseOnlyPreviewProjectRootRequest(params))
+    );
+  }
+
+  async createProjectFolder(
+    params: ApiParams<'createProjectFolder'>
+  ): ReturnType<OnlyPreviewApi['createProjectFolder']> {
+    return await runOperation('createProjectFolder', async () => {
+      const request = parseOnlyPreviewCreateProjectFolderRequest(params);
+      return await onlyPreviewProjectNativeActionService.createUntitledProjectFolder(request);
+    });
+  }
+
+  async renameProjectItem(
+    params: ApiParams<'renameProjectItem'>
+  ): ReturnType<OnlyPreviewApi['renameProjectItem']> {
+    return await runOperation('renameProjectItem', async () => {
+      const request = parseOnlyPreviewRenameProjectItemRequest(params);
+      const window = onlyPreviewWindowHelper.getStandaloneWindow(request.hostToken);
+      return await onlyPreviewProjectNativeActionService.renameProjectItemFromUi(window, request);
     });
   }
 

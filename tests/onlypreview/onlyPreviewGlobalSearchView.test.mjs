@@ -158,11 +158,15 @@ const workspace = (generation = 8, currentDirectoryRelativePath = 'src') => ({
   currentDirectoryRelativePath
 });
 
-test('Search spans the BaseWindow, publishes exact Preview geometry, and stays topmost', () => {
+test('Search spans the BaseWindow, publishes exact Preview geometry, and stays topmost', async () => {
   const harness = createHarness();
   harness.service.updateBounds(host.hostToken, viewBounds, bounds);
   const view = harness.service.show(host.hostToken, 'chrome');
   assert.equal(harness.views.length, 1);
+  // The overlay is transparent and full-window, so attaching it before it has loaded puts an
+  // invisible click-and-keystroke sink over the shell and the preview for the whole cold boot.
+  assert.deepEqual(harness.children, [], 'an unloaded overlay must not be in the child list');
+  await tick();
   assert.deepEqual(view.bounds, viewBounds);
   assert.deepEqual(harness.service.getContext(host.hostToken).layout, {
     viewBounds,
@@ -177,8 +181,11 @@ test('Search spans the BaseWindow, publishes exact Preview geometry, and stays t
       layout: { viewBounds, workspaceBounds: bounds }
     }
   );
-  assert.deepEqual(harness.operations.slice(0, 2), [
+  // A raise is a real detach-then-attach: re-adding an attached child reorders the views tree, but
+  // only the detach drives the native host path that restacks AppKit subviews on macOS.
+  assert.deepEqual(harness.operations.slice(0, 3), [
     { kind: 'bounds', name: 'search-1', bounds: viewBounds },
+    { kind: 'remove', name: 'search-1' },
     { kind: 'add', name: 'search-1', bounds: viewBounds }
   ]);
 
@@ -197,7 +204,10 @@ test('Search spans the BaseWindow, publishes exact Preview geometry, and stays t
   harness.service.close(host.hostToken, 'discard');
   assert.equal(harness.children.includes(view), false);
   assert.equal(view.webContents.destroyed, false);
+  // Re-showing a warm overlay is synchronous: the renderer already exists, which is the whole point
+  // of keeping it alive across close.
   assert.equal(harness.service.show(host.hostToken, 'shell'), view);
+  assert.equal(harness.children.includes(view), true);
   assert.equal(harness.views.length, 1);
   harness.service.destroy();
   assert.equal(view.webContents.destroyed, true);

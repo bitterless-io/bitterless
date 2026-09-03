@@ -29,7 +29,10 @@ const en = {
     emptyProject: 'This folder has no indexed files.',
     indexProgressLabel: 'Building project search index',
     selectedCharacters: 'Selected {count} characters',
-    symlink: 'Symbolic link'
+    symlink: 'Symbolic link',
+    editNameLabel: 'Rename item',
+    nameInvalid: 'This name cannot be used on Windows or macOS.',
+    newFolderExhausted: 'Too many untitled folders already exist here.'
   },
   globalSearch: {
     label: 'Global Search',
@@ -60,6 +63,8 @@ const en = {
     loading: 'Preparing preview…',
     emptyTitle: 'Select a file',
     emptyBody: 'Choose a file from the project index to preview it here.',
+    loadingProjectTitle: 'Loading project',
+    loadingProjectBody: 'Building the project index. Files appear as they are found.',
     openExternally: 'Open in default app',
     openExternallyFailed: 'Could not open this file in its default app.',
     reveal: 'Reveal in folder',
@@ -161,6 +166,8 @@ const en = {
     PATH_PERMISSION_DENIED: 'Bitterless does not have permission to read this file or folder.',
     PATH_OUTSIDE_WORKSPACE: 'The file resolves outside the open project and cannot be previewed.',
     PATH_NOT_REGULAR_FILE: 'Only regular files can be previewed.',
+    NAME_INVALID: 'This name cannot be used on Windows or macOS.',
+    NAME_EXISTS: 'An item with this name already exists in this folder.',
     PATH_UNSUPPORTED_DEVICE: 'This device or special file cannot be previewed.',
     TEXT_TOO_LARGE: 'This file is larger than its preview limit.',
     SIGNATURE_MISMATCH: 'The file contents do not match its extension.',
@@ -229,7 +236,10 @@ const zh: Localized<typeof en> = {
     emptyProject: '此文件夹中没有可索引的文件。',
     indexProgressLabel: '正在建立项目搜索索引',
     selectedCharacters: '已选择 {count} 个字符',
-    symlink: '符号链接'
+    symlink: '符号链接',
+    editNameLabel: '重命名',
+    nameInvalid: '该名称在 Windows 或 macOS 上不可用。',
+    newFolderExhausted: '此目录下未命名文件夹已过多。'
   },
   globalSearch: {
     label: '全局搜索',
@@ -260,6 +270,8 @@ const zh: Localized<typeof en> = {
     loading: '正在准备预览…',
     emptyTitle: '选择一个文件',
     emptyBody: '从项目索引中选择文件，在此处预览。',
+    loadingProjectTitle: '正在加载项目',
+    loadingProjectBody: '正在建立项目索引，文件会随发现逐步出现。',
     openExternally: '用默认应用打开',
     openExternallyFailed: '无法使用默认应用打开此文件。',
     reveal: '在文件夹中显示',
@@ -355,6 +367,8 @@ const zh: Localized<typeof en> = {
     PATH_PERMISSION_DENIED: 'Bitterless 没有读取此文件或文件夹的权限。',
     PATH_OUTSIDE_WORKSPACE: '此文件指向当前项目之外，无法预览。',
     PATH_NOT_REGULAR_FILE: '只能预览普通文件。',
+    NAME_INVALID: '该名称在 Windows 或 macOS 上不可用。',
+    NAME_EXISTS: '该目录下已存在同名项目。',
     PATH_UNSUPPORTED_DEVICE: '无法预览设备或特殊文件。',
     TEXT_TOO_LARGE: '此文件超过对应格式的预览上限。',
     SIGNATURE_MISMATCH: '文件内容与扩展名不匹配。',

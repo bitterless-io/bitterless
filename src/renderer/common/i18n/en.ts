@@ -36,6 +36,8 @@ export const en = {
       preview: 'Preview',
       openExternally: 'Open in system app',
       revealInFolder: 'Reveal in folder',
+      newFolder: 'New Folder',
+      rename: 'Rename…',
       copyFile: 'Copy File',
       copyFolder: 'Copy Folder',
       copyPath: 'Copy Path',
@@ -52,11 +54,17 @@ export const en = {
       deleteCancelButton: 'Cancel',
       deleteFailureTitle: 'Could not delete file',
       deleteFailureMessage: 'The file could not be deleted. It may have moved or changed.',
+      renameFailureTitle: 'Could not rename item',
+      renameExistsMessage: 'An item with this name already exists in this folder.',
+      renameInvalidMessage: 'This name cannot be used on Windows or macOS.',
+      renameFailureMessage: 'The item could not be renamed. It may have moved or changed.',
+      renameFailureOk: 'OK',
       deleteFailureOk: 'OK'
     }
   },
   menuBar: {
-    restartToUpdate: 'update',
+    restartToUpdate: 'Update',
+    downloadingUpdate: 'Downloading',
     updateToVersion: 'Update to {version}',
     proxy: 'Proxy',
     maestro: {

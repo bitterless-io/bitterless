@@ -176,7 +176,7 @@ test('Markdown rendering and selection counts stay renderer-only, inert, and hos
     shellStore.indexOf('async refresh()'),
     shellStore.indexOf('async openSettings()')
   );
-  assert.match(directRefresh, /await this\.refreshIndex\(\)/);
+  assert.match(directRefresh, /await \([\s\S]*this\.refreshIndex\(\)\)/);
   assert.doesNotMatch(directRefresh, /broadcast\(ONLY_PREVIEW_REFRESH_EVENT/);
 
   assert.match(shellEvents, /ONLY_PREVIEW_REFRESH_EVENT/);
@@ -184,7 +184,7 @@ test('Markdown rendering and selection counts stay renderer-only, inert, and hos
     shellStore.indexOf('refresh: () =>'),
     shellStore.indexOf('browseListing:')
   );
-  assert.match(nativeRefresh, /this\.refreshIndex\(\)/);
+  assert.match(nativeRefresh, /this\.refresh(?:Index)?\(\)/);
   assert.match(shellStore, /const reportingRevision = String\(presentation\.selectionRevision\)/);
 
   const shellApp = source('src/renderer/onlypreview/shell/src/App.vue');
@@ -229,9 +229,12 @@ test('image and native media adapters keep renderer-owned lifecycle and no text/
   assert.match(imageComponent, /@pointercancel="finishPointerDrag"/);
   assert.match(imageComponent, /@lostpointercapture="finishPointerDrag"/);
   assert.match(imageComponent, /onlyPreviewPreviewStore\.reportSurfaceReady\(revision\)/);
+  // The element requests the asset itself, so its `error` is a read failure. Nothing in the
+  // component decodes, so it can no longer report a decode failure.
+  assert.match(imageComponent, /:src="content\.src"/);
   assert.match(
     imageComponent,
-    /onlyPreviewPreviewStore\.reportSurfaceError\(revision, 'IMAGE_DECODE_FAILED'\)/
+    /onlyPreviewPreviewStore\.reportSurfaceError\(revision, 'IMAGE_READ_FAILED'\)/
   );
   assert.doesNotMatch(imageComponent, /defineEmits/);
 
@@ -247,11 +250,13 @@ test('image and native media adapters keep renderer-owned lifecycle and no text/
   assert.match(mediaComponent, /ONLY_PREVIEW_MEDIA_METADATA_TIMEOUT_MS/);
   assert.doesNotMatch(mediaComponent, /canPlayType|defineEmits/);
 
+  // The image renders straight from the revision-bound asset URL. Nothing fetches it, buffers it
+  // into a blob, or creates an object URL, so there is no CORS check in front of an image and no
+  // second copy of the file in the renderer heap.
   const imageService = source('src/renderer/onlypreview/preview/src/onlyPreviewImage.service.ts');
-  assert.match(imageService, /await response\.blob\(\)/);
-  assert.match(imageService, /URL\.createObjectURL/);
-  assert.match(imageService, /await image\.decode\(\)/);
-  assert.match(imageService, /URL\.revokeObjectURL/);
+  assert.match(imageService, /createOnlyPreviewImageRender/);
+  assert.match(imageService, /return \{ src: assetUrl \}/);
+  assert.doesNotMatch(imageService, /fetch\(|\.blob\(\)|createObjectURL|revokeObjectURL/);
 
   const mediaService = source('src/renderer/onlypreview/preview/src/onlyPreviewMedia.service.ts');
   assert.match(mediaService, /method: 'HEAD'/);
@@ -260,8 +265,11 @@ test('image and native media adapters keep renderer-owned lifecycle and no text/
 
   const region = source('src/main/onlypreview/views/onlyPreviewPreviewRegion.service.ts');
   const delivery = source('src/main/onlypreview/views/onlyPreviewSelectionDelivery.service.ts');
-  assert.match(delivery, /adapter\.adapterId === 'audio' \|\| adapter\.adapterId === 'video'/);
-  assert.match(delivery, /\? 'selection'[\s\S]*: 'ttl'/);
+  // Image, audio and video all render straight from the element, so all three hold the token for
+  // the life of the selection; none of them buffers the file and hands it back on ready.
+  assert.match(delivery, /adapter\.adapterId === 'image' \|\|/);
+  assert.match(delivery, /lifetime: 'selection'/);
+  assert.doesNotMatch(delivery, /: 'ttl'/);
   assert.match(region, /this\.presentation\.status !== 'loading'/);
   const adapterSource = source('src/main/onlypreview/views/onlyPreviewPreviewAdapter.service.ts');
   const adapterTextGate = adapterSource.slice(
@@ -386,7 +394,28 @@ test('deep Project rows stay complete while HTML routes to the isolated Chrome s
   ]) {
     assert.doesNotMatch(source(rendererBoundary), /readHtml|renderHtml|htmlContent|assetHtml/i);
   }
-  assert.match(source('src/renderer/onlypreview/preview/index.html'), /frame-src 'none'/);
+  // The preview page's own script origin stays fenced; every content-loading directive is open by
+  // owner decision, so a previewable file can never be blocked by this page's policy.
+  // `*` matches network schemes and the page's own scheme only, so a custom scheme has to be named
+  // in every directive that loads from it. Widening to `*` without naming it is what broke images.
+  for (const page of [
+    'src/renderer/onlypreview/preview/index.html',
+    'src/renderer/onlypreview/shell/index.html'
+  ]) {
+    const csp = source(page).match(/content="(default-src[^"]*)"/)?.[1];
+    assert.ok(csp, `${page} must declare a Content-Security-Policy`);
+    assert.match(csp, /script-src 'self'/);
+    assert.doesNotMatch(csp, /script-src[^;]*https?:/u);
+    for (const directive of ['default-src', 'img-src', 'media-src', 'connect-src', 'font-src']) {
+      const sources = csp.match(new RegExp(`${directive} ([^;]*)`))?.[1];
+      assert.ok(sources, `${page} must declare ${directive}`);
+      assert.match(
+        sources,
+        /bitterless-preview:/,
+        `${page} ${directive} must name the custom scheme; '*' does not match it`
+      );
+    }
+  }
 });
 
 test('OnlyPreview shell keeps folder identity in the title and synthetic Project root row', () => {

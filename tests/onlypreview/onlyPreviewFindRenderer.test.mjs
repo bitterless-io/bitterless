@@ -90,7 +90,10 @@ const shortcutInput = (platform, overrides = {}) => ({
 });
 
 const sharedTypes = loadTypeScriptModule('src/shared/onlypreview/onlyPreview.types.ts');
-const contract = loadTypeScriptModule('src/shared/onlypreview/onlyPreview.contract.ts');
+const entryName = loadTypeScriptModule('src/shared/onlypreview/onlyPreviewEntryName.shared.ts');
+const contract = loadTypeScriptModule('src/shared/onlypreview/onlyPreview.contract.ts', {
+  './onlyPreviewEntryName.shared': entryName
+});
 const hostToken = 'host-token-123456789';
 const hostId = 'host-for-find-tests';
 
@@ -520,6 +523,30 @@ test('Main shortcut predicates reserve Shift+CommandOrControl+F for Global Searc
       windowHelper,
       'isCurrentFileFindShortcut',
       platform
+    );
+    // Copy Path / Copy Name are window-wide now, so they must survive focus living in any view —
+    // and plain Cmd+C must stay with the focused document, where it means "copy the selection".
+    const projectCopy = loadShortcutPredicate(windowHelper, 'isProjectItemCopyShortcut', platform);
+    const copyInput = (overrides) => shortcutInput(platform, { key: 'c', ...overrides });
+    assert.equal(projectCopy(copyInput({ shift: true })), true);
+    assert.equal(projectCopy(copyInput({ alt: true })), true);
+    assert.equal(projectCopy(copyInput({})), false, 'plain Cmd+C belongs to the focused document');
+    assert.equal(projectCopy(copyInput({ shift: true, alt: true })), false);
+    assert.equal(projectCopy(copyInput({ shift: true, isAutoRepeat: true })), false);
+    assert.equal(projectCopy(copyInput({ shift: true, type: 'keyUp' })), false);
+    assert.equal(projectCopy(shortcutInput(platform, { shift: true })), false, 'only the C key');
+    assert.equal(
+      projectCopy({
+        type: 'keyDown',
+        isAutoRepeat: false,
+        key: 'c',
+        shift: true,
+        alt: false,
+        control: true,
+        meta: true
+      }),
+      false,
+      'the opposite platform modifier must not also be held'
     );
 
     assert.equal(globalSearch(shortcutInput(platform, { shift: true })), true);

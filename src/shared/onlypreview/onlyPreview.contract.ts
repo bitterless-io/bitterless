@@ -20,9 +20,12 @@ import type {
   OnlyPreviewPreviewRevisionRequest,
   OnlyPreviewProjectItemCopyRequest,
   OnlyPreviewProjectRootCopyRequest,
+  OnlyPreviewCreateProjectFolderRequest,
   OnlyPreviewProjectRootRequest,
+  OnlyPreviewRenameProjectItemRequest,
   OnlyPreviewSettings
 } from './onlyPreview.types';
+import { validateOnlyPreviewEntryName } from './onlyPreviewEntryName.shared';
 
 export const cloneOnlyPreviewDescriptor = (
   descriptor: OnlyPreviewDescriptor,
@@ -159,6 +162,16 @@ export const normalizeOnlyPreviewRelativePath = (
   return segments.join('/');
 };
 
+// The renderer validates the same rules for immediate feedback; this is the boundary check, and the
+// hidden preload checks a third time immediately before the syscall.
+export const requireOnlyPreviewEntryName = (value: unknown): string => {
+  const result = validateOnlyPreviewEntryName(value);
+  if (!result.ok) {
+    throw new OnlyPreviewContractError('NAME_INVALID', `The name is not usable: ${result.reason}.`);
+  }
+  return result.name;
+};
+
 export const parseOnlyPreviewFileRef = (value: unknown): OnlyPreviewFileRef => {
   const record = expectRecord(value, 'File reference');
   return {
@@ -195,6 +208,31 @@ export const parseOnlyPreviewProjectRootRequest = (
   return {
     hostToken: expectBoundedToken(record.hostToken, 'Host capability'),
     workspaceId: expectBoundedToken(record.workspaceId, 'Workspace capability')
+  };
+};
+
+export const parseOnlyPreviewCreateProjectFolderRequest = (
+  value: unknown
+): OnlyPreviewCreateProjectFolderRequest => {
+  const record = expectRecord(value, 'Project folder creation request');
+  expectExactKeys(record, ['hostToken', 'workspaceId', 'parentRelativePath']);
+  return {
+    hostToken: expectBoundedToken(record.hostToken, 'Host capability'),
+    workspaceId: expectBoundedToken(record.workspaceId, 'Workspace capability'),
+    // An empty parent is the Project root, which normalizes to the empty string.
+    parentRelativePath: normalizeOnlyPreviewRelativePath(record.parentRelativePath ?? '')
+  };
+};
+
+export const parseOnlyPreviewRenameProjectItemRequest = (
+  value: unknown
+): OnlyPreviewRenameProjectItemRequest => {
+  const record = expectRecord(value, 'Project rename request');
+  expectExactKeys(record, ['hostToken', 'workspaceId', 'relativePath', 'name']);
+  return {
+    hostToken: expectBoundedToken(record.hostToken, 'Host capability'),
+    ...parseOnlyPreviewFileRef(record),
+    name: requireOnlyPreviewEntryName(record.name)
   };
 };
 

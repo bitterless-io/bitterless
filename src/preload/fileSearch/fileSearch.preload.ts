@@ -27,7 +27,9 @@ import {
 import {
   onlyPreviewFileAuthorityRuntimeHandlerName,
   type OnlyPreviewFileAuthorityDeleteGrantRequest,
+  type OnlyPreviewFileAuthorityCreateDirectoryRequest,
   type OnlyPreviewFileAuthorityItemRequest,
+  type OnlyPreviewFileAuthorityRenameRequest,
   type OnlyPreviewFileAuthorityRuntimePrivateApi,
   type OnlyPreviewFileAuthorityRuntimeReadyRequest,
   type OnlyPreviewFileAuthorityRuntimeReadyResult,
@@ -428,6 +430,72 @@ export class OnlyPreviewFileAuthorityRuntime
           runtimeInstanceId,
           workspace.workspaceId,
           workspace.workspaceGeneration
+        )
+      );
+    } catch (error) {
+      return onlyPreviewFailure(error);
+    }
+  }
+
+  async createDirectory(params: OnlyPreviewFileAuthorityCreateDirectoryRequest) {
+    try {
+      if (
+        !isRecord(params) ||
+        !hasExactKeys(params, [
+          'capability',
+          'name',
+          'parentRelativePath',
+          'runtimeInstanceId',
+          'workspaceGeneration',
+          'workspaceId'
+        ]) ||
+        typeof params.parentRelativePath !== 'string' ||
+        typeof params.name !== 'string'
+      ) {
+        throw new TypeError('Project folder creation request is invalid.');
+      }
+      requireProjectAuthorityIdentity(params.capability, params.runtimeInstanceId);
+      const workspace = requireProjectWorkspaceRef(params);
+      return onlyPreviewSuccess(
+        await projectAuthority.createDirectory(
+          runtimeInstanceId,
+          workspace.workspaceId,
+          workspace.workspaceGeneration,
+          params.parentRelativePath,
+          params.name
+        )
+      );
+    } catch (error) {
+      return onlyPreviewFailure(error);
+    }
+  }
+
+  async renameEntry(params: OnlyPreviewFileAuthorityRenameRequest) {
+    try {
+      if (
+        !isRecord(params) ||
+        !hasExactKeys(params, [
+          'capability',
+          'name',
+          'relativePath',
+          'runtimeInstanceId',
+          'workspaceGeneration',
+          'workspaceId'
+        ]) ||
+        typeof params.relativePath !== 'string' ||
+        typeof params.name !== 'string'
+      ) {
+        throw new TypeError('Project rename request is invalid.');
+      }
+      requireProjectAuthorityIdentity(params.capability, params.runtimeInstanceId);
+      const workspace = requireProjectWorkspaceRef(params);
+      return onlyPreviewSuccess(
+        await projectAuthority.renameEntry(
+          runtimeInstanceId,
+          workspace.workspaceId,
+          workspace.workspaceGeneration,
+          params.relativePath,
+          params.name
         )
       );
     } catch (error) {

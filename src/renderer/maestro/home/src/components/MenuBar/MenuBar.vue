@@ -302,8 +302,8 @@ function fixedTabClass(tab: TabInfo): string {
           <IconSettings v-else :size="18" stroke="1.8" />
         </button>
 
-        <!-- Update button — at the address bar's trailing edge. The compact label stays unchanged
-             while the disabled shimmer communicates downloading; the title preserves detail. -->
+        <!-- Update button — at the address bar's trailing edge. The compact label names the state
+             it is in (Downloading / Update); the title preserves the target-version detail. -->
         <button
           v-if="updateStore.ready"
           class="maestro-menu-bar__update"
@@ -321,7 +321,11 @@ function fixedTabClass(tab: TabInfo): string {
           type="button"
           @click="updateStore.install()"
         >
-          <span class="maestro-menu-bar__update-label">{{ i18nHelper.menuBar.restartToUpdate }}</span>
+          <span class="maestro-menu-bar__update-label">{{
+            updateStore.downloading
+              ? i18nHelper.menuBar.downloadingUpdate
+              : i18nHelper.menuBar.restartToUpdate
+          }}</span>
         </button>
       </div>
     </header>

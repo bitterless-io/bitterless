@@ -73,6 +73,12 @@ observable while every user-triggered OnlyPreview action is not.
   test over all five profiles instead of leaving it incidental.
 - `Settings → Log` lists the OnlyPreview log directory through the existing allowlisted directory
   contract.
+- A renderer observation acknowledgement (`reportPreviewReady` / `reportPreviewReset` /
+  `reportPreviewError`) rejected as stale is recorded at `info`, not `error`. That rejection is a
+  supersede from fast file switching, is swallowed by the renderer, and never reaches the owner;
+  recording it at `error` filled the log with routine races and buried real failures. Only
+  `INVALID_INPUT` on those three operations is treated this way — every other code, and every other
+  operation, still reports as a failure.
 - Diagnostics are best effort: a logging failure must never change an OnlyPreview result. Success
   paths stay silent, and the existing `onlypreview-search` timing records are unchanged.
 

@@ -397,11 +397,14 @@ test('unsupported descriptor errors accept only the exact Main-authored effectiv
   }
 });
 
-test('image buffering revokes on ready while audio/video keep selection-lifetime Range authority', async () => {
-  for (const [relativePath, kind, expectedLifetime] of [
-    ['fixture.png', 'image', 'ttl'],
-    ['fixture.mp3', 'audio', 'selection'],
-    ['fixture.mp4', 'video', 'selection']
+// The `<img>`, `<audio>` and `<video>` elements each fetch their own asset and can re-request it,
+// so all three keep the token for the life of the selection. Images used to buffer the file into a
+// blob and hand the token back on ready, which made every repeat request 404.
+test('image, audio and video all keep selection-lifetime Range authority past ready', async () => {
+  for (const [relativePath, kind] of [
+    ['fixture.png', 'image'],
+    ['fixture.mp3', 'audio'],
+    ['fixture.mp4', 'video']
   ]) {
     const { service } = createHarness();
     service.updateBounds(host.hostToken, bounds);
@@ -419,22 +422,19 @@ test('image buffering revokes on ready while audio/video keep selection-lifetime
     assert.deepEqual(state.assetIssues.at(-1).options, {
       selectionRevision: loading.selectionRevision,
       maxBytes: 3,
-      lifetime: expectedLifetime
+      lifetime: 'selection'
     });
 
     service.reportVueReady(host.hostToken, loading.selectionRevision, vue.previewRuntimeToken);
     const ready = service.snapshotForVue(host.hostToken, vue.previewRuntimeToken);
     assert.equal(ready.status, 'ready');
     assert.equal(ready.selectedTextAvailable, false);
-    assert.equal(
-      typeof ready.descriptor.assetUrl === 'string',
-      kind === 'audio' || kind === 'video'
-    );
+    assert.equal(typeof ready.descriptor.assetUrl, 'string');
     assert.equal(
       state.assetSelectionRevocations.some(
         (entry) => entry.selectionRevision === loading.selectionRevision
       ),
-      kind === 'image'
+      false
     );
     service.destroy();
   }

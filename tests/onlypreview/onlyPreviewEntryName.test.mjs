@@ -26,6 +26,7 @@ const {
   ONLY_PREVIEW_ENTRY_NAME_MAX_BYTES,
   ONLY_PREVIEW_ENTRY_NAME_MAX_UTF16,
   ONLY_PREVIEW_UNTITLED_FOLDER_BASE,
+  ONLY_PREVIEW_UNTITLED_FOLDER_MAX_INDEX,
   onlyPreviewUntitledFolderName,
   validateOnlyPreviewEntryName
 } = await import(pathToFileURL(bundlePath).href);
@@ -111,5 +112,18 @@ test('untitled folder sequencing starts unnumbered and then counts', () => {
   // Every generated name must itself satisfy the rules it will be created under.
   for (const index of [1, 2, 3, 99]) {
     assert.equal(validateOnlyPreviewEntryName(onlyPreviewUntitledFolderName(index)).ok, true);
+  }
+});
+
+test('Main allocates untitled folders unnumbered first, then from two, within a bounded sequence', () => {
+  // The sequence is driven by `mkdir` failing with NAME_EXISTS, so it needs a ceiling: without one
+  // a directory full of untitled folders would spin the loop instead of reporting a failure.
+  assert.equal(onlyPreviewUntitledFolderName(1), 'untitled folder');
+  assert.equal(onlyPreviewUntitledFolderName(2), 'untitled folder 2');
+  assert.equal(onlyPreviewUntitledFolderName(ONLY_PREVIEW_UNTITLED_FOLDER_MAX_INDEX), 'untitled folder 1000');
+  const names = Array.from({ length: 50 }, (_value, index) => onlyPreviewUntitledFolderName(index + 1));
+  assert.equal(new Set(names).size, names.length, 'every index must produce a distinct name');
+  for (const name of names) {
+    assert.deepEqual(validateOnlyPreviewEntryName(name), { ok: true, name });
   }
 });

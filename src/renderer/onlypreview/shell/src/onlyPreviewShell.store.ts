@@ -328,6 +328,7 @@ export class OnlyPreviewShellStore {
       this.errorMessage = errorMessage(error);
     }
   }
+
   private subscribe(): void {
     subscribeOnlyPreviewShellEvents(onlyPreviewEnv.hostId, {
       workspaceChanged: () => {
@@ -525,14 +526,12 @@ export class OnlyPreviewShellStore {
         generation === this.searchWorkspaceGeneration &&
         workspaceId === this.workspace?.workspaceId
       ) {
-        this.errorMessage = errorMessage(error);
-        this.indexLoading = false;
-        this.indexProgressState = settleOnlyPreviewSearchProgress(this.indexProgressState);
+        this.failIndex(hostToken, workspaceId, error);
       }
     }
   }
 
-  private async refreshIndex(): Promise<void> {
+  async refreshIndex(): Promise<void> {
     const hostToken = onlyPreviewEnv.hostToken;
     const workspace = this.workspace;
     if (!hostToken || !workspace) return;
@@ -550,13 +549,19 @@ export class OnlyPreviewShellStore {
         generation === this.searchWorkspaceGeneration &&
         workspaceId === this.workspace?.workspaceId
       ) {
-        this.errorMessage = errorMessage(error);
-        this.indexLoading = false;
-        this.indexProgressState = settleOnlyPreviewSearchProgress(this.indexProgressState);
+        this.failIndex(hostToken, workspaceId, error);
       }
     }
   }
 
+  // Reported so the preview pane stops animating: a build that fails before an index exists emits
+  // no snapshot, so Main cannot see its end.
+  private failIndex(hostToken: string, workspaceId: string, error: unknown): void {
+    this.indexLoading = false;
+    this.errorMessage = errorMessage(error);
+    this.indexProgressState = settleOnlyPreviewSearchProgress(this.indexProgressState);
+    void onlyPreviewClient.reportProjectIndexFailed({ hostToken, workspaceId });
+  }
   private async applySearchSnapshot(snapshot: OnlyPreviewSearchSnapshot): Promise<void> {
     const workspace = this.workspace;
     if (

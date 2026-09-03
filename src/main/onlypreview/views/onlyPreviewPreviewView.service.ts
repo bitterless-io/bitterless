@@ -651,9 +651,14 @@ export class OnlyPreviewPreviewViewService {
   }
 
   /**
-   * A blank PDF viewer still fires the main-frame `did-finish-load`, and a matching document frame
-   * can exist before PDFium has loaded its page model. Readiness therefore requires the exact
-   * current non-main frame's own `did-frame-finish-load` event.
+   * A blank PDF viewer still fires the main-frame `did-finish-load`, and a document frame can exist
+   * before PDFium has loaded its page model. Readiness therefore requires a non-main frame's own
+   * `did-frame-finish-load`.
+   *
+   * That frame's URL is deliberately NOT compared against the navigation URL. Requiring equality
+   * made the signal unreachable — every `surface=chrome` preview timed out at exactly 8s and none
+   * ever reached ready — so a correctly rendered PDF was replaced by a failure card once the owner
+   * stopped switching files.
    */
   private awaitDocumentFrameFinish(
     view: WebContentsView,
@@ -676,14 +681,14 @@ export class OnlyPreviewPreviewViewService {
       }
       if (isMainFrame) return;
       const frame = webFrameMain.fromId(frameProcessId, frameRoutingId);
-      if (
-        !frame ||
-        frame.isDestroyed() ||
-        frame === webContents.mainFrame ||
-        frame.url !== navigationUrl
-      ) {
-        return;
-      }
+      if (!frame || frame.isDestroyed() || frame === webContents.mainFrame) return;
+      // The OOPIF PDF viewer builds two sub-frames: the extension shell, then the content frame
+      // holding the document. Testing the *event's* frame against the navigation URL never matched
+      // — the shell commits at a `chrome-extension://` URL — but testing the subtree does, and it
+      // is what separates "the viewer shell loaded" from "PDFium has the document". Readiness is
+      // what unblocks find, so reporting it before the document exists would dispatch a query into
+      // an empty viewer.
+      if (!this.hasDocumentFrame(webContents, navigationUrl)) return;
       this.clearDocumentFrameWatch();
       this.callbacks.onChromeReady(runtime, view, revision);
       this.callbacks.onActiveViewAttached();
@@ -695,18 +700,58 @@ export class OnlyPreviewPreviewViewService {
         return;
       }
       this.clearDocumentFrameWatch();
+      // The deadline is not a verdict on its own. A viewer that created its document frame has a
+      // rendered PDF on screen, and replacing that with a failure card is the worse outcome. Only a
+      // viewer with no sub-frame at all has genuinely failed. The count is recorded so a future
+      // occurrence separates "no event fired" from "an event fired and was rejected".
+      const documentFrames = this.countDocumentFrames(webContents);
+      console.info(
+        `[onlypreview] event=pdf-frame-deadline documentFrames=${documentFrames} elapsedMs=${DOCUMENT_FRAME_DEADLINE_MS}`
+      );
+      if (documentFrames > 0) {
+        this.callbacks.onChromeReady(runtime, view, revision);
+        this.callbacks.onActiveViewAttached();
+        return;
+      }
       this.callbacks.onChromeUnavailable(
         runtime,
         view,
         revision,
         new OnlyPreviewContractError(
           'PDF_VIEWER_UNAVAILABLE',
-          'The built-in PDF viewer document frame did not finish loading for this file.'
+          'The built-in PDF viewer never created a document frame for this file.'
         )
       );
     }, DOCUMENT_FRAME_DEADLINE_MS);
     this.documentFrameWatch = { view, timer, listener };
     webContents.on('did-frame-finish-load', listener);
+  }
+
+  private hasDocumentFrame(webContents: Electron.WebContents, navigationUrl: string): boolean {
+    try {
+      const main = webContents.mainFrame;
+      if (!main || main.isDestroyed()) return false;
+      return main.framesInSubtree.some(
+        (frame) => frame !== main && !frame.isDestroyed() && frame.url === navigationUrl
+      );
+    } catch {
+      // A view torn down between the event and this read has no document frame by definition.
+      return false;
+    }
+  }
+
+  private countDocumentFrames(webContents: Electron.WebContents): number {
+    try {
+      const main = webContents.mainFrame;
+      if (!main || main.isDestroyed()) return 0;
+      // `framesInSubtree` includes the main frame itself; every other entry is a document frame the
+      // viewer created.
+      return main.framesInSubtree.filter((frame) => frame && frame !== main && !frame.isDestroyed())
+        .length;
+    } catch {
+      // A view torn down between the deadline and this inspection has no frames to report.
+      return 0;
+    }
   }
 
   private clearDocumentFrameWatch(): void {

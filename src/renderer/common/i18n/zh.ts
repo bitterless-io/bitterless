@@ -36,6 +36,8 @@ export const zh: typeof en = {
       preview: '预览',
       openExternally: '用系统应用打开',
       revealInFolder: '在文件夹中显示',
+      newFolder: '新建文件夹',
+      rename: '重命名…',
       copyFile: '复制文件',
       copyFolder: '复制文件夹',
       copyPath: '复制路径',
@@ -52,11 +54,17 @@ export const zh: typeof en = {
       deleteCancelButton: '取消',
       deleteFailureTitle: '无法删除文件',
       deleteFailureMessage: '文件删除失败，它可能已被移动或更改。',
+      renameFailureTitle: '无法重命名',
+      renameExistsMessage: '该目录下已存在同名项目。',
+      renameInvalidMessage: '该名称在 Windows 或 macOS 上不可用。',
+      renameFailureMessage: '该项目无法重命名，可能已被移动或修改。',
+      renameFailureOk: '好',
       deleteFailureOk: '好'
     }
   },
   menuBar: {
-    restartToUpdate: 'update',
+    restartToUpdate: 'Update',
+    downloadingUpdate: 'Downloading',
     updateToVersion: '更新到 {version}',
     proxy: '代理',
     maestro: {

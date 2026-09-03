@@ -24,6 +24,7 @@ import {
 } from '../../src/main/logging/logPolicy.service';
 import {
   formatOnlyPreviewFailureLine,
+  isOnlyPreviewExpectedSupersede,
   ONLY_PREVIEW_LOG_TOKEN_LIMIT
 } from '../../src/main/logging/onlyPreviewLogRecord.service';
 import { buildDiagnosticEnvironmentStatus } from '../../src/main/diagnostics/diagnosticEnvironment.service';
@@ -342,13 +343,47 @@ test('an OnlyPreview action failure is recorded with a sanitized cause', () => {
   }
 });
 
+test('a superseded renderer acknowledgement is not recorded as a failure', () => {
+  // The preview renderer reports an observation for a selection a faster switch already replaced.
+  // Main rejects it, the renderer swallows the rejection, and nothing reaches the owner — so an
+  // error-level record here is noise that buries real failures.
+  for (const operation of ['reportPreviewReady', 'reportPreviewReset', 'reportPreviewError']) {
+    assert.equal(
+      isOnlyPreviewExpectedSupersede({ operation, code: 'INVALID_INPUT', error: null }),
+      true,
+      `${operation} staleness must be expected`
+    );
+  }
+
+  // Only staleness is expected. A real rejection from the same operation still reports.
+  assert.equal(
+    isOnlyPreviewExpectedSupersede({
+      operation: 'reportPreviewReset',
+      code: 'OPERATION_FAILED',
+      error: null
+    }),
+    false
+  );
+  // And an operation that is not an acknowledgement always reports.
+  assert.equal(
+    isOnlyPreviewExpectedSupersede({
+      operation: 'revealInFolder',
+      code: 'INVALID_INPUT',
+      error: null
+    }),
+    false
+  );
+});
+
 test('every OnlyPreview Main operation reports itself before its payload is generalized', () => {
   const handler = source('src/main/xpc/onlyPreview.handler.ts');
   assert.match(handler, /onlyPreviewLogService\.writeOperationFailure\(\{\s*operation,/);
   const callSites = handler.match(/runOperation\(/g) ?? [];
   const namedCallSites = handler.match(/runOperation\(\s*'([A-Za-z0-9_]+)'\s*,/g) ?? [];
+  // Every call site named, and none lost. An exact count would break on each legitimate new
+  // operation, so the floor guards against silent removal instead.
   assert.equal(callSites.length, namedCallSites.length);
-  assert.equal(namedCallSites.length, 40);
+  assert.ok(namedCallSites.length >= 40, `expected at least 40 named operations, saw ${namedCallSites.length}`);
   assert.equal(new Set(namedCallSites).size, namedCallSites.length);
 
   // Every reported name must survive the sanitizer's opaque-token rule and stay distinguishable

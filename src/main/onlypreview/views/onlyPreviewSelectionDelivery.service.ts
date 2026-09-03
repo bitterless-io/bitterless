@@ -55,8 +55,10 @@ export const issueOnlyPreviewSelectionDelivery = (params: {
       assetUrl: onlyPreviewAssetRegistry.issue(hostToken, prepared, descriptor.mimeType, {
         selectionRevision,
         maxBytes: Math.min(descriptor.size, adapterLimit ?? descriptor.size),
-        lifetime:
-          adapter.adapterId === 'audio' || adapter.adapterId === 'video' ? 'selection' : 'ttl'
+        // The element owns the request for all three: `<img>`, `<audio>` and `<video>` fetch the
+        // asset themselves and may re-request it on a re-attach or a re-mount. A `ttl` token that
+        // the one-shot revoke retired on ready made the second request 404.
+        lifetime: 'selection'
       })
     };
     assetIssued = true;

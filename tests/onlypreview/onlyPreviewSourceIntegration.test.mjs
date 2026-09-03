@@ -421,7 +421,9 @@ test('renderers keep empty state distinct from index failure and PDF/Monaco runt
   assert.match(shellStore, /handleTreeClick\(entry:[\s\S]*if \(clickCount > 1\) return/);
   assert.match(
     shellApp,
-    /@click="onlyPreviewShellStore\.handleTreeClick\(row\.entry, \$event\.detail\)"/
+    // The row delegates through a local wrapper that keeps the row being renamed inert; the chevron
+    // still calls the store directly because it only toggles.
+    /@click="handleTreeRowClick\(row\.entry, \$event\.detail\)"/
   );
   assert.match(
     shellApp,
