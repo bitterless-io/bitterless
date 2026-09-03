@@ -1,6 +1,6 @@
 # EyesOnAgents Claude Multi-Environment
 
-Status: Draft
+Status: Implemented; owner runtime verification pending (real two-environment check, see Acceptance)
 
 Date: 2026-09-02
 

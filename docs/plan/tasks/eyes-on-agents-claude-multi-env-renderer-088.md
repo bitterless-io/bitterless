@@ -1,7 +1,7 @@
 ---
 id: eyes-on-agents-claude-multi-env-renderer-088
 scope: Replace the single Claude directory block with an environment list (add/rename/remove/enable) and per-environment setup, plus a resolved environment label on the thread card
-status: in-progress
+status: done
 depends-on: [eyes-on-agents-claude-multi-env-data-model-084, eyes-on-agents-claude-multi-env-watcher-085, eyes-on-agents-claude-multi-env-plugin-install-086, eyes-on-agents-claude-multi-env-hook-attribution-087]
 verify: focused EyesOnAgents UI-source/store tests, renderer i18n check, UI strict typecheck; no Electron; manual multi-environment verification is owner-only
 ---
@@ -523,3 +523,23 @@ pass on top of the delivery above, not a rewrite; nothing already shipped was re
   contradiction with the shipped renderer/store/service code.
 - Electron, packaged-app, and end-to-end tests were not run in this completion pass either, per the
   task's standing instruction.
+
+## Review
+
+[Independent review 1](../reviews/eyes-on-agents-claude-multi-env-renderer-088-1.md) passed with no
+blocking findings — the final task of the 5-task Claude Multi-Environment plan. It re-verified the
+most safety-critical part (the `EyesOnAgentsApi`/`EyesOnAgentsService` resolution) by tracing all 11
+widened/added interface members and confirming the 7 CRUD delegates are genuinely dead code
+satisfying `implements` only, with the real handler still calling `claudeDirectoryConfig` directly;
+confirmed the oldest pre-088 test in the codebase (`claude-provider-toggle.test.mjs`) still exercises
+the zero-dependency ambient fallback path unchanged. It independently corroborated the completion
+pass's flakiness finding (11/15 and 10/15 failure rates on two different commits, same single
+assertion, confirming "pre-existing, flaky, unrelated" rather than "fixed" or "newly introduced").
+It confirmed the restored per-environment metadata/Retry UI and the rewritten layout doc both
+accurately describe the shipped code, not an idealized description. Two informational, non-blocking
+observations: one recorded in `docs/plan/backlog.md`, one judged consistent with the design's own
+field semantics and not added anywhere.
+
+With this task done, the entire Claude Multi-Environment plan (084 → 085 → 086 → 087 → 088) is
+complete; the feature doc's Acceptance section is satisfied except the explicitly owner-only manual
+two-real-environment verification.

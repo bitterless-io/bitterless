@@ -86,6 +86,11 @@ Non-blocking review findings are recorded here after task verification.
   only the bundle-id failure is not evidence this one was fixed. Needs investigation into the
   underlying timing race, not just a retry/flake-quarantine.
 
+- Task 088 review: no `EyesOnAgentsClaudeEnvironment`/`EyesOnAgentsClaudeEnvironmentStatus` field
+  actually surfaces "is this the last remaining environment" from the service — the renderer's
+  `environmentRows.length <= 1` client-side check is the only feasible option today and can't drift
+  from `removeEnvironment`'s own guard (same source array), but if this area is touched again,
+  consider adding an explicit field instead of re-deriving the count.
 - Pre-existing, unrelated to the iTerm2 Open feature: `yarn check:renderer-i18n` crashes on
   `assert(trayCreateIndex > homeCreateIndex, 'Tray must follow Home creation')`
   (`scripts/renderer-i18n/check-renderer-i18n.mjs:172`) because commit `c67ac21` changed
