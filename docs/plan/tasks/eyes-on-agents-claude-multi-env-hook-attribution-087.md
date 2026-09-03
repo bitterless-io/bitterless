@@ -1,7 +1,7 @@
 ---
 id: eyes-on-agents-claude-multi-env-hook-attribution-087
 scope: Capture CLAUDE_CONFIG_DIR on SessionStart (schema V4) and persist it for later environment-label resolution
-status: pending
+status: in-progress
 depends-on: [eyes-on-agents-claude-multi-env-data-model-084]
 verify: focused Claude Hook contract/helper and repository unit tests, Core strict typecheck; no Electron
 ---
