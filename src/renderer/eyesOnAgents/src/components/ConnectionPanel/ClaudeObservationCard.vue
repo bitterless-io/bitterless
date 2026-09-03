@@ -123,6 +123,16 @@
                 {{ i18nHelper.eyesOnAgents.claudeEnvironment.changeDirectory }}
               </a-button>
               <a-button
+                v-if="canCopySetupCommand(environment)"
+                name="eyesOnAgents__connections__claudeEnvironmentCopySetup"
+                size="mini"
+                :loading="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(environment.id)"
+                :disabled="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(environment.id)"
+                @click="handleCopySetupCommand(environment.id)"
+              >
+                <span aria-live="polite">{{ setupCommandCopyLabel(environment) }}</span>
+              </a-button>
+              <a-button
                 v-if="isEligibleForAutomatic(environment)"
                 size="mini"
                 :loading="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(environment.id)"
@@ -501,6 +511,9 @@ const addingEnvironment = ref(false);
 const addEnvironmentLabel = ref('');
 const renamingId = ref<string | null>(null);
 const renameLabelDraft = ref('');
+// Task 089: the id of the row whose setup command was copied last, mirroring the card-level
+// reloadCommandCopied confirmation pattern per row — copying another row moves the confirmation.
+const setupCommandCopiedId = ref<string | null>(null);
 
 const environmentPath = (environment: EyesOnAgentsClaudeEnvironmentStatus): string =>
   environment.effectiveDirectory
@@ -548,6 +561,20 @@ const environmentNextRetryLabel = (environment: EyesOnAgentsClaudeEnvironmentSta
 const canRetryEnvironment = (environment: EyesOnAgentsClaudeEnvironmentStatus): boolean => (
   providerError.value !== null
   || ['waiting', 'degraded', 'retrying', 'error'].includes(environment.state)
+);
+
+// Task 089: only a real custom environment with a configured directory can be wrapped — the
+// automatic environment needs no wrapper and has a null configuredDirectory by definition, and the
+// synthetic invalid-hydration row (empty id) has no environment identity to scope the copy to.
+const canCopySetupCommand = (environment: EyesOnAgentsClaudeEnvironmentStatus): boolean => (
+  environment.id !== ''
+  && environment.mode === 'custom'
+  && environment.configuredDirectory !== null
+);
+const setupCommandCopyLabel = (environment: EyesOnAgentsClaudeEnvironmentStatus): string => (
+  setupCommandCopiedId.value === environment.id
+    ? i18nHelper.eyesOnAgents.claudeBridge.copied
+    : i18nHelper.eyesOnAgents.claudeEnvironment.copySetupCommand
 );
 
 const handleStartAddEnvironment = (): void => {
@@ -631,6 +658,15 @@ const handleRetryEnvironment = async (id: string): Promise<void> => {
     return;
   }
   await eyesOnAgentsStore.retryClaudeDirectoryForEnvironment(id).catch(() => undefined);
+};
+
+const handleCopySetupCommand = async (id: string): Promise<void> => {
+  try {
+    await eyesOnAgentsStore.copyClaudeEnvironmentSetupCommand(id);
+    setupCommandCopiedId.value = id;
+  } catch {
+    setupCommandCopiedId.value = null;
+  }
 };
 
 const handleInstallForEnvironment = async (environmentId: string): Promise<void> => {

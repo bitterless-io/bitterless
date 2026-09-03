@@ -119,6 +119,73 @@ Non-blocking review findings are recorded here after task verification.
   bullet, so informational. Pairs with the path-normalization entry above: both are reasons the
   environment label can come back empty. Give the automatic environment a resolvable effective
   directory for matching purposes if the label ever becomes load-bearing.
+- **Task 089 review: the function-name derivation rules can silently collide, and pasting
+  both wrappers makes one environment unreachable.** `[^a-z0-9_]+ → _` plus run-collapsing is
+  many-to-one: verified with the real
+  `deriveEyesOnAgentsClaudeEnvironmentFunctionName` that `Claude Work`, `claude-work`,
+  `claude_work`, and `Claude/Work` all derive to `claude_work`; likewise `claude 2` and `claude-2`
+  both derive to `claude_2`. Two environments with such labels produce two wrappers with the same
+  function name, and a user who pastes both into `.zshrc` silently keeps only the second — the first
+  environment's `CLAUDE_CONFIG_DIR` becomes unreachable with no error anywhere. The feature doc's
+  Non-goals cover duplicate *directories*
+  (`docs/features/eyes-on-agents-claude-multi-environment.md:524-526`) but say nothing about
+  duplicate derived function names. Not blocking and arguably a user configuration error like the
+  duplicate-directory case, but unlike that case there is no UI hint at all. Consider surfacing the
+  derived name in the button tooltip or the guidance note so a collision is visible before the paste,
+  or disambiguating with a suffix.
+- **Task 089 review: the per-row `Copied` confirmation never resets, so it can advertise a
+  stale clipboard.** `setupCommandCopiedId`
+  (`src/renderer/eyesOnAgents/src/components/ConnectionPanel/ClaudeObservationCard.vue:516`) is set
+  at `:666` and cleared only on failure (`:668`) or when another row is copied. There is no
+  resetting `watch` — the card's only `watch` is the pre-existing `setupAction` one at `:469`, which
+  resets the card-level `reloadCommandCopied` but not this ref. So after copying row X, using
+  **Change directory** or **Rename** on that same row leaves its button reading `Copied` while the
+  clipboard still holds the wrapper for the *old* directory/label. The button remains clickable and
+  a second click does copy the fresh snippet, so the harm is confined to a misleading label. Add
+  `setupCommandCopiedId.value = null` when that row's `configuredDirectory` or `label` changes (or
+  fold it into a `watch` on the environment list), matching the reset discipline the card already
+  applies to `reloadCommandCopied`.
+- **Task 089 review: routing the clipboard copy through `runClaudeEnvironmentAction` makes a
+  post-write `getSnapshot()` failure report a *successful* copy as a failure.** The task's
+  contract-defect note accounts for the extra round trip but not for its error-attribution
+  consequence. `runClaudeEnvironmentAction`
+  (`src/renderer/eyesOnAgents/src/store/eyesOnAgents.store.ts:673-674`) runs
+  `await callback(); this.applySnapshot(await eyesOnAgentsEmitter.getSnapshot());` — so if
+  `getSnapshot()` rejects or times out *after* the clipboard write has already committed in Main,
+  `actionError` is set, the action rethrows, and `handleCopySetupCommand`'s `catch`
+  (`ClaudeObservationCard.vue:667-668`) clears the confirmation. The user sees an error and no
+  `Copied` even though the snippet is on their clipboard. `runCommandAction` (`:644-659`), the horn
+  the contract originally named, has no post-action snapshot and therefore no such false negative.
+  A related, currently unreachable variant: `runClaudeEnvironmentAction:668` returns **silently** when
+  the row id is already busy, which would render `Copied` without copying — only prevented today by
+  the button's `:disabled` binding. Consider skipping the snapshot refresh for side-effect-only row
+  actions, or resolving the confirmation from the callback's own outcome rather than the whole gate's.
+- **Task 089 review: the snippet's `#` comment line is rejected when pasted at a
+  default-configured interactive zsh prompt.** zsh's `INTERACTIVE_COMMENTS` option is off by default
+  and macOS does not enable it (`grep -in interactivecomment /etc/zshrc /etc/zshenv /etc/zprofile`
+  → not set). Verified: pasting the two-line snippet into `zsh -f -i` and into `zsh -i` prints
+  `zsh: command not found: #` for line 1 before line 2 defines the function correctly. Cosmetic —
+  the wrapper still works (`STUB-SAW:[…/.claude2] ARGS:[--probe]`), and Ral's own zsh has
+  `interactivecomments` set, and the comment is fine in a profile file. But
+  `docs/integrations/eyes-on-agents-layout.md:310` and the feature doc both describe the snippet as
+  "ready-to-paste", so a default-zsh user gets a spurious error. No change recommended unless the
+  paste-at-prompt path becomes load-bearing; note it if the copy ever grows a "paste this into your
+  terminal" instruction.
+- **Task 089 review: the builder's control-character rejection is the *only* gate for the
+  directory (not a second line of defence, as the task doc states), and its error message misreports
+  the cause.** `buildEyesOnAgentsClaudeEnvironmentSetupCommand`
+  (`src/shared/eyesOnAgents/eyesOnAgents.contract.ts:465-467`) throws
+  `'Claude environment setup command requires a configured directory'` for `\0`/`\r`/`\n`, which is
+  confusing when a directory *is* configured and merely contains a control character. It matters more
+  than a wording nit because the claimed upstream gates do not exist — see the evidence correction
+  below: `requireCanonicalClaudeConfigDirectory`
+  (`src/main/eyesOnAgents/claudePath.resolver.ts:31`) rejects only `\0`, and a directory whose name
+  contains `\n` is realpath-able and non-symlink on this macOS (verified:
+  `fs.realpathSync.native` returns `"…/a\nb"`, `isDirectory: true`, `isSymlink: false`), so it would
+  pass canonicalization and reach the builder. Behavior is safe either way (it throws, nothing
+  reaches the clipboard), so this is message accuracy plus a defence-depth gap. Split the two
+  conditions into distinct messages, and if `\r`/`\n` should really be impossible upstream, add the
+  check to `requireCanonicalClaudeConfigDirectory`.
 - Pre-existing, unrelated to the iTerm2 Open feature: `yarn check:renderer-i18n` crashes on
   `assert(trayCreateIndex > homeCreateIndex, 'Tray must follow Home creation')`
   (`scripts/renderer-i18n/check-renderer-i18n.mjs:186`) because commit `c67ac21` changed

@@ -437,11 +437,101 @@ rename, remove, enable/disable):
   instead of just the path) — a small, additive change to existing tooltip text, not a new UI
   element, so a single-environment user sees no visible change (there is nothing to disambiguate).
 
+## Per-environment setup: copyable shell command and install probe
+
+Tasks 084-088 shipped the environment list, but walking the real end-to-end setup surfaced two gaps
+that leave the flow unfinishable from inside Bitterless. Both are addressed here (tasks 089, 090).
+
+### The gap
+
+The guidance note tells the user their `claude2` wrapper must set `CLAUDE_CONFIG_DIR` before
+invoking `claude`, but that is the one step Bitterless cannot perform and gives no help with — the
+user has to hand-write the shell plumbing from a sentence of prose. And after clicking Install on an
+environment's row, nothing in the UI confirms it worked *for that environment*: the setup action's
+status is global (one `installationId`, one `this.inspection` slot on the plugin bridge), so every
+row shows the same title and the same button whether or not that particular
+`CLAUDE_CONFIG_DIR` actually received the plugin. The user's only recourse today is to read
+`~/.claude2/settings.json` by hand or start a session and see whether a row appears.
+
+### Copyable shell command (task 089)
+
+Each `mode: 'custom'` row with a configured directory gains a **Copy setup command** action that
+puts a ready-to-paste shell wrapper on the clipboard, derived from that row's label and directory:
+
+```sh
+# Bitterless: Claude environment "claude2"
+claude2() { CLAUDE_CONFIG_DIR='/Users/ral/.claude2' command claude "$@"; }
+```
+
+- The function name comes from the environment's label, lowercased with every character outside
+  `[a-z0-9_]` collapsed to `_`, prefixed with `_` if it would otherwise start with a digit, and
+  falling back to `claude_env` when nothing usable remains. A label of `claude` is therefore allowed
+  and safe: `command claude` skips function lookup **for the name it is given**, so a wrapper named
+  `claude` runs the `claude` executable instead of recursing into itself.
+- **A label deriving to `command`, or to a shell reserved word, also falls back to `claude_env`.**
+  `command` is a *regular* builtin, so a wrapper named `command` shadows the very mechanism the body
+  relies on and recurses — bash hangs outright, zsh aborts with "maximum nested function level
+  reached" — which is the one case the `claude` guarantee above does **not** cover. Guarded
+  alongside it is the union of bash's and zsh's reserved-word tables restricted to `[a-z0-9_]`
+  (`case`, `coproc`, `do`, `done`, `elif`, `else`, `end`, `esac`, `fi`, `for`, `foreach`,
+  `function`, `if`, `in`, `nocorrect`, `repeat`, `select`, `then`, `time`, `until`, `while`): each
+  either cannot be parsed as a function definition or is parsed as a reserved word at the call site,
+  so the pasted snippet would be a syntax error or an unreachable wrapper rather than a definition.
+  Reserved words made only of punctuation (`!`, `{`, `}`, `[[`, `]]`) collapse to `_` under the
+  `[a-z0-9_]` sanitization and are unreachable, so they are deliberately not listed.
+- The directory is emitted **single-quoted** and verbatim from `configuredDirectory` (already
+  realpath-canonicalized by `requireCanonicalClaudeConfigDirectory`), so the snippet's path matches
+  what the label resolver compares against. Single quotes rather than double: bash and zsh both make
+  history expansion (`!`), parameter expansion, command substitution and backslash escapes inert
+  inside `'…'`, which leaves `'` as the only character to escape (as the standard `'\''`) — whereas a
+  double-quoted path containing `!` cannot be pasted at an interactive prompt in **either** shell
+  (`event not found`).
+- The automatic environment gets no such action — it needs no wrapper, and its `configuredDirectory`
+  is `null` by definition.
+- **The snippet contains a real filesystem path, so it must never be logged.** This is the same
+  constraint the existing "no `configDirectory` in `main.log`" rule imposes; a user-initiated
+  clipboard write is the one sanctioned egress, and it reuses the existing
+  `writeClipboardText` dependency already used by **Copy `/reload-plugins`**.
+
+### Per-environment install probe (task 090)
+
+A narrow, read-only probe answers exactly one question per environment — *is the Bitterless plugin
+present and enabled in this `CLAUDE_CONFIG_DIR`?* — and nothing else.
+
+- It reuses `ClaudePluginBridgeService.inspectClaudeNamespace(executable, configDirectory)`
+  (`claudePluginBridge.service.ts:1354`), which is **already** per-directory and already pure: it
+  returns a value and does not touch `this.inspection`. The probe is a thin wrapper over it.
+- **It deliberately does not make `this.inspection` per-environment.** That field has ~50 usages
+  across a 1,564-line file that is already over the review size limit and holds this codebase's
+  densest installationId lifecycle state machine; converting it to a map would be a large, risky
+  refactor for a read-only status readout. The shared installation identity stays exactly as it is.
+- The probe spawns two `claude` CLI calls per environment, so it must never run inside
+  `getSnapshot()`. It is cached per environment id with its own timestamp and refreshed only on:
+  app start, that environment being added or having its directory changed, and an explicit
+  install/refresh/retry action on that row.
+- It surfaces as `pluginPresence: 'installed' | 'disabled' | 'not_installed' | 'unknown'` plus
+  `pluginProbedAt` on `EyesOnAgentsClaudeEnvironmentStatus`. `'unknown'` covers never-probed, probe
+  failure, and a missing/unusable `claude` executable — it never guesses `'not_installed'` from an
+  error, because "we could not check" and "we checked and it is absent" drive different user action.
+- The per-row surface splits along the real boundary: **plugin presence is per environment**
+  (from this probe), **listener/runtime state stays global** (one socket, one outbox). The row shows
+  its own presence pill; the global listener status is not duplicated per row.
+
 ## Non-goals
 
 - Per-environment plugin installation identity/coverage isolation (distinct `installationId`,
   socket, or outbox per environment). Every environment within one Bitterless profile shares the
-  existing single installation-identity state machine; see "Scope decisions."
+  existing single installation-identity state machine; see "Scope decisions." Task 090's
+  per-environment install probe is **read-only** and explicitly does not breach this: it reports
+  whether a directory has the plugin, and never gives an environment its own identity, socket,
+  outbox, or `this.inspection` slot.
+- Per-environment listener/runtime status. The listener, socket, and outbox are one per profile, so
+  "is the listener running" stays a single global fact and is not duplicated onto environment rows.
+- Writing the task 089 shell snippet into the user's shell profile (`.zshrc`, `.bashrc`, a wrapper
+  script) on their behalf. Bitterless puts it on the clipboard; installing it is the user's step.
+- Verifying that the user's wrapper actually exports `CLAUDE_CONFIG_DIR` correctly. Task 090's probe
+  inspects the *directory*, not the user's shell configuration; a wrapper that silently fails to set
+  the variable shows up as sessions landing on the wrong environment, not as a probe failure.
 - WezTerm/Ghostty terminal support (unchanged from
   [EyesOnAgents iTerm2 Open](eyes-on-agents-iterm2-open.md)).
 - Automatically discovering `CLAUDE_CONFIG_DIR` values the user has not explicitly added (e.g.
@@ -476,6 +566,16 @@ rename, remove, enable/disable):
 - The last remaining environment cannot be removed.
 - No `configDirectory` value is ever written to `main.log`; environment lifecycle, watcher, plugin,
   and Hook-attribution log lines identify an environment only by `id`/`label`.
+- A `mode: 'custom'` environment labelled `claude2` pointing at `/Users/ral/.claude2` yields a
+  clipboard snippet defining a `claude2()` shell function that sets that exact `CLAUDE_CONFIG_DIR`
+  and invokes `command claude`; the automatic environment offers no such action; and the snippet's
+  path never appears in `main.log`.
+- After Install succeeds on one environment's row, that row (and only that row) reports
+  `pluginPresence: 'installed'`; an environment whose directory has never been installed into
+  reports `'not_installed'`; a probe that could not run reports `'unknown'` rather than
+  `'not_installed'`.
+- The probe never runs inside `getSnapshot()` — no `claude` CLI process is spawned by rendering or
+  refreshing the board.
 - Repository, migration audit, core, bridge, UI-source, typecheck, and production build checks run
   without launching Electron windows.
 - Manual, non-automatable verification: with two real `CLAUDE_CONFIG_DIR` directories and two wrapped

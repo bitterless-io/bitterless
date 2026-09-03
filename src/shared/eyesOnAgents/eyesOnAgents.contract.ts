@@ -20,6 +20,41 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 const CLAUDE_DESKTOP_SESSION_ID_PATTERN = /^local_([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
 const CONTROL_CHARACTER_PATTERN = /[\0\r\n]/;
 const NUL_CHARACTER_PATTERN = /\0/;
+// Task 089 (copyable per-environment setup command). Derivation, in this order: lowercase, replace
+// every character outside [a-z0-9_] with _, collapse runs of _, fall back to claude_env when
+// nothing usable survives (empty, or a single _) or the result is a reserved name, prefix _ when
+// the result starts with a digit.
+const CLAUDE_ENVIRONMENT_FUNCTION_NAME_FALLBACK = 'claude_env';
+const CLAUDE_ENVIRONMENT_FUNCTION_NAME_UNSAFE_PATTERN = /[^a-z0-9_]+/gu;
+const CLAUDE_ENVIRONMENT_FUNCTION_NAME_UNDERSCORE_RUN_PATTERN = /__+/gu;
+const CLAUDE_ENVIRONMENT_FUNCTION_NAME_LEADING_DIGIT_PATTERN = /^[0-9]/u;
+// Names the wrapper must never take, every one reachable from a label of the same text through the
+// [a-z0-9_] sanitization above (reserved words made only of punctuation — `!`, `{`, `}`, `[[`, `]]`
+// — sanitize to `_` and can never be derived, so they are deliberately absent).
+//   - `command` is the wrapper's own escape hatch and a *regular* builtin, so a function named
+//     `command` shadows it and `command claude "$@"` recurses: bash hangs outright, zsh aborts with
+//     "maximum nested function level reached".
+//   - the rest are the union of bash's and zsh's reserved-word tables restricted to [a-z0-9_]. Each
+//     either fails to parse as a function definition (`if() { … }` is a syntax error in both shells;
+//     `while`/`until`/`time`/`in`/`function` in bash; `repeat`/`foreach`/`end` in zsh) or parses as
+//     a reserved word at the *call* site so the wrapper is unreachable (`while`/`until` loop forever
+//     in zsh; `time`/`coproc`/`nocorrect` swallow the arguments). Verified in both shells.
+const CLAUDE_ENVIRONMENT_FUNCTION_NAME_RESERVED = new Set([
+  'command',
+  'case', 'coproc', 'do', 'done', 'elif', 'else', 'end', 'esac', 'fi', 'for', 'foreach',
+  'function', 'if', 'in', 'nocorrect', 'repeat', 'select', 'then', 'time', 'until', 'while'
+]);
+// A `#` comment runs to end of line, so a newline is the only character that can escape it — every
+// whitespace/control run in the label folds to one space so the comment stays exactly one line.
+// eslint-disable-next-line no-control-regex -- folding control characters out of a user label is the point
+const CLAUDE_ENVIRONMENT_COMMENT_BLANK_PATTERN = /[\s\u0000-\u001f\u007f]+/gu;
+// The directory is emitted inside 'single quotes', where bash and zsh both leave history expansion
+// (`!`), parameter expansion, command substitution and backslash escapes inert — so `'` is the only
+// character that needs escaping, in the standard close/escape/reopen form `'\''`. Double quotes
+// would additionally require escaping `"`, `$`, `` ` `` and `\`, and would still leave a path
+// containing `!` unpastable at an interactive bash *or* zsh prompt (`event not found`).
+const CLAUDE_ENVIRONMENT_SINGLE_QUOTE_PATTERN = /'/gu;
+const CLAUDE_ENVIRONMENT_SINGLE_QUOTE_ESCAPE = "'\\''";
 const MAX_LAST_USER_PROMPT_BYTES = 8_192;
 const MAX_THREAD_TITLE_LENGTH = 300;
 const UTF8_ENCODER = new TextEncoder();
@@ -421,6 +456,54 @@ export const buildEyesOnAgentsIterm2DeepLink = (
   const parsed = parseEyesOnAgentsIterm2SessionId(iterm2SessionId);
   if (parsed === null) throw new Error('iTerm2 session ID is required');
   return `iterm2:///reveal?sessionid=${encodeURIComponent(parsed)}`;
+};
+
+// Task 089: derives the wrapper's shell function name from an environment label. Kept exported so
+// the fallback/collision rules are testable on their own, independently of the emitted snippet.
+export const deriveEyesOnAgentsClaudeEnvironmentFunctionName = (label: string): string => {
+  const name = label
+    .toLowerCase()
+    .replace(CLAUDE_ENVIRONMENT_FUNCTION_NAME_UNSAFE_PATTERN, '_')
+    .replace(CLAUDE_ENVIRONMENT_FUNCTION_NAME_UNDERSCORE_RUN_PATTERN, '_');
+  if (name === '' || name === '_') return CLAUDE_ENVIRONMENT_FUNCTION_NAME_FALLBACK;
+  // A name that shadows `command` or a bash/zsh reserved word cannot be a working wrapper, so it
+  // takes the same documented fallback as "nothing usable survived" rather than a second name shape
+  // (`command_env` would newly collide with the label `command env`, which already derives there).
+  if (CLAUDE_ENVIRONMENT_FUNCTION_NAME_RESERVED.has(name)) {
+    return CLAUDE_ENVIRONMENT_FUNCTION_NAME_FALLBACK;
+  }
+  return CLAUDE_ENVIRONMENT_FUNCTION_NAME_LEADING_DIGIT_PATTERN.test(name) ? `_${name}` : name;
+};
+
+// Task 089: the ready-to-paste CLAUDE_CONFIG_DIR shell wrapper for one custom Claude environment
+// (see docs/features/eyes-on-agents-claude-multi-environment.md, "Copyable shell command"):
+//
+//   # Bitterless: Claude environment "claude2"
+//   claude2() { CLAUDE_CONFIG_DIR='/Users/ral/.claude2' command claude "$@"; }
+//
+// `command claude` — never bare `claude` — so an environment labelled `claude` produces a wrapper
+// that runs the `claude` *executable* instead of recursing into itself and hanging the user's shell.
+// `command` skips function lookup for the name it is given, but it is itself a regular builtin and
+// therefore shadowable, so this only holds while the wrapper is not named `command`; that one case
+// is handled by CLAUDE_ENVIRONMENT_FUNCTION_NAME_RESERVED, not by `command`.
+// Pure and Electron-free so it is unit-testable and has exactly one definition for every caller.
+// The result embeds a real filesystem path and must never be logged; a user-initiated clipboard
+// write is its only sanctioned egress.
+export const buildEyesOnAgentsClaudeEnvironmentSetupCommand = (params: {
+  label: string;
+  configDirectory: string;
+}): string => {
+  if (!params.configDirectory || CONTROL_CHARACTER_PATTERN.test(params.configDirectory)) {
+    throw new Error('Claude environment setup command requires a configured directory');
+  }
+  const functionName = deriveEyesOnAgentsClaudeEnvironmentFunctionName(params.label);
+  const comment = params.label
+    .replace(CLAUDE_ENVIRONMENT_COMMENT_BLANK_PATTERN, ' ')
+    .trim() || functionName;
+  const directory = params.configDirectory
+    .replace(CLAUDE_ENVIRONMENT_SINGLE_QUOTE_PATTERN, CLAUDE_ENVIRONMENT_SINGLE_QUOTE_ESCAPE);
+  return `# Bitterless: Claude environment "${comment}"\n`
+    + `${functionName}() { CLAUDE_CONFIG_DIR='${directory}' command claude "$@"; }`;
 };
 
 export const parseEyesOnAgentsSessionKeyParams = (

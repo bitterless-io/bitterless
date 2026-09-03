@@ -626,6 +626,11 @@ export interface EyesOnAgentsApi {
   }): Promise<EyesOnAgentsClaudeEnvironment[]>;
   chooseClaudeEnvironmentDirectory(params: { id: string }): Promise<EyesOnAgentsClaudeEnvironment[]>;
   useAutomaticClaudeEnvironment(params: { id: string }): Promise<EyesOnAgentsClaudeEnvironment[]>;
+  // Task 089: writes that one environment's ready-to-paste CLAUDE_CONFIG_DIR shell wrapper to the
+  // clipboard. Takes a required { id } like the environment-CRUD members above, not the bridge
+  // methods' optional { environmentId } — a wrapper is always explicitly row-scoped, and silently
+  // falling back to environments[0] would hand the user a snippet for the wrong environment.
+  copyClaudeEnvironmentSetupCommand(params: { id: string }): Promise<void>;
   setClaudeProviderEnabled(params: {
     enabled: boolean;
   }): Promise<EyesOnAgentsSnapshot>;

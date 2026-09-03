@@ -428,6 +428,16 @@ class EyesOnAgentsState {
     );
   }
 
+  // Task 089: puts that environment's ready-to-paste CLAUDE_CONFIG_DIR wrapper on the clipboard.
+  // Routed through the per-id gate (not runCommandAction's global busyAction) so the row's own
+  // Copy setup command button owns its loading state and copying one environment never disables
+  // another row's controls — the same reason the CRUD actions above use this gate.
+  async copyClaudeEnvironmentSetupCommand(id: string): Promise<void> {
+    await this.runClaudeEnvironmentAction(id, () =>
+      eyesOnAgentsEmitter.copyClaudeEnvironmentSetupCommand({ id }),
+    );
+  }
+
   // Task 088 (gap 1): the watcher-retry sibling of chooseClaudeEnvironmentDirectory/
   // useAutomaticClaudeEnvironment above — a per-id busy gate, not the shared claude-directory-retry
   // busyAction key its zero-arg predecessor uses, since one environment's watcher retry is fully

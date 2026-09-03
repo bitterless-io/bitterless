@@ -24,6 +24,7 @@ import type {
 import {
   buildEyesOnAgentsDeepLink,
   buildEyesOnAgentsClaudeDesktopDeepLink,
+  buildEyesOnAgentsClaudeEnvironmentSetupCommand,
   buildEyesOnAgentsIterm2DeepLink,
   effectiveEyesOnAgentsRuntimeState,
   isEyesOnAgentsFocused,
@@ -3105,6 +3106,29 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       this.requireClaudeProviderManagementEnabled();
       this.dependencies.writeClipboardText(CLAUDE_RELOAD_PLUGINS_COMMAND);
     });
+  }
+
+  // Task 089: resolves the row id through the same claudeDirectoryConfig/resolveClaudeBridgeEnvironment
+  // path the bridge methods use (an unknown id throws 'Claude environment was not found'), then
+  // writes the shared pure builder's snippet through the injected writeClipboardText dependency —
+  // the same egress Copy /reload-plugins already uses, never electron's clipboard directly.
+  // Nothing here logs: the snippet and configDirectory never reach a logger, and the only failure
+  // this method raises identifies the environment by label alone.
+  async copyClaudeEnvironmentSetupCommand(params: { id: string }): Promise<void> {
+    const directoryConfig = this.requireClaudeDirectoryConfig();
+    const environment = resolveClaudeBridgeEnvironment(
+      directoryConfig.listEnvironments(),
+      { environmentId: params.id }
+    );
+    if (environment.mode !== 'custom' || environment.configDirectory === null) {
+      throw new Error(
+        `Claude environment "${environment.label}" has no configured directory to wrap`
+      );
+    }
+    this.dependencies.writeClipboardText(buildEyesOnAgentsClaudeEnvironmentSetupCommand({
+      label: environment.label,
+      configDirectory: environment.configDirectory
+    }));
   }
 
   async changeClaudeDirectory(): Promise<EyesOnAgentsSnapshot> {

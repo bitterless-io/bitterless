@@ -794,6 +794,7 @@ export const en = {
       save: 'Save',
       cancel: 'Cancel',
       changeDirectory: 'Change directory',
+      copySetupCommand: 'Copy setup command',
       useAutomatic: 'Use automatic',
       enable: 'Enable',
       disable: 'Disable',

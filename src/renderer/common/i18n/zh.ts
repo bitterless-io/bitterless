@@ -781,6 +781,7 @@ export const zh: typeof en = {
       save: '保存',
       cancel: '取消',
       changeDirectory: '更改目录',
+      copySetupCommand: '复制配置命令',
       useAutomatic: '恢复自动发现',
       enable: '启用',
       disable: '停用',

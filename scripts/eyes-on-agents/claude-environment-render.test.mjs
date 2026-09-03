@@ -160,7 +160,7 @@ const withRemovability = (environments) => environments.map((environment) => ({
 const createStore = (environments, { providerError = null, ...overrides } = {}) => {
   const calls = {
     add: [], rename: [], remove: [], setEnabled: [], chooseDirectory: [], useAutomatic: [],
-    changeDirectory: 0, useAutomaticDirectory: 0, retry: [], retryDirectory: 0,
+    changeDirectory: 0, useAutomaticDirectory: 0, retry: [], retryDirectory: 0, copySetup: [],
   };
   return {
     calls,
@@ -195,6 +195,7 @@ const createStore = (environments, { providerError = null, ...overrides } = {}) 
     setClaudeEnvironmentEnabled: async (id, enabled) => { calls.setEnabled.push([id, enabled]); },
     chooseClaudeEnvironmentDirectory: async (id) => { calls.chooseDirectory.push(id); },
     useAutomaticClaudeEnvironment: async (id) => { calls.useAutomatic.push(id); },
+    copyClaudeEnvironmentSetupCommand: async (id) => { calls.copySetup.push(id); },
     ...overrides,
   };
 };
@@ -543,6 +544,97 @@ try {
       const row = rows(mounted.host)[0];
       assert.ok(rowButton(row, /^Retry$/),
         'a global provider error still offers Retry on an otherwise-watching row');
+    } finally {
+      mounted.app.unmount();
+      document.body.innerHTML = '';
+    }
+  });
+
+  // Task 089: Copy setup command renders only for a row with a real id, mode 'custom', and a
+  // non-null configuredDirectory — the automatic environment needs no wrapper by definition.
+  await test('Copy setup command renders only for a configured custom environment', async () => {
+    const environments = [
+      createEnvironment({ label: 'Default', mode: 'automatic', configuredDirectory: null }),
+      createEnvironment({
+        id: '22222222-2222-4222-8222-222222222222',
+        label: 'claude2',
+        mode: 'custom',
+        configuredDirectory: '/Users/ral/.claude2',
+        effectiveDirectory: '/Users/ral/.claude2',
+      }),
+      createEnvironment({
+        id: '33333333-3333-4333-8333-333333333333',
+        label: 'claude3',
+        mode: 'custom',
+        configuredDirectory: null,
+        effectiveDirectory: null,
+      }),
+    ];
+    const mounted = await mountCard(environments);
+    try {
+      const [automaticRow, configuredRow, unconfiguredRow] = rows(mounted.host);
+      assert.equal(rowButton(automaticRow, /^Copy setup command$/), undefined,
+        'the automatic environment offers no wrapper to copy');
+      assert.equal(rowButton(unconfiguredRow, /^Copy setup command$/), undefined,
+        'a custom environment without a chosen directory offers no wrapper');
+      const copyButton = rowButton(configuredRow, /^Copy setup command$/);
+      assert.ok(copyButton, 'a configured custom environment offers Copy setup command');
+      copyButton.click();
+      await nextTick();
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
+      assert.deepEqual(mounted.store.calls.copySetup, ['22222222-2222-4222-8222-222222222222'],
+        'the copy is scoped to the clicked row id');
+      assert.match(configuredRow.textContent ?? '', /Copied/,
+        'the row confirms the copy in place, mirroring the reload-command pattern');
+      assert.ok(copyButton.querySelector('[aria-live="polite"]'),
+        'the confirmation swap is announced politely');
+    } finally {
+      mounted.app.unmount();
+      document.body.innerHTML = '';
+    }
+  });
+
+  await test('the synthetic invalid-hydration row never offers Copy setup command', async () => {
+    const sentinel = createEnvironment({
+      id: '',
+      label: '',
+      mode: 'custom',
+      configuredDirectory: '/Users/ral/.claude-broken',
+      state: 'error',
+      error: 'Saved Claude directory configuration is invalid',
+    });
+    const mounted = await mountCard([sentinel]);
+    try {
+      const row = rows(mounted.host)[0];
+      assert.equal(rowButton(row, /^Copy setup command$/), undefined,
+        'an empty id has no environment identity to scope a copy to');
+    } finally {
+      mounted.app.unmount();
+      document.body.innerHTML = '';
+    }
+  });
+
+  await test('a failed copy leaves the row label unconfirmed', async () => {
+    const environment = createEnvironment({
+      label: 'claude2',
+      mode: 'custom',
+      configuredDirectory: '/Users/ral/.claude2',
+    });
+    const mounted = await mountCard([environment], {
+      copyClaudeEnvironmentSetupCommand: async () => {
+        throw new Error('Claude environment "claude2" has no configured directory to wrap');
+      },
+    });
+    try {
+      const row = rows(mounted.host)[0];
+      const copyButton = rowButton(row, /^Copy setup command$/);
+      assert.ok(copyButton);
+      copyButton.click();
+      await nextTick();
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
+      await nextTick();
+      assert.doesNotMatch(row.textContent ?? '', /Copied/,
+        'a rejected copy must not claim success');
     } finally {
       mounted.app.unmount();
       document.body.innerHTML = '';
