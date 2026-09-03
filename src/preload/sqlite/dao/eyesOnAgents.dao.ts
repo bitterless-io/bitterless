@@ -2213,6 +2213,9 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           // Independent COALESCE-preserve rule: no ambiguity/collision check to port, unlike
           // desktop_session_id above (see docs/features/eyes-on-agents-iterm2-open.md).
           iterm2SessionId: thread.iterm2SessionId ?? row.iterm2_session_id,
+          // Independent COALESCE-preserve rule, one more level: does not interact with the
+          // desktop_session_id or iterm2_session_id preserve rules above.
+          claudeConfigDir: thread.claudeConfigDir ?? row.claude_config_dir,
           transcriptPath: transcriptAmbiguous
             ? null
             : thread.transcriptPath ?? row.transcript_path,
@@ -2236,6 +2239,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
         if (next.desktopSessionId === row.desktop_session_id &&
           next.desktopIdentityAmbiguous === row.desktop_identity_ambiguous &&
           next.iterm2SessionId === row.iterm2_session_id &&
+          next.claudeConfigDir === row.claude_config_dir &&
           next.transcriptPath === row.transcript_path &&
           next.transcriptIdentityAmbiguous === row.transcript_identity_ambiguous &&
           next.title === row.title &&
@@ -2248,6 +2252,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
         sqliteManager.db.prepare(
           `UPDATE eyes_on_agents_thread SET desktop_session_id = ?, desktop_identity_ambiguous = ?,
             iterm2_session_id = ?,
+            claude_config_dir = ?,
             transcript_path = ?, transcript_identity_ambiguous = ?,
             title = ?, cwd = ?, project_key = ?, project_root = ?, project_name = ?,
             is_archived = ?, archive_state = ?, last_activity_at = ?,
@@ -2258,6 +2263,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
            WHERE provider = 'claude' AND thread_id = ?`
         ).run(
           next.desktopSessionId, next.desktopIdentityAmbiguous, next.iterm2SessionId,
+          next.claudeConfigDir,
           next.transcriptPath,
           next.transcriptIdentityAmbiguous, next.title, next.cwd,
           next.projectKey, next.projectRoot, next.projectName,
