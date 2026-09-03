@@ -116,6 +116,7 @@ try {
   );
   const {
     ensureEyesOnAgentsArchiveSchema,
+    ensureEyesOnAgentsClaudeConfigDirSchema,
     ensureEyesOnAgentsClaudeDeletionSchema,
     ensureEyesOnAgentsCompletionAlertSchema,
     ensureEyesOnAgentsHookDeliverySchema,
@@ -152,6 +153,8 @@ try {
   ensureEyesOnAgentsClaudeDeletionSchema(repairDb);
   ensureEyesOnAgentsIterm2SessionSchema(repairDb);
   ensureEyesOnAgentsIterm2SessionSchema(repairDb);
+  ensureEyesOnAgentsClaudeConfigDirSchema(repairDb);
+  ensureEyesOnAgentsClaudeConfigDirSchema(repairDb);
   repairDb.prepare(
     `INSERT INTO eyes_on_agents_hook_delivery_receipt (
       delivery_id, session_key, provider, thread_id, observed_at, committed_at
@@ -234,6 +237,8 @@ try {
   ensureEyesOnAgentsClaudeDeletionSchema(oldDb);
   ensureEyesOnAgentsIterm2SessionSchema(oldDb);
   ensureEyesOnAgentsIterm2SessionSchema(oldDb);
+  ensureEyesOnAgentsClaudeConfigDirSchema(oldDb);
+  ensureEyesOnAgentsClaudeConfigDirSchema(oldDb);
   const migratedColumns = oldDb.prepare('PRAGMA table_info(eyes_on_agents_thread)').all();
   assert.deepEqual(
     migratedColumns
@@ -261,6 +266,11 @@ try {
     migratedColumns.some((column) => column.name === 'iterm2_session_id'),
     true,
     'old databases must receive the idempotent iterm2_session_id column'
+  );
+  assert.equal(
+    migratedColumns.some((column) => column.name === 'claude_config_dir'),
+    true,
+    'old databases must receive the idempotent claude_config_dir column'
   );
   assert.ok(
     oldDb.prepare(
@@ -3448,6 +3458,71 @@ try {
     desktopSessionId: iterm2DesktopId,
     iterm2SessionId: iterm2SessionIdA
   }, 'replacing iterm2SessionId must not disturb the independently preserved desktop_session_id');
+
+  const claudeConfigDirThread = '8b8b8b8b-8b8b-4b8b-8b8b-8b8b8b8b8b8b';
+  const claudeConfigDirA = '/tmp/claude-environments/claude2';
+  const claudeConfigDirB = '/tmp/claude-environments/claude3';
+  const readClaudeConfigDirThread = async () => (
+    (await repository.getSnapshot()).threads.find(
+      (thread) => thread.threadId === claudeConfigDirThread
+    )
+  );
+  await repository.upsertClaudeInventory({ threads: [{
+    threadId: claudeConfigDirThread, desktopSessionId: null, claudeConfigDir: claudeConfigDirA,
+    transcriptPath: null, title: null, cwd: null, archiveState: 'unknown',
+    lastActivityAt: 195_000, observedAt: 195_000
+  }] });
+  assert.equal((await readClaudeConfigDirThread()).claudeConfigDir, claudeConfigDirA);
+  await repository.upsertClaudeInventory({ threads: [{
+    threadId: claudeConfigDirThread, desktopSessionId: null, claudeConfigDir: null,
+    transcriptPath: null, title: null, cwd: null, archiveState: 'unknown',
+    lastActivityAt: 196_000, observedAt: 196_000
+  }] });
+  assert.equal(
+    (await readClaudeConfigDirThread()).claudeConfigDir,
+    claudeConfigDirA,
+    'a later event with no claudeConfigDir must not clear an already-stored value'
+  );
+  await repository.upsertClaudeInventory({ threads: [{
+    threadId: claudeConfigDirThread, desktopSessionId: null, claudeConfigDir: claudeConfigDirB,
+    transcriptPath: null, title: null, cwd: null, archiveState: 'unknown',
+    lastActivityAt: 197_000, observedAt: 197_000
+  }] });
+  assert.equal(
+    (await readClaudeConfigDirThread()).claudeConfigDir,
+    claudeConfigDirB,
+    'a later event with a new claudeConfigDir must replace the stored value'
+  );
+  const claudeConfigDirDesktopId = `local_${claudeConfigDirThread}`;
+  await repository.upsertClaudeInventory({ threads: [{
+    threadId: claudeConfigDirThread, desktopSessionId: claudeConfigDirDesktopId,
+    claudeConfigDir: null, desktopEvidenceComplete: true,
+    transcriptPath: null, title: null, cwd: null, archiveState: 'unknown',
+    lastActivityAt: 198_000, observedAt: 198_000
+  }] });
+  assert.deepEqual({
+    desktopSessionId: (await readClaudeConfigDirThread()).desktopSessionId,
+    claudeConfigDir: (await readClaudeConfigDirThread()).claudeConfigDir
+  }, {
+    desktopSessionId: claudeConfigDirDesktopId,
+    claudeConfigDir: claudeConfigDirB
+  }, 'setting desktop_session_id must not disturb the independently preserved claudeConfigDir');
+  const iterm2SessionIdForClaudeConfigDirThread = 'w2t0p0:77777777-7777-4777-8777-777777777777';
+  await repository.upsertClaudeInventory({ threads: [{
+    threadId: claudeConfigDirThread, desktopSessionId: null,
+    iterm2SessionId: iterm2SessionIdForClaudeConfigDirThread, claudeConfigDir: null,
+    transcriptPath: null, title: null, cwd: null, archiveState: 'unknown',
+    lastActivityAt: 199_000, observedAt: 199_000
+  }] });
+  assert.deepEqual({
+    desktopSessionId: (await readClaudeConfigDirThread()).desktopSessionId,
+    iterm2SessionId: (await readClaudeConfigDirThread()).iterm2SessionId,
+    claudeConfigDir: (await readClaudeConfigDirThread()).claudeConfigDir
+  }, {
+    desktopSessionId: claudeConfigDirDesktopId,
+    iterm2SessionId: iterm2SessionIdForClaudeConfigDirThread,
+    claudeConfigDir: claudeConfigDirB
+  }, 'setting iterm2SessionId must not disturb the independently preserved desktop_session_id or claudeConfigDir');
 
   await repository.reconcileClaudeAgentStates({
     agents: [{

@@ -223,7 +223,7 @@ export const coreSqliteMigrations: readonly SqliteMigration[] = [
     runner: ensureEyesOnAgentsIterm2SessionSchema,
   },
   {
-    versionCode: '260903125153',
+    versionCode: '260902150000',
     runner: ensureEyesOnAgentsClaudeConfigDirSchema,
   },
 ];
