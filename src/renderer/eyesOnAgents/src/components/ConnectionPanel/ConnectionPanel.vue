@@ -270,17 +270,7 @@
         :aria-labelledby="getProviderTabId('claude')"
       >
         <ClaudeObservationCard />
-      </div>
-
-      <div
-        :id="getProviderPanelId('claude-iterm2')"
-        v-show="activeProvider === 'claude-iterm2'"
-        name="eyesOnAgents__connections__claudeIterm2Panel"
-        class="eyes-connection-panel__detail"
-        role="tabpanel"
-        :aria-labelledby="getProviderTabId('claude-iterm2')"
-      >
-        <ClaudeIterm2Card />
+        <ClaudeEnvironmentCard />
       </div>
     </div>
   </a-drawer>
@@ -292,21 +282,16 @@ import { IconInfoCircle, IconPlugConnected, IconRefresh } from '@tabler/icons-vu
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import claudeLogo from '@renderer/common/assets/icons/providers/claude.png';
 import codexLogo from '@renderer/common/assets/icons/providers/codex.png';
-import ClaudeIterm2Card from './ClaudeIterm2Card.vue';
+import ClaudeEnvironmentCard from './ClaudeEnvironmentCard.vue';
 import ClaudeObservationCard from './ClaudeObservationCard.vue';
 import { eyesOnAgentsStore } from '../../store/eyesOnAgents.store';
 
 type ConnectionProvider = 'codex' | 'claude';
-// Task 093: the rail no longer splits by provider. It splits by how a session is observed and
-// opened — Claude owns two sections, Desktop metadata and an iTerm2 CLI environment — so the rail,
-// the active tab, the tab/panel ids and keyboard navigation all key off ConnectionSection. Only
-// genuinely provider-shaped facts (the logo) still key off ConnectionProvider.
-type ConnectionSection = 'codex' | 'claude' | 'claude-iterm2';
+type ConnectionSection = ConnectionProvider;
 
 const connectionSections = [
   'codex',
   'claude',
-  'claude-iterm2',
 ] as const satisfies readonly ConnectionSection[];
 const activeProvider = ref<ConnectionSection>('codex');
 const providerTablistRef = ref<HTMLElement | null>(null);
@@ -316,7 +301,6 @@ const getSectionProvider = (section: ConnectionSection): ConnectionProvider =>
 const getProviderLabel = (section: ConnectionSection): string => {
   switch (section) {
     case 'codex': return i18nHelper.eyesOnAgents.provider.codex;
-    case 'claude-iterm2': return i18nHelper.eyesOnAgents.provider.claudeIterm2;
     default: return i18nHelper.eyesOnAgents.provider.claude;
   }
 };

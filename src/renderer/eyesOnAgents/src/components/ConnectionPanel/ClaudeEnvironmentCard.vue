@@ -1,43 +1,32 @@
 <template>
   <section
-    name="eyesOnAgents__connections__claudeIterm2"
+    name="eyesOnAgents__connections__claudeEnvironment"
     class="eyes-connection-card eyes-connection-card--claude"
+    :aria-labelledby="directoryTitleId"
   >
     <div class="eyes-connection-card__header">
       <div>
         <span class="eyes-connection-card__eyebrow">
           {{ i18nHelper.eyesOnAgents.claudeBridge.eyebrow }}
         </span>
-        <h2>{{ i18nHelper.eyesOnAgents.claudeIterm2.title }}</h2>
+        <h2 :id="directoryTitleId">{{ i18nHelper.eyesOnAgents.claudeEnvironment.title }}</h2>
       </div>
+      <a-button
+        v-if="providerEnabled"
+        size="mini"
+        :loading="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(ADD_CLAUDE_ENVIRONMENT_KEY)"
+        :disabled="addingEnvironment"
+        @click="handleStartAddEnvironment"
+      >
+        {{ i18nHelper.eyesOnAgents.claudeEnvironment.addEnvironment }}
+      </a-button>
     </div>
 
     <template v-if="providerEnabled">
-      <aside
-        name="eyesOnAgents__connections__claudeIterm2Requirement"
-        class="eyes-connection-panel__boundary"
-      >
-        <IconInfoCircle :size="17" />
-        <span>{{ i18nHelper.eyesOnAgents.claudeIterm2.requirement }}</span>
-      </aside>
-
-      <section
+      <div
         name="eyesOnAgents__connections__claudeDirectories"
         class="eyes-connection-card__directories"
-        :aria-labelledby="directoryTitleId"
       >
-        <div class="eyes-connection-card__directories-header">
-          <h3 :id="directoryTitleId">{{ i18nHelper.eyesOnAgents.claudeEnvironment.title }}</h3>
-          <a-button
-            size="mini"
-            :loading="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(ADD_CLAUDE_ENVIRONMENT_KEY)"
-            :disabled="addingEnvironment"
-            @click="handleStartAddEnvironment"
-          >
-            {{ i18nHelper.eyesOnAgents.claudeEnvironment.addEnvironment }}
-          </a-button>
-        </div>
-
         <div v-if="addingEnvironment" class="eyes-connection-card__directories-add">
           <a-input
             v-model="addEnvironmentDirectory"
@@ -247,7 +236,7 @@
           <IconInfoCircle :size="17" />
           <span>{{ i18nHelper.eyesOnAgents.claudeEnvironment.guidance }}</span>
         </aside>
-      </section>
+      </div>
     </template>
 
     <p v-else class="eyes-connection-card__provider-paused" role="status">
@@ -263,11 +252,8 @@ import type { EyesOnAgentsClaudeEnvironmentStatus } from '@shared/eyesOnAgents/e
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { ADD_CLAUDE_ENVIRONMENT_KEY, eyesOnAgentsStore } from '../../store/eyesOnAgents.store';
 
-// Task 093: the environment list moved here from ClaudeObservationCard.vue unchanged. A CLI Claude
-// environment is an iTerm2 concern — eyesOnAgents.service.ts renders a Claude thread from either a
-// desktopSessionId or an iterm2SessionId, and resolveClaudeDesktopRoots is platform-fixed and never
-// consults an environment's configDirectory — so this section owns the list while the Claude section
-// keeps the provider toggle, the shared plugin/listener facts, and the Desktop metadata count.
+// Claude environments are configuration profiles for observation and plugin setup. They belong to
+// the Claude connection page regardless of which terminal or app launches Claude Code.
 const bridge = computed(() => eyesOnAgentsStore.snapshot?.claudeBridge ?? null);
 const provider = computed(() => eyesOnAgentsStore.snapshot?.claudeProvider ?? null);
 // Gating is unchanged: the one `Claude support` switch in the Claude section governs this section

@@ -89,7 +89,6 @@
                 <ThreadCardMenu
                   :thread="thread"
                   @open="handleOpen"
-                  @open-in-iterm2="handleOpenInIterm2"
                   @toggle-read-state="handleToggleReadState"
                   @copy-session-path="handleCopySessionPath"
                   @archive="handleArchive"
@@ -104,7 +103,6 @@
       <ThreadCardMenu
         :thread="thread"
         @open="handleOpen"
-        @open-in-iterm2="handleOpenInIterm2"
         @toggle-read-state="handleToggleReadState"
         @copy-session-path="handleCopySessionPath"
         @archive="handleArchive"
@@ -269,11 +267,6 @@ const handleOpen = async (): Promise<void> => {
   closeMenus();
   if (!canOpenThread.value) return;
   await eyesOnAgentsStore.openThread(props.thread.sessionKey).catch(() => undefined);
-};
-
-const handleOpenInIterm2 = async (): Promise<void> => {
-  closeMenus();
-  await eyesOnAgentsStore.openThreadInIterm2(props.thread.sessionKey).catch(() => undefined);
 };
 
 const handleCopySessionPath = async (): Promise<void> => {

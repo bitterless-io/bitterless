@@ -317,12 +317,9 @@ const observationProofLabel = computed(() => {
   return i18nHelper.eyesOnAgents.claudeBridge.proofAwaiting;
 });
 
-// Task 093: the environment list moved to ClaudeIterm2Card.vue — a CLI Claude environment is an
-// iTerm2 concern, and Claude Desktop discovery never consults an environment's CLAUDE_CONFIG_DIR
-// (resolveClaudeDesktopRoots is platform-fixed). What stays here is the one global fact those rows
-// used to repeat: every environment watcher watches the SAME Desktop metadata root, so the count is
-// identical on every row. It is read from the environments array rather than from a new Main-side
-// field, and renders nothing at all when no environment reports a usable number.
+// Environment management lives in the sibling ClaudeEnvironmentCard. This card keeps the one
+// global fact those rows would otherwise repeat: every watcher scans the same Desktop metadata
+// roots, so the count is identical for every configured environment.
 const desktopDirectoryCount = computed<number | null>(() => {
   const [environment] = eyesOnAgentsStore.snapshot?.claudeDirectory ?? [];
   const count = environment?.desktopDirectoryCount;

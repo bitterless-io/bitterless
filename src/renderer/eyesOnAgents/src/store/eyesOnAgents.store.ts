@@ -389,8 +389,8 @@ class EyesOnAgentsState {
     );
   }
 
-  // Task 088: environment CRUD, mirroring openThread/openThreadInIterm2's call/error-handling
-  // pattern (in-flight guard, error/rethrow contract) rather than the single global busyAction gate
+  // Task 088: environment CRUD uses the same in-flight/error pattern as opening a thread
+  // (in-flight guard and rethrow contract) rather than the single global busyAction gate
   // above, so acting on one environment never disables another environment's row controls.
   async addClaudeEnvironment(configDirectory: string): Promise<void> {
     await this.runClaudeEnvironmentAction(ADD_CLAUDE_ENVIRONMENT_KEY, () =>
@@ -504,25 +504,6 @@ class EyesOnAgentsState {
       ) {
         this.closeThreadSearch();
       }
-    } catch (error) {
-      this.actionError = this.errorMessage(error);
-      throw error;
-    } finally {
-      const next = new Set(this.openingSessionKeys);
-      next.delete(sessionKey);
-      this.openingSessionKeys = next;
-    }
-  }
-
-  async openThreadInIterm2(sessionKey: EyesOnAgentsSessionKey): Promise<void> {
-    const thread = this.threads.find((item) => item.sessionKey === sessionKey);
-    if (!thread || thread.iterm2SessionId === null) return;
-    if (this.openingSessionKeys.has(sessionKey)) return;
-    this.openingSessionKeys = new Set(this.openingSessionKeys).add(sessionKey);
-    this.actionError = null;
-    try {
-      const result = await eyesOnAgentsEmitter.openThreadInIterm2({ sessionKey });
-      this.applySnapshot(result.snapshot);
     } catch (error) {
       this.actionError = this.errorMessage(error);
       throw error;

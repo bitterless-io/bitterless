@@ -1,6 +1,12 @@
 # A new Claude session never appears, because its iTerm2 identity is discarded with a failed transcript check
 
-Status: Root cause confirmed from source; repair pending
+Status: Closed by iTerm2 integration removal in
+[task 097](../plan/tasks/eyes-on-agents-remove-iterm2-claude-097.md)
+
+The terminal-only visibility route described below no longer exists. Claude cards now require a
+trusted Desktop mapping; old terminal fields remain readable only for upgrade compatibility and
+cannot make a row visible. The remaining text is retained as history rather than an active repair
+contract.
 
 Reported: 2026-09-04, by the owner, from the packaged Preview build ("新的会话没在 eyesonagent 出现")
 

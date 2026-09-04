@@ -49,7 +49,6 @@ import {
 import { ClaudeDirectoryConfigService } from '../eyesOnAgents/claudeDirectoryConfig.service';
 import { resolveClaudeBridgeEnvironment } from '../eyesOnAgents/claudeBridgeEnvironment.resolver';
 import { logClaudeBridgeAction } from '../eyesOnAgents/claudeBridgeLog.helper';
-import { revealIterm2Session } from '../eyesOnAgents/iterm2Reveal.helper';
 import { resolveClaudeExecutables } from '../eyesOnAgents/claudeExecutable.resolver';
 import { ClaudeAgentsAdapter } from '../eyesOnAgents/claudeAgents.adapter';
 import { ClaudeWatcherSupervisor } from '../eyesOnAgents/claudeWatcher.supervisor';
@@ -273,10 +272,6 @@ eyesOnAgentsService = new EyesOnAgentsService({
     }
   },
   openExternal: async (url) => await shell.openExternal(url),
-  // Task 094: the Open-in-iTerm2 transport. Not shell.openExternal — iTerm2 has no working reveal
-  // URL (see docs/issues/eyes-on-agents-open-in-iterm2-does-nothing.md); this spawns osascript with
-  // the session UUID as a process argument.
-  revealIterm2Session,
   writeClipboardText: (text) => clipboard.writeText(text),
   previewAbsoluteTarget: openRegisteredOnlyPreviewExplicitTarget,
   validateClaudeTranscript: (path, expectedThreadId) => {
@@ -347,12 +342,6 @@ export class EyesOnAgentsHandler extends XpcMainHandler implements EyesOnAgentsA
     snapshot: EyesOnAgentsSnapshot;
   }> {
     return await eyesOnAgentsService.openThread(parseEyesOnAgentsSessionKeyParams(params));
-  }
-
-  async openThreadInIterm2(params: { sessionKey: EyesOnAgentsSessionKey }): Promise<{
-    snapshot: EyesOnAgentsSnapshot;
-  }> {
-    return await eyesOnAgentsService.openThreadInIterm2(parseEyesOnAgentsSessionKeyParams(params));
   }
 
   async archiveThread(params: {

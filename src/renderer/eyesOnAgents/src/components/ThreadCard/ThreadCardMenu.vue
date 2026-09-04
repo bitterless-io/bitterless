@@ -14,18 +14,6 @@
     </span>
   </a-doption>
   <a-doption
-    v-if="canOpenInIterm2"
-    name="eyesOnAgents__threadCardMenu__openInIterm2"
-    class="thread-card__option"
-    :disabled="eyesOnAgentsStore.openingSessionKeys.has(thread.sessionKey)"
-    @click="emit('openInIterm2')"
-  >
-    <IconTerminal2 :size="13" aria-hidden="true" />
-    <span class="thread-card__option-label">
-      {{ i18nHelper.eyesOnAgents.actions.openInIterm2 }}
-    </span>
-  </a-doption>
-  <a-doption
     name="eyesOnAgents__threadCardMenu__readState"
     class="thread-card__option"
     :disabled="eyesOnAgentsStore.busyAction !== null"
@@ -69,7 +57,6 @@ import {
   IconCircleDot,
   IconClipboardText,
   IconExternalLink,
-  IconTerminal2,
 } from '@tabler/icons-vue';
 import type { EyesOnAgentsThread } from '@shared/eyesOnAgents/eyesOnAgents.type';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
@@ -78,7 +65,6 @@ import { eyesOnAgentsStore } from '../../store/eyesOnAgents.store';
 const props = defineProps<{ thread: EyesOnAgentsThread }>();
 const emit = defineEmits<{
   open: [];
-  openInIterm2: [];
   toggleReadState: [];
   copySessionPath: [];
   archive: [];
@@ -86,7 +72,6 @@ const emit = defineEmits<{
 
 const canOpenThread = computed(() => props.thread.provider === 'codex'
   || props.thread.desktopSessionId !== null);
-const canOpenInIterm2 = computed(() => props.thread.iterm2SessionId !== null);
 const openLabel = computed(() => props.thread.provider === 'claude'
   ? i18nHelper.eyesOnAgents.actions.openInClaude
   : i18nHelper.eyesOnAgents.actions.openInCodex);

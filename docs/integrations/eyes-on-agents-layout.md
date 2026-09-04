@@ -178,14 +178,11 @@ The menu bar shows:
 
 Clicking the connection status opens a 540px master-detail panel. The drawer is anchored to the
 `.eyes-on-agents__main` region rather than the document body, so its mask never covers the menu bar
-and it caps at the board width on a narrow window. A fixed 60px Agent App rail carries **three**
-sections — `Codex`, `Claude`, and `iTerm2` (Claude in iTerm2) — and its selected tab controls which
-detail pane is visible. The rail splits by **how a session is observed and opened**, not by
-provider: a Claude thread renders from either a `desktopSessionId` or an `iterm2SessionId`, and
-Claude Desktop discovery is platform-fixed and never reads an environment's `CLAUDE_CONFIG_DIR`, so
-the CLI environment list is an iTerm2 concern rather than a Desktop one. Both Claude sections reuse
-the official Claude Spark mark beside the Codex mark — the label carries the distinction and no new
-image asset exists. The selected pane contains:
+and it caps at the board width on a narrow window. A fixed 60px Agent App rail carries **two**
+sections — `Codex` and `Claude` — and its selected tab controls which provider detail pane is
+visible. The Claude detail keeps provider observation and the neutral `ClaudeEnvironmentCard`
+together: environment management is a general `CLAUDE_CONFIG_DIR` capability, not a terminal
+provider or an alternate Open route. The selected pane contains:
 
 - managed App Server status and `Connect`/`Disconnect`;
 - last successful sync time and latest error, if any;
@@ -194,7 +191,8 @@ image asset exists. The selected pane contains:
   `Enable`, `Repair`, latest-question permission, and `Remove`;
 - Claude provider switch plus one state-driven observation action: `Enable`, `Finish setup`,
   `Open new Claude session`, `Copy /reload-plugins`, `Retry listener`, `Repair`, or
-  `Remove plugin` while enabled, plus its own default-off **Store latest user question** Switch;
+  `Remove plugin` while enabled, plus its own default-off **Store latest user question** Switch and
+  the complete Claude environments list;
 - when review is required, one external Codex row naming `Settings → Hooks` and the exact four
   Bitterless hooks to turn on and trust; because the work happens in Codex, this row has no
   right-side action button.
@@ -213,26 +211,22 @@ The rail separates the two provider lifecycles without mixing navigation and ena
 │       │ Store latest user question            [switch]    │
 │       │ Remove Codex observation              [Remove]    │
 │       │                                                   │
-│ Claude│                                                   │
-│  logo │                                                   │
-│Claude │                                                   │
-│ Claude│                                                   │
-│  logo │                                                   │
-│iTerm2 │                                                   │
+│ Claude│ Claude observation                                │
+│  logo │ Claude environments                               │
 └───────┴───────────────────────────────────────────────────┘
 
-Selecting Claude replaces only the right pane with the Claude card: Claude support, the single
-Desktop metadata directory count, plugin/listener facts, a flat **Store latest user question** row
-whose small Switch authorizes only live Claude Hook capture, and the state-driven
-setup/reload/repair surface. Selecting iTerm2 replaces it with the Claude in iTerm2 card: the
-iTerm2 requirement note and the Claude environments list.
+Selecting Claude replaces the right pane with the Claude observation card and
+`ClaudeEnvironmentCard`: Claude support, the single Desktop metadata directory count,
+plugin/listener facts, a flat **Store latest user question** row whose small Switch authorizes only
+live Claude Hook capture, the state-driven setup/reload/repair surface, and the complete environment
+list.
 ```
 
 The rail is a vertical tablist, not a connection control. Click, Arrow Up/Down, Home, and End select
-and focus a section with roving tabindex, wrapping over all three entries. It remains fixed while
-the three `v-show` detail panes own independent scrolling and stay mounted, so switching never loses
-local setup or copy state. Both Claude sections stay selectable while Claude support is Off. At less
-than 480px the rail shrinks to 52px, visible labels hide, and accessible section names remain.
+and focus a provider with roving tabindex, wrapping over the two entries. It remains fixed while the
+two `v-show` detail panes own independent scrolling and stay mounted, so switching never loses local
+setup or copy state. Claude stays selectable while Claude support is Off. At less than 480px the
+rail shrinks to 52px, visible labels hide, and accessible provider names remain.
 
 App Server Connect/Disconnect never installs or removes observation. The observation header keeps
 local installation, Codex trust, and current listener distinct through its aggregate label and
@@ -304,20 +298,15 @@ their persisted annotations return when the provider is enabled. The switch rema
 the saved preference is invalid so it can replace the value. The existing plugin removal control is
 labelled **Remove plugin**, avoiding ambiguity with the provider switch.
 
-## Claude in iTerm2
+## Claude environments
 
-The third rail section owns everything about a CLI Claude environment. It opens with the one
-explanation whose absence cost a debugging session, in the existing
-`eyes-connection-panel__boundary` aside treatment: a CLI Claude session becomes visible only once
-its hook reports an identity, so it must be started **inside iTerm2** — a session started in
-Terminal.app or an editor terminal has no Claude Desktop match and never appears — and an
-already-running session needs `/reload-plugins`, or a fresh session, before its hook is loaded.
+The Claude detail contains a neutral `ClaudeEnvironmentCard` beneath the observation card. It owns
+general `CLAUDE_CONFIG_DIR` configuration and does not represent a terminal, a third provider, or a
+second Open route. The single **Claude support** switch governs its actions together with the rest
+of Claude observation; disabling Claude never leaves interactive environment controls attached to a
+paused provider.
 
-Gating is unchanged: the single **Claude support** switch, which stays in the Claude section,
-governs this section too. With Claude support Off this card folds to the same one-line paused
-explanation rather than presenting an interactive but dead list.
-
-This section contains one **Claude environments** list,
+The card contains one **Claude environments** list,
 replacing the earlier single Session directories block with one row per configured
 `EyesOnAgentsClaudeEnvironment` (multi-environment support). It uses the card's existing quiet
 neutral background hierarchy and no decorative border or shadow. A persistent **Add environment**
@@ -386,7 +375,7 @@ directory still lists the plugin installed, and the card-level action resolves t
 is per `CLAUDE_CONFIG_DIR`. In that one state the action therefore appears both card-level and per
 row; that is the cost of keeping every directory repairable.
 
-The card-level setup section below the list keeps the profile-wide concerns — the shared
+The observation card in the same Claude detail keeps the profile-wide concerns — the shared
 installation identity, the listener, **Reload in Claude**, **Repair**. What task 090 removed is the
 earlier *unconditional* per-row repetition of that global block, which showed an identical title and
 button on every row regardless of that row's own state; the common from-scratch case is now driven
@@ -398,11 +387,7 @@ by per-row presence instead.
 │ Plugin · Enabled   Listener · Active   Hook status · Confirmed  │
 └─────────────────────────────────────────────────────────────────┘
 
-┌ Claude in iTerm2 ──────────────────────────────────────────────────────┐
-│ ⓘ A CLI Claude session becomes visible only once its hook reports an   │
-│   identity, so start it inside iTerm2 … an already-running session     │
-│   needs /reload-plugins, or a fresh session.                           │
-│                                                                        │
+┌ Claude environments ──────────────────────────────────────────────────┐
 │ ┌ Claude environments ───────────────────────────────[Add environment] │
 │ │ Default                                   Automatic · Watching  [on] │
 │ │ [ /Users/ral/.claude__________ ]                  [Change directory] │
@@ -445,7 +430,7 @@ depends on scroll position or a specific row's state.
 | stopped | signed-out/shutdown state; never claim watching |
 | choosing/applying | disable that row's competing directory actions; keep the last snapshot visible |
 | last remaining environment | **Remove** stays disabled with an explanatory hint; every other row action stays available |
-| Claude provider disabled | fold the Claude card to its switch and one explanation, and the Claude in iTerm2 card to the same paused line; hide every Claude task without deleting it |
+| Claude provider disabled | fold Claude observation to its switch and one explanation, disable the environment surface, and hide every Claude task without deleting it |
 | Claude provider enabling/disabling | disable the switch and all connection actions; persisted Off immediately gates every subsequent snapshot, while On keeps Claude rows hidden until cleanup and the full refresh complete |
 | Claude provider error | **Retry** becomes available on every row, even one that is otherwise `watching`, so recovery is reachable from any environment |
 
@@ -514,16 +499,15 @@ A card displays only observation metadata:
   no match, or in a single-environment setup, keeps the plain `Working directory: {path}` text
   unchanged. The match is resolved live against the current environments list, never persisted, so a
   renamed environment's label updates immediately and a removed environment's threads silently lose
-  the prefix. A Claude row with neither a trusted Desktop Open route nor an `iterm2SessionId` does not
-  render. There is no icon-only `Open` button;
+  the prefix. A Claude row without a trusted Desktop Open route does not render; retained legacy
+  Hook/storage fields are inert compatibility data and never change that rule. There is no icon-only
+  `Open` button;
 - the overflow (`…`) control is always present. Its items, in order: the provider-named open item
   (**Open in Codex** / **Open in Claude**) with a quiet `(double click)` hint, omitted when the row
-  has no trusted route; **Open in iTerm2**, an independent action present whenever a Claude row
-  carries an `iterm2SessionId`, regardless of whether the provider-named open item is also present —
-  neither open item hides or replaces the other; the read-state item (**Mark as read** / **Mark as
-  unread**) labelled from the stored unread flag; and **Copy session path**, which puts the session
-  JSONL's absolute path on the clipboard for a Claude row with a known transcript (Codex rows have no
-  discovered session file);
+  has no trusted route; the read-state item (**Mark as read** / **Mark as unread**) labelled from the
+  stored unread flag; **Copy session path**, which puts the session JSONL's absolute path on the
+  clipboard for a Claude row with a known transcript (Codex rows have no discovered session file);
+  and Codex-only **Archive**;
 - one status slot right of the title carries either the working spinner or the unread red dot — the
   dot for any non-active unread row, which means terminal (`idle`, `ended`, `failed`) **and**
   `unknown`. Working and waiting cards show only the spinner, so the two states cannot collide in that
@@ -550,14 +534,10 @@ Every openable card participates in card-level keyboard focus; the menu's open i
 `Enter` launches the provider desktop UI and marks a confirmed terminal
 observation read after the fixed deep link is accepted. Codex uses `codex://threads/<uuid>`. A
 Claude row with a unique `desktopSessionId` uses
-`claude://claude.ai/epitaxy/<desktopSessionId>`; a Claude row with a captured `iterm2SessionId`
-additionally (or exclusively) offers **Open in iTerm2**, an independent overflow action that never
-replaces the provider-named open item. That one action is not a deep link: it drives iTerm2 through
-AppleScript to `select` the session whose id is the UUID half of the stored `ITERM_SESSION_ID`, marks
-the row opened only when the pane was really revealed, and otherwise reports a distinct error (pane
-gone, or macOS Automation permission not granted) instead of silently appearing to succeed. A Claude row with
-neither identity is Main-private inventory and does not render in Focus or modal search results. A
-visible Claude card's More menu exposes **Copy session path** when a canonical JSONL exists.
+`claude://claude.ai/epitaxy/<desktopSessionId>`. A Claude row without that trusted Desktop identity
+is Main-private inventory and does not render in Focus or modal search results, even when an older
+database row or queued Hook delivery retains legacy compatibility fields. A visible Claude card's
+More menu exposes **Copy session path** when a canonical JSONL exists.
 Selecting or copying a path never marks read.
 
 ```text
@@ -642,7 +622,7 @@ resolves. An unread `unknown` row shows its dot and belongs to the visible unrea
 | unknown runtime | accessible runtime label remains `Unknown`; no active loader is shown |
 | Claude Desktop archived | explicit metadata transition hides the row; unarchive restores its Domain/read state |
 | Claude Desktop deleted | explicit `deleted_<uuid>` tombstone removes the row from every board/search surface; residual JSONL and late Hooks do not restore it |
-| Claude CLI-only inventory | retained internally for reconciliation; absent from board/search until a trusted Desktop mapping OR a captured `iterm2SessionId` exists |
+| Claude non-Desktop inventory | retained internally for reconciliation; absent from board/search until a trusted Desktop mapping exists; legacy compatibility fields are ignored |
 | Claude provider off | Claude rows and controls are absent from the board/search; Codex remains fully interactive |
 | Claude setup interrupted after exact install | one **Finish setup** action rebuilds the owned plugin generation; no dead-end Needs review guide |
 | Claude plugin installed, receipt pending | **Open new Claude session** is primary, Copy `/reload-plugins` is secondary, and status updates automatically |
@@ -674,8 +654,9 @@ EyesOnAgentsApp
   ├─ EyesOnAgentsMenuBar
   ├─ ConnectionPanel
   │    ├─ CodexConnectionSection
-  │    ├─ ClaudeObservationCard
-  │    └─ ClaudeIterm2Card
+  │    └─ ClaudeDetail
+  │         ├─ ClaudeObservationCard
+  │         └─ ClaudeEnvironmentCard
   ├─ AgentBoard
   │    └─ FocusColumn (every visible thread)
   │         ├─ header Search button

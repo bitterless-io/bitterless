@@ -83,11 +83,21 @@ design document.
   passed.
 - [OnlyPreview sub-application](features/onlypreview.md) - capability-scoped local indexing,
   standalone-only multi-view preview, EyesOnAgents-style MenuBar, settings, and OS file-open routing.
+- [OnlyPreview embeddable mount](features/onlypreview-embeddable-mount.md) - proposed: the
+  four-layer composite gains its own container `View` and asks a mount for geometry, window services
+  and shortcut arbitration, so one OnlyPreview surface can live either in its own window as today or
+  as a Mini App tab inside the Maestro (Cowork) browser window. Supersedes the "standalone-only"
+  wording in the entry above once delivered.
 - [OnlyPreview delete never tells the tree](issues/onlypreview-delete-never-tells-the-tree.md) -
   fixed; owner verification pending: New Folder and Rename each broadcast their result to the shell
   but Delete announced nothing, so removed rows stayed on screen and every later right-click, copy or
   delete on one failed against a path that was gone; a delete now announces what it removed and the
   tree drops every pointer into a removed folder before re-reading the index.
+- [OnlyPreview browse targets and history](features/onlypreview-browse-history.md) - designed;
+  implementation in progress: a directory becomes a previewable target showing its name, path and
+  children; the Project heading becomes Project/History tabs over a per-workspace persisted visit
+  list; and back/forward controls left of the preview name walk a session visit stack, bringing the
+  tree with them.
 - [The Project index never latches ready, so the pane stays on "Loading project"](issues/onlypreview-index-never-latches-ready.md) -
   implemented; owner verification pending: `initialize` and `refresh` hand their snapshot back as an
   RPC result, which never passed the only place the index state was observed, so a Project whose
@@ -95,8 +105,9 @@ design document.
   methods now observe the snapshot they return.
 - [Locate file leaves the row unhighlighted after opening from global search](issues/onlypreview-locate-file-leaves-no-highlight.md) -
   implemented; owner verification pending: the tree highlight answers from the click anchor before it
-  falls back to the located row, and a file opened from search was never clicked, so locate now
-  collapses the tree selection onto the row it locates.
+  falls back to the anchored row, and a file opened from search was never clicked, so every path that
+  re-anchors without a click — locate, an inherited watch selection, an explicit reveal — now
+  collapses the tree selection onto that row.
 - [Agent onboarding calls the Preview edition a test instance](issues/preview-edition-treated-as-test-instance.md) -
   implemented; owner verification pending: `bitterless-preview` is a shipped edition with its own
   bridge and storage, but the copied setup instruction, all three bundled skills, and the workspace
@@ -227,14 +238,11 @@ design document.
 - [EyesOnAgents last user prompt](features/eyes-on-agents-last-user-prompt.md) - narrow capture of one
   bounded latest user question per thread with content-free offline delivery and tiered All-thread
   App Server recovery.
-- [EyesOnAgents iTerm2 Open](features/eyes-on-agents-iterm2-open.md) - implemented; owner runtime
-  verification pending from a freshly packaged build: Hook-captured iTerm2 terminal identity makes
-  CLI-only Claude sessions visible and adds an independent AppleScript-driven **Open in iTerm2**
-  action beside the existing Claude Desktop route.
-- [Open in iTerm2 does nothing](issues/eyes-on-agents-open-in-iterm2-does-nothing.md) - repaired in
-  source; owner runtime verification pending: `iterm2:///reveal` is not a real iTerm2 capability and
-  the value passed to it was the prefixed `ITERM_SESSION_ID` rather than a session id, so the action
-  was inert while still reporting success.
+- [EyesOnAgents iTerm2 Open](features/eyes-on-agents-iterm2-open.md) - removed by task 097:
+  the third connection entry, CLI-only visibility, Open-in-iTerm2 action, AppleScript transport, and
+  Automation entitlement are retired; inert schema/storage compatibility remains.
+- [Open in iTerm2 does nothing](issues/eyes-on-agents-open-in-iterm2-does-nothing.md) - closed by
+  feature removal; no packaged runtime verification remains necessary.
 - [EyesOnAgents Claude Multi-Environment](features/eyes-on-agents-claude-multi-environment.md) -
   implemented; owner runtime verification pending: N independently-managed `CLAUDE_CONFIG_DIR`
   environments (own watcher, own hook install target, Hook-attributed `claude_config_dir`),

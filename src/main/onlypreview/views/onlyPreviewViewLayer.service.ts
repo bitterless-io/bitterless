@@ -1,7 +1,7 @@
-import type { BaseWindow, View } from 'electron';
+import type { View } from 'electron';
 
 /**
- * Child-view stacking for the OnlyPreview window, in one place.
+ * Child-view stacking for the OnlyPreview composite, in one place.
  *
  * Before this, three services each called `contentView.addChildView` and each only knew how to put
  * *itself* on top, so no code owned the resulting order. `raiseAfterPreviewAttach` existed purely to
@@ -12,6 +12,12 @@ import type { BaseWindow, View } from 'electron';
  * The primitive is fine. Electron documents it: "If the same View is added to a parent which already
  * contains it, it will be reordered such that it becomes the topmost view." So every show re-adds
  * every shown view in layer order, lowest first, and the last call wins.
+ *
+ * The parent is the composite's own container `View`, not the window: the four layers are children
+ * of one relocatable native view so the whole surface can be carried by a host that is not a window
+ * of its own. Measured on Electron 40.10.6 before this change — a plain `View` parents a
+ * `WebContentsView`, the re-add reorder behaves identically inside a container, and child bounds are
+ * parent-relative, so nothing about the algorithm or the coordinates below changes with the move.
  */
 export const ONLY_PREVIEW_VIEW_LAYER_ORDER = ['base', 'main', 'global', 'alert'] as const;
 
@@ -50,12 +56,12 @@ interface LayerOccupant {
 }
 
 export class OnlyPreviewViewLayerService {
-  private window: BaseWindow | null = null;
+  private container: View | null = null;
   private readonly occupants = new Map<OnlyPreviewViewLayer, LayerOccupant>();
   private lastRecord = '';
 
-  start(window: BaseWindow): void {
-    this.window = window;
+  start(container: View): void {
+    this.container = container;
     this.occupants.clear();
     this.lastRecord = '';
   }
@@ -101,8 +107,10 @@ export class OnlyPreviewViewLayerService {
    * view sorts to the bottom on macOS.
    */
   resort(): void {
-    const window = this.window;
-    if (!window || window.isDestroyed()) return;
+    // `View` has no `isDestroyed()`, so liveness is the container's presence: the owner clears it in
+    // `stop()` during teardown, which is the same moment the window check used to start failing.
+    const container = this.container;
+    if (!container) return;
     const shown: OnlyPreviewViewLayer[] = [];
     for (const layer of ONLY_PREVIEW_VIEW_LAYER_ORDER) {
       const occupant = this.occupants.get(layer);
@@ -111,7 +119,7 @@ export class OnlyPreviewViewLayerService {
         this.occupants.delete(layer);
         continue;
       }
-      window.contentView.addChildView(occupant.view);
+      container.addChildView(occupant.view);
       this.setVisible(occupant.view, true);
       shown.push(layer);
     }
@@ -119,7 +127,7 @@ export class OnlyPreviewViewLayerService {
   }
 
   stop(): void {
-    this.window = null;
+    this.container = null;
     this.occupants.clear();
     this.lastRecord = '';
   }

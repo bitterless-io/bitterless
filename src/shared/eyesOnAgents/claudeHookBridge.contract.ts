@@ -46,8 +46,8 @@ const NUL = /\0/;
 const UTF8_ENCODER = new TextEncoder();
 const BASE_PAYLOAD_KEYS = ['hookEventName', 'sessionId', 'transcriptPath', 'cwd'] as const;
 
-// Shared with the future `eyesOnAgents.contract.ts` deep-link builder (task 082) so the
-// `ITERM_SESSION_ID` shape has a single source of truth instead of being redefined per consumer.
+// Retained for legacy V3/V4 deliveries and persisted rows so the historical `ITERM_SESSION_ID`
+// shape keeps one parser during upgrades.
 export const CLAUDE_HOOK_ITERM2_SESSION_ID_PATTERN = /^w\d+t\d+p\d+:[0-9A-Fa-f-]{36}$/;
 
 export const parseClaudeHookIterm2SessionId = (value: unknown): string | null => {
@@ -216,14 +216,6 @@ export const createClaudeHookEventV2 = (params: {
   };
 };
 
-const readClaudeHookTerminalIdentity = (
-  environment: NodeJS.ProcessEnv
-): { terminalApp: 'iterm2'; terminalSessionId: string } | null => {
-  if (environment.TERM_PROGRAM !== 'iTerm.app') return null;
-  const terminalSessionId = parseClaudeHookIterm2SessionId(environment.ITERM_SESSION_ID);
-  return terminalSessionId === null ? null : { terminalApp: 'iterm2', terminalSessionId };
-};
-
 export const createClaudeHookEventV3 = (params: {
   rawInput: unknown;
   eventId: unknown;
@@ -234,21 +226,16 @@ export const createClaudeHookEventV3 = (params: {
   if (!isEyesOnAgentsRecord(params.rawInput)) throw new Error('Claude hook input must be an object');
   const parsed = parseEventIdentity({ ...params, rawInput: params.rawInput });
   if (parsed.payload.hookEventName !== 'SessionStart') return createClaudeHookEventV2(params);
-  const terminal = readClaudeHookTerminalIdentity(params.environment ?? process.env);
   return {
     schemaVersion: 3,
     eventId: parsed.eventId,
     occurredAt: parsed.occurredAt,
-    payload: (terminal
-      ? { ...parsed.payload, hookEventName: 'SessionStart', ...terminal }
-      : { ...parsed.payload, hookEventName: 'SessionStart' }) as ClaudeHookEventV3Payload
+    payload: { ...parsed.payload, hookEventName: 'SessionStart' } as ClaudeHookEventV3Payload
   };
 };
 
-// Sibling of readClaudeHookTerminalIdentity, one level up: which CLAUDE_CONFIG_DIR emitted this
-// SessionStart. Read verbatim (no trim/normalize) and never throws — absence or a malformed value
-// both mean "attribute to the automatic environment," per the feature doc's "Hook payload
-// attribution (schema V4)" section.
+// Which CLAUDE_CONFIG_DIR emitted this SessionStart. Read verbatim (no trim/normalize) and never
+// throws — absence or malformed input means "attribute to the automatic environment."
 const readClaudeHookEnvironmentAttribution = (
   environment: NodeJS.ProcessEnv
 ): { claudeConfigDir: string } | null => {
@@ -269,7 +256,6 @@ export const createClaudeHookEventV4 = (params: {
   const parsed = parseEventIdentity({ ...params, rawInput: params.rawInput });
   if (parsed.payload.hookEventName !== 'SessionStart') return createClaudeHookEventV3(params);
   const environment = params.environment ?? process.env;
-  const terminal = readClaudeHookTerminalIdentity(environment);
   const environmentAttribution = readClaudeHookEnvironmentAttribution(environment);
   return {
     schemaVersion: 4,
@@ -278,7 +264,6 @@ export const createClaudeHookEventV4 = (params: {
     payload: {
       ...parsed.payload,
       hookEventName: 'SessionStart',
-      ...(terminal ?? {}),
       ...(environmentAttribution ?? {})
     } as ClaudeHookEventV4Payload
   };

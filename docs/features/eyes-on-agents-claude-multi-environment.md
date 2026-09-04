@@ -9,15 +9,18 @@ Date: 2026-09-02
 Extend Claude observation from exactly one configured Claude config directory
 (`CLAUDE_CONFIG_DIR`, normally `~/.claude`) to N independently-managed named **environments** — a
 user who runs a wrapped `claude2`/`claude3` shell command against a second/third
-`CLAUDE_CONFIG_DIR` gets that environment's sessions discovered, hook-observed, and Open-routed the
-same way the default environment already is. This supersedes the single-`configDirectory` model
-described in [EyesOnAgents Claude Observation](eyes-on-agents-claude-observation.md)'s "Claude
-directory lifecycle and configuration" section; that section is edited in place (task 084) to point
-here rather than duplicating a now-superseded contract.
+`CLAUDE_CONFIG_DIR` gets that environment's sessions discovered and Hook-observed the same way the
+default environment already is. Environment attribution does not create an Open route: a Claude
+thread becomes visible only after it has a trusted Claude Desktop mapping. This supersedes the
+single-`configDirectory` model described in
+[EyesOnAgents Claude Observation](eyes-on-agents-claude-observation.md)'s "Claude directory
+lifecycle and configuration" section; that section is edited in place (task 084) to point here
+rather than duplicating a now-superseded contract.
 
-This also subsumes the earlier, narrower "add iTerm2 configuration guidance to Agent Connections"
-request: the concrete guidance a user needs is "how do I add and install a second Claude
-environment," which is exactly this feature's renderer surface (task 088).
+> **Current renderer placement (task 097):** Agent Connections contains only Codex and Claude. The
+> complete environments list lives under the ordinary Claude detail as `ClaudeEnvironmentCard`;
+> environment CRUD, watcher, attribution, and plugin-install behavior remain available without a
+> separate connection category or runtime route.
 
 ## Scope decisions (why the design is shaped this way)
 
@@ -301,8 +304,9 @@ section's rule.
 
 The Hook payload carries no field today identifying which `CLAUDE_CONFIG_DIR` emitted a delivery —
 confirmed by inspection, not assumed. `src/shared/eyesOnAgents/claudeHookBridge.type.ts` gains a
-fourth schema version, following the exact event-conditional-optional-field precedent V3 used for
-`terminalApp`/`terminalSessionId`:
+fourth schema version, following the exact event-conditional-optional-field precedent used by V3.
+The older terminal-shaped fields inherited from V3 remain parseable only for queued-delivery and
+upgrade compatibility; they are not current visibility, routing, or renderer inputs:
 
 ```ts
 type ClaudeHookEnvironmentFieldAbsent = { claudeConfigDir?: never };
@@ -336,30 +340,19 @@ type ClaudeHookEvent = ClaudeHookEventV1 | ClaudeHookEventV2 | ClaudeHookEventV3
 - Following the same delegation rule task 081 established for V3: only a genuine `SessionStart`
   event bumps `schemaVersion` to `4`; every other `hookEventName` delegates straight through the
   unchanged V3 constructor and keeps emitting `schemaVersion: 3` (which itself still delegates
-  non-`SessionStart` events to the unchanged V2 constructor). Terminal identity and environment
-  identity are both `SessionStart`-only facts, so this chain of delegation is additive at every
-  level and never revisits an already-shipped constructor's behavior.
+  non-`SessionStart` events to the unchanged V2 constructor). Environment identity is a
+  `SessionStart`-only fact. The retained V3/V4 terminal fields and parser accept older queued
+  deliveries across an upgrade, but their values are ignored by current visibility, routing, and UI
+  behavior.
 
-> **Implementation note (task 087):** the task's own Path list did not name
-> `src/main/eyesOnAgents/claudeHookBridge.helper.ts`, but the helper subprocess's one call site is
-> the only place that actually invokes a version constructor at runtime — task 081 swapped this same
-> call site from `createClaudeHookEventV2` to `createClaudeHookEventV3` for the identical reason.
-> Leaving it on `createClaudeHookEventV3` would mean `CLAUDE_CONFIG_DIR` is never captured outside
-> tests, defeating this task's objective, so it now calls `createClaudeHookEventV4`. This has one
-> necessary, mechanical consequence: `eyesOnAgents.service.ts`'s pre-existing `iterm2SessionId`
-> derivation in `commitClaudeHookDeliveryInternal` (task 082) narrowed on `delivery.event.schemaVersion
-> === 3` to read `payload.terminalApp`; since a genuine `SessionStart` now legitimately arrives as
-> `schemaVersion: 4` (still carrying `terminalApp`/`terminalSessionId` unchanged), that check widened
-> to `schemaVersion === 3 || schemaVersion === 4` so already-shipped iTerm2 attribution keeps working
-> once V4 is live. No other part of the V3 terminal-identity capture or consumption logic changed.
-> The one pre-existing test asserting the real helper subprocess's `schemaVersion` for a genuine
-> `SessionStart` (`scripts/eyes-on-agents/claude-hook-terminal-identity.test.mjs`) was updated from
-> `3` to `4` for the same reason, mirroring task 082's precedent of updating exactly one pre-existing
-> test fixture when a new schema version legitimately changes real subprocess output.
+> **Implementation note (task 087, compatibility retained by task 097):** the helper subprocess
+> calls `createClaudeHookEventV4` so `CLAUDE_CONFIG_DIR` is captured outside tests. V3/V4 payloads
+> still accept their historical terminal fields so already-queued deliveries survive an upgrade,
+> but task 097 makes those values inert: they do not make a row visible, openable, or actionable.
 
-- `eyes_on_agents_thread` gains one more nullable column, `claude_config_dir TEXT`, populated the
-  same way `iterm2_session_id` is (independent COALESCE-preserve upsert; no collision/ambiguity
-  check). This is a raw path string, not a foreign key to `EyesOnAgentsClaudeEnvironment.id` —
+- `eyes_on_agents_thread` gains one more nullable column, `claude_config_dir TEXT`, populated by an
+  independent COALESCE-preserve upsert with no collision/ambiguity check. This is a raw path string,
+  not a foreign key to `EyesOnAgentsClaudeEnvironment.id` —
   environments can be renamed or removed independently of already-persisted thread rows, so
   attribution is resolved at snapshot-read time by matching a thread's `claude_config_dir` against
   the currently configured environments' `configDirectory` values (path-normalized comparison), not
@@ -382,24 +375,15 @@ pipeline.
 
 ## Renderer
 
-> **Implementation note (task 093):** the environment list no longer lives in
-> `ClaudeObservationCard.vue`. Owner feedback after configuring a real `claude2` environment was
-> that the UI never says the one thing that decides whether a CLI session appears — that it has to
-> be started inside iTerm2 — while the list sat next to Claude Desktop concerns it has nothing to do
-> with. The list moved whole into a new `ClaudeIterm2Card.vue`, rendered in a third Connections rail
-> section, **Claude in iTerm2**; the rail is now driven by a `ConnectionSection` union
-> (`'codex' | 'claude' | 'claude-iterm2'`) rather than the provider union, which survives only for
-> the logo. Every row control (add/rename/remove/enable, the inline path editor, per-row plugin
-> presence and its Install/Check action, per-row Retry, Copy setup command, Use automatic, the
-> guidance note) relocated unchanged. Two things did change: the new section states the iTerm2
-> requirement and the `/reload-plugins` caveat, and `Desktop metadata directories: N` left the rows
-> for the Claude section, shown **once** — it is the same platform-fixed number on every row
-> (`resolveClaudeDesktopRoots` derives from platform/home/env and never reads a `configDirectory`),
-> read from the environments array rather than from a new Main-side field, and rendered not at all
-> when no environment reports a usable value. Gating is unchanged: the single `Claude support`
-> switch stays in the Claude section and folds both cards.
+The ordinary Claude detail contains `ClaudeObservationCard.vue` followed by
+`ClaudeEnvironmentCard.vue`. The environment card owns the complete general-purpose environment
+list and every existing row control: add, rename, remove, enable, inline path editing, plugin
+presence with Install/Check, per-row Retry, Copy setup command, Use automatic, and the guidance
+note. `Desktop metadata directories: N` remains in the observation card and renders once because it
+is the same platform-fixed value for every environment. The single **Claude support** switch gates
+both cards.
 
-`ClaudeObservationCard.vue`'s single directory block becomes an environment list, structurally
+`ClaudeEnvironmentCard.vue` renders the environment list, structurally
 mirroring the already-shipped `claudeSubscription` accounts list pattern in this codebase (a proven
 precedent for "user-managed list of named, independently enabled/status-tracked entities" — add,
 rename, remove, enable/disable):
@@ -573,9 +557,8 @@ present and enabled in this `CLAUDE_CONFIG_DIR`?* — and nothing else.
 - Verifying that the user's wrapper actually exports `CLAUDE_CONFIG_DIR` correctly. Task 090's probe
   inspects the *directory*, not the user's shell configuration; a wrapper that silently fails to set
   the variable shows up as sessions landing on the wrong environment, not as a probe failure.
-- WezTerm/Ghostty terminal support (unchanged from
-  [EyesOnAgents iTerm2 Open](eyes-on-agents-iterm2-open.md)). Task 093's **Claude in iTerm2** section
-  explains the current limitation to the user; widening it remains this same non-goal.
+- Creating an additional Open route from environment attribution. Only a trusted Claude Desktop
+  mapping makes a Claude thread visible and provider-openable.
 - De-duplicating the Desktop metadata watcher. N environments each spawn a watcher over the *same*
   platform-fixed Claude Desktop metadata root, which is why task 093 shows the directory count once
   instead of per row. Collapsing that to one shared Desktop watcher is a real improvement but a
@@ -603,7 +586,8 @@ present and enabled in this `CLAUDE_CONFIG_DIR`?* — and nothing else.
 - A Claude Code session started with that second environment's `CLAUDE_CONFIG_DIR` is discovered
   (via its own watcher) and/or Hook-observed (via the shared installation, since the same
   `installationId`/socket serves every environment) exactly as the default environment's sessions
-  are today, including the already-shipped iTerm2 Open path.
+  are today. That observation alone does not render a card; a trusted Desktop mapping remains the
+  visibility and Open authority.
 - That session's thread row records `claude_config_dir` matching the second environment's directory;
   the renderer resolves and displays that environment's label without persisting a foreign key to it.
 - Removing an environment stops only its watcher and removes it from the configured list; it does
@@ -658,11 +642,10 @@ Assuming a `claude2` wrapper already exists (the owner's is `/usr/local/bin/clau
 | 4 | Read both rows' presence pills | both likely **Plugin not installed** — the preview plugin is not in either directory yet |
 | 5 | Click **Install plugin** on the `claude2` row only | that row flips to **Plugin installed**; the default row stays **not installed** — this is the whole point of task 090 |
 | 6 | Confirm isolation on disk | `~/.claude2/settings.json` gains the preview hook; `~/.claude/settings.json` is untouched |
-| 7 | Run `claude2` in an **iTerm2** pane and send one prompt | a row appears in Focus tagged with the `claude2` environment label |
-| 8 | Use that row's **Open in iTerm2** | focus jumps back to that exact pane |
-| 9 | Run plain `claude` in another iTerm2 pane | a second row appears, attributed to the default environment, both live at once |
-| 10 | Rename the `claude2` environment | the label updates on the row and on its threads; no re-probe, no CLI spawn |
-| 11 | Try **Remove** on the last remaining environment | disabled, with the explanatory hint |
+| 7 | Run `claude2` and send one prompt | Hook delivery is accepted for that environment; it does not create a Focus/search card without a trusted Desktop mapping |
+| 8 | Inspect a Desktop-mapped Claude row's menu | the provider action opens Claude and no terminal-specific action is present |
+| 9 | Rename the `claude2` environment | the label updates on matching thread metadata; no re-probe, no CLI spawn |
+| 10 | Try **Remove** on the last remaining environment | disabled, with the explanatory hint |
 
 **Copy setup command** is *not* on this path when a wrapper already exists — step 3 replaces it. Use
 it only to check the snippet it produces (see the shell caveat below).

@@ -235,33 +235,44 @@ test('the selection is dropped when its rows go away', () => {
   assert.match(controller, /apply\(intent[\s\S]*?this\.retain\(\);/);
 });
 
-test('locating the previewed file collapses the tree selection onto it', () => {
+test('every anchor move without a click collapses the tree selection onto that row', () => {
   // Ral 2026-09-04: open a file from global search, click locate, and the row arrived without a
   // highlight. `isSelected` answers from `anchorPath` (or an explicit multi-selection) before it
   // falls back to `treeSelectedRelativePath`, and a file opened from search was never clicked in the
-  // tree, so the stale anchor kept the highlight.
-  const app = source('src/renderer/onlypreview/shell/src/App.vue');
-  const locate = app.slice(
-    app.indexOf('const locateCurrentFile'),
-    app.indexOf('const handleTreeKeydown')
+  // tree, so the stale anchor kept the highlight. Locate, an inherited watch selection, and an
+  // explicit reveal all re-anchor deliberately, so all three collapse.
+  const store = source('src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts');
+  const controller = source('src/renderer/onlypreview/shell/src/onlyPreviewTreeSelection.store.ts');
+
+  assert.match(store, /collapseTreeSelection: \(\) => void = \(\) => \{\};/);
+
+  const locate = store.slice(
+    store.indexOf('async locateSelectedFile('),
+    store.indexOf('async showFileContextMenu(')
   );
-  assert.match(locate, /onlyPreviewTreeSelection\.clear\(\)/);
-  // Gated on the same precondition `locateSelectedFile` uses, so locating nothing cannot wipe a
-  // real selection.
-  assert.match(locate, /if \(onlyPreviewShellStore\.selectedRelativePath\)/);
+  // After the guard, so locating nothing cannot wipe a real selection.
   assert.ok(
-    locate.indexOf('onlyPreviewTreeSelection.clear()') <
-      locate.indexOf('locateSelectedFile()'),
-    'the selection collapses before the anchor moves'
+    locate.indexOf('if (!this.selectedRelativePath) return') <
+      locate.indexOf('this.collapseTreeSelection()'),
+    'locate collapses only once it has something to locate'
   );
 
-  // The fallback the fix depends on: with no explicit anchor and no multi-selection, the tree
-  // highlight follows `treeSelectedRelativePath`.
-  const controller = source('src/renderer/onlypreview/shell/src/onlyPreviewTreeSelection.store.ts');
+  const center = store.slice(
+    store.indexOf('private centerTreeRow('),
+    store.indexOf('private clearBrowseProjection(')
+  );
+  assert.match(center, /this\.collapseTreeSelection\(\);\s*this\.treeSelectedRelativePath = relativePath;/);
+
+  // Registered from the controller, because the store must not import it back — the controller
+  // already imports the store, and its own comments record fighting that cycle.
   assert.match(
     controller,
-    /clear\(\): void \{\s*this\.paths = \[\];\s*this\.anchorPath = null;/
+    /onlyPreviewShellStore\.collapseTreeSelection = \(\) => onlyPreviewTreeSelection\.clear\(\);/
   );
+  assert.doesNotMatch(store, /from '\.\/onlyPreviewTreeSelection\.store'/);
+
+  // The fallback the fix depends on.
+  assert.match(controller, /clear\(\): void \{\s*this\.paths = \[\];\s*this\.anchorPath = null;/);
   assert.match(
     controller,
     /get anchor\(\): string \| null \{\s*return this\.anchorPath \?\? this\.host\.treeSelectedRelativePath;/

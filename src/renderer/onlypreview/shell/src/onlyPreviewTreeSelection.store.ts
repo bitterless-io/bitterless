@@ -134,6 +134,21 @@ export const onlyPreviewTreeSelection = reactive(
 );
 
 /**
+ * Collapse the tree selection onto whatever row the shell store just anchored.
+ *
+ * `isSelected` answers from `anchorPath`, and from an explicit multi-selection, before it falls back
+ * to `treeSelectedRelativePath`. So every path that moves the anchor *without a click* — locate, a
+ * watch commit that inherited the selection onto a new path, an explicit reveal — has to say so, or
+ * the row arrives with the highlight still on whatever was clicked before. Opening a file from
+ * global search makes it visible every time: that file was never clicked in the tree at all.
+ *
+ * Registered from here rather than imported there. This module already depends on the shell store,
+ * the reverse import would close a cycle, and the store is at its 800-line budget. The no-op default
+ * means an unregistered controller degrades to the previous behaviour instead of throwing.
+ */
+onlyPreviewShellStore.collapseTreeSelection = () => onlyPreviewTreeSelection.clear();
+
+/**
  * Open the Project row menu, carrying the selection.
  *
  * It lives here rather than in the shell store for two reasons: the store is at its 800-line budget,

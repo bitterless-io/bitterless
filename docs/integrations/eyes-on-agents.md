@@ -434,7 +434,7 @@ All view nor Focus is stored as a separate table row.
 | `provider` | `codex` or `claude` |
 | `thread_id` | validated provider-owned UUID; unique together with `provider` |
 | `desktop_session_id` | nullable validated Claude Desktop `local_<uuid>` identity used only for UI routing |
-| `iterm2_session_id` | nullable validated `ITERM_SESSION_ID` (`w<n>t<n>p<n>:<uuid>`) captured on `SessionStart` inside iTerm2, used only for UI routing to **Open in iTerm2** |
+| `iterm2_session_id` | retained nullable historical compatibility value; no current visibility, routing, or UI behavior reads it |
 | `claude_config_dir` | nullable `CLAUDE_CONFIG_DIR` absolute path captured on `SessionStart` (schema V4); not a foreign key — resolved against currently configured Claude environments at snapshot-read time |
 | `domain_id` | non-null reference to an active EyesOnAgents Domain |
 | `title` | Codex name/preview fallback, display only |
@@ -456,6 +456,11 @@ All view nor Focus is stored as a separate table row.
 | `status_observed_at` | freshness boundary for runtime evidence |
 | `last_activity_at` | sort/display timestamp from reliable metadata or events |
 | `created_at`, `updated_at` | local lifecycle timestamps |
+
+The historical terminal identity column and V3/V4 Hook payload fields remain readable solely for
+upgrade compatibility. Old queued deliveries are accepted and existing rows are left untouched, but
+current ingestion does not use those values for visibility, Open routing, renderer state, or any
+user action. There is no migration that drops or rewrites the retained data.
 
 ### `eyes_on_agents_thread_snapshot`
 
@@ -768,7 +773,6 @@ EyesOnAgentsHandler (main)
   syncThreads()
   refreshThreadPages() -> { changed }
   openThread({ sessionKey })
-  openThreadInIterm2({ sessionKey })
   previewClaudeTranscript({ sessionKey })
   markAllRead()
   installCodexBridge()

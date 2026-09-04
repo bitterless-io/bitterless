@@ -660,8 +660,7 @@ export const en = {
     title: 'EyesOnAgents',
     provider: {
       codex: 'Codex',
-      claude: 'Claude',
-      claudeIterm2: 'iTerm2'
+      claude: 'Claude'
     },
     completionNotification: {
       title: 'Thread finished',
@@ -827,14 +826,6 @@ export const en = {
       installPlugin: 'Install plugin',
       checkPlugin: 'Check plugin'
     },
-    claudeIterm2: {
-      title: 'Claude in iTerm2',
-      requirement:
-        'A CLI Claude session becomes visible only once its hook reports an identity, so start it '
-        + 'inside iTerm2 — a session started in Terminal.app or an editor terminal has no Claude '
-        + 'Desktop match and never appears here. An already-running session needs /reload-plugins, '
-        + 'or a fresh session, before its hook is loaded.'
-    },
     actions: {
       sync: 'Sync',
       refresh: 'Refresh',
@@ -846,7 +837,6 @@ export const en = {
       close: 'Close EyesOnAgents',
       openInCodex: 'Open in Codex',
       openInClaude: 'Open in Claude',
-      openInIterm2: 'Open in iTerm2',
       doubleClickHint: '(double click)',
       markRead: 'Mark as read',
       markUnread: 'Mark as unread',

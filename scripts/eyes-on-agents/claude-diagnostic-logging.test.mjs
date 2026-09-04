@@ -248,7 +248,7 @@ const delivery = ({ deliveryId, hookEventName, occurredAt, terminal = false, con
 
 const deliveryId = (index) => `5${index}555555-5555-4555-8555-555555555555`;
 
-test('every hook event logs its session, schemaVersion, terminal identity and attribution', async () => {
+test('every hook event logs its session, schemaVersion and environment attribution', async () => {
   const harness = createHarness();
   const capture = captureConsoleInfo();
   let lines = [];
@@ -282,12 +282,11 @@ test('every hook event logs its session, schemaVersion, terminal identity and at
     'SessionEnd'
   ].map((hookEventName) => (
     `[claude-hook] event=${hookEventName} session=${SESSION_ID} schemaVersion=2 `
-    + 'terminalIdentity=false terminalApp=none terminalSession=none '
     + 'environmentAttribution=false transcript=true'
   )), 'each hook event must be traceable to its session, not just SessionStart');
 });
 
-test('a SessionStart carrying terminal identity and attribution logs both, never a path', async () => {
+test('a legacy SessionStart terminal identity is ignored while attribution remains path-free', async () => {
   const harness = createHarness();
   const capture = captureConsoleInfo();
   let lines = [];
@@ -306,13 +305,11 @@ test('a SessionStart carrying terminal identity and attribution logs both, never
   }
   assert.deepEqual(lines, [
     `[claude-hook] event=SessionStart session=${SESSION_ID} schemaVersion=4 `
-    + `terminalIdentity=true terminalApp=iterm2 terminalSession=${ITERM_SESSION_ID} `
     + 'environmentAttribution=true transcript=true'
   ]);
   assert.equal(lines[0].includes(CLAUDE_CONFIG_DIR), false);
   assert.equal(lines[0].includes(TRANSCRIPT_PATH), false);
   assert.equal(lines[0].includes(CWD), false);
-  // The same rule the [claude-iterm2] helper is held to: an identifier may be logged, a path never.
   for (const line of lines) {
     assert.equal(line.includes('/'), false, `a log line must never carry a path: ${line}`);
   }
@@ -345,21 +342,16 @@ test('the hook log line shape is stable and path-free for every field combinatio
       hookEventName: 'SessionEnd',
       sessionId: SESSION_ID,
       schemaVersion: 1,
-      terminalApp: null,
-      terminalSessionId: null,
       environmentAttribution: false,
       transcript: false
     }),
     `[claude-hook] event=SessionEnd session=${SESSION_ID} schemaVersion=1 `
-    + 'terminalIdentity=false terminalApp=none terminalSession=none '
     + 'environmentAttribution=false transcript=false'
   );
   const line = buildClaudeHookLogLine({
     hookEventName: 'SessionStart',
     sessionId: SESSION_ID,
     schemaVersion: 4,
-    terminalApp: 'iterm2',
-    terminalSessionId: ITERM_SESSION_ID,
     environmentAttribution: true,
     transcript: true
   });
@@ -389,7 +381,7 @@ test('threads held back by the visibility gate are logged once, bounded, with th
   assert.equal(lines.length, 1, 'a steady-state hold must be logged once, not once per snapshot');
   assert.equal(
     lines[0],
-    '[claude-visibility] gate=terminal_identity_missing '
+    '[claude-visibility] gate=desktop_identity_missing '
     + `held=${HELD_IDS.length} named=${CLAUDE_VISIBILITY_GATE_LOG_ID_LIMIT} `
     + `ids=${HELD_IDS.slice(0, CLAUDE_VISIBILITY_GATE_LOG_ID_LIMIT)
         .map((threadId) => `claude:${threadId}`).join(',')}`
@@ -397,7 +389,7 @@ test('threads held back by the visibility gate are logged once, bounded, with th
   assert.equal(lines[0].includes('/'), false, 'a log line must never carry a path');
 });
 
-test('a thread that gains an identity stops being reported as held', async () => {
+test('a historical terminal identity stays held until a trusted Desktop identity arrives', async () => {
   const held = persistedThread({ threadId: HELD_IDS[0] });
   const harness = createHarness({ threads: [held] });
   const capture = captureConsoleInfo();
@@ -406,7 +398,12 @@ test('a thread that gains an identity stops being reported as held', async () =>
     await initialize(harness);
     await harness.service.getSnapshot();
     held.iterm2SessionId = ITERM_SESSION_ID;
-    await harness.service.getSnapshot();
+    assert.deepEqual((await harness.service.getSnapshot()).threads, []);
+    held.desktopSessionId = `local_${HELD_IDS[0]}`;
+    assert.deepEqual(
+      (await harness.service.getSnapshot()).threads.map(({ threadId }) => threadId),
+      [HELD_IDS[0]],
+    );
     lines = capture.lines.filter((line) => line.startsWith('[claude-visibility]'));
   } finally {
     capture.restore();

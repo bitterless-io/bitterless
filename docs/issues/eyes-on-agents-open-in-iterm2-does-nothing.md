@@ -1,9 +1,8 @@
 # Open in iTerm2 does nothing
 
-Status: Repaired in source by
-[task 094](../plan/tasks/eyes-on-agents-iterm2-reveal-applescript-094.md); owner runtime
-verification pending — the Apple Events entitlement only lands in a freshly packaged build, and the
-first use raises the one-time macOS Automation prompt
+Status: Closed by removal in
+[task 097](../plan/tasks/eyes-on-agents-remove-iterm2-claude-097.md); the action, transport, and
+Automation entitlement no longer ship
 
 Reported: 2026-09-04, by the owner, from the packaged Preview build
 

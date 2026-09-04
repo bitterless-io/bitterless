@@ -3,6 +3,7 @@ import {
   BaseWindow,
   BrowserWindow,
   screen,
+  View,
   webContents as electronWebContents,
   WebContentsView,
   type Input,
@@ -227,6 +228,11 @@ const settingsBoundsForParent = (
 
 export class OnlyPreviewWindowHelper {
   baseWindow: BaseWindow | null = null;
+  // The composite's own parent. Every OnlyPreview layer is a child of this container rather than of
+  // the window, so the four views move as one native object and the layer order inside them is
+  // independent of whatever else a host window stacks. In this mount it simply fills the window's
+  // content rect, which leaves every layer on the coordinates it had before.
+  surfaceContainer: View | null = null;
   shellView: WebContentsView | null = null;
   settingsWindow: BrowserWindow | null = null;
   agentSkillGuideWindow: BrowserWindow | null = null;
@@ -716,14 +722,18 @@ export class OnlyPreviewWindowHelper {
     onlyPreviewAlertWindowService.destroy();
     onlyPreviewGlobalSearchWindowService.destroy();
     onlyPreviewPreviewRegionService.destroy();
+    const surfaceContainer = this.surfaceContainer;
     this.baseWindow = null;
+    this.surfaceContainer = null;
     this.shellView = null;
     this.baseWindowState = null;
     fileSearchWindowService.stop();
     onlyPreviewViewLayerService.stop();
     if (window && !window.isDestroyed()) {
       try {
-        if (shellView) window.contentView.removeChildView(shellView);
+        // One detach for the whole composite: the layers are children of the container, so removing
+        // the container takes them with it.
+        if (surfaceContainer) window.contentView.removeChildView(surfaceContainer);
       } catch {
         // The view may already have been detached by Electron during teardown.
       }
@@ -892,10 +902,14 @@ export class OnlyPreviewWindowHelper {
     });
     this.shellView = shellView;
     this.shellStartupLease = { hostToken: host.hostToken, window, view: shellView };
+    const surfaceContainer = new View();
+    this.surfaceContainer = surfaceContainer;
+    window.contentView.addChildView(surfaceContainer);
+    this.syncSurfaceBounds();
     // A `BaseWindow` has no web contents of its own, so the shell — the project rail, toolbar,
-    // status bar and find bar — is a full-window `WebContentsView` and belongs in the stack as its
-    // lowest layer rather than outside it.
-    onlyPreviewViewLayerService.start(window);
+    // status bar and find bar — fills the composite as a `WebContentsView` and belongs in the stack
+    // as its lowest layer rather than outside it.
+    onlyPreviewViewLayerService.start(surfaceContainer);
     onlyPreviewViewLayerService.show('base', 'shell', shellView);
     // The constructor only carries width/height/x/y. WindowStateController.show() is what applies
     // the persisted bounds and any saved maximize/full-screen, so the listener has to exist before
@@ -904,6 +918,7 @@ export class OnlyPreviewWindowHelper {
     window.on('resize' as any, () => {
       if (this.baseWindow !== window) return;
       const [width, height] = window.getContentSize();
+      this.syncSurfaceBounds();
       shellView.setBounds({ x: 0, y: 0, width, height });
       // Unconditional, unlike the preview's own bounds below: a dialog can be open before any file
       // has been previewed, and it still has to cover the resized window.
@@ -1137,9 +1152,25 @@ export class OnlyPreviewWindowHelper {
   }
 
   private applyInitialBounds(): void {
-    if (!this.baseWindow || !this.shellView) return;
-    const [width, height] = this.baseWindow.getContentSize();
-    this.shellView.setBounds({ x: 0, y: 0, width, height });
+    const size = this.syncSurfaceBounds();
+    if (!size || !this.shellView) return;
+    this.shellView.setBounds({ x: 0, y: 0, ...size });
+  }
+
+  /**
+   * Keep the composite's container over the window's content rect.
+   *
+   * The one place the standalone mount translates a window into a surface size. Layer rects stay
+   * relative to the container, so this is also the only place that has to change when a host other
+   * than a window supplies that rect.
+   */
+  private syncSurfaceBounds(): { width: number; height: number } | null {
+    const window = this.baseWindow;
+    const container = this.surfaceContainer;
+    if (!window || window.isDestroyed()) return null;
+    const [width, height] = window.getContentSize();
+    container?.setBounds({ x: 0, y: 0, width, height });
+    return { width, height };
   }
 
   private finishShellOpenTrace(

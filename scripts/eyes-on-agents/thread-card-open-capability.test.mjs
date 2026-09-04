@@ -155,7 +155,7 @@ const stubsPlugin = {
 };
 
 const createStore = (overrides = {}) => {
-  const calls = { open: [], openIterm2: [], readState: [], copyPath: [], archive: [] };
+  const calls = { open: [], readState: [], copyPath: [], archive: [] };
   return {
     calls,
     busyAction: null,
@@ -164,7 +164,6 @@ const createStore = (overrides = {}) => {
     // that wants a resolved label passes its own resolver via overrides.
     resolveClaudeEnvironmentLabel: () => null,
     openThread: async (sessionKey) => calls.open.push(sessionKey),
-    openThreadInIterm2: async (sessionKey) => calls.openIterm2.push(sessionKey),
     setThreadUnread: async (sessionKey, isUnread) => calls.readState.push([sessionKey, isUnread]),
     copySessionPath: async (sessionKey) => calls.copyPath.push(sessionKey),
     archiveThread: async (sessionKey) => calls.archive.push(sessionKey),
@@ -246,11 +245,17 @@ try {
           element.textContent ?? '',
         );
     });
-  const activeContextDropdown = () => [
-    ...document.body.querySelectorAll(
-      '.arco-trigger-position-bottom .arco-dropdown, .arco-trigger-position-top .arco-dropdown',
-    ),
-  ].find((element) => element.closest('.arco-trigger-popup-wrapper')?.style.display !== 'none');
+  // Placement can change as the shared menu's height changes. The pointer popup is teleported after
+  // the More popup, so choose the last visible shared menu rather than coupling to a placement class.
+  const activeContextDropdown = () => [...document.body.querySelectorAll('.arco-dropdown')]
+    .reverse()
+    .find((element) => {
+      const wrapper = element.closest('.arco-trigger-popup-wrapper');
+      return wrapper?.style.display !== 'none'
+        && /Archive|Copy session path|Mark as (read|unread)|Open in/.test(
+          element.textContent ?? '',
+        );
+    });
   const optionTexts = (dropdown) => [...dropdown.querySelectorAll('.arco-dropdown-option')]
     .map((element) => element.textContent?.replace(/\s+/gu, ' ').trim() ?? '');
   const clickOption = async (dropdown, pattern) => {
@@ -551,6 +556,7 @@ try {
       await nextTick();
       await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
       await nextTick();
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
       const dropdown = activeContextDropdown();
       assert.ok(dropdown);
       assert.deepEqual(
@@ -564,7 +570,7 @@ try {
     }
   });
 
-  await test('a CLI-only Claude row exposes Open in iTerm2 without enabling the primary Open route', async () => {
+  await test('a historical terminal identity does not make a CLI-only Claude row openable', async () => {
     const cliOnlyThread = createThread({
       iterm2SessionId: 'w0t0p0:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
     });
@@ -575,7 +581,7 @@ try {
       assert.equal(
         card.hasAttribute('tabindex'),
         false,
-        'canOpenThread stays false for a CLI-only row even with an iTerm2 identity',
+        'canOpenThread stays false without a trusted Desktop identity',
       );
 
       card.dispatchEvent(new KeyboardEvent('keydown', {
@@ -593,19 +599,17 @@ try {
       assert.ok(dropdown);
       assert.deepEqual(
         optionTexts(dropdown),
-        ['Open in iTerm2', 'Mark as unread', 'Copy session path'],
-        'the dropdown offers the new action even though there is no primary Open item',
+        ['Mark as unread', 'Copy session path'],
+        'the retired terminal identity does not expose an open action',
       );
-      await clickOption(dropdown, /Open in iTerm2/);
-      assert.deepEqual(mounted.store.calls.openIterm2, [cliOnlyThread.sessionKey]);
-      assert.deepEqual(mounted.store.calls.open, [], 'Open in iTerm2 never calls the primary open route');
+      assert.deepEqual(mounted.store.calls.open, []);
     } finally {
       mounted.app.unmount();
       document.body.innerHTML = '';
     }
   });
 
-  await test('a row with both desktopSessionId and iterm2SessionId offers both open routes at once', async () => {
+  await test('a Desktop-routable row ignores a historical terminal identity', async () => {
     const bothThread = createThread({
       desktopSessionId: 'local_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       iterm2SessionId: 'w0t0p0:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
@@ -625,12 +629,9 @@ try {
       assert.ok(dropdown);
       assert.deepEqual(
         optionTexts(dropdown),
-        ['Open in Claude (double click)', 'Open in iTerm2', 'Mark as unread', 'Copy session path'],
-        'neither open route hides the other when both identities are present',
+        ['Open in Claude (double click)', 'Mark as unread', 'Copy session path'],
+        'only the trusted Desktop route is exposed',
       );
-      await clickOption(dropdown, /Open in iTerm2/);
-      assert.deepEqual(mounted.store.calls.openIterm2, [bothThread.sessionKey]);
-      assert.deepEqual(mounted.store.calls.open, [], 'Open in iTerm2 never calls the Desktop open route');
     } finally {
       mounted.app.unmount();
       document.body.innerHTML = '';

@@ -450,25 +450,6 @@ export const buildEyesOnAgentsClaudeDesktopDeepLink = (
   return `claude://claude.ai/epitaxy/${parsed}`;
 };
 
-// Task 094: iTerm2's own session id is the bare UUID half of ITERM_SESSION_ID
-// (`w{window}t{tab}p{pane}:{UUID}`) — `get id of current session ...` returns the UUID with no
-// `w0t1p1:` prefix, measured on a running iTerm2. The stored value stays the verbatim captured
-// environment variable (the capture is faithful and correct); the UUID the reveal transport needs is
-// derived here, at open time. There is deliberately no `iterm2:///reveal` URL builder anymore: that
-// scheme accepts the URL and does nothing, with either the full or the bare id (A/B measured — see
-// docs/issues/eyes-on-agents-open-in-iterm2-does-nothing.md).
-// Returns null rather than throwing so an unexpected stored value is an actionable "no session
-// UUID" outcome the caller can log and report, not a crash inside a snapshot read.
-export const extractEyesOnAgentsIterm2SessionUuid = (value: unknown): string | null => {
-  if (typeof value !== 'string') return null;
-  if (!CLAUDE_HOOK_ITERM2_SESSION_ID_PATTERN.test(value)) return null;
-  const uuid = value.slice(value.indexOf(':') + 1);
-  // The shape pattern above only bounds the UUID half to 36 hex/dash characters, so the strict
-  // UUID_PATTERN this file already uses is what decides whether the derived value may be handed to
-  // the AppleScript transport as a process argument.
-  return UUID_PATTERN.test(uuid) ? uuid.toLowerCase() : null;
-};
-
 // Task 089: derives the wrapper's shell function name from an environment label. Kept exported so
 // the fallback/collision rules are testable on their own, independently of the emitted snippet.
 export const deriveEyesOnAgentsClaudeEnvironmentFunctionName = (label: string): string => {

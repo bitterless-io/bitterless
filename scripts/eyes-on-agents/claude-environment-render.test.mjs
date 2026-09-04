@@ -12,10 +12,9 @@ import { JSDOM } from 'jsdom';
 // correct payload, and remove staying disabled for the last remaining environment. Mirrors
 // thread-card-open-capability.test.mjs's real-DOM mount/click harness (not source-pattern
 // matching) so these are genuine behavioral assertions.
-// Task 093: the environment list moved into its own rail section, so this suite now mounts
-// ClaudeIterm2Card.vue. Every behavioral assertion below is unchanged except the desktop-directory
-// count, which is deliberately no longer a per-row fact (it is shown once in the Claude card —
-// see claude-setup-render.test.mjs).
+// The environment list is a dedicated card inside the Claude connection page. The
+// desktop-directory count is deliberately not a per-row fact (it is shown once in the observation
+// card — see claude-setup-render.test.mjs).
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const buildRoot = mkdtempSync(join(projectRoot, '.eyes-claude-environment-render-'));
@@ -118,7 +117,7 @@ const stubsPlugin = {
           contents: `
           const current = () => globalThis.__eyesOnAgentsClaudeEnvironmentHarness.store;
           // Mirrors eyesOnAgents.store.ts's exported Add-environment busy key, which
-          // ClaudeIterm2Card.vue imports instead of declaring its own literal.
+          // ClaudeEnvironmentCard.vue imports instead of declaring its own literal.
           export const ADD_CLAUDE_ENVIRONMENT_KEY = '__add__';
           export const eyesOnAgentsStore = new Proxy({}, {
             get: (_target, key) => current()[key],
@@ -220,11 +219,11 @@ const createStore = (
 };
 
 try {
-  const outfile = join(buildRoot, 'ClaudeIterm2Card.mjs');
+  const outfile = join(buildRoot, 'ClaudeEnvironmentCard.mjs');
   await build({
     entryPoints: [join(
       projectRoot,
-      'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ClaudeIterm2Card.vue',
+      'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ClaudeEnvironmentCard.vue',
     )],
     outfile,
     bundle: true,
@@ -236,7 +235,7 @@ try {
     plugins: [stubsPlugin, vuePlugin],
   });
 
-  const { default: ClaudeIterm2Card } = await import(
+  const { default: ClaudeEnvironmentCard } = await import(
     `${pathToFileURL(outfile).href}?v=${Date.now()}`
   );
 
@@ -246,7 +245,7 @@ try {
     globalThis.__eyesOnAgentsClaudeEnvironmentHarness = { store };
     const host = document.getElementById('claude-observation-root');
     const { h } = await import('vue');
-    const app = createApp({ render: () => h(ClaudeIterm2Card) });
+    const app = createApp({ render: () => h(ClaudeEnvironmentCard) });
     app.use(ArcoVue);
     app.mount(host);
     await nextTick();
@@ -661,19 +660,14 @@ try {
     }
   });
 
-  // Task 093: the section explains the one thing that actually decides whether a CLI session shows
-  // up — it has to be started inside iTerm2 — and stays governed by the single Claude support
-  // toggle that lives in the Claude section.
-  await test('the section states the iTerm2 requirement and folds to the paused line when Claude is off', async () => {
+  await test('the generic environment card has no terminal requirement and folds when Claude is off', async () => {
     const mounted = await mountCard([createEnvironment()]);
     try {
-      const note = mounted.host.querySelector(
-        '[name="eyesOnAgents__connections__claudeIterm2Requirement"]',
-      );
-      assert.ok(note, 'the iTerm2 requirement must be stated in this section');
-      assert.match(note.textContent ?? '', /inside iTerm2/);
-      assert.match(note.textContent ?? '', /Terminal\.app/);
-      assert.match(note.textContent ?? '', /\/reload-plugins/);
+      assert.ok(mounted.host.querySelector(
+        '[name="eyesOnAgents__connections__claudeEnvironment"]',
+      ));
+      assert.match(mounted.host.textContent ?? '', /Claude environments/);
+      assert.doesNotMatch(mounted.host.textContent ?? '', /iTerm2|Terminal\.app/);
     } finally {
       mounted.app.unmount();
       document.body.innerHTML = '';

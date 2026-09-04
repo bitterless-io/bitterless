@@ -37,26 +37,26 @@ const createView = (name) => ({
   }
 });
 
-const createWindow = () => {
+// The layers are children of the composite's container `View`, not of the window: a plain `View`
+// parents a `WebContentsView` and reorders a child it already contains exactly as a window's
+// `contentView` does (measured on Electron 40.10.6), so the stub is the same shape one level down.
+const createContainer = () => {
   const order = [];
   return {
     order,
-    isDestroyed: () => false,
-    contentView: {
-      addChildView(view) {
-        const current = order.indexOf(view);
-        if (current >= 0) order.splice(current, 1);
-        order.push(view);
-      }
+    addChildView(view) {
+      const current = order.indexOf(view);
+      if (current >= 0) order.splice(current, 1);
+      order.push(view);
     }
   };
 };
 
 const harness = () => {
   const service = new OnlyPreviewViewLayerService();
-  const window = createWindow();
-  service.start(window);
-  return { service, window, names: () => window.order.map(({ name }) => name) };
+  const container = createContainer();
+  service.start(container);
+  return { service, container, names: () => container.order.map(({ name }) => name) };
 };
 
 test('the layer order is fixed and the sort re-adds every shown view lowest first', () => {
@@ -156,8 +156,8 @@ test('hide is scoped to its owner, and a destroyed view is dropped rather than t
   assert.equal(service.ownerOf('main'), null);
 });
 
-test('the sort is idempotent and survives a destroyed or absent window', () => {
-  const { service, window, names } = harness();
+test('the sort is idempotent and does nothing without a container', () => {
+  const { service, container, names } = harness();
   service.show('base', 'shell', createView('shell'));
   service.show('main', 'preview', createView('preview'));
   const before = names();
@@ -165,13 +165,12 @@ test('the sort is idempotent and survives a destroyed or absent window', () => {
   service.resort();
   assert.deepEqual(names(), before);
 
-  window.isDestroyed = () => true;
-  service.resort();
-  assert.deepEqual(names(), before, 'a destroyed window is left alone');
-
+  // `View` has no `isDestroyed()`, so teardown is expressed by the container going away rather than
+  // by asking it whether it is still alive. After `stop()` the sort must touch nothing.
   service.stop();
   service.resort();
   assert.equal(service.ownerOf('base'), null);
+  assert.deepEqual(container.order.map(({ name }) => name), before, 'a stopped sort re-adds nothing');
 });
 
 test('OnlyPreview child-view stacking lives in exactly one file', () => {
@@ -181,15 +180,22 @@ test('OnlyPreview child-view stacking lives in exactly one file', () => {
   // left the overlay buried. Only the layer service may add a child view.
   assert.match(
     source('src/main/onlypreview/views/onlyPreviewViewLayer.service.ts'),
-    /window\.contentView\.addChildView\(occupant\.view\)/
+    /container\.addChildView\(occupant\.view\)/
   );
   for (const path of [
     'src/main/onlypreview/views/onlyPreviewPreviewView.service.ts',
-    'src/main/onlypreview/views/onlyPreviewGlobalSearchView.service.ts',
-    'src/main/windows/onlyPreviewWindow.helper.ts'
+    'src/main/onlypreview/views/onlyPreviewGlobalSearchView.service.ts'
   ]) {
     assert.doesNotMatch(source(path), /contentView\.addChildView\(/, `${path} must not raise views`);
   }
+  // The window helper attaches the composite's container to its host — one call, and never a layer.
+  // Attaching the whole surface is not raising a view inside it, which is what this file forbids.
+  const helper = source('src/main/windows/onlyPreviewWindow.helper.ts');
+  assert.deepEqual(
+    helper.match(/contentView\.addChildView\([^)]*\)/g),
+    ['contentView.addChildView(surfaceContainer)'],
+    'the helper may attach only the surface container'
+  );
   // And nothing may reach back into the overlay to re-raise it after a preview attach.
   for (const path of [
     'src/main/onlypreview/views/onlyPreviewPreviewView.service.ts',

@@ -74,6 +74,8 @@ export class OnlyPreviewShellStore {
   settings: OnlyPreviewSettings | null = null;
   selectedRelativePath = '';
   treeSelectedRelativePath: string | null = null;
+  /** Set by `onlyPreviewTreeSelection.store.ts`, which documents why. */
+  collapseTreeSelection: () => void = () => {};
   selectedCharacterCount = 0;
   previewPresentation: OnlyPreviewPreviewPresentation | null = null;
   previewActionError = '';
@@ -232,6 +234,7 @@ export class OnlyPreviewShellStore {
   }
   async locateSelectedFile(): Promise<string> {
     if (!this.selectedRelativePath) return '';
+    this.collapseTreeSelection();
     this.treeSelectedRelativePath = this.selectedRelativePath;
     this.expandSelectedParents();
     await this.loadSelectedParentListings();
@@ -637,6 +640,7 @@ export class OnlyPreviewShellStore {
   }
 
   private centerTreeRow(relativePath: string): void {
+    this.collapseTreeSelection();
     this.treeSelectedRelativePath = relativePath;
     this.focusedRelativePath = relativePath;
     this.centerProjectRelativePath = relativePath;

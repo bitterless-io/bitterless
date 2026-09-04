@@ -173,7 +173,10 @@ try {
         persistedThread({ provider: 'codex', threadId: CODEX_ID, desktopSessionId: null }),
         mapped,
         persistedThread({
-          provider: 'claude', threadId: UNMAPPED_CLAUDE_ID, desktopSessionId: null
+          provider: 'claude',
+          threadId: UNMAPPED_CLAUDE_ID,
+          desktopSessionId: null,
+          iterm2SessionId: 'w0t0p0:33333333-3333-4333-8333-333333333333'
         })
       ]
     };

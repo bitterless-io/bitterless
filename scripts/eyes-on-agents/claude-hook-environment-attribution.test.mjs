@@ -87,7 +87,7 @@ test('every non-SessionStart event never carries claudeConfigDir, even with CLAU
   }
 });
 
-test('SessionStart captures terminal identity and environment attribution independently of each other', () => {
+test('SessionStart ignores terminal environment variables while preserving environment attribution', () => {
   const both = contract.createClaudeHookEventV4({
     rawInput: rawInput('SessionStart'),
     eventId: EVENT_ID,
@@ -100,20 +100,21 @@ test('SessionStart captures terminal identity and environment attribution indepe
     }
   });
   assert.equal(both.schemaVersion, 4);
-  assert.equal(both.payload.terminalApp, 'iterm2');
-  assert.equal(both.payload.terminalSessionId, VALID_ITERM_SESSION_ID);
+  assert.equal(Object.hasOwn(both.payload, 'terminalApp'), false);
+  assert.equal(Object.hasOwn(both.payload, 'terminalSessionId'), false);
   assert.equal(both.payload.claudeConfigDir, VALID_CLAUDE_CONFIG_DIR);
   assert.deepEqual(contract.parseClaudeHookEvent(both), both);
 
-  const iterm2Only = contract.createClaudeHookEventV4({
+  const terminalOnly = contract.createClaudeHookEventV4({
     rawInput: rawInput('SessionStart'),
     eventId: EVENT_ID,
     occurredAt: 100,
     captureUserPrompt: false,
     environment: { TERM_PROGRAM: 'iTerm.app', ITERM_SESSION_ID: VALID_ITERM_SESSION_ID }
   });
-  assert.equal(iterm2Only.payload.terminalApp, 'iterm2');
-  assert.equal(Object.hasOwn(iterm2Only.payload, 'claudeConfigDir'), false);
+  assert.equal(Object.hasOwn(terminalOnly.payload, 'terminalApp'), false);
+  assert.equal(Object.hasOwn(terminalOnly.payload, 'terminalSessionId'), false);
+  assert.equal(Object.hasOwn(terminalOnly.payload, 'claudeConfigDir'), false);
 
   const configDirOnly = contract.createClaudeHookEventV4({
     rawInput: rawInput('SessionStart'),
@@ -157,7 +158,7 @@ test('schemaVersion 2 and 3 events are rejected if made to carry claudeConfigDir
   }
 });
 
-test('claudeConfigDir is carried through metadata-only conversion unstripped, alongside terminal identity', () => {
+test('claudeConfigDir is carried through metadata-only conversion without terminal identity', () => {
   const sessionStart = contract.createClaudeHookEventV4({
     rawInput: rawInput('SessionStart'),
     eventId: EVENT_ID,
@@ -171,7 +172,7 @@ test('claudeConfigDir is carried through metadata-only conversion unstripped, al
   });
   const metadataOnly = contract.toMetadataOnlyClaudeHookEvent(sessionStart);
   assert.equal(metadataOnly.payload.claudeConfigDir, VALID_CLAUDE_CONFIG_DIR);
-  assert.equal(metadataOnly.payload.terminalApp, 'iterm2');
+  assert.equal(Object.hasOwn(metadataOnly.payload, 'terminalApp'), false);
 
   const delivery = {
     schemaVersion: 1,
@@ -181,10 +182,10 @@ test('claudeConfigDir is carried through metadata-only conversion unstripped, al
   };
   const metadataOnlyDelivery = contract.toMetadataOnlyClaudeHookDelivery(delivery);
   assert.equal(metadataOnlyDelivery.event.payload.claudeConfigDir, VALID_CLAUDE_CONFIG_DIR);
-  // Round trip through the offline-outbox parser must also preserve the content-free identifiers.
+  // Round trip through the offline-outbox parser must preserve environment attribution.
   const reparsed = contract.parseClaudeHookMetadataOnlyDelivery(JSON.parse(JSON.stringify(metadataOnlyDelivery)));
   assert.equal(reparsed.event.payload.claudeConfigDir, VALID_CLAUDE_CONFIG_DIR);
-  assert.equal(reparsed.event.payload.terminalApp, 'iterm2');
+  assert.equal(Object.hasOwn(reparsed.event.payload, 'terminalApp'), false);
 });
 
 test('V1, V2, and V3 fixtures still parse unchanged alongside the new V4 schema', () => {
@@ -465,12 +466,7 @@ test('commitClaudeHookDelivery without CLAUDE_CONFIG_DIR persists null and logs 
 
 test.after(() => rmSync(buildRoot, { recursive: true, force: true }));
 
-// Issue: a new session never appeared. Terminal identity is carried ONLY by SessionStart, and it was
-// persisted only inside the transcript-validation branch — so an lstat that lost the race with
-// Claude Code creating the JSONL dropped the identity permanently, and the visibility gate
-// (desktopSessionId || iterm2SessionId) then hid the row forever even though its lifecycle state
-// was correct.
-test('a SessionStart whose transcript does not exist yet still persists the terminal identity', async () => {
+test('a rejected transcript still persists environment attribution but no terminal identity', async () => {
   const harness = createServiceHarness({ rejectTranscript: true });
   await initialize(harness);
   const capture = captureConsoleInfo();
@@ -486,10 +482,10 @@ test('a SessionStart whose transcript does not exist yet still persists the term
     capture.restore();
   }
   assert.equal(harness.upsertCalls.length, 1,
-    'the identity upsert must still happen when the transcript check fails');
+    'the environment-attribution upsert must still happen when the transcript check fails');
   const thread = harness.upsertCalls[0].threads[0];
-  assert.equal(thread.iterm2SessionId, 'w0t1p1:C1A9D6DE-2E09-4747-9CFA-DA5B6FB15371',
-    'the iTerm2 identity must survive a rejected transcript — it is what makes the row visible');
+  assert.equal(Object.hasOwn(thread, 'iterm2SessionId'), false,
+    'retired terminal identity must never be persisted from a Hook delivery');
   assert.equal(thread.claudeConfigDir, VALID_CLAUDE_CONFIG_DIR);
   assert.equal(thread.transcriptPath, null,
     'the transcript path itself must stay unset when validation rejected it');

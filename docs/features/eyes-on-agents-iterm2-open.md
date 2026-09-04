@@ -1,12 +1,25 @@
 # EyesOnAgents iTerm2 Open
 
-Status: Implemented; owner runtime verification pending (real-iTerm2 reveal check from a freshly
-packaged build carrying the new Apple Events entitlement, see Acceptance)
+Status: Removed by
+[eyes-on-agents-remove-iterm2-claude-097](../plan/tasks/eyes-on-agents-remove-iterm2-claude-097.md)
 
 Date: 2026-09-02 (Open route corrected 2026-09-04 — see
 [Open in iTerm2 does nothing](../issues/eyes-on-agents-open-in-iterm2-does-nothing.md))
 
-## Decision
+## Removal decision (2026-09-04)
+
+EyesOnAgents no longer exposes an iTerm2 product integration. Agent connections contains only
+Codex and Claude; CLI-only `iterm2SessionId` no longer makes a row visible; Open-in-iTerm2, its
+AppleScript transport/logging, and the macOS Automation entitlement are removed. Claude
+multi-environment configuration remains supported under the Claude section because
+`CLAUDE_CONFIG_DIR`, watcher isolation, and per-directory Hook installation are not terminal
+features.
+
+The nullable persisted identity and old Hook payload fields remain inert solely so upgrades and
+queued deliveries stay readable. They authorize no UI, visibility, or action. The remaining text in
+this document records the retired implementation and is not a current product contract.
+
+## Historical design
 
 Extend [EyesOnAgents Claude Observation](eyes-on-agents-claude-observation.md) with a second,
 independent Open route for local Claude Code CLI sessions running inside iTerm2. Today a Claude row

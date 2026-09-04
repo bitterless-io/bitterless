@@ -24,7 +24,6 @@ const emitterPlugin = {
           export const eyesOnAgentsEmitter = {
             getSnapshot: () => harness().getSnapshot(),
             openThread: (params) => harness().openThread(params),
-            openThreadInIterm2: (params) => harness().openThreadInIterm2(params),
             archiveThread: (params) => harness().archiveThread(params),
             setThreadUnread: (params) => harness().setThreadUnread(params)
           };
@@ -166,7 +165,6 @@ test('Focus board store contract', async (context) => {
     let currentSnapshot = createSnapshot([]);
     let openSnapshot = currentSnapshot;
     const openedThreadIds = [];
-    const openedIterm2ThreadIds = [];
     const archivedSessionKeys = [];
     const readStateCalls = [];
     const defaultOpenThread = async ({ sessionKey: openedSessionKey }) => {
@@ -186,10 +184,6 @@ test('Focus board store contract', async (context) => {
     globalThis.__eyesOnAgentsFocusBoardHarness = {
       getSnapshot: async () => currentSnapshot,
       openThread: (params) => openThread(params),
-      openThreadInIterm2: async ({ sessionKey: openedSessionKey }) => {
-        openedIterm2ThreadIds.push(openedSessionKey);
-        return { snapshot: openSnapshot };
-      },
       archiveThread: (params) => archiveThread(params),
       setThreadUnread: async (params) => {
         readStateCalls.push(params);
@@ -219,7 +213,6 @@ test('Focus board store contract', async (context) => {
       openThread = defaultOpenThread;
       archiveThread = defaultArchiveThread;
       openedThreadIds.length = 0;
-      openedIterm2ThreadIds.length = 0;
       archivedSessionKeys.length = 0;
       readStateCalls.length = 0;
     };
@@ -1010,45 +1003,6 @@ test('Focus board store contract', async (context) => {
       assert.deepEqual(threadIds(store.threads), []);
       assert.equal(store.busyAction, null);
     });
-
-    await context.test(
-      'openThreadInIterm2 calls the XPC method with the sessionKey and mirrors openThread\'s rethrow',
-      async () => {
-        const cliOnly = createThread({
-          threadId: 'iterm2-only',
-          provider: 'claude',
-          title: 'CLI-only task',
-          iterm2SessionId: 'w0t0p0:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-        });
-        resetStore(createSnapshot([cliOnly]));
-
-        await store.openThreadInIterm2(cliOnly.sessionKey);
-        assert.deepEqual(openedIterm2ThreadIds, [cliOnly.sessionKey]);
-        assert.deepEqual(openedThreadIds, [], 'the Desktop open route is never called');
-        assert.equal(store.actionError, null);
-
-        const originalOpenThreadInIterm2 = globalThis.__eyesOnAgentsFocusBoardHarness
-          .openThreadInIterm2;
-        const failure = new Error('iTerm2 open failed');
-        globalThis.__eyesOnAgentsFocusBoardHarness.openThreadInIterm2 = async () => {
-          throw failure;
-        };
-        try {
-          // openThread rethrows on failure so the component's own
-          // `.catch(() => undefined)` is what actually swallows the rejection;
-          // openThreadInIterm2 mirrors that contract exactly.
-          await assert.rejects(
-            () => store.openThreadInIterm2(cliOnly.sessionKey),
-            (error) => error === failure,
-          );
-          assert.equal(store.actionError, failure.message);
-          await store.openThreadInIterm2(cliOnly.sessionKey).catch(() => undefined);
-        } finally {
-          globalThis.__eyesOnAgentsFocusBoardHarness.openThreadInIterm2 =
-            originalOpenThreadInIterm2;
-        }
-      },
-    );
 
     // Task 088 (review 1): direct coverage for the store's own matching/normalization logic. The
     // ThreadCard test stubs resolveClaudeEnvironmentLabel out through createStore overrides, so it
