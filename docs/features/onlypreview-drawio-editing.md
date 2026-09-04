@@ -19,31 +19,65 @@ root redirected to a local one (`STYLE_PATH`, `SHAPES_PATH`, `STENCIL_PATH`, `DR
 edit, and the local asset root holds no stencils, so a diagram that uses shape libraries renders
 without them.
 
+## Is there a component to install instead?
+
+No. Checked on the npm registry, 2026-09-04:
+
+| package | latest | size | what it is |
+| --- | --- | --- | --- |
+| `mxgraph` | 4.2.2, **2020-10-28** | 9.5 MB | the graph *library* under draw.io. No palette, no format panel, no menus. Upstream archived it. |
+| `react-drawio` | 1.0.7 | 36.5 KB | an `<iframe>` pointing at `embed.diagrams.net` — the editor comes from the network |
+| `vue-drawio` | 1.0.0 | 36.5 KB | the same wrapper for Vue |
+| `drawio`, `drawio-webapp`, `@drawio/*` | — | — | do not exist |
+
+The iframe wrappers are out: they fetch the editor over the network and would send diagram content
+to a third party. So an offline editor means vendoring draw.io's webapp. That is not a preference,
+it is the only shape available.
+
+Electron integration is not in question either: **`jgraph/drawio-desktop` is the official Electron
+build of draw.io** (Apache-2.0, Electron ^44.1.1, active). It loads
+`file://…/drawio/src/main/webapp/index.html` from a bundled copy of the same webapp — exactly the
+arrangement below, with `drawio` vendored as the app's own submodule.
+
 ## The bundle — the one decision that needs the owner
 
-An editor needs draw.io's **webapp**, not its viewer: `js/app.min.js`, `styles/`, `images/`,
-`shapes/`, `stencils/`, and `resources/dia_*.txt`. The official artifact is one file:
+`draw.war` is a Java **W**eb **a**pplication **ar**chive: a ZIP with a servlet layout, because
+draw.io historically shipped as a Java servlet app. The static webapp sits at the archive root and
+unzips to plain files; nothing Java is needed to serve it. Measured from its central directory:
 
-| release | asset | size |
-| --- | --- | --- |
-| `v31.3.2` (the version already vendored) | `draw.war` | **50.8 MB** compressed |
+| | |
+| --- | --- |
+| `draw.war` v31.3.2 | 3,647 entries, **50.2 MB packed / 144.5 MB unpacked** |
 
-Unpacked it is well over 100 MB, most of it `stencils/**`. Committing that into `bitterless` would
-put it in every clone and every packaged build.
+Where the bulk is, unpacked: `js/` 66.4 MB, `stencils/` 40.8 MB, `img/` 6.5 MB, `images/` 6.1 MB,
+`WEB-INF/` 5.0 MB, `resources/` 5.4 MB, `templates/` 4.9 MB, `math4/` 3.1 MB.
 
-**Recommendation: do not commit it.** This repository already has the pattern for a large third-party
-payload — Maestro's external tools are fetched and staged into `Resources/` at packaging time rather
-than living in the tree. Draw.io's editor follows the same route:
+Most of that is not an editor. `js/integrate.min.js` (21.3 MB) is draw.io's integration build, and
+its size matches `app.min.js` + `stencils.min.js` + `extensions.min.js` (9.2 + 7.2 + 3.7) — so the
+40.8 MB of loose `stencils/*.xml` is the same content in unpacked form and should not be needed.
+A plausible offline embed set is:
+
+```text
+js/integrate.min.js   21.3 MB      images/          6.1 MB
+img/                   6.5 MB      mxgraph/         3.0 MB
+shapes/                2.2 MB      styles/          0.1 MB
+resources/dia.txt                  index.html, js/bootstrap.js, js/main.js
+                                   ── roughly 40 MB unpacked
+```
+
+For scale, the official desktop app ships 154–246 MB per platform. The exact kept set is confirmed
+by the first fetch run and written back here; the estimate above is not yet verified against a
+running editor.
+
+**Recommendation: fetch and stage, do not commit.** This repository already has the pattern for a
+large third-party payload — Maestro's external tools are fetched and staged into `Resources/` at
+packaging time rather than living in the tree.
 
 ```text
 scripts/drawio/fetch-editor.mjs      download draw.war, verify its SHA-256, unpack, trim, emit
 vendor/drawio-editor/                gitignored, dev loads from here
 Resources/drawio-editor/             staged at packaging time, outside the ASAR
 ```
-
-Trimmed to what an editor actually needs — dropping `math/`, the plugin samples, and every
-`resources/dia_*.txt` except `en` and `zh` — the staged tree should land far below the raw unpack.
-The exact figure comes from the first fetch run and goes in this document.
 
 Everything below assumes that plan. It is the only part that needs a yes before implementation
 starts; the rest follows from it.
@@ -73,7 +107,7 @@ editor surface, so opening a folder full of `.drawio` files stays as cheap as it
 Through draw.io's own **embed protocol**, not through its internals:
 
 ```text
-editor page   local editor.html?embed=1&proto=json&spin=1&noSaveBtn=0&saveAndExit=0
+editor page   local index.html?embed=1&proto=json&spin=1&noSaveBtn=0&saveAndExit=0&offline=1
 host  ← {event:'init'}                     the editor is ready
 host  → {action:'load', xml, autosave:1}   the diagram, once
 host  ← {event:'autosave', xml}            every change, debounced by the editor
