@@ -580,7 +580,61 @@ present and enabled in this `CLAUDE_CONFIG_DIR`?* — and nothing else.
   without launching Electron windows.
 - Manual, non-automatable verification: with two real `CLAUDE_CONFIG_DIR` directories and two wrapped
   `claude`/`claude2` shell commands, confirm both environments' sessions appear in Focus
-  simultaneously with correct, independent status in the Connections drawer. Owner-only.
+  simultaneously with correct, independent status in the Connections drawer. Owner-only — the
+  concrete steps are below.
+
+## Owner verification on a preview build
+
+The owner tests on the packaged **preview** build (`yarn build_preview:mac_arm`, which runs under
+runtime profile `release_preview` → profile id `production-preview`). Two consequences shape the
+whole procedure and are easy to be surprised by:
+
+1. **The preview build has its own Claude plugin identity.**
+   `resolveClaudePluginBridgeIdentity('production-preview')` yields marketplace
+   `bitterless-local-production-preview`, plugin
+   `bitterless-observer-production-preview@bitterless-local-production-preview`, and artifacts under
+   `eyes-on-agents/claude-marketplace-production-preview`. It is therefore a **separate installation
+   from the production Bitterless**, and the two coexist inside the same `CLAUDE_CONFIG_DIR`.
+   Installing from the preview build does not touch production's plugin, and does not require
+   uninstalling it first.
+2. **Because the identity differs, the per-environment probe reports on the preview plugin only.** A
+   directory that already has the *production* plugin installed still shows **Plugin not installed**
+   in the preview build until the preview plugin is installed there. That is correct, not a bug.
+
+Assuming a `claude2` wrapper already exists (the owner's is `/usr/local/bin/claude2`, a PATH script
+— see "Shell wrapper shapes" below), the procedure is:
+
+| # | Step | Expected |
+|---|---|---|
+| 1 | Build and launch the preview app | it runs alongside production Bitterless |
+| 2 | EyesOnAgents → **Agent Connections** → Claude card, provider toggle on | the environment list shows one row, the automatic default |
+| 3 | **Add environment**, label `claude2`, pick `~/.claude2` in the native picker | a second row appears, `Custom`, path shown; cancelling the picker adds nothing |
+| 4 | Read both rows' presence pills | both likely **Plugin not installed** — the preview plugin is not in either directory yet |
+| 5 | Click **Install plugin** on the `claude2` row only | that row flips to **Plugin installed**; the default row stays **not installed** — this is the whole point of task 090 |
+| 6 | Confirm isolation on disk | `~/.claude2/settings.json` gains the preview hook; `~/.claude/settings.json` is untouched |
+| 7 | Run `claude2` in an **iTerm2** pane and send one prompt | a row appears in Focus tagged with the `claude2` environment label |
+| 8 | Use that row's **Open in iTerm2** | focus jumps back to that exact pane |
+| 9 | Run plain `claude` in another iTerm2 pane | a second row appears, attributed to the default environment, both live at once |
+| 10 | Rename the `claude2` environment | the label updates on the row and on its threads; no re-probe, no CLI spawn |
+| 11 | Try **Remove** on the last remaining environment | disabled, with the explanatory hint |
+
+**Copy setup command** is *not* on this path when a wrapper already exists — step 3 replaces it. Use
+it only to check the snippet it produces (see the shell caveat below).
+
+### Shell wrapper shapes
+
+Task 089's **Copy setup command** emits a shell **function** for a shell profile
+(`.zshrc`/`.bashrc`). That is not the only shape, and not the one the owner actually uses:
+
+| shape | works in | survives non-interactive spawn | notes |
+|---|---|---|---|
+| function in a shell profile (what 089 emits) | bash, zsh, sh | no | **syntax error in fish/nushell** |
+| script on `PATH` (owner's `/usr/local/bin/claude2`) | any shell | yes | shell-agnostic; also reachable by other programs |
+
+The owner's script additionally `unset`s `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, and
+`CLAUDE_CODE_OAUTH_TOKEN` so the second environment uses its own Claude login instead of inheriting
+shell-level credentials — which is the actual reason for wanting multiple environments. The emitted
+snippet does **not** do this. Both gaps are recorded in `docs/plan/backlog.md`.
 
 ## Sources
 

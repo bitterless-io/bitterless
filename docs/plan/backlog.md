@@ -234,6 +234,21 @@ Non-blocking review findings are recorded here after task verification.
   genuinely differ. `busyClaudeEnvironmentIds` already exists for exactly this
   (used by Retry/Remove at `:147-148`, `:205-207`) — use it, or accept that only one bridge
   mutation can be in flight and grey the others explicitly.
+- Task 089 follow-up (owner feedback 2026-09-04): **Copy setup command** emits a shell *function*
+  for a shell profile, which assumes the user (a) uses a POSIX-family interactive shell and (b) keeps
+  wrappers in `.zshrc`/`.bashrc`. Neither holds generally: the syntax is a hard error in **fish** and
+  nushell, a function in a profile is not visible to non-interactive spawns, and the owner's own
+  real-world wrapper is a **PATH script** (`/usr/local/bin/claude2`, `#!/usr/bin/env zsh`, `exec`ing
+  the real `claude`) rather than a profile function at all. Consider emitting a PATH-script variant
+  (shell-agnostic and non-interactive-safe), or selecting syntax from `process.env.SHELL`, or at
+  minimum labelling the snippet as bash/zsh-only in the UI.
+- Task 089 follow-up (owner feedback 2026-09-04): the emitted snippet sets `CLAUDE_CONFIG_DIR` but
+  does **not** clear inherited credentials, while the owner's real wrapper `unset`s
+  `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, and `CLAUDE_CODE_OAUTH_TOKEN` so the second
+  environment authenticates with its own Claude login. Since "one machine, several Claude logins" is
+  the stated reason multi-environment exists, a wrapper that silently inherits a shell-level API key
+  can defeat the whole point — the second environment would run as the first account. Decide whether
+  the snippet should unset them (and document the choice either way).
 - Pre-existing, unrelated to the iTerm2 Open feature: `yarn check:renderer-i18n` crashes on
   `assert(trayCreateIndex > homeCreateIndex, 'Tray must follow Home creation')`
   (`scripts/renderer-i18n/check-renderer-i18n.mjs:186`) because commit `c67ac21` changed
