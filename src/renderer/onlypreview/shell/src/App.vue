@@ -611,6 +611,17 @@ const handleShellKeydown = (event: KeyboardEvent): void => {
   }
 };
 
+// A selection must not outlive its rows: opening another Project replaces every row, and a delete or
+// an external change removes some of them.
+watch(
+  () => onlyPreviewShellStore.workspace?.workspaceId ?? '',
+  () => onlyPreviewTreeSelection.clear()
+);
+watch(
+  () => onlyPreviewShellStore.visibleRows.length,
+  () => onlyPreviewTreeSelection.retain()
+);
+
 onMounted(() => {
   subscribeOnlyPreviewProjectIntents();
   window.addEventListener('pagehide', flushProjectWidth);

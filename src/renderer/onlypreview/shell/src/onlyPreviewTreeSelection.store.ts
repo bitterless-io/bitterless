@@ -82,6 +82,9 @@ export class OnlyPreviewTreeSelectionController {
    * multi-select gesture must not load a document.
    */
   apply(intent: OnlyPreviewSelectionIntent, relativePath: string | null): boolean {
+    // Rows can have disappeared since the last gesture — a delete, an external change, a collapsed
+    // folder — and a range or a toggle must start from what is actually on screen.
+    this.retain();
     const current = this.paths.length ? this.paths : this.anchor === null ? [] : [this.anchor];
     const result = resolveOnlyPreviewSelection(
       intent,
@@ -99,11 +102,13 @@ export class OnlyPreviewTreeSelectionController {
     this.anchorPath = null;
   }
 
-  // Called after the tree's rows change, so an action can never target a row that is gone.
+  // Called before every gesture and whenever the tree's rows change, so an action can never target a
+  // row that is gone and the highlight cannot outlive its row.
   retain(): void {
     if (!this.paths.length) return;
     const next = retainOnlyPreviewSelection({ paths: this.paths, anchor: this.anchor }, this.rows);
     if (next.paths.length !== this.paths.length) this.paths = [...next.paths];
+    if (this.anchorPath && !next.anchor) this.anchorPath = null;
   }
 
   /**

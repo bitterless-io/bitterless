@@ -224,3 +224,13 @@ test('actions that only make sense for one row are inert while several are selec
   const rename = menuBody.slice(menuBody.indexOf("id: 'onlypreview-rename'"));
   assert.match(rename.slice(0, 400), /enabled: menuSelection\.length <= 1/);
 });
+
+test('the selection is dropped when its rows go away', () => {
+  const app = source('src/renderer/onlypreview/shell/src/App.vue');
+  // Opening another Project replaces every row; a delete or an external change removes some.
+  assert.match(app, /workspace\?\.workspaceId[\s\S]*?onlyPreviewTreeSelection\.clear\(\)/);
+  assert.match(app, /visibleRows\.length[\s\S]*?onlyPreviewTreeSelection\.retain\(\)/);
+  const controller = source('src/renderer/onlypreview/shell/src/onlyPreviewTreeSelection.store.ts');
+  // And once more before every gesture, so a range starts from what is actually on screen.
+  assert.match(controller, /apply\(intent[\s\S]*?this\.retain\(\);/);
+});
