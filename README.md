@@ -9,7 +9,6 @@ BitterLess is an out-of-the-box self-evolving agent app built with **Electron**.
 | Component | Choice                 |
 |-----------|------------------------|
 | **Runtime** | Electron               |
-| **Vector Database** | Qdrant (local version) |
 | **Relational Database** | SQLite3 (with cipher)  |
 | **Embedding Model** | BGE-M3                 |
 | **Perception** | Multi-modal input processing |

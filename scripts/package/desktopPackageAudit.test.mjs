@@ -535,7 +535,6 @@ test('dependency classification keeps external runtime roots and bundles selecte
     '@arco-design/web-vue',
     '@earendil-works/pi-ai',
     '@electron-toolkit/preload',
-    '@qdrant/js-client-rest',
     '@rig-lib/semaphore',
     '@silurus/ooxml',
     '@tabler/icons-vue',

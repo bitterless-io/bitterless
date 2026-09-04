@@ -44,7 +44,7 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
   - '!{postcss.config.js,theme.ts,electron.vite.spec.md}'
   - '!{package.rig.json5,env.rig.json5}'
-  - '!{.qdrant-initialized,bitterless-bot.memory-card.json}'
+  - '!bitterless-bot.memory-card.json'
   - '!**/*.md'
   - '!**/node-pty/prebuilds/win32*/**'
 extraResources:

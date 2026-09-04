@@ -23,7 +23,6 @@ import './dao/todoEvent.dao';
 import './dao/eyesOnAgents.dao';
 import './handler/language.handler';
 import './handler/searchEngine.handler';
-import { initQdrant } from './qdrantHelper/qdrant.helper';
 import { pathHelper } from '@shared/pathHelper/preload/pathPreload.helper';
 import { randomUUID } from 'crypto';
 import * as path from 'path';
@@ -187,7 +186,6 @@ const bootstrapServices = async (): Promise<void> => {
   if (!bootResult.ok) return;
   await loadTiktokenLocal();
   initMessageServer();
-  await initQdrant();
 };
 
 bootstrapServices().catch((err) => console.error('[sqlite.preload] service bootstrap failed:', err));

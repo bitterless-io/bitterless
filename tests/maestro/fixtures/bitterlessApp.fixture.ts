@@ -216,19 +216,12 @@ const attachRendererDiagnostics = (page: Page, errors: string[]): void => {
     if (message.type() !== 'error') return
     const url = prefix()
     const text = message.text()
-    // The host SQLite renderer optionally starts a separately packaged Qdrant binary. The
-    // source-tree E2E build intentionally has no external_resources bundle; keep every other
-    // host/Maestro error visible and ignore only that exact optional-host absence.
-    const isExpectedUnpackagedQdrantAbsence =
-      /\/renderer\/sqlite\/index\.html(?:$|[?#])/.test(url) &&
-      text.startsWith('[qdrant] failed to start: spawn ') &&
-      text.endsWith('/external_resources/qdrant/qdrant ENOENT')
     const isExpectedDevToolsAutofillAbsence =
       url.startsWith('devtools://') &&
       (text.startsWith('Request Autofill.enable failed. ') ||
         text.startsWith('Request Autofill.setAddresses failed. ')) &&
       text.includes('wasn\'t found')
-    if (!isExpectedUnpackagedQdrantAbsence && !isExpectedDevToolsAutofillAbsence) {
+    if (!isExpectedDevToolsAutofillAbsence) {
       errors.push(`[console ${url}] ${text}`)
     }
   })
