@@ -1,6 +1,10 @@
 # OnlyPreview Draw.io Editing
 
-Status: design
+Status: parked (owner, 2026-09-04: 「draw 的需求先放着，先不用支持预览和编辑了」)
+
+Nothing here is queued. The research below is kept because it is the expensive part —
+the measured bundle numbers and the ruled-out alternatives — so picking this up later
+starts from the decision rather than from the survey.
 
 Owner request, 2026-09-04: 「对于 draw.io 我想好了，我要支持编辑！」, approved shape: the editor lives in
 the preview pane, Save overwrites the file in place, and the write goes through the hidden
