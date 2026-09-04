@@ -573,9 +573,27 @@ class OnlyPreviewPreviewStore {
           assetUrl,
           presentation.descriptor.size
         );
-        const content = await attempt.result;
+        // The drawio path had no diagnostics at all, so a failed diagram was indistinguishable from
+        // a diagram that never started loading.
+        const startedAt = Date.now();
+        console.info(`[onlypreview] event=drawio-load-start bytes=${presentation.descriptor.size}`);
+        let content: OnlyPreviewDrawioContent;
+        try {
+          content = await attempt.result;
+        } catch (error) {
+          const code =
+            error instanceof OnlyPreviewContractError ? error.code : 'DIAGRAM_PARSE_FAILED';
+          console.info(
+            `[onlypreview] event=drawio-load-failed code=${code} elapsedMs=${Date.now() - startedAt}`
+          );
+          throw error;
+        }
+        console.info(
+          `[onlypreview] event=drawio-load-ok pages=${content.pageCount} cells=${content.cellCount} elapsedMs=${Date.now() - startedAt}`
+        );
         if (!this.isCurrent(generation, revision)) {
           this.drawioSelection.cancel(attempt);
+          console.info('[onlypreview] event=drawio-load-superseded');
           return;
         }
         if (!this.drawioSelection.accept(attempt)) return;
