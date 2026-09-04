@@ -111,6 +111,14 @@ const SHEET_EXTENSIONS = new Set(['.xlsx', '.xlsm']);
 const DOCUMENT_EXTENSIONS = new Set(['.docx']);
 const PRESENTATION_EXTENSIONS = new Set(['.pptx']);
 const DIAGRAM_EXTENSIONS = new Set(['.drawio']);
+// draw.io's other default save names. `extname` only ever returns the last segment, so a
+// `foo.drawio.xml` resolved to `.xml` and opened as plain text in Monaco — which is what "the
+// diagram does not preview" looked like, with no diagram record anywhere because the diagram path
+// was never entered.
+const DIAGRAM_COMPOUND_SUFFIXES = ['.drawio.xml'];
+// A bare `.xml` is only a diagram when it actually is one, so it is decided by its content.
+const DIAGRAM_SNIFF_EXTENSIONS = new Set(['.xml']);
+const DIAGRAM_SNIFF_BYTES = 4_096;
 
 const MIME_BY_EXTENSION: Record<string, string> = {
   '.pdf': 'application/pdf',
@@ -196,6 +204,7 @@ const extensionOf = (relativePath: string): string => {
 export const classifyOnlyPreviewExtension = (relativePath: string): OnlyPreviewKind => {
   const name = basenameOf(relativePath);
   const extension = extensionOf(relativePath);
+  if (DIAGRAM_COMPOUND_SUFFIXES.some((suffix) => name.endsWith(suffix))) return 'diagram';
   if (TEXT_EXTENSIONS.has(extension) || KNOWN_TEXT_BASENAMES.has(name)) return 'text';
   if (PDF_EXTENSIONS.has(extension)) return 'pdf';
   if (IMAGE_EXTENSIONS.has(extension)) return 'image';
@@ -354,6 +363,35 @@ export const decodeOnlyPreviewText = (
   return { text: new TextDecoder('utf-8').decode(payload), encoding: 'utf-8' };
 };
 
+/**
+ * Is this XML actually a diagram?
+ *
+ * `<mxfile` is draw.io's own root element, so the test is specific: an ordinary XML file never
+ * carries it, and "Save as XML" from draw.io always does. Only the head of the file is read.
+ */
+export const hasOnlyPreviewDiagramRoot = (sample: Uint8Array): boolean => {
+  const head = new TextDecoder('utf-8')
+    .decode(sample.subarray(0, DIAGRAM_SNIFF_BYTES))
+    .replace(/^\uFEFF/, '');
+  return /<mxfile[\s>]/u.test(head);
+};
+
+/**
+ * The kind, with the one refinement that needs the file's bytes.
+ *
+ * Extension alone cannot tell a draw.io `.xml` from any other `.xml`, and guessing either way is
+ * wrong — so a bare `.xml` is promoted to a diagram only when its own root says so.
+ */
+export const resolveOnlyPreviewKind = (
+  relativePath: string,
+  sample?: Uint8Array
+): OnlyPreviewKind => {
+  const kind = classifyOnlyPreviewExtension(relativePath);
+  if (kind !== 'text' || !sample?.length) return kind;
+  if (!DIAGRAM_SNIFF_EXTENSIONS.has(extensionOf(relativePath))) return kind;
+  return hasOnlyPreviewDiagramRoot(sample) ? 'diagram' : kind;
+};
+
 const adapterForClassification = (
   relativePath: string,
   kind: OnlyPreviewKind
@@ -393,7 +431,7 @@ export interface OnlyPreviewPreparedFileMetadata {
 export class OnlyPreviewClassifierService {
   describe(file: OnlyPreviewPreparedFileMetadata, sample?: Uint8Array): OnlyPreviewDescriptor {
     const extension = extensionOf(file.relativePath);
-    const kind = classifyOnlyPreviewExtension(file.relativePath);
+    const kind = resolveOnlyPreviewKind(file.relativePath, sample);
     const descriptor: OnlyPreviewDescriptor = {
       workspaceId: file.workspaceId,
       relativePath: file.relativePath,
