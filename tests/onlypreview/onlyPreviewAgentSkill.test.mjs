@@ -44,7 +44,13 @@ await build({
   format: 'esm',
   target: 'node22',
   sourcemap: 'inline',
-  tsconfig: join(projectRoot, 'tsconfig.node.json')
+  tsconfig: join(projectRoot, 'tsconfig.node.json'),
+  // fs-extra and its `graceful-fs` dependency are CommonJS and call `require('fs')` at load time.
+  // esbuild leaves that call intact when it bundles them into ESM, where `require` does not exist,
+  // so the bundle needs one.
+  banner: {
+    js: "import { createRequire as __createRequire } from 'node:module';\nconst require = __createRequire(import.meta.url);"
+  }
 });
 
 const service = await import(pathToFileURL(serviceBundle).href);
@@ -78,10 +84,10 @@ const createSkillFixture = () => {
   return { fixtureRoot, skillPath };
 };
 
-const withSkillFixture = (callback) => {
+const withSkillFixture = async (callback) => {
   const fixture = createSkillFixture();
   try {
-    callback(fixture);
+    await callback(fixture);
   } finally {
     rmSync(fixture.fixtureRoot, { recursive: true, force: true });
   }
@@ -132,7 +138,7 @@ test('portable Preview skill inventory, version, and MCP dependency are exact', 
   assert.match(skill, /Never guess/i);
 });
 
-test('skill path resolution and complete-file validation fail closed', () => {
+test('skill path resolution and complete-file validation fail closed', async () => {
   assert.equal(
     service.resolveOnlyPreviewAgentSkillPath({
       appPath: '/application',
@@ -150,52 +156,52 @@ test('skill path resolution and complete-file validation fail closed', () => {
     join('/resources', 'agent-skills', 'bitterless-preview')
   );
 
-  withSkillFixture(({ skillPath }) => {
-    assert.equal(service.requireOnlyPreviewAgentSkillPath(skillPath), skillPath);
+  await withSkillFixture(async ({ skillPath }) => {
+    assert.equal(await service.requireOnlyPreviewAgentSkillPath(skillPath), skillPath);
   });
 
   for (const relativePath of service.ONLY_PREVIEW_AGENT_SKILL_REQUIRED_FILES) {
-    withSkillFixture(({ skillPath }) => {
+    await withSkillFixture(async ({ skillPath }) => {
       unlinkSync(join(skillPath, relativePath));
-      assert.throws(() => service.requireOnlyPreviewAgentSkillPath(skillPath), /unavailable/);
+      await assert.rejects(service.requireOnlyPreviewAgentSkillPath(skillPath), /unavailable/);
     });
-    withSkillFixture(({ skillPath }) => {
+    await withSkillFixture(async ({ skillPath }) => {
       writeFileSync(join(skillPath, relativePath), '');
-      assert.throws(() => service.requireOnlyPreviewAgentSkillPath(skillPath), /unavailable/);
+      await assert.rejects(service.requireOnlyPreviewAgentSkillPath(skillPath), /unavailable/);
     });
-    withSkillFixture(({ skillPath }) => {
+    await withSkillFixture(async ({ skillPath }) => {
       const filePath = join(skillPath, relativePath);
       unlinkSync(filePath);
       symlinkSync(join(skillPath, 'SKILL.md'), filePath);
-      assert.throws(() => service.requireOnlyPreviewAgentSkillPath(skillPath), /unavailable/);
+      await assert.rejects(service.requireOnlyPreviewAgentSkillPath(skillPath), /unavailable/);
     });
   }
 
-  withSkillFixture(({ fixtureRoot, skillPath }) => {
+  await withSkillFixture(async ({ fixtureRoot, skillPath }) => {
     const realPath = `${skillPath}-real`;
     renameSync(skillPath, realPath);
     symlinkSync(realPath, skillPath, 'dir');
-    assert.throws(() => service.requireOnlyPreviewAgentSkillPath(skillPath), /unavailable/);
+    await assert.rejects(service.requireOnlyPreviewAgentSkillPath(skillPath), /unavailable/);
     assert.equal(dirname(realPath), fixtureRoot);
   });
-  withSkillFixture(({ skillPath }) => {
+  await withSkillFixture(async ({ skillPath }) => {
     const referencesPath = join(skillPath, 'references');
     const realReferencesPath = `${referencesPath}-real`;
     renameSync(referencesPath, realReferencesPath);
     symlinkSync(realReferencesPath, referencesPath, 'dir');
-    assert.throws(() => service.requireOnlyPreviewAgentSkillPath(skillPath), /unavailable/);
+    await assert.rejects(service.requireOnlyPreviewAgentSkillPath(skillPath), /unavailable/);
   });
-  withSkillFixture(({ skillPath }) => {
+  await withSkillFixture(async ({ skillPath }) => {
     const toolsPath = join(skillPath, 'references/tools.md');
     unlinkSync(toolsPath);
     mkdirSync(toolsPath);
-    assert.throws(() => service.requireOnlyPreviewAgentSkillPath(skillPath), /unavailable/);
+    await assert.rejects(service.requireOnlyPreviewAgentSkillPath(skillPath), /unavailable/);
   });
-  withSkillFixture(({ skillPath }) => {
+  await withSkillFixture(async ({ skillPath }) => {
     const toolsPath = join(skillPath, 'references/tools.md');
     chmodSync(toolsPath, 0o000);
     try {
-      assert.throws(() => service.requireOnlyPreviewAgentSkillPath(skillPath), /unavailable/);
+      await assert.rejects(service.requireOnlyPreviewAgentSkillPath(skillPath), /unavailable/);
     } finally {
       chmodSync(toolsPath, 0o600);
     }

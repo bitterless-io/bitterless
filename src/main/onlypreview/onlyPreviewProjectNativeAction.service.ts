@@ -22,7 +22,6 @@ import {
 } from './onlyPreviewWorkspace.registry';
 import { onlyPreviewPreviewRegionService } from './views/onlyPreviewPreviewRegion.service';
 import {
-  ONLY_PREVIEW_PROJECT_NEW_FOLDER_EVENT,
   ONLY_PREVIEW_PROJECT_RENAME_EVENT,
   ONLY_PREVIEW_SELECTION_CHANGED_EVENT
 } from '@shared/onlypreview/onlyPreview.types';
@@ -129,12 +128,6 @@ export class OnlyPreviewProjectNativeActionService {
         click: () => actions.openExternally(currentRequest)
       });
     }
-    template.push({
-      id: 'onlypreview-reveal-in-folder',
-      label: labels.revealInFolder,
-      click: () => actions.revealInFolder(currentRequest)
-    });
-    template.push({ type: 'separator' });
     // New Folder is deliberately absent from a file row (owner decision 2026-09-02): creating
     // "inside" a file has no meaning, and the folder and root menus already cover every location.
     if (item.nodeKind === 'directory') {
@@ -195,8 +188,15 @@ export class OnlyPreviewProjectNativeActionService {
     // Delete now covers folders as well as files, and it acts on the whole tree selection when the
     // right-clicked row is part of it — a menu that says `Delete…` over a fourteen-row selection is
     // a trap, so the label carries the count.
+    // Reveal sits directly above Delete (owner, 2026-09-04), so the destructive action has a
+    // harmless neighbour rather than following the copy block straight on.
     template.push(
       { type: 'separator' },
+      {
+        id: 'onlypreview-reveal-in-folder',
+        label: labels.revealInFolder,
+        click: () => actions.revealInFolder(currentRequest)
+      },
       {
         id: 'onlypreview-delete',
         label:

@@ -743,7 +743,7 @@ class OnlyPreviewHandler
       onlyPreviewWindowHelper.requireAgentSkillGuideHost(params?.hostToken);
       const commandPath = await mcpHandler.ensureShim();
       const serverName = getMcpServerName(app.getName());
-      const skillPath = requireOnlyPreviewAgentSkillPath(
+      const skillPath = await requireOnlyPreviewAgentSkillPath(
         resolveOnlyPreviewAgentSkillPath({
           appPath: app.getAppPath(),
           isPackaged: app.isPackaged,

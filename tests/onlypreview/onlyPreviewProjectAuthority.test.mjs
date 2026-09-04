@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -723,4 +724,75 @@ test('Main retains only a host/workspace/generation ref for Project authority di
       }),
     expectOnlyPreviewError('HOST_NOT_FOUND')
   );
+});
+
+const recoveryEntries = (root) =>
+  readdirSync(root).filter((name) => name.startsWith('.bitterless-delete-recovery-'));
+
+test('a folder is deleted with everything inside it and leaves no recovery entry', async () => {
+  await withTempDirectory('onlypreview-project-delete-folder-', async (root) => {
+    mkdirSync(join(root, 'out-yes', 'deep'), { recursive: true });
+    write(join(root, 'out-yes', 'notes.txt'), 'notes');
+    write(join(root, 'out-yes', 'deep', 'inner.txt'), 'inner');
+    write(join(root, 'keep.txt'), 'keep');
+    const authority = new runtime.FileSearchProjectAuthority();
+    const binding = await authority.bindWorkspace(runtimeInstanceId, 'workspace-folder', root);
+
+    const grant = await authority.prepareDelete(
+      runtimeInstanceId,
+      binding.workspaceId,
+      binding.workspaceGeneration,
+      'out-yes'
+    );
+    const result = await authority.commitDelete(
+      runtimeInstanceId,
+      binding.workspaceId,
+      binding.workspaceGeneration,
+      grant.grantId,
+      'out-yes'
+    );
+
+    assert.equal(result.relativePath, 'out-yes');
+    assert.equal(existsSync(join(root, 'out-yes')), false);
+    assert.equal(existsSync(join(root, 'keep.txt')), true, 'a sibling is untouched');
+    // The isolate rename moves the folder into a private directory before the recursive removal.
+    // That directory is ours and must never be left in the owner's Project.
+    assert.deepEqual(recoveryEntries(root), []);
+  });
+});
+
+test('a folder delete that fails after isolation restores it and cleans up after itself', async () => {
+  await withTempDirectory('onlypreview-project-delete-folder-fail-', async (root) => {
+    mkdirSync(join(root, 'src'));
+    write(join(root, 'src', 'main.ts'), 'export {};');
+    // The failure has to land after the isolate rename, which is the only point where a recovery
+    // directory exists at all.
+    const operations = {
+      ...runtime.projectAuthorityFileOperations,
+      removeTree: async () => {
+        throw new Error('refused');
+      }
+    };
+    const authority = new runtime.FileSearchProjectAuthority(operations);
+    const binding = await authority.bindWorkspace(runtimeInstanceId, 'workspace-fail', root);
+    const grant = await authority.prepareDelete(
+      runtimeInstanceId,
+      binding.workspaceId,
+      binding.workspaceGeneration,
+      'src'
+    );
+
+    await assert.rejects(
+      authority.commitDelete(
+        runtimeInstanceId,
+        binding.workspaceId,
+        binding.workspaceGeneration,
+        grant.grantId,
+        'src'
+      ),
+      expectOnlyPreviewError('OPERATION_FAILED')
+    );
+    assert.equal(existsSync(join(root, 'src', 'main.ts')), true, 'nothing was lost');
+    assert.deepEqual(recoveryEntries(root), []);
+  });
 });

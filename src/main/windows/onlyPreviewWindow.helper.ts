@@ -1046,6 +1046,19 @@ export class OnlyPreviewWindowHelper {
       phase: 'renderer-loaded',
       elapsedMs: this.diagnostics.elapsed(diagnostic.startedAt)
     });
+    // The owner asked for the OnlyPreview window's own DevTools on the Preview channel, not only in
+    // a debug build. Detached and inactive: a detached DevTools window is a separate NSWindow, and
+    // activating it takes key status away from the BaseWindow — which is how Cmd+F went dead.
+    if (
+      isOnlyPreviewDevToolsEnabled() &&
+      this.baseWindow === window &&
+      this.shellView === shellView &&
+      !window.isDestroyed() &&
+      !shellView.webContents.isDestroyed() &&
+      !shellView.webContents.isDevToolsOpened()
+    ) {
+      shellView.webContents.openDevTools({ mode: 'detach', activate: false });
+    }
     const previewView = onlyPreviewPreviewRegionService.getVuePreviewView();
     if (
       !shouldAutoOpenOnlyPreviewDevTools() ||

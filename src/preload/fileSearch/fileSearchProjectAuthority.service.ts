@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import type { BigIntStats } from 'node:fs';
+// `node:fs/promises`, not fs-extra, and deliberately: a delete grant pins its target by holding a
+// `FileHandle` and re-`stat`ing it, which fs-extra's promisified `open` cannot give (it resolves to
+// a raw descriptor), and fs-extra is CJS-only with undetectable named exports, so it cannot be
+// bundled or externalized into the ESM harness these primitives are tested through.
 import {
   link,
   lstat,
@@ -538,7 +542,10 @@ export class FileSearchProjectAuthority {
       isolated = await this.isolateDeleteEntry(prepared.canonicalPath);
       await this.requireIsolatedDeleteIdentity(prepared, isolated, workspace);
       await this.requireCurrentRoot(workspace, operation);
-      await this.requirePinnedDeleteIdentity(prepared);
+      // After the isolate rename the original path is gone by design. A file is still pinned by its
+      // open descriptor, which follows the inode; a directory has no descriptor, so re-checking its
+      // old path would ENOENT every time — the isolated check above and below is its identity.
+      await this.requirePinnedDeleteIdentity(prepared, { isolated: true });
       await this.requireIsolatedDeleteIdentity(prepared, isolated, workspace);
       this.requireActiveWorkspace(workspace, operation);
       if (prepared.nodeKind === 'directory') {
@@ -559,7 +566,12 @@ export class FileSearchProjectAuthority {
         modifiedAt: prepared.grant.modifiedAt
       };
     } catch (error) {
-      if (isolated) await this.restoreIsolatedDeleteEntry(isolated, prepared?.nodeKind ?? 'file');
+      if (isolated) {
+        await this.restoreIsolatedDeleteEntry(isolated, prepared?.nodeKind ?? 'file');
+        // Whether or not the entry could be put back, the recovery directory itself is ours and has
+        // no business being left in the owner's Project.
+        await this.fileOperations.rmdir(isolated.directoryPath).catch(() => undefined);
+      }
       return toSafeProjectError(error, 'delete');
     } finally {
       if (prepared) {
@@ -796,11 +808,16 @@ export class FileSearchProjectAuthority {
     }
   }
 
-  private async requirePinnedDeleteIdentity(prepared: PreparedDeleteGrant): Promise<void> {
+  private async requirePinnedDeleteIdentity(
+    prepared: PreparedDeleteGrant,
+    options: { isolated?: boolean } = {}
+  ): Promise<void> {
     if (prepared.handleClosed) {
       throw new OnlyPreviewContractError('INVALID_INPUT', 'Delete grant is unavailable.');
     }
     if (prepared.nodeKind === 'directory' || !prepared.handle) {
+      // Nothing to check at the original path once the entry has been moved out of it.
+      if (options.isolated) return;
       await this.requireDirectoryDeleteIdentity(prepared.canonicalPath, prepared.identity);
       return;
     }

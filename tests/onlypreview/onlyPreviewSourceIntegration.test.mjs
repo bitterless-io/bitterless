@@ -166,14 +166,19 @@ test('window sources delegate dual Preview isolation and preserve generic Omni r
     standaloneStartup,
     /previewView\.webContents\.openDevTools\(\{ mode: 'detach', activate: false \}\)/
   );
-  assert.doesNotMatch(standaloneStartup, /shellView\.webContents\.openDevTools\(/);
-  assert.equal((standaloneStartup.match(/openDevTools\(/g) ?? []).length, 1);
+  // The owner asked for the OnlyPreview window's own DevTools on the Preview channel too. Detached
+  // and inactive, because an activating DevTools window takes key status from the BaseWindow.
+  assert.match(
+    standaloneStartup,
+    /shellView\.webContents\.openDevTools\(\{ mode: 'detach', activate: false \}\)/
+  );
+  assert.equal((standaloneStartup.match(/openDevTools\(/g) ?? []).length, 2);
   const loadViewBody = standalone.slice(
     standalone.indexOf('private async loadView('),
     standalone.indexOf('private applyInitialBounds(')
   );
   assert.doesNotMatch(loadViewBody, /openDevTools\(|did-finish-load/);
-  assert.equal((standalone.match(/openDevTools\(/g) ?? []).length, 2);
+  assert.equal((standalone.match(/openDevTools\(/g) ?? []).length, 3);
 
   const omni = source('src/main/windows/omniWindow.helper.ts');
   assert.doesNotMatch(omni, /onlypreview/i);
@@ -426,7 +431,7 @@ test('renderers keep empty state distinct from index failure and PDF/Monaco runt
     shellApp,
     // The row delegates through a local wrapper that keeps the row being renamed inert; the chevron
     // still calls the store directly because it only toggles.
-    /@click="handleTreeRowClick\(row\.entry, \$event\.detail\)"/
+    /@click="handleTreeRowClick\(row\.entry, \$event\)"/
   );
   assert.match(
     shellApp,
@@ -446,7 +451,7 @@ test('renderers keep empty state distinct from index failure and PDF/Monaco runt
   );
   assert.match(
     shellApp,
-    /tree-row--selected'[\s\S]*onlyPreviewShellStore\.treeSelectedRelativePath[\s\S]*:aria-selected="[\s\S]*row\.entry\.relativePath === onlyPreviewShellStore\.treeSelectedRelativePath/
+    /tree-row--selected'[\s\S]*onlyPreviewTreeSelection\.isSelected\(row\.entry\.relativePath\)[\s\S]*:aria-selected="onlyPreviewTreeSelection\.isSelected\(row\.entry\.relativePath\)"/
   );
   const globalSearchContext = shellStore.slice(
     shellStore.indexOf('getGlobalSearchContext()'),
@@ -564,8 +569,5 @@ test('selected Project rows keep their blue surface while excluded rows remain o
     shellStyle,
     /\.onlypreview-shell__tree-icon--search-excluded-directory \{[^}]*color:\s*#c2410c/i
   );
-  assert.match(
-    shellStyle,
-    /\.onlypreview-shell__tree-row--selected::after \{[^}]*background:\s*var\(--onlypreview-royal\)/
-  );
+  assert.doesNotMatch(shellStyle, /\.onlypreview-shell__tree-row--selected::after/);
 });

@@ -83,6 +83,11 @@ design document.
   passed.
 - [OnlyPreview sub-application](features/onlypreview.md) - capability-scoped local indexing,
   standalone-only multi-view preview, EyesOnAgents-style MenuBar, settings, and OS file-open routing.
+- [OnlyPreview folder delete leaves a recovery directory](issues/onlypreview-folder-delete-leaves-a-recovery-directory.md) -
+  fixed; owner verification pending: the post-isolate identity check re-`lstat`ed the renamed-away
+  original path, so every folder delete failed and left its `.bitterless-delete-recovery-*` directory
+  in the project; cleanup now runs on the failure path, the selected row loses its right-hand rail,
+  the shell view opens detached DevTools, and Reveal in folder sits above Delete.
 - [OnlyPreview Main filesystem I/O](issues/onlypreview-main-filesystem-io.md) - implemented; owner
   runtime verification pending: potentially large project-content traversal, mutation, open and
   byte delivery now stay inside trusted renderer preloads while Main retains bounded configuration

@@ -640,7 +640,7 @@ test('OnlyPreview folder-first chrome, current-file locator, and native file men
   );
   assert.match(
     menuBody,
-    /onlypreview-reveal-in-folder[\s\S]*onlypreview-copy-item[\s\S]*onlypreview-copy-path[\s\S]*onlypreview-copy-relative-path[\s\S]*onlypreview-copy-name/
+    /onlypreview-copy-item[\s\S]*onlypreview-copy-path[\s\S]*onlypreview-copy-relative-path[\s\S]*onlypreview-copy-name[\s\S]*onlypreview-reveal-in-folder/
   );
   assert.match(menuBody, /item\.nodeKind === 'file' \? labels\.copyFile : labels\.copyFolder/);
   assert.match(menuBody, /onlypreview-delete[\s\S]*menuSelection\.length > 1/);
@@ -673,7 +673,7 @@ test('OnlyPreview folder-first chrome, current-file locator, and native file men
   );
   assert.match(
     menuBody,
-    /onlypreview-reveal-in-folder[\s\S]*type: 'separator'[\s\S]*onlypreview-delete/
+    /type: 'separator'[\s\S]*onlypreview-reveal-in-folder[\s\S]*onlypreview-delete/
   );
   assert.match(menuBody, /Menu\.buildFromTemplate\([\s\S]*\.popup\(\{ window \}\)/);
   assert.doesNotMatch(menuBody, /realPath/);

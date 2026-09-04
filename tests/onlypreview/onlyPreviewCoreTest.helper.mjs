@@ -22,6 +22,12 @@ await build({
   target: 'node22',
   sourcemap: 'inline',
   tsconfig: join(projectRoot, 'tsconfig.node.json'),
+  // fs-extra and its `graceful-fs` dependency are CommonJS and call `require('fs')` at load time.
+  // esbuild leaves that call intact when it bundles them into ESM, where `require` does not exist,
+  // so the bundle needs one.
+  banner: {
+    js: "import { createRequire as __createRequire } from 'node:module';\nconst require = __createRequire(import.meta.url);"
+  },
   alias: {
     electron: join(projectRoot, 'tests/onlypreview/fixtures/electron.stub.mjs'),
     '@main/fileSearch/fileSearchWindow.service': join(

@@ -1,5 +1,6 @@
-import { accessSync, constants, lstatSync } from 'node:fs';
+import { constants } from 'node:fs';
 import { join } from 'node:path';
+import { access, lstat } from 'fs-extra';
 import type { OnlyPreviewAgentSkillGuideInfo } from '@shared/onlypreview/onlyPreview.types';
 
 export const ONLY_PREVIEW_AGENT_SKILL_NAME = 'bitterless-preview';
@@ -37,25 +38,25 @@ export const resolveOnlyPreviewAgentSkillPath = ({
       )
     : join(appPath, 'skills', ONLY_PREVIEW_AGENT_SKILL_NAME);
 
-export const requireOnlyPreviewAgentSkillPath = (skillPath: string): string => {
+export const requireOnlyPreviewAgentSkillPath = async (skillPath: string): Promise<string> => {
   try {
     for (const directoryPath of [
       skillPath,
       join(skillPath, 'agents'),
       join(skillPath, 'references')
     ]) {
-      const stats = lstatSync(directoryPath);
+      const stats = await lstat(directoryPath);
       if (stats.isSymbolicLink() || !stats.isDirectory()) {
         throw new Error('invalid skill directory');
       }
     }
     for (const relativePath of ONLY_PREVIEW_AGENT_SKILL_REQUIRED_FILES) {
       const filePath = join(skillPath, relativePath);
-      const stats = lstatSync(filePath);
+      const stats = await lstat(filePath);
       if (stats.isSymbolicLink() || !stats.isFile() || stats.size === 0) {
         throw new Error('invalid skill file');
       }
-      accessSync(filePath, constants.R_OK);
+      await access(filePath, constants.R_OK);
     }
   } catch {
     throw new Error('Bitterless Preview agent skill is unavailable. Restart Bitterless and retry.');

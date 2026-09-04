@@ -195,8 +195,14 @@ test('the large-content guard intentionally leaves bounded Main configuration I/
   const windowHelper = source('src/main/windows/onlyPreviewWindow.helper.ts');
   const logSetup = source('src/main/logging/log.setup.ts');
 
-  assert.match(agentSkill, /from ['"]node:fs['"]/);
-  assert.match(agentSkill, /accessSync|lstatSync/);
+  // Still bounded metadata checks over a fixed file list rather than content reads — only the
+  // syscalls moved to fs-extra's promise API, which is this codebase's file I/O style.
+  assert.match(agentSkill, /from ['"]node:fs['"]/, 'constants still come from node:fs');
+  assert.match(agentSkill, /import \{ access, lstat \} from ['"]fs-extra['"]/);
+  assert.doesNotMatch(agentSkill, /Sync\(/, 'no synchronous filesystem call blocks Main');
+  assert.match(agentSkill, /await lstat\(/);
+  assert.match(agentSkill, /await access\(filePath, constants\.R_OK\)/);
+  assert.doesNotMatch(agentSkill, /readFile/, 'the guard reads metadata, never file content');
   assert.match(windowHelper, /windowStateService/);
   assert.match(logSetup, /electron-log/);
 });
