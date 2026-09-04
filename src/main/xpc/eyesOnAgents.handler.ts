@@ -18,6 +18,7 @@ import {
   getCodexHookOutboxPath
 } from '@shared/eyesOnAgents/codexHookBridge.contract';
 import {
+  deriveEyesOnAgentsClaudeEnvironmentLabel,
   parseEyesOnAgentsAddClaudeEnvironmentParams,
   parseEyesOnAgentsClaudeBridgeEnvironmentParams,
   parseEyesOnAgentsClaudeEnvironmentIdParams,
@@ -512,10 +513,16 @@ export class EyesOnAgentsHandler extends XpcMainHandler implements EyesOnAgentsA
     return claudeDirectoryConfig.listEnvironments();
   }
 
-  async addClaudeEnvironment(params: { label: string }): Promise<EyesOnAgentsClaudeEnvironment[]> {
-    const { label } = parseEyesOnAgentsAddClaudeEnvironmentParams(params);
-    const configDirectory = await pickClaudeConfigDirectory();
-    if (configDirectory !== null) await claudeDirectoryConfig.addEnvironment({ label, configDirectory });
+  async addClaudeEnvironment(
+    params: { configDirectory: string }
+  ): Promise<EyesOnAgentsClaudeEnvironment[]> {
+    const { configDirectory } = parseEyesOnAgentsAddClaudeEnvironmentParams(params);
+    // addEnvironment canonicalizes and validates the directory (existing, non-symlink, not a
+    // filesystem root) and throws a readable message if it does not, which the renderer surfaces.
+    await claudeDirectoryConfig.addEnvironment({
+      label: deriveEyesOnAgentsClaudeEnvironmentLabel(configDirectory),
+      configDirectory
+    });
     await claudeObservation.applyEnvironments();
     return claudeDirectoryConfig.listEnvironments();
   }

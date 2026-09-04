@@ -608,12 +608,38 @@ export const parseEyesOnAgentsClaudeEnvironmentLabel = (value: unknown): string 
   return parseEyesOnAgentsText(value, 'Claude environment label', 80, false) as string;
 };
 
+// Task 091: an environment is added by pasting its absolute CLAUDE_CONFIG_DIR, not by naming it and
+// then hunting for it in the native picker — a Claude config directory is a hidden dotfile directory,
+// which the macOS dialog makes awkward to reach, while the absolute path is one paste. This parser
+// deliberately does NOT touch the filesystem; existence/symlink/realpath checks stay in
+// requireCanonicalClaudeConfigDirectory on the Main side, the only place allowed to stat.
 export const parseEyesOnAgentsAddClaudeEnvironmentParams = (
   value: unknown
-): { label: string } => {
+): { configDirectory: string } => {
   if (!isEyesOnAgentsRecord(value)) throw new Error('Claude environment params must be an object');
-  assertOnlyKeys(value, ['label'], 'Claude environment params');
-  return { label: parseEyesOnAgentsClaudeEnvironmentLabel(value.label) };
+  assertOnlyKeys(value, ['configDirectory'], 'Claude environment params');
+  const configDirectory = parseEyesOnAgentsText(
+    value.configDirectory,
+    'Claude config directory',
+    4_096,
+    false
+  ) as string;
+  if (!configDirectory.startsWith('/') && !/^[A-Za-z]:[\\/]/u.test(configDirectory)) {
+    throw new Error('Claude config directory must be an absolute path');
+  }
+  return { configDirectory };
+};
+
+// Names an environment from its own directory so the user does not have to label a thing they just
+// identified by path: /Users/ral/.claude2 -> "claude2". Derive from the CANONICAL path so a trailing
+// slash or a "/./" segment cannot produce a different label for the same directory. The label is not
+// an identity (id is) and Rename always exists, so a duplicate or awkward derivation is correctable.
+export const deriveEyesOnAgentsClaudeEnvironmentLabel = (configDirectory: string): string => {
+  const segments = configDirectory.split(/[\\/]+/u).filter((segment) => segment.length > 0);
+  const base = segments[segments.length - 1] ?? '';
+  const stripped = base.startsWith('.') ? base.slice(1) : base;
+  const label = stripped.length > 0 ? stripped : base;
+  return label.length > 0 ? label.slice(0, 80) : 'Claude environment';
 };
 
 export const parseEyesOnAgentsClaudeEnvironmentIdParams = (

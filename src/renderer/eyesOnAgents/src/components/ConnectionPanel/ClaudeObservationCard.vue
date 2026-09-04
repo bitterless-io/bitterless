@@ -50,18 +50,18 @@
 
         <div v-if="addingEnvironment" class="eyes-connection-card__directories-add">
           <a-input
-            v-model="addEnvironmentLabel"
+            v-model="addEnvironmentDirectory"
             size="mini"
-            :max-length="80"
-            :placeholder="i18nHelper.eyesOnAgents.claudeEnvironment.addLabelPlaceholder"
-            :aria-label="i18nHelper.eyesOnAgents.claudeEnvironment.addLabelPlaceholder"
+            :max-length="4096"
+            :placeholder="i18nHelper.eyesOnAgents.claudeEnvironment.addDirectoryPlaceholder"
+            :aria-label="i18nHelper.eyesOnAgents.claudeEnvironment.addDirectoryPlaceholder"
             @keydown.enter="handleAddEnvironment"
           />
           <a-button
             size="mini"
             type="primary"
             :loading="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(ADD_CLAUDE_ENVIRONMENT_KEY)"
-            :disabled="!addEnvironmentLabel.trim()"
+            :disabled="!addEnvironmentDirectory.trim()"
             @click="handleAddEnvironment"
           >
             {{ i18nHelper.eyesOnAgents.claudeEnvironment.add }}
@@ -523,7 +523,7 @@ const observationProofLabel = computed(() => {
 const environmentRows = computed(() => eyesOnAgentsStore.snapshot?.claudeDirectory ?? []);
 const defaultEnvironmentId = computed(() => environmentRows.value[0]?.id ?? null);
 const addingEnvironment = ref(false);
-const addEnvironmentLabel = ref('');
+const addEnvironmentDirectory = ref('');
 const renamingId = ref<string | null>(null);
 const renameLabelDraft = ref('');
 // Task 089: the id of the row whose setup command was copied last, mirroring the card-level
@@ -624,23 +624,25 @@ const setupCommandCopyLabel = (environment: EyesOnAgentsClaudeEnvironmentStatus)
 
 const handleStartAddEnvironment = (): void => {
   addingEnvironment.value = true;
-  addEnvironmentLabel.value = '';
+  addEnvironmentDirectory.value = '';
 };
 
 const handleCancelAddEnvironment = (): void => {
   addingEnvironment.value = false;
-  addEnvironmentLabel.value = '';
+  addEnvironmentDirectory.value = '';
 };
 
 const handleAddEnvironment = async (): Promise<void> => {
-  const label = addEnvironmentLabel.value.trim();
-  if (!label) return;
+  const configDirectory = addEnvironmentDirectory.value.trim();
+  if (!configDirectory) return;
   try {
-    await eyesOnAgentsStore.addClaudeEnvironment(label);
+    await eyesOnAgentsStore.addClaudeEnvironment(configDirectory);
     addingEnvironment.value = false;
-    addEnvironmentLabel.value = '';
+    addEnvironmentDirectory.value = '';
   } catch {
-    // actionError already reflects the failure; keep the form open so the label is not lost.
+    // actionError already reflects the failure (a non-absolute path, or one that is not an existing
+    // directory); keep the form open with the typed path so a typo can be corrected rather than
+    // retyped.
   }
 };
 

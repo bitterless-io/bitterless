@@ -392,9 +392,9 @@ class EyesOnAgentsState {
   // Task 088: environment CRUD, mirroring openThread/openThreadInIterm2's call/error-handling
   // pattern (in-flight guard, error/rethrow contract) rather than the single global busyAction gate
   // above, so acting on one environment never disables another environment's row controls.
-  async addClaudeEnvironment(label: string): Promise<void> {
+  async addClaudeEnvironment(configDirectory: string): Promise<void> {
     await this.runClaudeEnvironmentAction(ADD_CLAUDE_ENVIRONMENT_KEY, () =>
-      eyesOnAgentsEmitter.addClaudeEnvironment({ label }),
+      eyesOnAgentsEmitter.addClaudeEnvironment({ configDirectory }),
     );
   }
 

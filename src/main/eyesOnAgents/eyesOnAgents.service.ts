@@ -31,6 +31,7 @@ import {
   isEyesOnAgentsRecord,
   normalizeEyesOnAgentsProviderThreadTitle,
   normalizeEyesOnAgentsThreadStatus,
+  deriveEyesOnAgentsClaudeEnvironmentLabel,
   parseEyesOnAgentsPath,
   parseEyesOnAgentsSessionKey,
   parseEyesOnAgentsText,
@@ -3050,12 +3051,16 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     return this.requireClaudeDirectoryConfig().listEnvironments();
   }
 
-  async addClaudeEnvironment(params: { label: string }): Promise<EyesOnAgentsClaudeEnvironment[]> {
+  // Task 091: no native picker on this path any more — the caller pastes the absolute directory and
+  // addEnvironment validates it. The label is derived from the directory rather than asked for.
+  async addClaudeEnvironment(
+    params: { configDirectory: string }
+  ): Promise<EyesOnAgentsClaudeEnvironment[]> {
     const directoryConfig = this.requireClaudeDirectoryConfig();
-    const configDirectory = (await this.dependencies.pickClaudeConfigDirectory?.()) ?? null;
-    if (configDirectory !== null) {
-      await directoryConfig.addEnvironment({ label: params.label, configDirectory });
-    }
+    await directoryConfig.addEnvironment({
+      label: deriveEyesOnAgentsClaudeEnvironmentLabel(params.configDirectory),
+      configDirectory: params.configDirectory
+    });
     await this.dependencies.claudeObservation?.applyEnvironments?.();
     return directoryConfig.listEnvironments();
   }

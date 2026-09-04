@@ -632,7 +632,8 @@ export interface EyesOnAgentsApi {
   // Environment CRUD (task 084 registered these on EyesOnAgentsHandler; task 088 closes the gap
   // left on this shared interface — see the multi-environment design doc's Renderer section).
   listClaudeEnvironments(): Promise<EyesOnAgentsClaudeEnvironment[]>;
-  addClaudeEnvironment(params: { label: string }): Promise<EyesOnAgentsClaudeEnvironment[]>;
+  // Task 091: takes the pasted absolute CLAUDE_CONFIG_DIR; the label is derived from it.
+  addClaudeEnvironment(params: { configDirectory: string }): Promise<EyesOnAgentsClaudeEnvironment[]>;
   renameClaudeEnvironment(params: {
     id: string;
     label: string;

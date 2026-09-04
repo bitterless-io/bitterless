@@ -640,6 +640,53 @@ try {
     ))
   ]);
 
+  // Issue: the scoped unix socket path must stay inside the platform sun_path limit. The owner hit
+  // `listen EINVAL` on a 134-byte path because the raw 36-char environment UUID was concatenated
+  // into the filename, while the win32 branch had always hashed it. Every unit test passed because
+  // nothing asserted the produced path's LENGTH or bound it.
+  {
+    const UUID_A = 'af147ca5-5493-4079-81db-1c6f8841682b';
+    const UUID_B = 'bf147ca5-5493-4079-81db-1c6f8841682b';
+    // The longest real profile-scoped userData directory, which is exactly where this broke.
+    const userData = '/Users/ral/Library/Application Support/Bitterless_DEBUG_PROD';
+
+    const scopedA = contract.getClaudeInventoryBridgeEndpoint(userData, 'darwin', UUID_A);
+    const scopedB = contract.getClaudeInventoryBridgeEndpoint(userData, 'darwin', UUID_B);
+
+    assert.equal(scopedA.transport, 'unix');
+    assert(Buffer.byteLength(scopedA.path, 'utf8') <= 103,
+      `scoped Claude inventory socket path must fit the 103-byte unix limit, got ${
+        Buffer.byteLength(scopedA.path, 'utf8')}: ${scopedA.path}`);
+    // Two environments running at once must not collide on one endpoint — this also closes the
+    // task 085 review's logged gap that no test asserted per-environment distinctness.
+    assert.notEqual(scopedA.path, scopedB.path,
+      'two Claude environments must get two distinct socket paths');
+    assert(!scopedA.path.includes(UUID_A),
+      'the raw environment id must not appear in the socket path — that is what overflowed');
+
+    // The unscoped form is the pre-085 path and must stay byte-identical for existing callers.
+    const unscoped = contract.getClaudeInventoryBridgeEndpoint(userData, 'darwin');
+    assert.equal(unscoped.path, `${userData}/eyes-on-agents/claude-inventory.sock`);
+
+    // win32 named pipes are not sun_path-bound, but must stay per-environment distinct.
+    const pipeA = contract.getClaudeInventoryBridgeEndpoint(userData, 'win32', UUID_A);
+    const pipeB = contract.getClaudeInventoryBridgeEndpoint(userData, 'win32', UUID_B);
+    assert.equal(pipeA.transport, 'win32-named-pipe');
+    assert.notEqual(pipeA.path, pipeB.path);
+
+    // A home directory long enough to overflow anyway must fail with an actionable message rather
+    // than emitting a path that bind(2) will later reject as EINVAL.
+    assert.throws(
+      () => contract.getClaudeInventoryBridgeEndpoint(
+        `/Users/${'n'.repeat(90)}/Library/Application Support/Bitterless_DEBUG_PROD`,
+        'darwin',
+        UUID_A
+      ),
+      /unix socket limit/,
+      'an unavoidably-too-long path must throw a message naming the limit'
+    );
+  }
+
   console.log('EyesOnAgents Claude inventory tests passed');
 } finally {
   rmSync(fixtureRoot, { recursive: true, force: true });

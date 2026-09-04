@@ -789,7 +789,7 @@ export const zh: typeof en = {
         + '并确保该环境使用的 shell 命令（例如 claude2 包装脚本）在调用 claude 之前设置了 '
         + 'CLAUDE_CONFIG_DIR。',
       addEnvironment: '添加环境',
-      addLabelPlaceholder: '名称（例如 claude2）',
+      addDirectoryPlaceholder: 'CLAUDE_CONFIG_DIR 绝对路径（例如 /Users/you/.claude2）',
       add: '添加',
       notConfigured: '未配置',
       rename: '重命名',

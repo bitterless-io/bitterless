@@ -292,8 +292,13 @@ The Claude card also contains one **Claude environments** list before the state-
 action, replacing the earlier single Session directories block with one row per configured
 `EyesOnAgentsClaudeEnvironment` (multi-environment support). It uses the card's existing quiet
 neutral background hierarchy and no decorative border or shadow. A persistent **Add environment**
-button in the list header opens a small inline label input; submitting always creates a new
-`custom`-mode environment through a native directory picker.
+button in the list header opens one inline input for the **absolute `CLAUDE_CONFIG_DIR`, pasted**;
+submitting creates a new `custom`-mode environment and derives its label from the directory
+(`/Users/ral/.claude2` → `claude2`). There is no label field and no native picker on this path: a
+Claude config directory is a hidden dotfile directory, which the macOS dialog makes awkward to
+reach, while the absolute path is one paste. A rejected path (not absolute, or not an existing
+directory) surfaces through the card's action-error line and **leaves the form open with the typed
+value**, so a typo is corrected rather than retyped.
 
 Each row shows: the environment's label (inline **Rename**/**Save**/**Cancel** in place of the
 static label), its resolved path or **Not configured** in a bordered, read-only Arco Input so it can

@@ -29,10 +29,20 @@ const safeString = (value: unknown, label: string): string => {
   return value;
 };
 
+// A unix domain socket address is a fixed-size struct sockaddr_un: sun_path is 104 bytes on macOS
+// and 108 on Linux, INCLUDING the terminating NUL, so the usable path is one byte shorter. bind(2)
+// rejects anything longer with EINVAL. macOS is the tighter of the two and is what we budget for.
+const UNIX_SOCKET_PATH_MAX_BYTES = 103;
+
 // environmentId scopes the endpoint to one configured Claude environment (task 085): each
 // environment now runs its own ClaudeWatcherSupervisor/child process, so without a distinct
 // socket/pipe per environment, two simultaneously-running environments would collide on the same
 // endpoint path. Omitting it (existing callers, existing tests) reproduces the exact pre-085 path.
+//
+// The scoped unix name is deliberately terse (`ci-<12 hex>.sock`, 20 chars) rather than the obvious
+// `claude-inventory-<id>.sock`. The profile-scoped userData prefix already consumes 65-76 of the
+// 103-byte budget, so on a debug/preview profile even a hashed `claude-inventory-<12 hex>.sock`
+// (34 chars) overflows. Hashing alone is not enough here; the base name has to shrink too.
 export const getClaudeInventoryBridgeEndpoint = (
   userDataPath: string,
   platform: NodeJS.Platform = process.platform,
@@ -44,7 +54,19 @@ export const getClaudeInventoryBridgeEndpoint = (
     const suffix = createHash('sha1').update(`${safe}${scope}`).digest('hex').slice(0, 12);
     return { transport: 'win32-named-pipe', path: `\\\\.\\pipe\\bitterless-claude-inventory-${suffix}` };
   }
-  return { transport: 'unix', path: join(safe, 'eyes-on-agents', `claude-inventory${scope}.sock`) };
+  const fileName = environmentId === undefined
+    ? 'claude-inventory.sock'
+    : `ci-${createHash('sha1').update(scope).digest('hex').slice(0, 12)}.sock`;
+  const path = join(safe, 'eyes-on-agents', fileName);
+  // A long enough home directory can still overflow any fixed name. Fail with something actionable
+  // instead of letting it surface as an opaque `listen EINVAL` on an environment's status row.
+  if (Buffer.byteLength(path, 'utf8') > UNIX_SOCKET_PATH_MAX_BYTES) {
+    throw new Error(
+      `Claude inventory socket path is ${Buffer.byteLength(path, 'utf8')} bytes, over the `
+      + `${UNIX_SOCKET_PATH_MAX_BYTES}-byte unix socket limit`
+    );
+  }
+  return { transport: 'unix', path };
 };
 
 export const parseClaudeInventoryInvalidation = (

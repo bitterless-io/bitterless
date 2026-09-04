@@ -413,7 +413,10 @@ try {
     }
   });
 
-  await test('Add environment submits the trimmed label to addClaudeEnvironment', async () => {
+  // Task 091: the add form takes the absolute CLAUDE_CONFIG_DIR, not a label. A Claude config
+  // directory is a hidden dotfile directory, awkward to reach in the native picker, while the
+  // absolute path is one paste — and the label is derived from the directory rather than asked for.
+  await test('Add environment submits the trimmed directory to addClaudeEnvironment', async () => {
     const mounted = await mountCard([createEnvironment()]);
     try {
       const addToggle = [...mounted.host.querySelectorAll('button')]
@@ -422,10 +425,10 @@ try {
       addToggle.click();
       await nextTick();
       const input = mounted.host.querySelector(
-        'input[placeholder="Label (e.g. claude2)"]',
+        'input[placeholder="Absolute CLAUDE_CONFIG_DIR (e.g. /Users/you/.claude2)"]',
       );
       assert.ok(input, 'the add form input appears');
-      input.value = '  claude3  ';
+      input.value = '  /Users/ral/.claude2  ';
       input.dispatchEvent(new browserWindow.Event('input'));
       await nextTick();
       const addButton = [...mounted.host.querySelectorAll('button')]
@@ -434,8 +437,8 @@ try {
       addButton.click();
       await nextTick();
       await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
-      assert.deepEqual(mounted.store.calls.add, ['claude3'],
-        'the label is trimmed before being sent to the store');
+      assert.deepEqual(mounted.store.calls.add, ['/Users/ral/.claude2'],
+        'the directory is trimmed before being sent to the store');
     } finally {
       mounted.app.unmount();
       document.body.innerHTML = '';

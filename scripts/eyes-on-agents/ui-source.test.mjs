@@ -1011,7 +1011,11 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
   assert.match(claudeCard, /eyesOnAgentsStore\.chooseClaudeEnvironmentDirectory\(id\)/);
   assert.match(claudeCard, /eyesOnAgentsStore\.useAutomaticClaudeEnvironment\(id\)/);
   assert.match(claudeCard, /eyesOnAgentsStore\.removeClaudeEnvironment\(id\)/);
-  assert.match(claudeCard, /eyesOnAgentsStore\.addClaudeEnvironment\(label\)/);
+  // Task 091: the add form sends the pasted absolute CLAUDE_CONFIG_DIR, not a label — the label
+  // is derived from the directory on the Main side.
+  assert.match(claudeCard, /eyesOnAgentsStore\.addClaudeEnvironment\(configDirectory\)/);
+  assert.doesNotMatch(claudeCard, /addEnvironmentLabel/,
+    'the add form must no longer carry a label field');
   assert.match(claudeCard, /eyesOnAgentsStore\.renameClaudeEnvironment\(id, label\)/);
   assert.match(claudeCard, /eyesOnAgentsStore\.setClaudeEnvironmentEnabled\(id, enabled\)/);
   // Gap 1 (post-088 review): the manual per-environment Retry action falls back to the legacy
@@ -1039,7 +1043,22 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
   assert.match(sharedTypes, /changeClaudeDirectory\(\): Promise<EyesOnAgentsSnapshot>/);
   assert.doesNotMatch(sharedTypes, /changeClaudeDirectory\([^)]*(?:path|directory|url)/i,
     'the renderer contract must not accept a custom path');
-  assert.doesNotMatch(rendererSource, /showOpenDialog|pickDirectory|configDirectory\s*:/);
+  // The renderer must never open a native dialog itself, and must never own a directory path for
+  // any EXISTING environment: Change directory / Use automatic stay path-free, so Main remains the
+  // only side that can repoint a configured environment.
+  assert.doesNotMatch(rendererSource, /showOpenDialog|pickDirectory/);
+  // Task 091 narrows, deliberately, the one case where the renderer does carry a path: ADDING an
+  // environment now sends the absolute CLAUDE_CONFIG_DIR the user pasted, because a Claude config
+  // directory is hidden and the native picker made it awkward to reach. Main still validates it
+  // through requireCanonicalClaudeConfigDirectory (absolute, existing, non-symlink, not a
+  // filesystem root) before it is persisted or watched — the renderer proposes, Main disposes.
+  assert.match(store, /addClaudeEnvironment\(configDirectory: string\)/,
+    'add is the only renderer path that carries a directory, and it is explicitly typed');
+  assert.doesNotMatch(
+    store,
+    /(?:changeClaudeDirectory|chooseClaudeEnvironmentDirectory|useAutomaticClaudeEnvironment)\([^)]*(?:path|directory|Directory)/,
+    'repointing an existing environment must not accept a renderer-supplied path',
+  );
   const directorySurface = cssRule(panelStyles, '.eyes-connection-card__directories');
   assert.match(directorySurface, /background:/);
   assert.doesNotMatch(directorySurface, /\bborder\s*:|box-shadow/,

@@ -425,8 +425,18 @@ rename, remove, enable/disable):
 - Row actions: rename, change directory (opens the existing native picker) or "Use automatic" for
   the one eligible environment, enable/disable, remove (disabled for the last remaining
   environment).
-- A persistent "Add environment" action opens a small form (label + directory picker), always
-  creating a `mode: 'custom'` entry.
+- A persistent "Add environment" action opens a one-field form: the **absolute
+  `CLAUDE_CONFIG_DIR`, pasted** (task 091). It always creates a `mode: 'custom'` entry, and the
+  label is **derived from the directory** (`/Users/ral/.claude2` → `claude2`) rather than asked for.
+  This replaced an earlier label-plus-native-picker form: a Claude config directory is a hidden
+  dotfile directory, which the macOS dialog makes awkward to reach, while the absolute path is a
+  single paste. Rename remains available for anything the derivation gets wrong.
+  - **Trust boundary note.** This is the one place the renderer supplies a filesystem path; every
+    other directory action (Change directory, Use automatic) stays path-free so Main alone can
+    repoint an existing environment. Main still validates the pasted value through
+    `requireCanonicalClaudeConfigDirectory` — absolute, existing, non-symlink, not a filesystem
+    root — before it is persisted, watched, or used as `CLAUDE_CONFIG_DIR`. The renderer proposes,
+    Main disposes. `scripts/eyes-on-agents/ui-source.test.mjs` pins both halves of that boundary.
 - One short guidance note (replacing the standalone note originally proposed for this section):
   "Each environment needs its own hook install. Point Bitterless at your environment's
   `CLAUDE_CONFIG_DIR`, then Install — and make sure the shell command you use for that environment
