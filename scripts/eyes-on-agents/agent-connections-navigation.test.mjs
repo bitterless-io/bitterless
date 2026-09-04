@@ -87,6 +87,12 @@ const stubsPlugin = {
       path: 'claude-card',
       namespace: 'eyes-agent-connections-test'
     }));
+    // Task 093: the rail gained a third section whose detail pane is its own component, so the
+    // navigation harness stubs it the same way — this suite tests the rail, not either card.
+    buildApi.onResolve({ filter: /ClaudeIterm2Card\.vue$/ }, () => ({
+      path: 'claude-iterm2-card',
+      namespace: 'eyes-agent-connections-test'
+    }));
     buildApi.onLoad({ filter: /.*/, namespace: 'eyes-agent-connections-test' }, (args) => {
       if (args.path === 'i18n') {
         return {
@@ -108,6 +114,23 @@ const stubsPlugin = {
                   return true;
                 }
               });
+            `,
+          loader: 'js'
+        };
+      }
+      if (args.path === 'claude-iterm2-card') {
+        return {
+          contents: `
+              import { h } from 'vue';
+              export default {
+                name: 'ClaudeIterm2CardStub',
+                setup: () => () => h('div', {
+                  class: 'claude-iterm2-stub',
+                  'data-provider-enabled': String(
+                    globalThis.__eyesAgentConnectionsHarness.store.snapshot.claudeProvider.enabled
+                  )
+                }, 'Claude in iTerm2')
+              };
             `,
           loader: 'js'
         };
@@ -297,12 +320,34 @@ try {
     assert.match(componentSource, /case 'Home':[\s\S]*?case 'End':/);
     assert.match(
       componentSource,
-      /v-show="activeProvider === 'codex'"[\s\S]*?role="tabpanel"[\s\S]*?v-show="activeProvider === 'claude'"[\s\S]*?role="tabpanel"/
+      /v-show="activeProvider === 'codex'"[\s\S]*?role="tabpanel"[\s\S]*?v-show="activeProvider === 'claude'"[\s\S]*?role="tabpanel"[\s\S]*?v-show="activeProvider === 'claude-iterm2'"[\s\S]*?role="tabpanel"/
     );
     assert.match(
       componentSource,
-      /name="eyesOnAgents__connections__codexPanel"[\s\S]*?eyesOnAgents__connections__appServer[\s\S]*?eyesOnAgents__connections__boundary[\s\S]*?eyesOnAgents__connections__bridge[\s\S]*?name="eyesOnAgents__connections__claudePanel"[\s\S]*?<ClaudeObservationCard\s*\/>/
+      /name="eyesOnAgents__connections__codexPanel"[\s\S]*?eyesOnAgents__connections__appServer[\s\S]*?eyesOnAgents__connections__boundary[\s\S]*?eyesOnAgents__connections__bridge[\s\S]*?name="eyesOnAgents__connections__claudePanel"[\s\S]*?<ClaudeObservationCard\s*\/>[\s\S]*?name="eyesOnAgents__connections__claudeIterm2Panel"[\s\S]*?<ClaudeIterm2Card\s*\/>/
     );
+    // Task 093: the rail is driven by a section union, not the provider union — a Claude CLI
+    // environment is an iTerm2 concern and gets its own tab, while the provider union survives
+    // only for genuinely provider-shaped facts (the logo).
+    assert.match(
+      componentSource,
+      /type ConnectionSection = 'codex' \| 'claude' \| 'claude-iterm2';/
+    );
+    assert.match(
+      componentSource,
+      /const connectionSections = \[\s*'codex',\s*'claude',\s*'claude-iterm2',\s*\] as const satisfies readonly ConnectionSection\[\];/
+    );
+    assert.match(
+      componentSource,
+      /const getSectionProvider = \(section: ConnectionSection\): ConnectionProvider =>\s*section === 'codex' \? 'codex' : 'claude';/,
+      'both Claude sections must reuse the Claude Spark logo rather than a new asset'
+    );
+    assert.doesNotMatch(
+      componentSource,
+      /providers\/claude-iterm2|iterm2\.png/,
+      'the tab label carries the distinction; no new image asset is invented'
+    );
+    assert.match(componentSource, /case 'claude-iterm2': return i18nHelper\.eyesOnAgents\.provider\.claudeIterm2/);
     for (const action of [
       'connectAppServer',
       'disconnectAppServer',
@@ -399,29 +444,58 @@ try {
       const drawer = host.querySelector('.eyes-connection-panel');
       const tablist = host.querySelector('[role="tablist"]');
       const tabs = [...host.querySelectorAll('button[role="tab"]')];
-      const codexTab = tabs.find((tab) => tab.textContent?.includes('Codex'));
-      const claudeTab = tabs.find((tab) => tab.textContent?.includes('Claude'));
+      // Task 093: two of the three tabs are Claude tabs, so they are resolved by id rather than by
+      // a substring of their label.
+      const codexTab = host.querySelector('#eyes-connection-provider-tab-codex');
+      const claudeTab = host.querySelector('#eyes-connection-provider-tab-claude');
+      const iterm2Tab = host.querySelector('#eyes-connection-provider-tab-claude-iterm2');
       const codexPanel = host.querySelector('#eyes-connection-provider-panel-codex');
       const claudePanel = host.querySelector('#eyes-connection-provider-panel-claude');
+      const iterm2Panel = host.querySelector('#eyes-connection-provider-panel-claude-iterm2');
 
       assert.equal(drawer?.getAttribute('data-drawer-width'), '540');
       assert.equal(tablist?.getAttribute('aria-label'), 'Agent apps');
       assert.equal(tablist?.getAttribute('aria-orientation'), 'vertical');
-      assert.ok(codexTab && claudeTab && codexPanel && claudePanel);
+      assert.equal(tabs.length, 3, 'the rail shows exactly three sections');
+      assert.ok(codexTab && claudeTab && iterm2Tab);
+      assert.ok(codexPanel && claudePanel && iterm2Panel);
+      assert.equal(codexTab.textContent?.trim(), 'Codex');
+      assert.equal(claudeTab.textContent?.trim(), 'Claude');
+      assert.equal(iterm2Tab.textContent?.trim(), 'iTerm2');
       assert.equal(codexTab.getAttribute('aria-selected'), 'true');
       assert.equal(codexTab.getAttribute('tabindex'), '0');
       assert.equal(claudeTab.getAttribute('aria-selected'), 'false');
       assert.equal(claudeTab.getAttribute('tabindex'), '-1');
+      assert.equal(iterm2Tab.getAttribute('aria-selected'), 'false');
+      assert.equal(iterm2Tab.getAttribute('tabindex'), '-1');
       assert.equal(codexTab.getAttribute('aria-controls'), codexPanel.id);
       assert.equal(claudeTab.getAttribute('aria-controls'), claudePanel.id);
+      assert.equal(iterm2Tab.getAttribute('aria-controls'), iterm2Panel.id);
       assert.equal(codexPanel.getAttribute('aria-labelledby'), codexTab.id);
       assert.equal(claudePanel.getAttribute('aria-labelledby'), claudeTab.id);
+      assert.equal(iterm2Panel.getAttribute('aria-labelledby'), iterm2Tab.id);
       assert.equal(codexPanel.style.display, '');
       assert.equal(claudePanel.style.display, 'none');
+      assert.equal(iterm2Panel.style.display, 'none');
       assert.ok(codexPanel.querySelector('[name="eyesOnAgents__connections__appServer"]'));
       assert.ok(codexPanel.querySelector('[name="eyesOnAgents__connections__boundary"]'));
       assert.ok(codexPanel.querySelector('[name="eyesOnAgents__connections__bridge"]'));
       assert.ok(claudePanel.querySelector('.claude-observation-stub'));
+      assert.ok(iterm2Panel.querySelector('.claude-iterm2-stub'));
+      assert.equal(claudePanel.querySelector('.claude-iterm2-stub'), null,
+        'the environment list must render only under Claude in iTerm2');
+
+      iterm2Tab.click();
+      await settle();
+      assert.equal(iterm2Tab.getAttribute('aria-selected'), 'true');
+      assert.equal(iterm2Tab.getAttribute('tabindex'), '0');
+      assert.equal(iterm2Panel.style.display, '');
+      assert.equal(claudePanel.style.display, 'none');
+      assert.equal(
+        iterm2Panel.querySelector('.claude-iterm2-stub')?.getAttribute('data-provider-enabled'),
+        'false',
+        'the iTerm2 section stays selectable while Claude support is Off'
+      );
 
       claudeTab.click();
       await settle();
@@ -452,16 +526,27 @@ try {
       assert.equal(claudePanel.querySelector('#claude-local-state'), stateInput);
       assert.equal(stateInput.value, 'Retained troubleshooting draft');
 
+      // Task 093: keyboard navigation now wraps over THREE tabs, so a move from the middle tab and
+      // a wrap from an end tab are different assertions.
       claudeTab.focus();
       assert.equal(await dispatchKey(claudeTab, 'ArrowDown'), false);
+      assert.equal(iterm2Tab.getAttribute('aria-selected'), 'true');
+      assert.equal(document.activeElement, iterm2Tab, 'ArrowDown moves Claude → Claude in iTerm2');
+      assert.equal(await dispatchKey(iterm2Tab, 'ArrowDown'), false);
       assert.equal(codexTab.getAttribute('aria-selected'), 'true');
-      assert.equal(document.activeElement, codexTab, 'ArrowDown wraps and focuses Codex');
+      assert.equal(document.activeElement, codexTab, 'ArrowDown wraps from the last tab to Codex');
       assert.equal(await dispatchKey(codexTab, 'ArrowUp'), false);
-      assert.equal(document.activeElement, claudeTab, 'ArrowUp wraps and focuses Claude');
+      assert.equal(document.activeElement, iterm2Tab, 'ArrowUp wraps from Codex to the last tab');
+      assert.equal(await dispatchKey(iterm2Tab, 'ArrowUp'), false);
+      assert.equal(document.activeElement, claudeTab, 'ArrowUp moves Claude in iTerm2 → Claude');
       await dispatchKey(claudeTab, 'Home');
       assert.equal(document.activeElement, codexTab, 'Home selects and focuses the first tab');
       await dispatchKey(codexTab, 'End');
-      assert.equal(document.activeElement, claudeTab, 'End selects and focuses the last tab');
+      assert.equal(document.activeElement, iterm2Tab, 'End selects and focuses the last of three');
+      assert.equal(codexTab.getAttribute('tabindex'), '-1');
+      assert.equal(claudeTab.getAttribute('tabindex'), '-1');
+      assert.equal(iterm2Tab.getAttribute('tabindex'), '0',
+        'the roving tabindex keeps exactly one tab reachable across three sections');
       assert.deepEqual(store.calls, [], 'provider navigation must never invoke connection APIs');
     } finally {
       app.unmount();

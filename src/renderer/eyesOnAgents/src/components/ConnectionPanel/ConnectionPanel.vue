@@ -26,23 +26,23 @@
         :aria-label="i18nHelper.eyesOnAgents.connection.providerNavigation"
       >
         <button
-          v-for="provider in connectionProviders"
-          :id="getProviderTabId(provider)"
-          :key="provider"
+          v-for="section in connectionSections"
+          :id="getProviderTabId(section)"
+          :key="section"
           type="button"
           name="eyesOnAgents__connections__providerTab"
           class="eyes-connection-panel__provider-tab"
-          :class="{ 'eyes-connection-panel__provider-tab--active': activeProvider === provider }"
+          :class="{ 'eyes-connection-panel__provider-tab--active': activeProvider === section }"
           role="tab"
-          :aria-selected="activeProvider === provider"
-          :aria-controls="getProviderPanelId(provider)"
-          :tabindex="activeProvider === provider ? 0 : -1"
-          :title="getProviderLabel(provider)"
-          @click="selectProvider(provider)"
-          @keydown="handleProviderKeydown($event, provider)"
+          :aria-selected="activeProvider === section"
+          :aria-controls="getProviderPanelId(section)"
+          :tabindex="activeProvider === section ? 0 : -1"
+          :title="getProviderLabel(section)"
+          @click="selectProvider(section)"
+          @keydown="handleProviderKeydown($event, section)"
         >
           <img
-            v-if="provider === 'codex'"
+            v-if="getSectionProvider(section) === 'codex'"
             class="eyes-connection-panel__provider-logo eyes-connection-panel__provider-logo--codex"
             :src="codexLogo"
             alt=""
@@ -58,7 +58,7 @@
             draggable="false"
           />
           <span class="eyes-connection-panel__provider-label">
-            {{ getProviderLabel(provider) }}
+            {{ getProviderLabel(section) }}
           </span>
         </button>
       </nav>
@@ -271,6 +271,17 @@
       >
         <ClaudeObservationCard />
       </div>
+
+      <div
+        :id="getProviderPanelId('claude-iterm2')"
+        v-show="activeProvider === 'claude-iterm2'"
+        name="eyesOnAgents__connections__claudeIterm2Panel"
+        class="eyes-connection-panel__detail"
+        role="tabpanel"
+        :aria-labelledby="getProviderTabId('claude-iterm2')"
+      >
+        <ClaudeIterm2Card />
+      </div>
     </div>
   </a-drawer>
 </template>
@@ -281,60 +292,75 @@ import { IconInfoCircle, IconPlugConnected, IconRefresh } from '@tabler/icons-vu
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import claudeLogo from '@renderer/common/assets/icons/providers/claude.png';
 import codexLogo from '@renderer/common/assets/icons/providers/codex.png';
+import ClaudeIterm2Card from './ClaudeIterm2Card.vue';
 import ClaudeObservationCard from './ClaudeObservationCard.vue';
 import { eyesOnAgentsStore } from '../../store/eyesOnAgents.store';
 
 type ConnectionProvider = 'codex' | 'claude';
+// Task 093: the rail no longer splits by provider. It splits by how a session is observed and
+// opened — Claude owns two sections, Desktop metadata and an iTerm2 CLI environment — so the rail,
+// the active tab, the tab/panel ids and keyboard navigation all key off ConnectionSection. Only
+// genuinely provider-shaped facts (the logo) still key off ConnectionProvider.
+type ConnectionSection = 'codex' | 'claude' | 'claude-iterm2';
 
-const connectionProviders = ['codex', 'claude'] as const satisfies readonly ConnectionProvider[];
-const activeProvider = ref<ConnectionProvider>('codex');
+const connectionSections = [
+  'codex',
+  'claude',
+  'claude-iterm2',
+] as const satisfies readonly ConnectionSection[];
+const activeProvider = ref<ConnectionSection>('codex');
 const providerTablistRef = ref<HTMLElement | null>(null);
 
-const getProviderLabel = (provider: ConnectionProvider): string =>
-  provider === 'codex'
-    ? i18nHelper.eyesOnAgents.provider.codex
-    : i18nHelper.eyesOnAgents.provider.claude;
-const getProviderTabId = (provider: ConnectionProvider): string =>
-  `eyes-connection-provider-tab-${provider}`;
-const getProviderPanelId = (provider: ConnectionProvider): string =>
-  `eyes-connection-provider-panel-${provider}`;
-const selectProvider = (provider: ConnectionProvider): void => {
-  activeProvider.value = provider;
+const getSectionProvider = (section: ConnectionSection): ConnectionProvider =>
+  section === 'codex' ? 'codex' : 'claude';
+const getProviderLabel = (section: ConnectionSection): string => {
+  switch (section) {
+    case 'codex': return i18nHelper.eyesOnAgents.provider.codex;
+    case 'claude-iterm2': return i18nHelper.eyesOnAgents.provider.claudeIterm2;
+    default: return i18nHelper.eyesOnAgents.provider.claude;
+  }
 };
-const focusProvider = (provider: ConnectionProvider): void => {
-  activeProvider.value = provider;
+const getProviderTabId = (section: ConnectionSection): string =>
+  `eyes-connection-provider-tab-${section}`;
+const getProviderPanelId = (section: ConnectionSection): string =>
+  `eyes-connection-provider-panel-${section}`;
+const selectProvider = (section: ConnectionSection): void => {
+  activeProvider.value = section;
+};
+const focusProvider = (section: ConnectionSection): void => {
+  activeProvider.value = section;
   void nextTick(() => {
     providerTablistRef.value
-      ?.querySelector<HTMLButtonElement>(`#${getProviderTabId(provider)}`)
+      ?.querySelector<HTMLButtonElement>(`#${getProviderTabId(section)}`)
       ?.focus();
   });
 };
-const handleProviderKeydown = (event: KeyboardEvent, provider: ConnectionProvider): void => {
-  const providerIndex = connectionProviders.indexOf(provider);
-  let targetProvider: ConnectionProvider | null = null;
+const handleProviderKeydown = (event: KeyboardEvent, section: ConnectionSection): void => {
+  const sectionIndex = connectionSections.indexOf(section);
+  let targetSection: ConnectionSection | null = null;
 
   switch (event.key) {
     case 'ArrowUp':
-      targetProvider =
-        connectionProviders[
-          (providerIndex - 1 + connectionProviders.length) % connectionProviders.length
+      targetSection =
+        connectionSections[
+          (sectionIndex - 1 + connectionSections.length) % connectionSections.length
         ];
       break;
     case 'ArrowDown':
-      targetProvider = connectionProviders[(providerIndex + 1) % connectionProviders.length];
+      targetSection = connectionSections[(sectionIndex + 1) % connectionSections.length];
       break;
     case 'Home':
-      [targetProvider] = connectionProviders;
+      [targetSection] = connectionSections;
       break;
     case 'End':
-      targetProvider = connectionProviders[connectionProviders.length - 1];
+      targetSection = connectionSections[connectionSections.length - 1];
       break;
     default:
       return;
   }
 
   event.preventDefault();
-  focusProvider(targetProvider);
+  focusProvider(targetSection);
 };
 
 const props = defineProps<{ visible: boolean }>();

@@ -868,6 +868,11 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
   const claudeCard = read(
     'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ClaudeObservationCard.vue'
   );
+  // Task 093: the environment list is its own rail section now, so every assertion about a row's
+  // markup, handlers or store calls belongs to this component rather than the Claude card.
+  const claudeIterm2Card = read(
+    'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ClaudeIterm2Card.vue'
+  );
   const panelStyles = read(
     'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ConnectionPanel.less'
   );
@@ -900,6 +905,7 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
   assert.doesNotMatch(rendererSource, /transcriptPath|\.jsonl|claude:\/\//);
 
   assert.match(panel, /<ClaudeObservationCard \/>/);
+  assert.match(panel, /<ClaudeIterm2Card \/>/);
   assert.match(claudeCard, /snapshot\?\.claudeBridge/);
   assert.match(claudeCard, /bridge\?\.listeningSince/);
   assert.match(claudeCard, /bridge\?\.firstReceiptAt/);
@@ -962,9 +968,14 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
     store,
     /copyClaudeReloadCommand\(\): Promise<void>[\s\S]*eyesOnAgentsEmitter\.copyClaudeReloadCommand\(\)/,
   );
-  assert.match(claudeCard, /name="eyesOnAgents__connections__claudeDirectories"/);
-  assert.match(
+  assert.match(claudeIterm2Card, /name="eyesOnAgents__connections__claudeDirectories"/);
+  assert.doesNotMatch(
     claudeCard,
+    /eyesOnAgents__connections__claudeDirectories|claudeEnvironmentRow|claudeEnvironmentGuidance/,
+    'the environment list must live only in the Claude in iTerm2 section',
+  );
+  assert.match(
+    claudeIterm2Card,
     /<a-input[\s\S]*:model-value="environmentPath\(environment\)"[\s\S]*readonly[\s\S]*\/>/,
     'each environment row must expose its resolved path in a read-only Arco Input',
   );
@@ -975,15 +986,15 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
   // Task 092: the directory handler now receives the environment (it needs the row's current path
   // to prefill the inline editor), so the sentinel check reads environment.id.
   assert.match(
-    claudeCard,
+    claudeIterm2Card,
     /if \(environment\.id === ''\) \{[\s\S]*eyesOnAgentsStore\.changeClaudeDirectory\(\)/,
   );
   assert.match(
-    claudeCard,
+    claudeIterm2Card,
     /if \(id === ''\) \{[\s\S]*eyesOnAgentsStore\.useAutomaticClaudeDirectory\(\)/,
   );
   assert.match(
-    claudeCard,
+    claudeIterm2Card,
     /const isEligibleForAutomatic = \(environment: EyesOnAgentsClaudeEnvironmentStatus\): boolean =>[\s\S]*environment\.mode === 'custom' \|\| environment\.state === 'error'/,
     'a malformed saved directory must still expose Use automatic recovery on the default row',
   );
@@ -991,12 +1002,12 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
   // EyesOnAgentsClaudeEnvironmentStatus.canRemove (mirroring
   // ClaudeDirectoryConfigService.removeEnvironment's own guard), not re-derived from the row count.
   assert.match(
-    claudeCard,
+    claudeIterm2Card,
     /:disabled="!environment\.canRemove/,
     'remove must be disabled from the service-surfaced canRemove flag',
   );
   assert.doesNotMatch(
-    claudeCard,
+    claudeIterm2Card,
     /environmentRows\.length <= 1/,
     'the renderer must not re-derive the last-remaining-environment guard',
   );
@@ -1007,35 +1018,58 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
     'the Add-environment busy key must be exported from the store',
   );
   assert.match(
-    claudeCard,
+    claudeIterm2Card,
     /import \{ ADD_CLAUDE_ENVIRONMENT_KEY, eyesOnAgentsStore \} from '\.\.\/\.\.\/store\/eyesOnAgents\.store';/,
     'the card must import the shared Add-environment busy key instead of redeclaring it',
   );
-  assert.doesNotMatch(claudeCard, /= '__add__'/,
+  assert.doesNotMatch(claudeIterm2Card, /= '__add__'/,
     'the card must not declare its own copy of the Add-environment busy key');
   // Task 092: the card sends the inline editor's path alongside the row id.
   assert.match(
-    claudeCard,
+    claudeIterm2Card,
     /eyesOnAgentsStore\.chooseClaudeEnvironmentDirectory\(id, configDirectory\)/,
   );
-  assert.match(claudeCard, /eyesOnAgentsStore\.useAutomaticClaudeEnvironment\(id\)/);
-  assert.match(claudeCard, /eyesOnAgentsStore\.removeClaudeEnvironment\(id\)/);
+  assert.match(claudeIterm2Card, /eyesOnAgentsStore\.useAutomaticClaudeEnvironment\(id\)/);
+  assert.match(claudeIterm2Card, /eyesOnAgentsStore\.removeClaudeEnvironment\(id\)/);
   // Task 091: the add form sends the pasted absolute CLAUDE_CONFIG_DIR, not a label — the label
   // is derived from the directory on the Main side.
-  assert.match(claudeCard, /eyesOnAgentsStore\.addClaudeEnvironment\(configDirectory\)/);
-  assert.doesNotMatch(claudeCard, /addEnvironmentLabel/,
+  assert.match(claudeIterm2Card, /eyesOnAgentsStore\.addClaudeEnvironment\(configDirectory\)/);
+  assert.doesNotMatch(claudeIterm2Card, /addEnvironmentLabel/,
     'the add form must no longer carry a label field');
-  assert.match(claudeCard, /eyesOnAgentsStore\.renameClaudeEnvironment\(id, label\)/);
-  assert.match(claudeCard, /eyesOnAgentsStore\.setClaudeEnvironmentEnabled\(id, enabled\)/);
+  assert.match(claudeIterm2Card, /eyesOnAgentsStore\.renameClaudeEnvironment\(id, label\)/);
+  assert.match(claudeIterm2Card, /eyesOnAgentsStore\.setClaudeEnvironmentEnabled\(id, enabled\)/);
   // Gap 1 (post-088 review): the manual per-environment Retry action falls back to the legacy
   // zero-arg store method for the empty-id sentinel row, exactly like Change directory/Use automatic.
-  assert.match(claudeCard, /if \(id === ''\) \{[\s\S]*eyesOnAgentsStore\.retryClaudeDirectory\(\)/);
-  assert.match(claudeCard, /eyesOnAgentsStore\.retryClaudeDirectoryForEnvironment\(id\)/);
-  assert.match(claudeCard, /environmentDesktopLabel\(environment\)/);
-  assert.match(claudeCard, /environmentLastScanLabel\(environment\)/);
-  assert.match(claudeCard, /environment\.desktopDirectoryCount/);
-  assert.match(claudeCard, /environment\.lastSuccessfulScanAt/);
-  assert.match(claudeCard, /canRetryEnvironment\(environment\)/);
+  assert.match(claudeIterm2Card,
+    /if \(id === ''\) \{[\s\S]*eyesOnAgentsStore\.retryClaudeDirectory\(\)/);
+  assert.match(claudeIterm2Card, /eyesOnAgentsStore\.retryClaudeDirectoryForEnvironment\(id\)/);
+  assert.match(claudeIterm2Card, /environmentLastScanLabel\(environment\)/);
+  assert.match(claudeIterm2Card, /environment\.lastSuccessfulScanAt/);
+  assert.match(claudeIterm2Card, /canRetryEnvironment\(environment\)/);
+  // Task 093: the desktop-directory count is the same platform-fixed number on every environment
+  // (resolveClaudeDesktopRoots never reads a configDirectory), so it is shown ONCE in the Claude
+  // card and read from the environments array — no new Main-side field, and nothing rendered when
+  // the array is empty or the value is unusable.
+  assert.doesNotMatch(claudeIterm2Card, /desktopDirectoryCount|desktopDirectories/,
+    'the per-row desktop-directory count must not survive in the environment rows');
+  assert.match(
+    claudeCard,
+    /const desktopDirectoryCount = computed<number \| null>\(\(\) => \{[\s\S]*eyesOnAgentsStore\.snapshot\?\.claudeDirectory \?\? \[\][\s\S]*environment\?\.desktopDirectoryCount[\s\S]*: null;/,
+    'the single Desktop metadata count must come from the environments array',
+  );
+  assert.match(
+    claudeCard,
+    /desktopDirectoryLabel = computed\(\(\) => desktopDirectoryCount\.value === null\s*\?\s*null/,
+    'an unavailable count must render nothing rather than 0 or undefined',
+  );
+  assert.match(
+    claudeCard,
+    /v-if="desktopDirectoryLabel"[\s\S]*name="eyesOnAgents__connections__claudeDesktopDirectories"/,
+  );
+  assert.match(
+    cssRule(panelStyles, '.eyes-connection-card .eyes-connection-card__desktop-meta'),
+    /font-size: 10px/,
+  );
   assert.match(store, /eyesOnAgentsEmitter\.changeClaudeDirectory\(\)/);
   assert.match(store, /eyesOnAgentsEmitter\.useAutomaticClaudeDirectory\(\)/);
   assert.match(store, /eyesOnAgentsEmitter\.retryClaudeDirectory\(\)/);
@@ -1070,13 +1104,16 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
   const directoryPayloadFiles = walk('src/renderer/eyesOnAgents')
     .filter((file) => /configDirectory/.test(read(file)))
     .map((file) => file.replace(/^.*src\/renderer\//u, 'src/renderer/'));
+  // Task 093 moved the two directory-carrying call sites out of ClaudeObservationCard.vue into
+  // ClaudeIterm2Card.vue, so the allowed set names that component instead. The check stays NEGATIVE
+  // (an exhaustive file list, not a positive match on the allowed methods) for the reason above.
   assert.deepEqual(
     directoryPayloadFiles.sort(),
     [
-      'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ClaudeObservationCard.vue',
+      'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ClaudeIterm2Card.vue',
       'src/renderer/eyesOnAgents/src/store/eyesOnAgents.store.ts',
     ],
-    'only the Claude connection card and the store may handle a CLAUDE_CONFIG_DIR in the renderer',
+    'only the Claude in iTerm2 card and the store may handle a CLAUDE_CONFIG_DIR in the renderer',
   );
   assert.doesNotMatch(
     store,
@@ -1118,6 +1155,35 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
   assert.match(english, /useAutomatic: 'Use automatic'/);
   assert.match(chinese, /title: 'Claude 环境'/);
   assert.match(chinese, /useAutomatic: '恢复自动发现'/);
+  // Task 093: the new section's own identity plus the explanation whose absence cost a debugging
+  // session — a CLI session is invisible until its hook reports an identity from inside iTerm2.
+  assert.match(claudeIterm2Card, /i18nHelper\.eyesOnAgents\.claudeIterm2\.title/);
+  assert.match(
+    claudeIterm2Card,
+    /name="eyesOnAgents__connections__claudeIterm2Requirement"[\s\S]*claudeIterm2\.requirement/,
+  );
+  // Gating is unchanged: one `Claude support` switch, which lives in the Claude section, governs
+  // both Claude sections. Off must fold this card to the same paused line, not leave a dead list.
+  assert.match(
+    claudeIterm2Card,
+    /const providerEnabled = computed\(\(\) => provider\.value\?\.enabled === true\)/,
+  );
+  assert.match(claudeIterm2Card, /<template v-if="providerEnabled">/);
+  assert.match(
+    claudeIterm2Card,
+    /v-else class="eyes-connection-card__provider-paused" role="status"[\s\S]*providerPausedCopy/,
+  );
+  assert.doesNotMatch(claudeIterm2Card, /setClaudeProviderEnabled/,
+    'the provider switch itself stays in the Claude section');
+  assert.match(english, /claudeIterm2: 'iTerm2'/);
+  assert.match(english, /title: 'Claude in iTerm2'/);
+  assert.match(english, /A CLI Claude session becomes visible only once its hook reports an identity/);
+  assert.match(english, /inside iTerm2/);
+  assert.match(english, /needs \/reload-plugins/);
+  assert.match(chinese, /claudeIterm2: 'iTerm2'/);
+  assert.match(chinese, /title: 'iTerm2 中的 Claude'/);
+  assert.match(chinese, /必须在 iTerm2 中启动/);
+  assert.match(chinese, /\/reload-plugins 或新开一个会话/);
 });
 
 test('thread cards disclose only the bounded latest-question projection', () => {

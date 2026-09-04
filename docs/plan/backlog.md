@@ -264,3 +264,11 @@ Non-blocking review findings are recorded here after task verification.
   updating the check script's literal-substring probe. The script never reaches any i18n-content
   assertion while this is broken. Fix the probe (or the assertion it feeds) so the i18n check is
   load-bearing again.
+- Task 093 review: N configured Claude environments each spawn their own watcher over the **same**
+  platform-fixed Claude Desktop metadata root (`resolveClaudeDesktopRoots`,
+  `claudePath.resolver.ts:47-65`, derives from platform/home/env only and never reads an
+  environment's `configDirectory`). That is why the renderer now shows
+  `Desktop metadata directories: N` once in the Claude card instead of repeating an identical number
+  on every environment row. The redundant watching itself is untouched — collapsing Desktop
+  discovery to one shared watcher, with only the `projects/**` transcript watch staying
+  per-environment, is a `claudeObservation.service.ts` change and was an explicit task 093 non-goal.

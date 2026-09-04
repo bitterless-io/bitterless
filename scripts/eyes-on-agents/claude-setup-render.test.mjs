@@ -111,27 +111,32 @@ const createBridge = (setupAction) => ({
   error: setupAction === 'repair' ? 'Repair required' : null,
 });
 
-const createStore = (setupAction) => ({
+const defaultEnvironments = [{
+  id: '11111111-1111-4111-8111-111111111111',
+  label: 'Default',
+  enabled: true,
+  mode: 'automatic',
+  configuredDirectory: null,
+  effectiveDirectory: '/tmp/claude',
+  projectsDirectory: '/tmp/claude/projects',
+  desktopDirectoryCount: 1,
+  state: 'watching',
+  watching: true,
+  lastScanAt: null,
+  lastSuccessfulScanAt: null,
+  nextRetryAt: null,
+  error: null,
+  canRemove: false,
+}];
+
+// Task 093: `environments` is a parameter so this suite can also render the Claude card with no
+// hydrated environment at all — the state in which the single Desktop metadata line must render
+// nothing rather than `0` or `undefined`.
+const createStore = (setupAction, environments = defaultEnvironments) => ({
   snapshot: {
     claudeBridge: createBridge(setupAction),
     claudeProvider: { enabled: true, error: null, revision: 1 },
-    claudeDirectory: [{
-      id: '11111111-1111-4111-8111-111111111111',
-      label: 'Default',
-      enabled: true,
-      mode: 'automatic',
-      configuredDirectory: null,
-      effectiveDirectory: '/tmp/claude',
-      projectsDirectory: '/tmp/claude/projects',
-      desktopDirectoryCount: 1,
-      state: 'watching',
-      watching: true,
-      lastScanAt: null,
-      lastSuccessfulScanAt: null,
-      nextRetryAt: null,
-      error: null,
-      canRemove: false,
-    }],
+    claudeDirectory: environments,
   },
   busyAction: null,
   busyClaudeEnvironmentIds: new Set(),
@@ -173,9 +178,9 @@ try {
   });
 
   const module = await import(`${pathToFileURL(outfile).href}?v=${Date.now()}`);
-  const render = async (setupAction) => {
+  const render = async (setupAction, environments) => {
     globalThis.__eyesOnAgentsClaudeSetupHarness = {
-      store: createStore(setupAction),
+      store: createStore(setupAction, environments),
     };
     const app = createSSRApp({ render: () => h(module.default) });
     app.use(ArcoVue);
@@ -247,6 +252,29 @@ try {
   );
   assert.match(observingDocument.body.textContent ?? '', /Check status/);
   assert.match(observingDocument.body.textContent ?? '', /Remove plugin/);
+
+  // Task 093: the environment list is a rail section of its own now, and the one platform-fixed
+  // Desktop metadata count those rows used to repeat is shown exactly once, here.
+  assert.equal(
+    observingDocument.querySelector('[name="eyesOnAgents__connections__claudeDirectories"]'),
+    null,
+    'the environment list must no longer render inside the Claude card',
+  );
+  const desktopMeta = observingDocument.querySelectorAll(
+    '[name="eyesOnAgents__connections__claudeDesktopDirectories"]',
+  );
+  assert.equal(desktopMeta.length, 1, 'the Desktop metadata count must render exactly once');
+  assert.equal(desktopMeta[0].textContent?.trim(), 'Desktop metadata directories: 1');
+
+  const unhydratedDocument = await render('none', []);
+  assert.equal(
+    unhydratedDocument.querySelector(
+      '[name="eyesOnAgents__connections__claudeDesktopDirectories"]',
+    ),
+    null,
+    'no configured environment means no count to show — render nothing, not 0 or undefined',
+  );
+  assert.doesNotMatch(unhydratedDocument.body.textContent ?? '', /Desktop metadata directories/);
 
   const scriptOutfile = join(buildRoot, 'ClaudeObservationCard.script.mjs');
   await build({

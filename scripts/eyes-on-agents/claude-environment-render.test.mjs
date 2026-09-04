@@ -12,6 +12,10 @@ import { JSDOM } from 'jsdom';
 // correct payload, and remove staying disabled for the last remaining environment. Mirrors
 // thread-card-open-capability.test.mjs's real-DOM mount/click harness (not source-pattern
 // matching) so these are genuine behavioral assertions.
+// Task 093: the environment list moved into its own rail section, so this suite now mounts
+// ClaudeIterm2Card.vue. Every behavioral assertion below is unchanged except the desktop-directory
+// count, which is deliberately no longer a per-row fact (it is shown once in the Claude card —
+// see claude-setup-render.test.mjs).
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const buildRoot = mkdtempSync(join(projectRoot, '.eyes-claude-environment-render-'));
@@ -114,7 +118,7 @@ const stubsPlugin = {
           contents: `
           const current = () => globalThis.__eyesOnAgentsClaudeEnvironmentHarness.store;
           // Mirrors eyesOnAgents.store.ts's exported Add-environment busy key, which
-          // ClaudeObservationCard.vue imports instead of declaring its own literal.
+          // ClaudeIterm2Card.vue imports instead of declaring its own literal.
           export const ADD_CLAUDE_ENVIRONMENT_KEY = '__add__';
           export const eyesOnAgentsStore = new Proxy({}, {
             get: (_target, key) => current()[key],
@@ -162,7 +166,10 @@ const withRemovability = (environments) => environments.map((environment) => ({
   ...environment,
 }));
 
-const createStore = (environments, { providerError = null, bridge = {}, ...overrides } = {}) => {
+const createStore = (
+  environments,
+  { providerError = null, providerEnabled = true, bridge = {}, ...overrides } = {},
+) => {
   const calls = {
     add: [], rename: [], remove: [], setEnabled: [], chooseDirectory: [], useAutomatic: [],
     changeDirectory: 0, useAutomaticDirectory: 0, retry: [], retryDirectory: 0, copySetup: [],
@@ -179,7 +186,7 @@ const createStore = (environments, { providerError = null, bridge = {}, ...overr
         // whole snapshot.
         ...bridge,
       },
-      claudeProvider: { enabled: true, error: providerError, revision: 1 },
+      claudeProvider: { enabled: providerEnabled, error: providerError, revision: 1 },
       claudeDirectory: withRemovability(environments),
       claudeLastUserPromptCaptureEnabled: false,
     },
@@ -213,11 +220,11 @@ const createStore = (environments, { providerError = null, bridge = {}, ...overr
 };
 
 try {
-  const outfile = join(buildRoot, 'ClaudeObservationCard.mjs');
+  const outfile = join(buildRoot, 'ClaudeIterm2Card.mjs');
   await build({
     entryPoints: [join(
       projectRoot,
-      'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ClaudeObservationCard.vue',
+      'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ClaudeIterm2Card.vue',
     )],
     outfile,
     bundle: true,
@@ -229,7 +236,7 @@ try {
     plugins: [stubsPlugin, vuePlugin],
   });
 
-  const { default: ClaudeObservationCard } = await import(
+  const { default: ClaudeIterm2Card } = await import(
     `${pathToFileURL(outfile).href}?v=${Date.now()}`
   );
 
@@ -239,7 +246,7 @@ try {
     globalThis.__eyesOnAgentsClaudeEnvironmentHarness = { store };
     const host = document.getElementById('claude-observation-root');
     const { h } = await import('vue');
-    const app = createApp({ render: () => h(ClaudeObservationCard) });
+    const app = createApp({ render: () => h(ClaudeIterm2Card) });
     app.use(ArcoVue);
     app.mount(host);
     await nextTick();
@@ -630,9 +637,12 @@ try {
     }
   });
 
-  // Gap 1 (post-088 review): restores the pre-088 single block's desktop-directory-count/
-  // last-successful-scan/next-retry metadata and manual Retry action, scoped per environment.
-  await test('desktop directory count and last scan render per row, with a next-retry note when scheduled', async () => {
+  // Gap 1 (post-088 review): restores the pre-088 single block's last-successful-scan/next-retry
+  // metadata and manual Retry action, scoped per environment.
+  // Task 093: the desktop-directory count left the rows. Every environment's watcher watches the
+  // same platform-fixed Claude Desktop root, so repeating one global number per row was misleading;
+  // the Claude card now shows it once. The row keeps the metadata that really is per-environment.
+  await test('last scan renders per row with a next-retry note, and no per-row desktop count', async () => {
     const environment = createEnvironment({
       desktopDirectoryCount: 3,
       lastSuccessfulScanAt: '2026-09-03T00:00:00.000Z',
@@ -641,11 +651,41 @@ try {
     const mounted = await mountCard([environment]);
     try {
       const row = rows(mounted.host)[0];
-      assert.match(row.textContent ?? '', /Desktop metadata directories: 3/);
       assert.match(row.textContent ?? '', /Last successful scan: /);
       assert.match(row.textContent ?? '', /Next retry: /);
+      assert.doesNotMatch(row.textContent ?? '', /Desktop metadata directories/,
+        'the platform-fixed Desktop count belongs to the Claude card, once, not to every row');
     } finally {
       mounted.app.unmount();
+      document.body.innerHTML = '';
+    }
+  });
+
+  // Task 093: the section explains the one thing that actually decides whether a CLI session shows
+  // up — it has to be started inside iTerm2 — and stays governed by the single Claude support
+  // toggle that lives in the Claude section.
+  await test('the section states the iTerm2 requirement and folds to the paused line when Claude is off', async () => {
+    const mounted = await mountCard([createEnvironment()]);
+    try {
+      const note = mounted.host.querySelector(
+        '[name="eyesOnAgents__connections__claudeIterm2Requirement"]',
+      );
+      assert.ok(note, 'the iTerm2 requirement must be stated in this section');
+      assert.match(note.textContent ?? '', /inside iTerm2/);
+      assert.match(note.textContent ?? '', /Terminal\.app/);
+      assert.match(note.textContent ?? '', /\/reload-plugins/);
+    } finally {
+      mounted.app.unmount();
+      document.body.innerHTML = '';
+    }
+
+    const paused = await mountCard([createEnvironment()], { providerEnabled: false });
+    try {
+      assert.equal(rows(paused.host).length, 0,
+        'Claude support Off must not leave an interactive but dead environment list');
+      assert.match(paused.host.textContent ?? '', /Claude support is paused/);
+    } finally {
+      paused.app.unmount();
       document.body.innerHTML = '';
     }
   });

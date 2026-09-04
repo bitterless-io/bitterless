@@ -178,9 +178,14 @@ The menu bar shows:
 
 Clicking the connection status opens a 540px master-detail panel. The drawer is anchored to the
 `.eyes-on-agents__main` region rather than the document body, so its mask never covers the menu bar
-and it caps at the board width on a narrow window. A fixed 60px Agent App rail uses
-the official Codex and Claude PNG marks; its selected tab controls which provider detail pane is
-visible. The selected pane contains:
+and it caps at the board width on a narrow window. A fixed 60px Agent App rail carries **three**
+sections — `Codex`, `Claude`, and `iTerm2` (Claude in iTerm2) — and its selected tab controls which
+detail pane is visible. The rail splits by **how a session is observed and opened**, not by
+provider: a Claude thread renders from either a `desktopSessionId` or an `iterm2SessionId`, and
+Claude Desktop discovery is platform-fixed and never reads an environment's `CLAUDE_CONFIG_DIR`, so
+the CLI environment list is an iTerm2 concern rather than a Desktop one. Both Claude sections reuse
+the official Claude Spark mark beside the Codex mark — the label carries the distinction and no new
+image asset exists. The selected pane contains:
 
 - managed App Server status and `Connect`/`Disconnect`;
 - last successful sync time and latest error, if any;
@@ -211,19 +216,23 @@ The rail separates the two provider lifecycles without mixing navigation and ena
 │ Claude│                                                   │
 │  logo │                                                   │
 │Claude │                                                   │
+│ Claude│                                                   │
+│  logo │                                                   │
+│iTerm2 │                                                   │
 └───────┴───────────────────────────────────────────────────┘
 
-Selecting Claude replaces only the right pane with the complete Claude card: Claude support,
-the Claude environments list, plugin/listener facts, a flat **Store latest user question** row whose
-small Switch authorizes only live Claude Hook capture, and the state-driven setup/reload/repair
-surface.
+Selecting Claude replaces only the right pane with the Claude card: Claude support, the single
+Desktop metadata directory count, plugin/listener facts, a flat **Store latest user question** row
+whose small Switch authorizes only live Claude Hook capture, and the state-driven
+setup/reload/repair surface. Selecting iTerm2 replaces it with the Claude in iTerm2 card: the
+iTerm2 requirement note and the Claude environments list.
 ```
 
 The rail is a vertical tablist, not a connection control. Click, Arrow Up/Down, Home, and End select
-and focus a provider with roving tabindex. It remains fixed while the two `v-show` detail panes own
-independent scrolling and stay mounted, so switching never loses local setup or copy state. Claude
-stays selectable while Claude support is Off. At less than 480px the rail shrinks to 52px, visible
-labels hide, and accessible provider names remain.
+and focus a section with roving tabindex, wrapping over all three entries. It remains fixed while
+the three `v-show` detail panes own independent scrolling and stay mounted, so switching never loses
+local setup or copy state. Both Claude sections stay selectable while Claude support is Off. At less
+than 480px the rail shrinks to 52px, visible labels hide, and accessible section names remain.
 
 App Server Connect/Disconnect never installs or removes observation. The observation header keeps
 local installation, Codex trust, and current listener distinct through its aggregate label and
@@ -254,6 +263,13 @@ committed Hook receipt separately. It does not enumerate unrelated plugins and n
 coverage merely because installation files exist. Its user-scope plugin is required for timely
 working/completion status in local CLI and Desktop Code sessions. Archive/unarchive comes from the
 read-only Desktop `isArchived` metadata scan, not from Hook trust.
+
+`Desktop metadata directories: N` appears here, once, as one quiet line above the facts list. It is
+a platform-fixed global fact — every environment's watcher watches the same Desktop metadata root —
+so repeating it on each environment row was misleading. The value is read from the configured
+environments array rather than from a new Main-side field, and nothing renders at all when no
+environment reports a usable number. The underlying redundancy (N environments each watching the
+same Desktop directory) is a watcher concern recorded in `docs/plan/backlog.md`, not a renderer one.
 
 The Claude latest-question Switch is independent from the Codex Switch and is also default-off. It
 permits one bounded preview only on a live `UserPromptSubmit` delivery. Its helper/output queue stays
@@ -288,8 +304,21 @@ their persisted annotations return when the provider is enabled. The switch rema
 the saved preference is invalid so it can replace the value. The existing plugin removal control is
 labelled **Remove plugin**, avoiding ambiguity with the provider switch.
 
-The Claude card also contains one **Claude environments** list before the state-driven setup
-action, replacing the earlier single Session directories block with one row per configured
+## Claude in iTerm2
+
+The third rail section owns everything about a CLI Claude environment. It opens with the one
+explanation whose absence cost a debugging session, in the existing
+`eyes-connection-panel__boundary` aside treatment: a CLI Claude session becomes visible only once
+its hook reports an identity, so it must be started **inside iTerm2** — a session started in
+Terminal.app or an editor terminal has no Claude Desktop match and never appears — and an
+already-running session needs `/reload-plugins`, or a fresh session, before its hook is loaded.
+
+Gating is unchanged: the single **Claude support** switch, which stays in the Claude section,
+governs this section too. With Claude support Off this card folds to the same one-line paused
+explanation rather than presenting an interactive but dead list.
+
+This section contains one **Claude environments** list,
+replacing the earlier single Session directories block with one row per configured
 `EyesOnAgentsClaudeEnvironment` (multi-environment support). It uses the card's existing quiet
 neutral background hierarchy and no decorative border or shadow. A persistent **Add environment**
 button in the list header opens one inline input for the **absolute `CLAUDE_CONFIG_DIR`, pasted**;
@@ -321,11 +350,13 @@ The automatic environment never shows it — it needs no wrapper and has no conf
 and neither does the synthetic invalid-hydration row. Installing the snippet into a shell profile
 stays the user's step; Bitterless only copies it, and never logs the snippet or the path.
 
-Each row also repeats the desktop-directory-count and last-successful-scan metadata the earlier
-single block showed, plus a next-retry note once one is scheduled, and a manual **Retry** button in
+Each row also carries the last-successful-scan metadata the earlier single block showed, plus a
+next-retry note once one is scheduled, and a manual **Retry** button in
 the same states the pre-multi-environment single block used: a global Claude provider error, or the
 row's own state being `waiting`, `degraded`, `retrying`, or `error`. Retry acts on that one
-environment's watcher only — one environment's failure/retry never affects another's.
+environment's watcher only — one environment's failure/retry never affects another's. The
+desktop-directory count is deliberately **not** repeated per row; it is one platform-fixed global
+fact and lives once in the Claude section.
 
 **Rename** and **Remove** render on every row that has a real environment id. The synthetic
 invalid-hydration row (no known environment id) hides its Rename/Remove and enable switch.
@@ -362,25 +393,36 @@ button on every row regardless of that row's own state; the common from-scratch 
 by per-row presence instead.
 
 ```text
-┌ Claude environments ─────────────────────────────────[Add environment] ┐
-│ Default                                     Automatic · Watching  [on] │
-│ [ /Users/ral/.claude__________ ]                    [Change directory] │
-│ Desktop metadata directories: 1 · Last successful scan 10:42           │
-│ Plugin installed                                                       │
-│                                                     [Rename]  [Remove] │
+┌ Claude observation · Observing              Claude support [on] ┐
+│ Desktop metadata directories: 1                                 │
+│ Plugin · Enabled   Listener · Active   Hook status · Confirmed  │
+└─────────────────────────────────────────────────────────────────┘
+
+┌ Claude in iTerm2 ──────────────────────────────────────────────────────┐
+│ ⓘ A CLI Claude session becomes visible only once its hook reports an   │
+│   identity, so start it inside iTerm2 … an already-running session     │
+│   needs /reload-plugins, or a fresh session.                           │
 │                                                                        │
-│ claude2                                        Custom · Retrying  [on] │
-│ [ /Users/ral/.claude2_________ ]           [Change directory]  [Retry] │
-│                                                   [Copy setup command] │
-│ Desktop metadata directories: 0 · Next retry 10:44                     │
-│ Plugin not installed                                  [Install plugin] │
-│                                                     [Rename]  [Remove] │
-│                                                                        │
-│ Note: each environment needs its own hook install. Point               │
-│ Bitterless at your environment's CLAUDE_CONFIG_DIR, then               │
-│ Install — and make sure the shell command for that                     │
-│ environment (e.g. a claude2 wrapper) sets CLAUDE_CONFIG_DIR            │
-│ before invoking claude.                                                │
+│ ┌ Claude environments ───────────────────────────────[Add environment] │
+│ │ Default                                   Automatic · Watching  [on] │
+│ │ [ /Users/ral/.claude__________ ]                  [Change directory] │
+│ │ Last successful scan 10:42                                           │
+│ │ Plugin installed                                                     │
+│ │                                                   [Rename]  [Remove] │
+│ │                                                                      │
+│ │ claude2                                      Custom · Retrying  [on] │
+│ │ [ /Users/ral/.claude2_________ ]         [Change directory]  [Retry] │
+│ │                                                 [Copy setup command] │
+│ │ Next retry 10:44                                                     │
+│ │ Plugin not installed                                [Install plugin] │
+│ │                                                   [Rename]  [Remove] │
+│ │                                                                      │
+│ │ ⓘ Note: each environment needs its own hook install. Point           │
+│ │   Bitterless at your environment's CLAUDE_CONFIG_DIR, then           │
+│ │   Install — and make sure the shell command for that                 │
+│ │   environment (e.g. a claude2 wrapper) sets CLAUDE_CONFIG_DIR        │
+│ │   before invoking claude.                                            │
+│ └──────────────────────────────────────────────────────────────────────│
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -393,7 +435,7 @@ depends on scroll position or a specific row's state.
 
 | row state | visible behavior |
 |---|---|
-| automatic + watching | resolved config root, Automatic label, desktop count, last successful scan |
+| automatic + watching | resolved config root, Automatic label, last successful scan |
 | custom + watching | canonical selected root plus **Use automatic** (default row only) |
 | custom + configured directory | **Copy setup command** is offered and copies that row's own `CLAUDE_CONFIG_DIR` wrapper; the automatic row and a custom row with no chosen directory never show it |
 | waiting | directory is valid but `projects` has not appeared; show next retry and **Retry**, not an error |
@@ -403,7 +445,7 @@ depends on scroll position or a specific row's state.
 | stopped | signed-out/shutdown state; never claim watching |
 | choosing/applying | disable that row's competing directory actions; keep the last snapshot visible |
 | last remaining environment | **Remove** stays disabled with an explanatory hint; every other row action stays available |
-| Claude provider disabled | fold the Claude card to its switch and one explanation; hide every Claude task without deleting it |
+| Claude provider disabled | fold the Claude card to its switch and one explanation, and the Claude in iTerm2 card to the same paused line; hide every Claude task without deleting it |
 | Claude provider enabling/disabling | disable the switch and all connection actions; persisted Off immediately gates every subsequent snapshot, while On keeps Claude rows hidden until cleanup and the full refresh complete |
 | Claude provider error | **Retry** becomes available on every row, even one that is otherwise `watching`, so recovery is reachable from any environment |
 
@@ -629,7 +671,8 @@ EyesOnAgentsApp
   ├─ EyesOnAgentsMenuBar
   ├─ ConnectionPanel
   │    ├─ CodexConnectionSection
-  │    └─ ClaudeConnectionSection
+  │    ├─ ClaudeObservationCard
+  │    └─ ClaudeIterm2Card
   ├─ AgentBoard
   │    └─ FocusColumn (every visible thread)
   │         ├─ header Search button

@@ -651,7 +651,8 @@ export const zh: typeof en = {
     title: 'EyesOnAgents',
     provider: {
       codex: 'Codex',
-      claude: 'Claude'
+      claude: 'Claude',
+      claudeIterm2: 'iTerm2'
     },
     completionNotification: {
       title: 'Thread 结束',
@@ -809,6 +810,13 @@ export const zh: typeof en = {
       pluginUnknown: '插件状态未知',
       installPlugin: '安装插件',
       checkPlugin: '检查插件'
+    },
+    claudeIterm2: {
+      title: 'iTerm2 中的 Claude',
+      requirement:
+        '命令行 Claude 会话只有在 Hook 上报身份后才会显示，因此必须在 iTerm2 中启动——在 Terminal.app '
+        + '或编辑器内置终端里启动的会话没有 Claude Desktop 匹配，永远不会出现在这里。已经在运行的会话'
+        + '需要执行 /reload-plugins 或新开一个会话，Hook 才会加载。'
     },
     actions: {
       sync: '同步',

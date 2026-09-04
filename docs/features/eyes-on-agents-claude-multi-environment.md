@@ -382,6 +382,23 @@ pipeline.
 
 ## Renderer
 
+> **Implementation note (task 093):** the environment list no longer lives in
+> `ClaudeObservationCard.vue`. Owner feedback after configuring a real `claude2` environment was
+> that the UI never says the one thing that decides whether a CLI session appears — that it has to
+> be started inside iTerm2 — while the list sat next to Claude Desktop concerns it has nothing to do
+> with. The list moved whole into a new `ClaudeIterm2Card.vue`, rendered in a third Connections rail
+> section, **Claude in iTerm2**; the rail is now driven by a `ConnectionSection` union
+> (`'codex' | 'claude' | 'claude-iterm2'`) rather than the provider union, which survives only for
+> the logo. Every row control (add/rename/remove/enable, the inline path editor, per-row plugin
+> presence and its Install/Check action, per-row Retry, Copy setup command, Use automatic, the
+> guidance note) relocated unchanged. Two things did change: the new section states the iTerm2
+> requirement and the `/reload-plugins` caveat, and `Desktop metadata directories: N` left the rows
+> for the Claude section, shown **once** — it is the same platform-fixed number on every row
+> (`resolveClaudeDesktopRoots` derives from platform/home/env and never reads a `configDirectory`),
+> read from the environments array rather than from a new Main-side field, and rendered not at all
+> when no environment reports a usable value. Gating is unchanged: the single `Claude support`
+> switch stays in the Claude section and folds both cards.
+
 `ClaudeObservationCard.vue`'s single directory block becomes an environment list, structurally
 mirroring the already-shipped `claudeSubscription` accounts list pattern in this codebase (a proven
 precedent for "user-managed list of named, independently enabled/status-tracked entities" — add,
@@ -557,7 +574,12 @@ present and enabled in this `CLAUDE_CONFIG_DIR`?* — and nothing else.
   inspects the *directory*, not the user's shell configuration; a wrapper that silently fails to set
   the variable shows up as sessions landing on the wrong environment, not as a probe failure.
 - WezTerm/Ghostty terminal support (unchanged from
-  [EyesOnAgents iTerm2 Open](eyes-on-agents-iterm2-open.md)).
+  [EyesOnAgents iTerm2 Open](eyes-on-agents-iterm2-open.md)). Task 093's **Claude in iTerm2** section
+  explains the current limitation to the user; widening it remains this same non-goal.
+- De-duplicating the Desktop metadata watcher. N environments each spawn a watcher over the *same*
+  platform-fixed Claude Desktop metadata root, which is why task 093 shows the directory count once
+  instead of per row. Collapsing that to one shared Desktop watcher is a real improvement but a
+  watcher change, recorded in `docs/plan/backlog.md`.
 - Automatically discovering `CLAUDE_CONFIG_DIR` values the user has not explicitly added (e.g.
   scanning `~` for `.claude*`-looking directories). Every environment beyond the default is
   explicitly added by the user through the native picker.
