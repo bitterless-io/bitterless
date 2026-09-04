@@ -10,6 +10,7 @@ import {
   rename,
   rmdir,
   stat,
+  rm,
   unlink,
   type FileHandle
 } from 'node:fs/promises';
@@ -47,7 +48,11 @@ interface PreparedDeleteGrant {
   grant: OnlyPreviewFileAuthorityDeleteGrant;
   canonicalPath: string;
   identity: ProjectFileIdentity;
-  handle: FileHandle;
+  nodeKind: 'file' | 'directory';
+  // A directory cannot be pinned by an open descriptor: `open()` on a directory fails on Windows.
+  // Its identity is re-checked by `lstat` instead, and the isolate rename is what actually protects
+  // the removal — once renamed, the subtree is unreachable by its original path.
+  handle: FileHandle | null;
   handleClosed: boolean;
   expiryTimer: ReturnType<typeof setTimeout> | null;
   expiresAt: number;
@@ -69,6 +74,7 @@ export interface FileSearchProjectAuthorityFileOperations {
   link(existingPath: string, newPath: string): Promise<void>;
   unlink(path: string): Promise<void>;
   rmdir(path: string): Promise<void>;
+  removeTree(path: string): Promise<void>;
 }
 
 export const projectAuthorityFileOperations: FileSearchProjectAuthorityFileOperations =
@@ -81,7 +87,10 @@ export const projectAuthorityFileOperations: FileSearchProjectAuthorityFileOpera
     rename: async (oldPath, newPath) => await rename(oldPath, newPath),
     link: async (existingPath, newPath) => await link(existingPath, newPath),
     unlink: async (path) => await unlink(path),
-    rmdir: async (path) => await rmdir(path)
+    rmdir: async (path) => await rmdir(path),
+    // `rm` unlinks a symbolic link rather than following it, so a link inside a deleted folder can
+    // never reach its target.
+    removeTree: async (path) => await rm(path, { recursive: true, force: false })
   });
 
 const DELETE_GRANT_TTL_MS = 60_000;
@@ -104,6 +113,18 @@ const sameIdentity = (left: ProjectFileIdentity, right: ProjectFileIdentity): bo
   left.inode === right.inode &&
   left.size === right.size &&
   left.modifiedTimeNanoseconds === right.modifiedTimeNanoseconds;
+
+// `dev` + `ino` identify the node; `size` and `mtime` describe its content. A directory's content
+// changes whenever any child is added or removed, so comparing them would fail the confirmation for
+// an ordinary background write instead of for a swap. The node identity is the part that matters.
+const sameNodeIdentity = (
+  left: ProjectFileIdentity,
+  right: ProjectFileIdentity,
+  nodeKind: 'file' | 'directory'
+): boolean =>
+  nodeKind === 'directory'
+    ? left.deviceId === right.deviceId && left.inode === right.inode
+    : sameIdentity(left, right);
 
 type ProjectAuthorityAction = 'read' | 'delete' | 'author';
 
@@ -441,13 +462,17 @@ export class FileSearchProjectAuthority {
       const operation = this.authorityOperation;
       const workspace = this.requireWorkspace(workspaceId, workspaceGeneration);
       const item = await this.resolveItem(workspace, relativePath, operation);
-      if (item.nodeKind !== 'file') {
+      if (item.nodeKind !== 'file' && item.nodeKind !== 'directory') {
         throw new OnlyPreviewContractError(
           'PATH_NOT_REGULAR_FILE',
-          'Only regular files can be deleted.'
+          'Only files and folders can be deleted.'
         );
       }
-      handle = await this.openPinnedDeleteHandle(item.canonicalPath, item.identity);
+      if (item.nodeKind === 'file') {
+        handle = await this.openPinnedDeleteHandle(item.canonicalPath, item.identity);
+      } else {
+        await this.requireDirectoryDeleteIdentity(item.canonicalPath, item.identity);
+      }
       this.requireActiveWorkspace(workspace, operation);
       const grant: OnlyPreviewFileAuthorityDeleteGrant = {
         runtimeInstanceId,
@@ -463,6 +488,7 @@ export class FileSearchProjectAuthority {
         grant,
         canonicalPath: item.canonicalPath,
         identity: item.identity,
+        nodeKind: item.nodeKind,
         handle,
         handleClosed: false,
         expiryTimer: null,
@@ -515,7 +541,11 @@ export class FileSearchProjectAuthority {
       await this.requirePinnedDeleteIdentity(prepared);
       await this.requireIsolatedDeleteIdentity(prepared, isolated, workspace);
       this.requireActiveWorkspace(workspace, operation);
-      await this.fileOperations.unlink(isolated.entryPath);
+      if (prepared.nodeKind === 'directory') {
+        await this.fileOperations.removeTree(isolated.entryPath);
+      } else {
+        await this.fileOperations.unlink(isolated.entryPath);
+      }
       const isolatedDirectory = isolated.directoryPath;
       isolated = null;
       await this.fileOperations.rmdir(isolatedDirectory).catch(() => undefined);
@@ -529,7 +559,7 @@ export class FileSearchProjectAuthority {
         modifiedAt: prepared.grant.modifiedAt
       };
     } catch (error) {
-      if (isolated) await this.restoreIsolatedDeleteEntry(isolated);
+      if (isolated) await this.restoreIsolatedDeleteEntry(isolated, prepared?.nodeKind ?? 'file');
       return toSafeProjectError(error, 'delete');
     } finally {
       if (prepared) {
@@ -770,11 +800,39 @@ export class FileSearchProjectAuthority {
     if (prepared.handleClosed) {
       throw new OnlyPreviewContractError('INVALID_INPUT', 'Delete grant is unavailable.');
     }
+    if (prepared.nodeKind === 'directory' || !prepared.handle) {
+      await this.requireDirectoryDeleteIdentity(prepared.canonicalPath, prepared.identity);
+      return;
+    }
     const handleStats = await prepared.handle.stat({ bigint: true });
     if (!handleStats.isFile() || !sameIdentity(prepared.identity, identityOf(handleStats))) {
       throw new OnlyPreviewContractError(
         'PATH_NOT_FOUND',
         'The selected file changed before it could be deleted.'
+      );
+    }
+  }
+
+  // The directory counterpart of the pinned handle. It runs immediately before the isolate rename
+  // and again after it, so a directory swapped in between is refused rather than removed.
+  private async requireDirectoryDeleteIdentity(
+    canonicalPath: string,
+    identity: ProjectFileIdentity
+  ): Promise<void> {
+    const lexicalStats = await this.fileOperations.lstat(canonicalPath);
+    const currentRealPath = await this.fileOperations.realpath(canonicalPath);
+    const currentStats = await this.fileOperations.stat(currentRealPath);
+    if (
+      lexicalStats.isSymbolicLink() ||
+      !lexicalStats.isDirectory() ||
+      currentRealPath !== canonicalPath ||
+      !currentStats.isDirectory() ||
+      !sameNodeIdentity(identity, identityOf(lexicalStats), 'directory') ||
+      !sameNodeIdentity(identity, identityOf(currentStats), 'directory')
+    ) {
+      throw new OnlyPreviewContractError(
+        'PATH_NOT_FOUND',
+        'The selected folder changed before it could be deleted.'
       );
     }
   }
@@ -819,32 +877,53 @@ export class FileSearchProjectAuthority {
     const lexicalStats = await this.fileOperations.lstat(isolated.entryPath);
     const isolatedRealPath = await this.fileOperations.realpath(isolated.entryPath);
     const isolatedStats = await this.fileOperations.stat(isolatedRealPath);
+    const isExpectedKind = (stats: BigIntStats): boolean =>
+      prepared.nodeKind === 'directory' ? stats.isDirectory() : stats.isFile();
     if (
       lexicalStats.isSymbolicLink() ||
-      !lexicalStats.isFile() ||
+      !isExpectedKind(lexicalStats) ||
       isolatedRealPath !== isolated.entryPath ||
       !isContainedPath(workspace.rootRealPath, isolatedRealPath) ||
-      !isolatedStats.isFile() ||
-      !sameIdentity(prepared.identity, identityOf(lexicalStats)) ||
-      !sameIdentity(prepared.identity, identityOf(isolatedStats))
+      !isExpectedKind(isolatedStats) ||
+      !sameNodeIdentity(prepared.identity, identityOf(lexicalStats), prepared.nodeKind) ||
+      !sameNodeIdentity(prepared.identity, identityOf(isolatedStats), prepared.nodeKind)
     ) {
       throw new OnlyPreviewContractError(
         'PATH_NOT_FOUND',
-        'The selected file was replaced before it could be deleted.'
+        'The selected item was replaced before it could be deleted.'
       );
     }
   }
 
-  private async restoreIsolatedDeleteEntry(isolated: IsolatedDeleteEntry): Promise<void> {
+  private async restoreIsolatedDeleteEntry(
+    isolated: IsolatedDeleteEntry,
+    nodeKind: 'file' | 'directory'
+  ): Promise<void> {
     try {
       await this.fileOperations.lstat(isolated.entryPath);
     } catch {
       return;
     }
+    if (nodeKind === 'file') {
+      try {
+        await this.fileOperations.link(isolated.entryPath, isolated.originalPath);
+      } catch {
+        // The private recovery entry remains intact and no concurrent candidate is overwritten.
+      }
+      return;
+    }
+    // A directory cannot be hard-linked, so it is renamed back — but only onto a name nothing has
+    // taken in the meantime, because `rename` would otherwise replace a concurrent candidate.
     try {
-      await this.fileOperations.link(isolated.entryPath, isolated.originalPath);
+      await this.fileOperations.lstat(isolated.originalPath);
+      return;
     } catch {
-      // The private recovery entry remains intact and no concurrent candidate is overwritten.
+      // Nothing is there, which is the only case where moving it back is safe.
+    }
+    try {
+      await this.fileOperations.rename(isolated.entryPath, isolated.originalPath);
+    } catch {
+      // The private recovery entry remains intact.
     }
   }
 
@@ -862,7 +941,7 @@ export class FileSearchProjectAuthority {
     prepared.handleClosed = true;
     if (prepared.expiryTimer) clearTimeout(prepared.expiryTimer);
     prepared.expiryTimer = null;
-    await prepared.handle.close().catch(() => undefined);
+    await prepared.handle?.close().catch(() => undefined);
   }
 
   private async revokeDeleteGrants(): Promise<void> {

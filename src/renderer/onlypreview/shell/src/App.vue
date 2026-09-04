@@ -168,6 +168,7 @@
           name="onlypreview__tree"
           class="onlypreview-shell__tree"
           role="tree"
+            aria-multiselectable="true"
           :aria-label="onlyPreviewI18n.project.treeLabel"
           @keydown="handleTreeKeydown"
         >
@@ -178,7 +179,9 @@
             class="onlypreview-shell__tree-row"
             :class="{
               'onlypreview-shell__tree-row--selected':
-                row.entry.relativePath === onlyPreviewShellStore.treeSelectedRelativePath,
+                onlyPreviewTreeSelection.isSelected(row.entry.relativePath),
+              'onlypreview-shell__tree-row--anchor':
+                onlyPreviewTreeSelection.isAnchor(row.entry.relativePath),
               'onlypreview-shell__tree-row--symlink': row.entry.nodeKind === 'symlink',
               'onlypreview-shell__tree-row--search-excluded': row.searchExcluded
             }"
@@ -189,18 +192,16 @@
             :tabindex="row.entry.relativePath === treeFocusRelativePath ? 0 : -1"
             :aria-level="row.depth + 1"
             :aria-expanded="row.entry.nodeKind === 'directory' ? row.expanded : undefined"
-            :aria-selected="
-              row.entry.relativePath === onlyPreviewShellStore.treeSelectedRelativePath
-            "
+            :aria-selected="onlyPreviewTreeSelection.isSelected(row.entry.relativePath)"
             :title="
               row.entry.nodeKind === 'symlink'
                 ? onlyPreviewI18n.project.symlink
                 : row.entry.relativePath
             "
             @focus="onlyPreviewShellStore.setFocusedPath(row.entry.relativePath)"
-            @click="handleTreeRowClick(row.entry, $event.detail)"
+            @click="handleTreeRowClick(row.entry, $event)"
             @dblclick.prevent="handleTreeRowDoubleClick(row.entry)"
-            @contextmenu.prevent.stop="onlyPreviewShellStore.showFileContextMenu(row.entry)"
+            @contextmenu.prevent.stop="showOnlyPreviewTreeContextMenu(row.entry)"
           >
             <span
               v-if="row.entry.nodeKind === 'directory'"
@@ -385,6 +386,10 @@ import PreviewToolbar from './components/PreviewToolbar/PreviewToolbar.vue';
 import { onlyPreviewProjectWidthPersistence } from './onlyPreviewProjectWidthPersistence.service';
 import type { OnlyPreviewIndexEntry } from '@shared/onlypreview/onlyPreview.types';
 import { onlyPreviewShellStore } from './onlyPreviewShell.store';
+import {
+  onlyPreviewTreeSelection,
+  showOnlyPreviewTreeContextMenu
+} from './onlyPreviewTreeSelection.store';
 import { onlyPreviewEditInputWidthCh } from './onlyPreviewProjectAuthoring.service';
 import {
   onlyPreviewProjectAuthoring,
@@ -478,6 +483,12 @@ const locateCurrentFile = async (): Promise<void> => {
 };
 
 const handleTreeKeydown = (event: KeyboardEvent): void => {
+  const primary = isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+  if (primary && event.key.toLowerCase() === 'a' && !event.shiftKey && !event.altKey) {
+    event.preventDefault();
+    onlyPreviewTreeSelection.apply('all', null);
+    return;
+  }
   if (event.key === ' ' || event.key === 'Enter') {
     event.preventDefault();
     onlyPreviewShellStore.activateFocusedEntry();
@@ -494,7 +505,11 @@ const handleTreeKeydown = (event: KeyboardEvent): void => {
     return;
   }
   event.preventDefault();
-  void focusTreePath(onlyPreviewShellStore.moveTreeFocus(event.key));
+  const moved = onlyPreviewShellStore.moveTreeFocus(event.key);
+  // Shift extends the selection to the row focus just reached; a plain arrow collapses it, matching
+  // the plain click.
+  onlyPreviewTreeSelection.apply(event.shiftKey ? 'extend' : 'replace', moved);
+  void focusTreePath(moved);
 };
 
 // A click on the row being renamed blurs the input, which commits; re-activating the row on top of
@@ -503,9 +518,21 @@ const handleTreeKeydown = (event: KeyboardEvent): void => {
 const isEditing = (relativePath: string): boolean =>
   onlyPreviewProjectAuthoring.editing?.relativePath === relativePath;
 
-const handleTreeRowClick = (entry: OnlyPreviewIndexEntry, clickCount: number): void => {
+// A modified click builds the selection and must not load a document: a shift-click across forty
+// rows would otherwise start forty previews.
+const handleTreeRowClick = (entry: OnlyPreviewIndexEntry, event: MouseEvent): void => {
   if (isEditing(entry.relativePath)) return;
-  onlyPreviewShellStore.handleTreeClick(entry, clickCount);
+  const primary = isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+  if (event.shiftKey && !primary) {
+    onlyPreviewTreeSelection.apply('extend', entry.relativePath);
+    return;
+  }
+  if (primary && !event.shiftKey) {
+    onlyPreviewTreeSelection.apply('toggle', entry.relativePath);
+    return;
+  }
+  onlyPreviewTreeSelection.apply('replace', entry.relativePath);
+  onlyPreviewShellStore.handleTreeClick(entry, event.detail);
 };
 
 const handleTreeRowDoubleClick = (entry: OnlyPreviewIndexEntry): void => {

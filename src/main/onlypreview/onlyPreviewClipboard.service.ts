@@ -47,13 +47,24 @@ export const ONLY_PREVIEW_CLIPBOARD_TIMEOUT_MS = 5_000;
 export const ONLY_PREVIEW_CLIPBOARD_MAX_OUTPUT_BYTES = 16 * 1024;
 export const ONLY_PREVIEW_WINDOWS_CLIPBOARD_PATH_ENV =
   'BITTERLESS_ONLYPREVIEW_CLIPBOARD_PATH';
+// A larger selection fails visibly rather than pasting a truncated list, which is worse than a
+// refusal because nothing on screen says what was dropped.
+export const ONLY_PREVIEW_MAX_CLIPBOARD_ITEMS = 200;
 
-const WINDOWS_CLIPBOARD_SCRIPT = [
-  'Add-Type -AssemblyName System.Windows.Forms',
-  '$items = New-Object System.Collections.Specialized.StringCollection',
-  `[void]$items.Add($env:${ONLY_PREVIEW_WINDOWS_CLIPBOARD_PATH_ENV})`,
-  '[System.Windows.Forms.Clipboard]::SetFileDropList($items)'
-].join('; ');
+// One environment variable per path, plus a count. A single delimited variable would need a
+// separator no filename can contain, and a Windows filename may legally contain almost anything the
+// reserved-character set does not forbid.
+const windowsClipboardScript = (count: number): string =>
+  [
+    'Add-Type -AssemblyName System.Windows.Forms',
+    '$items = New-Object System.Collections.Specialized.StringCollection',
+    ...Array.from(
+      { length: count },
+      (_unused, index) =>
+        `[void]$items.Add($env:${ONLY_PREVIEW_WINDOWS_CLIPBOARD_PATH_ENV}_${index})`
+    ),
+    '[System.Windows.Forms.Clipboard]::SetFileDropList($items)'
+  ].join('; ');
 
 const defaultExecuteCommand: OnlyPreviewClipboardCommandExecutor = async (command) => {
   await new Promise<void>((resolveCommand, rejectCommand) => {
@@ -80,10 +91,13 @@ const validateClipboardTarget = (platform: NodeJS.Platform, targetPath: string):
 
 export const createOnlyPreviewClipboardCommand = (
   platform: NodeJS.Platform,
-  targetPath: string,
+  targetPaths: readonly string[],
   environment: NodeJS.ProcessEnv = process.env
 ): OnlyPreviewClipboardCommand => {
-  validateClipboardTarget(platform, targetPath);
+  if (!targetPaths.length || targetPaths.length > ONLY_PREVIEW_MAX_CLIPBOARD_ITEMS) {
+    throw new OnlyPreviewContractError('INVALID_INPUT', 'Clipboard target count is invalid.');
+  }
+  for (const targetPath of targetPaths) validateClipboardTarget(platform, targetPath);
   const commonOptions = {
     encoding: 'utf8' as const,
     maxBuffer: ONLY_PREVIEW_CLIPBOARD_MAX_OUTPUT_BYTES,
@@ -92,32 +106,47 @@ export const createOnlyPreviewClipboardCommand = (
     windowsHide: true as const
   };
   if (platform === 'darwin') {
+    // Every path is collected into one AppleScript list, so a multi-selection pastes as several
+    // items rather than only the first. Paths still travel as `argv`, never interpolated into the
+    // script text.
     return {
       executable: '/usr/bin/osascript',
       args: [
         '-e',
         'on run argv',
         '-e',
-        'set the clipboard to POSIX file (item 1 of argv)',
+        'set items to {}',
+        '-e',
+        'repeat with argument in argv',
+        '-e',
+        'set end of items to POSIX file (argument as text)',
+        '-e',
+        'end repeat',
+        '-e',
+        'set the clipboard to items',
         '-e',
         'end run',
         '--',
-        targetPath
+        ...targetPaths
       ],
       options: commonOptions
     };
   }
   if (platform === 'win32') {
+    const env: NodeJS.ProcessEnv = { ...environment };
+    for (const [index, targetPath] of targetPaths.entries()) {
+      env[`${ONLY_PREVIEW_WINDOWS_CLIPBOARD_PATH_ENV}_${index}`] = targetPath;
+    }
     return {
       executable: 'powershell.exe',
-      args: ['-NoProfile', '-NonInteractive', '-STA', '-Command', WINDOWS_CLIPBOARD_SCRIPT],
-      options: {
-        ...commonOptions,
-        env: {
-          ...environment,
-          [ONLY_PREVIEW_WINDOWS_CLIPBOARD_PATH_ENV]: targetPath
-        }
-      }
+      args: [
+        '-NoProfile',
+        '-NonInteractive',
+        '-STA',
+        '-Command',
+        windowsClipboardScript(targetPaths.length)
+      ],
+      options: { ...commonOptions, env }
     };
   }
   throw new OnlyPreviewContractError(
@@ -153,8 +182,24 @@ export class OnlyPreviewClipboardService {
     item: OnlyPreviewClipboardItem,
     copyKind: OnlyPreviewClipboardCopyKind
   ): Promise<void> {
+    await this.copyProjectItems([item], copyKind);
+  }
+
+  /**
+   * Copy a whole selection.
+   *
+   * One pasteable list for `item`, and one line per entry in tree order for the three text kinds —
+   * a multi-selection that pasted only its first row would be a silent truncation.
+   */
+  async copyProjectItems(
+    items: readonly OnlyPreviewClipboardItem[],
+    copyKind: OnlyPreviewClipboardCopyKind
+  ): Promise<void> {
     try {
-      validateClipboardTarget(this.platform, item.realPath);
+      if (!items.length || items.length > ONLY_PREVIEW_MAX_CLIPBOARD_ITEMS) {
+        throw new OnlyPreviewContractError('INVALID_INPUT', 'Clipboard target count is invalid.');
+      }
+      for (const item of items) validateClipboardTarget(this.platform, item.realPath);
       if (copyKind === 'item') {
         if (this.itemCopyInFlight) {
           throw new OnlyPreviewContractError(
@@ -165,7 +210,11 @@ export class OnlyPreviewClipboardService {
         this.itemCopyInFlight = true;
         try {
           await this.executeCommand(
-            createOnlyPreviewClipboardCommand(this.platform, item.realPath, this.environment)
+            createOnlyPreviewClipboardCommand(
+              this.platform,
+              items.map((item) => item.realPath),
+              this.environment
+            )
           );
         } finally {
           this.itemCopyInFlight = false;
@@ -179,7 +228,9 @@ export class OnlyPreviewClipboardService {
       ) {
         throw new OnlyPreviewContractError('INVALID_INPUT', 'Clipboard copy kind is invalid.');
       }
-      this.textClipboard.writeText(projectClipboardText(item, copyKind));
+      this.textClipboard.writeText(
+        items.map((item) => projectClipboardText(item, copyKind)).join('\n')
+      );
     } catch (error) {
       if (error instanceof OnlyPreviewContractError && error.code === 'INVALID_INPUT') throw error;
       throw new OnlyPreviewContractError(

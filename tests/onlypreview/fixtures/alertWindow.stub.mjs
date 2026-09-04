@@ -3,15 +3,19 @@
 const stubState = (globalThis.__bitterlessAlertWindowStub ??= {
   answers: [],
   requests: [],
-  errors: []
+  errors: [],
+  confirms: [],
+  confirmAnswers: []
 });
 
 export const state = stubState;
 
-export const resetAlertWindowStub = (answers = []) => {
+export const resetAlertWindowStub = (answers = [], confirmAnswers = []) => {
   stubState.answers = [...answers];
+  stubState.confirmAnswers = [...confirmAnswers];
   stubState.requests = [];
   stubState.errors = [];
+  stubState.confirms = [];
 };
 
 export const onlyPreviewAlertWindowService = {
@@ -28,8 +32,9 @@ export const onlyPreviewAlertWindowService = {
       else return false;
     }
   },
-  async requestConfirm() {
-    return false;
+  async requestConfirm(_hostToken, request) {
+    stubState.confirms.push(request);
+    return stubState.confirmAnswers.shift() ?? false;
   },
   async showError(_hostToken, request) {
     stubState.errors.push(request);

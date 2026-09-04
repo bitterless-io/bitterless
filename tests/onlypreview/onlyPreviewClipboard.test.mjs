@@ -66,8 +66,10 @@ test('Windows filesystem copy uses fixed STA PowerShell and passes the path only
   ]);
   assert.equal(commands[0].args.join('\n').includes(hostilePath), false);
   assert.match(commands[0].args[4], /Clipboard\]::SetFileDropList/);
+  // One environment variable per path plus a matching `$items.Add` line: a single delimited variable
+  // would need a separator a Windows filename cannot contain, and there is none.
   assert.equal(
-    commands[0].options.env[runtime.ONLY_PREVIEW_WINDOWS_CLIPBOARD_PATH_ENV],
+    commands[0].options.env[`${runtime.ONLY_PREVIEW_WINDOWS_CLIPBOARD_PATH_ENV}_0`],
     hostilePath
   );
   assert.equal(commands[0].options.env.SYSTEMROOT, 'C:\\Windows');
@@ -158,4 +160,49 @@ test('renderer copy intent accepts only the four shortcut-safe void projections'
     () => runtime.parseOnlyPreviewProjectItemCopyRequest({ ...request, extra: true }),
     expectOnlyPreviewError('INVALID_INPUT')
   );
+});
+
+test('a multi-selection copies as a list rather than as its first row', async () => {
+  const commands = [];
+  const written = [];
+  const mac = new runtime.OnlyPreviewClipboardService({
+    platform: 'darwin',
+    executeCommand: async (command) => commands.push(command),
+    textClipboard: { writeText: (value) => written.push(value) }
+  });
+  const items = [
+    { realPath: '/w/docs', relativePath: 'docs', name: 'docs' },
+    { realPath: '/w/notes/one.md', relativePath: 'notes/one.md', name: 'one.md' }
+  ];
+
+  await mac.copyProjectItems(items, 'item');
+  assert.equal(commands.length, 1);
+  // Paths still travel as argv, never interpolated into the script text.
+  assert.deepEqual(commands[0].args.slice(-2), ['/w/docs', '/w/notes/one.md']);
+  assert.match(commands[0].args.join('\n'), /repeat with argument in argv/);
+  assert.match(commands[0].args.join('\n'), /set the clipboard to items/);
+
+  await mac.copyProjectItems(items, 'absolute-path');
+  await mac.copyProjectItems(items, 'relative-path');
+  await mac.copyProjectItems(items, 'name');
+  assert.deepEqual(written, [
+    '/w/docs\n/w/notes/one.md',
+    'docs\nnotes/one.md',
+    'docs\none.md'
+  ]);
+});
+
+test('an empty or oversized selection is refused instead of truncated', async () => {
+  const mac = new runtime.OnlyPreviewClipboardService({
+    platform: 'darwin',
+    executeCommand: async () => undefined,
+    textClipboard: { writeText: () => undefined }
+  });
+  await assert.rejects(mac.copyProjectItems([], 'item'));
+  const tooMany = Array.from(
+    { length: runtime.ONLY_PREVIEW_MAX_CLIPBOARD_ITEMS + 1 },
+    (_unused, index) => ({ realPath: `/w/${index}.md`, relativePath: `${index}.md`, name: `${index}.md` })
+  );
+  // A silently truncated paste is worse than a refused one: nothing on screen says what was dropped.
+  await assert.rejects(mac.copyProjectItems(tooMany, 'absolute-path'));
 });

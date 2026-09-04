@@ -1,6 +1,6 @@
 # OnlyPreview Multi-Select, Copy and Delete
 
-Status: design
+Status: implemented; owner verification pending
 
 Owner request, 2026-09-03: 「目录文件要支持多选 和多选的复制，另外要支持目录和文件的删除，删除也必须弹窗
 alert 确认后删除，也可以取消，右击菜单要有删除，删除是直接删除不是进垃圾桶」
@@ -60,14 +60,18 @@ So a right-click never acts on rows the owner cannot see are selected. The menu 
 count when more than one row is targeted (`Delete 3 Items…`), because a menu that says `Delete…` over
 a fourteen-row selection is a trap.
 
+There is no separate "multi" menu. The same row menu is used, and the two actions that can cover
+more than one row do:
+
 | row | items |
 | --- | --- |
-| file | Preview · Open in system app · Reveal in folder · Copy File · Copy Path · Copy Relative Path · Copy Name · Rename · **Delete…** |
-| folder | Reveal in folder · New Folder · Copy Folder · Copy Path · Copy Relative Path · Copy Name · Rename · **Delete…** |
+| file | Preview · Open in system app · Reveal in folder · New Folder *(folders only)* · Rename · Copy File · Copy Path · Copy Relative Path · Copy Name · **Delete…** |
+| folder | Reveal in folder · New Folder · Rename · Copy Folder · Copy Path · Copy Relative Path · Copy Name · **Delete…** |
 | root | New Folder · Reveal in folder · Copy Folder · Copy Path · Copy Name |
-| multi | Reveal in folder *(anchor only)* · Copy Items · Copy Paths · Copy Relative Paths · Copy Names · **Delete N Items…** |
 
-`Delete…` on a folder row is new. The root is still never deletable and still never renameable.
+With more than one row targeted, the four copy actions cover the whole selection and Delete reads
+`Delete N Items…`. `Delete…` on a folder row is new. The root is still never deletable, never
+renameable, and never part of a multi-selection.
 
 ## Copy
 
@@ -80,10 +84,11 @@ Every copy action becomes selection-wide.
 | Copy Relative Path | project-relative path | one per line, tree order |
 | Copy Name | basename | one per line, tree order |
 
-The platform adapter in `onlyPreviewClipboard.service.ts` currently writes exactly one path
-(`POSIX file (item 1 of argv)` on macOS, a one-element `StringCollection` on Windows). It becomes
-list-shaped on both: macOS collects every `argv` item into an AppleScript list, Windows adds one
-entry per indexed environment variable. Neither reads file bytes, and the existing timeout, output
+The platform adapter in `onlyPreviewClipboard.service.ts` wrote exactly one path
+(`POSIX file (item 1 of argv)` on macOS, a one-element `StringCollection` on Windows). It is
+list-shaped on both now: macOS collects every `argv` item into an AppleScript list, and Windows adds
+one entry per indexed environment variable — a single delimited variable would need a separator a
+Windows filename cannot contain, and there is none. Neither reads file bytes, and the existing timeout, output
 cap, `shell: false`, and no-absolute-path-to-renderer rules are unchanged. The list is bounded by
 `ONLY_PREVIEW_MAX_CLIPBOARD_ITEMS`; a larger selection fails visibly rather than truncating, because a
 silently truncated paste is worse than a refused one.
@@ -132,7 +137,7 @@ not replaced:
 | isolate | rename into a private `.bitterless-delete-recovery-<uuid>` sibling | same |
 | re-check | isolated entry is a regular file, contained, same identity | isolated entry is a directory, contained, same identity |
 | remove | `unlink` | `rm` recursive, no symlink following |
-| restore on failure | rename back | rename back |
+| restore on failure | hard-link back | rename back, only onto a free name |
 
 A directory cannot be pinned by a file handle — `open()` on a directory fails on Windows — so the
 directory path pins identity by `dev`/`ino` re-checked immediately before the isolate rename. The

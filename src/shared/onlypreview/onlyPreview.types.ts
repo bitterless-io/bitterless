@@ -547,7 +547,12 @@ export interface OnlyPreviewApi {
   toggleMaximizeWindow(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;
   closeWindow(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;
   showFileContextMenu(
-    params: OnlyPreviewHostRequest & OnlyPreviewFileRef
+    params: OnlyPreviewHostRequest &
+      OnlyPreviewFileRef & {
+        // The tree selection, so Delete can act on all of it when the clicked row is part of it.
+        // Only the shell knows which rows are selected, and Main re-validates every entry.
+        selection?: { relativePath: string; nodeKind: 'file' | 'directory' }[];
+      }
   ): Promise<OnlyPreviewResult<void>>;
   showProjectRootContextMenu(
     params: OnlyPreviewProjectRootRequest

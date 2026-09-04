@@ -1,5 +1,4 @@
 import { dialog, Menu, shell, type BaseWindow, type MenuItemConstructorOptions } from 'electron';
-import { basename } from 'node:path';
 import { OnlyPreviewContractError } from '@shared/onlypreview/onlyPreview.contract';
 import type {
   OnlyPreviewFileRef,
@@ -28,13 +27,52 @@ import {
   ONLY_PREVIEW_SELECTION_CHANGED_EVENT
 } from '@shared/onlypreview/onlyPreview.types';
 import { presentOnlyPreviewNewFolderDialog } from './onlyPreviewNewFolderDialog.service';
+import { presentOnlyPreviewDeleteDialog } from './onlyPreviewDeleteDialog.service';
+import type { OnlyPreviewDeleteEntry } from '@shared/onlypreview/onlyPreviewDeleteSelection.shared';
 import { xpcMain } from 'electron-xpc/main';
 
 type ProjectItemRequest = OnlyPreviewHostRequest & OnlyPreviewFileRef;
+
+// A selection larger than this is not a menu target: the plan is refused before the confirmation.
+const MAX_MENU_SELECTION = 1_000;
+
+const fillLabel = (template: string, values: Record<string, string>): string =>
+  template.replace(/\{(\w+)\}/gu, (match, key: string) => values[key] ?? match);
+
+/**
+ * What the menu's Delete acts on.
+ *
+ * The right-clicked row decides, the way every file manager does: inside the current selection the
+ * action covers the whole selection, outside it the selection collapses to that row first. So a
+ * right-click never acts on rows the owner cannot see are selected.
+ */
+const resolveMenuSelection = (
+  selection: unknown,
+  item: { relativePath: string; nodeKind: 'file' | 'directory' | 'symlink' }
+): OnlyPreviewDeleteEntry[] => {
+  const clicked: OnlyPreviewDeleteEntry = {
+    relativePath: item.relativePath,
+    nodeKind: item.nodeKind === 'directory' ? 'directory' : 'file'
+  };
+  if (!Array.isArray(selection) || selection.length > MAX_MENU_SELECTION) return [clicked];
+  const entries: OnlyPreviewDeleteEntry[] = [];
+  for (const value of selection) {
+    // The selection arrives from the visible renderer, so it is re-validated here. Every path is
+    // re-authorized again per entry before any syscall; this only decides what the menu offers.
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return [clicked];
+    const record = value as { relativePath?: unknown; nodeKind?: unknown };
+    if (typeof record.relativePath !== 'string' || !record.relativePath) return [clicked];
+    if (record.nodeKind !== 'file' && record.nodeKind !== 'directory') return [clicked];
+    entries.push({ relativePath: record.relativePath, nodeKind: record.nodeKind });
+  }
+  if (!entries.some((entry) => entry.relativePath === item.relativePath)) return [clicked];
+  return entries;
+};
 type ProjectItemRequestInput = {
   hostToken?: unknown;
   workspaceId?: unknown;
   relativePath?: unknown;
+  selection?: unknown;
 };
 type ProjectRootRequest = { hostToken: string; workspaceId: string };
 
@@ -43,12 +81,6 @@ interface ProjectItemMenuActions {
   openExternally(request: ProjectItemRequest): void;
   revealInFolder(request: ProjectItemRequest): void;
 }
-
-const displayFileName = (relativePath: string): string =>
-  Array.from(basename(relativePath), (character) => {
-    const codePoint = character.codePointAt(0) || 0;
-    return codePoint <= 0x1f || codePoint === 0x7f ? '�' : character;
-  }).join('');
 
 const sameAuthority = (
   current: OnlyPreviewProjectAuthorityRef,
@@ -82,6 +114,7 @@ export class OnlyPreviewProjectNativeActionService {
       relativePath: item.relativePath
     };
     const labels = i18nHelper.getMessages().app.onlyPreviewFileMenu;
+    const menuSelection = resolveMenuSelection(request.selection, item);
     const template: MenuItemConstructorOptions[] = [];
     if (item.nodeKind === 'file') {
       template.push({
@@ -129,36 +162,44 @@ export class OnlyPreviewProjectNativeActionService {
         id: 'onlypreview-copy-item',
         label: item.nodeKind === 'file' ? labels.copyFile : labels.copyFolder,
         accelerator: 'CommandOrControl+C',
-        click: () => void this.copyProjectItemFromUi(window, currentRequest, 'item')
+        click: () =>
+          void this.copyProjectItemFromUi(window, currentRequest, 'item', menuSelection)
       },
       {
         id: 'onlypreview-copy-path',
         label: labels.copyPath,
         accelerator: 'CommandOrControl+Shift+C',
-        click: () => void this.copyProjectItemFromUi(window, currentRequest, 'absolute-path')
+        click: () =>
+          void this.copyProjectItemFromUi(window, currentRequest, 'absolute-path', menuSelection)
       },
       {
         id: 'onlypreview-copy-relative-path',
         label: labels.copyRelativePath,
-        click: () => void this.copyProjectItemFromUi(window, currentRequest, 'relative-path')
+        click: () =>
+          void this.copyProjectItemFromUi(window, currentRequest, 'relative-path', menuSelection)
       },
       {
         id: 'onlypreview-copy-name',
         label: labels.copyName,
         accelerator: 'CommandOrControl+Alt+C',
-        click: () => void this.copyProjectItemFromUi(window, currentRequest, 'name')
+        click: () =>
+          void this.copyProjectItemFromUi(window, currentRequest, 'name', menuSelection)
       }
     );
-    if (item.nodeKind === 'file') {
-      template.push(
-        { type: 'separator' },
-        {
-          id: 'onlypreview-delete',
-          label: labels.delete,
-          click: () => void this.deleteFileFromMenu(window, currentRequest)
-        }
-      );
-    }
+    // Delete now covers folders as well as files, and it acts on the whole tree selection when the
+    // right-clicked row is part of it — a menu that says `Delete…` over a fourteen-row selection is
+    // a trap, so the label carries the count.
+    template.push(
+      { type: 'separator' },
+      {
+        id: 'onlypreview-delete',
+        label:
+          menuSelection.length > 1
+            ? fillLabel(labels.deleteManyMenu, { count: String(deleteSelection.length) })
+            : labels.delete,
+        click: () => void this.deleteProjectSelectionFromMenu(currentRequest, menuSelection)
+      }
+    );
     this.requireCurrentItem(authority);
     Menu.buildFromTemplate(template).popup({ window });
   }
@@ -222,7 +263,10 @@ export class OnlyPreviewProjectNativeActionService {
   async copyProjectItemFromUi(
     window: BaseWindow,
     request: ProjectItemRequest,
-    copyKind: OnlyPreviewClipboardCopyKind
+    copyKind: OnlyPreviewClipboardCopyKind,
+    // The whole tree selection when the clicked row is part of it, so a copy covers what a delete
+    // would. Absent for the keyboard shortcuts, which act on the focused row.
+    selection?: readonly OnlyPreviewDeleteEntry[]
   ): Promise<void> {
     try {
       const authority = onlyPreviewWorkspaceRegistry.getProjectAuthorityItemRef(
@@ -235,17 +279,38 @@ export class OnlyPreviewProjectNativeActionService {
         relativePath: authority.relativePath
       });
       this.requireCurrentItem(authority);
-      await onlyPreviewClipboardService.copyProjectItem(
-        {
-          realPath: item.canonicalPath,
-          relativePath: item.relativePath,
-          name: item.name
-        },
-        copyKind
-      );
+      const items = [
+        { realPath: item.canonicalPath, relativePath: item.relativePath, name: item.name }
+      ];
+      // Every other entry in the selection is authorized the same way before it reaches the
+      // clipboard; the clicked row is already resolved above.
+      for (const entry of selection ?? []) {
+        if (entry.relativePath === item.relativePath) continue;
+        const extra = await this.authorizeCopyItem(request.hostToken, request.workspaceId, entry);
+        items.push(extra);
+      }
+      await onlyPreviewClipboardService.copyProjectItems(items, copyKind);
     } catch {
       await this.showCopyFailure(window).catch(() => undefined);
     }
+  }
+
+  private async authorizeCopyItem(
+    hostToken: string,
+    workspaceId: string,
+    entry: OnlyPreviewDeleteEntry
+  ): Promise<{ realPath: string; relativePath: string; name: string }> {
+    const authority = onlyPreviewWorkspaceRegistry.getProjectAuthorityItemRef(hostToken, {
+      workspaceId,
+      relativePath: entry.relativePath
+    });
+    const item = await fileSearchWindowService.authorizeProjectItem({
+      workspaceId: authority.workspaceId,
+      workspaceGeneration: authority.workspaceGeneration,
+      relativePath: authority.relativePath
+    });
+    this.requireCurrentItem(authority);
+    return { realPath: item.canonicalPath, relativePath: item.relativePath, name: item.name };
   }
 
   async copyProjectRootFromUi(
@@ -477,44 +542,41 @@ export class OnlyPreviewProjectNativeActionService {
     }
   }
 
-  private async deleteFileFromMenu(window: BaseWindow, request: ProjectItemRequest): Promise<void> {
-    const labels = i18nHelper.getMessages().app.onlyPreviewFileMenu;
-    let authority: OnlyPreviewProjectAuthorityRef | null = null;
-    let prepared: Awaited<ReturnType<typeof fileSearchWindowService.prepareProjectDelete>> | null =
-      null;
-    try {
-      authority = onlyPreviewWorkspaceRegistry.getProjectAuthorityItemRef(
-        request.hostToken,
-        request
-      );
-      prepared = await fileSearchWindowService.prepareProjectDelete({
-        workspaceId: authority.workspaceId,
-        workspaceGeneration: authority.workspaceGeneration,
-        relativePath: authority.relativePath
-      });
-      this.requireCurrentItem(authority);
-      const confirmation = await dialog.showMessageBox(window, {
-        type: 'warning',
-        title: labels.deleteConfirmTitle,
-        message: labels.deleteConfirmMessage,
-        detail: `${displayFileName(prepared.name)}\n\n${labels.deleteConfirmDetail}`,
-        buttons: [labels.deleteCancelButton, labels.deleteConfirmButton],
-        defaultId: 0,
-        cancelId: 0,
-        destructiveId: 1,
-        noLink: true
-      });
-      if (confirmation.response !== 1) {
-        await this.cancelDelete(authority, prepared.grantId);
-        return;
+  /**
+   * Delete, driven by the alert-layer confirmation.
+   *
+   * The native message box is gone: one dialog surface now covers every delete, it renders above the
+   * preview including a PDF, and it can list a whole plan instead of naming one file.
+   */
+  async deleteProjectSelectionFromMenu(
+    request: ProjectItemRequest,
+    selection: readonly OnlyPreviewDeleteEntry[]
+  ): Promise<void> {
+    await presentOnlyPreviewDeleteDialog(
+      { hostToken: request.hostToken, selection, platform: process.platform },
+      {
+        removeEntry: async (entry) =>
+          await this.removeProjectEntry(request.hostToken, request.workspaceId, entry)
       }
-    } catch {
-      if (authority && prepared) await this.cancelDelete(authority, prepared.grantId);
-      await this.showDeleteFailure(window).catch(() => undefined);
-      return;
-    }
+    ).catch(() => undefined);
+  }
 
-    if (!authority || !prepared) return;
+  // One entry, through the same two-phase grant the single-file delete has always used. A prepared
+  // grant is always released: cancelled on failure, consumed on success.
+  private async removeProjectEntry(
+    hostToken: string,
+    workspaceId: string,
+    entry: OnlyPreviewDeleteEntry
+  ): Promise<void> {
+    const authority = onlyPreviewWorkspaceRegistry.getProjectAuthorityItemRef(hostToken, {
+      workspaceId,
+      relativePath: entry.relativePath
+    });
+    const prepared = await fileSearchWindowService.prepareProjectDelete({
+      workspaceId: authority.workspaceId,
+      workspaceGeneration: authority.workspaceGeneration,
+      relativePath: authority.relativePath
+    });
     try {
       this.requireCurrentItem(authority);
       const deleted = await fileSearchWindowService.commitProjectDelete({
@@ -526,31 +588,36 @@ export class OnlyPreviewProjectNativeActionService {
       if (deleted.relativePath !== authority.relativePath) {
         throw new OnlyPreviewContractError('PROTOCOL_ERROR', 'Delete result is invalid.');
       }
-      try {
-        this.requireCurrentItem(authority);
-      } catch {
-        return;
-      }
-      onlyPreviewSelectionCoordinator.invalidatePendingSelection(authority.host.hostToken, {
-        workspaceId: authority.workspaceId,
-        relativePath: deleted.relativePath
-      });
-      const cleared = onlyPreviewWorkspaceRegistry.clearSelection(authority.host.hostToken, {
-        workspaceId: authority.workspaceId,
-        relativePath: deleted.relativePath
-      });
-      if (!cleared) return;
-      onlyPreviewPreviewRegionService.clearWorkspace(
-        authority.host.hostToken,
-        authority.workspaceId
-      );
-      xpcMain.broadcast(ONLY_PREVIEW_SELECTION_CHANGED_EVENT, {
-        hostId: authority.host.hostId
-      });
-    } catch {
+    } catch (error) {
       await this.cancelDelete(authority, prepared.grantId);
-      await this.showDeleteFailure(window).catch(() => undefined);
+      throw error;
     }
+    this.followDeletedSelection(authority, entry.nodeKind);
+  }
+
+  // The delete counterpart of `followRenamedSelection`. A previewed file inside a removed folder is
+  // as gone as the folder, so subtree containment counts, not just the exact path.
+  private followDeletedSelection(
+    authority: OnlyPreviewProjectAuthorityRef,
+    nodeKind: 'file' | 'directory'
+  ): void {
+    const hostToken = authority.host.hostToken;
+    try {
+      this.requireCurrentItem(authority);
+    } catch {
+      return;
+    }
+    onlyPreviewSelectionCoordinator.invalidatePendingSelection(hostToken, {
+      workspaceId: authority.workspaceId,
+      relativePath: authority.relativePath
+    });
+    const selected = onlyPreviewWorkspaceRegistry.restore(hostToken)?.selectedRelativePath;
+    const deletedFile = nodeKind === 'file' && selected === authority.relativePath;
+    const deletedAncestor = selected?.startsWith(`${authority.relativePath}/`) ?? false;
+    if (!deletedFile && !deletedAncestor) return;
+    onlyPreviewWorkspaceRegistry.clearProjectSelection(hostToken);
+    onlyPreviewPreviewRegionService.clearWorkspace(hostToken, authority.workspaceId);
+    xpcMain.broadcast(ONLY_PREVIEW_SELECTION_CHANGED_EVENT, { hostId: authority.host.hostId });
   }
 
   private requireCurrentItem(expected: OnlyPreviewProjectAuthorityRef): void {
@@ -621,19 +688,6 @@ export class OnlyPreviewProjectNativeActionService {
         relativePath: authority.relativePath
       })
       .catch(() => undefined);
-  }
-
-  private async showDeleteFailure(window: BaseWindow): Promise<void> {
-    const labels = i18nHelper.getMessages().app.onlyPreviewFileMenu;
-    await dialog.showMessageBox(window, {
-      type: 'error',
-      title: labels.deleteFailureTitle,
-      message: labels.deleteFailureMessage,
-      buttons: [labels.deleteFailureOk],
-      defaultId: 0,
-      cancelId: 0,
-      noLink: true
-    });
   }
 
   private async showRenameFailure(window: BaseWindow, error: unknown): Promise<void> {

@@ -61,7 +61,7 @@ test('Project tree keeps row ARIA ownership while its directory arrow toggles on
   // The row delegates through a local wrapper so the row being renamed stays inert: a click there
   // blurs the input and commits, and re-activating on top of that would re-preview a path that is
   // about to change. The chevron keeps calling the store directly — it only toggles.
-  assert.match(row, /@click="handleTreeRowClick\(row\.entry, \$event\.detail\)"/);
+  assert.match(row, /@click="handleTreeRowClick\(row\.entry, \$event\)"/);
   assert.match(row, /@dblclick\.prevent="handleTreeRowDoubleClick\(row\.entry\)"/);
   assert.match(app, /const handleTreeRowClick[\s\S]*if \(isEditing\(entry\.relativePath\)\) return;/);
   assert.match(
