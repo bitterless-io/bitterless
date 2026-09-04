@@ -18,7 +18,6 @@ import {
   getCodexHookOutboxPath
 } from '@shared/eyesOnAgents/codexHookBridge.contract';
 import {
-  deriveEyesOnAgentsClaudeEnvironmentLabel,
   parseEyesOnAgentsAddClaudeEnvironmentParams,
   parseEyesOnAgentsClaudeBridgeEnvironmentParams,
   parseEyesOnAgentsClaudeEnvironmentIdParams,
@@ -28,6 +27,7 @@ import {
   parseEyesOnAgentsRenameClaudeEnvironmentParams,
   parseEyesOnAgentsRenameDomainParams,
   parseEyesOnAgentsReorderDomainsParams,
+  parseEyesOnAgentsSetClaudeEnvironmentDirectoryParams,
   parseEyesOnAgentsSetClaudeEnvironmentEnabledParams,
   parseEyesOnAgentsSetClaudeProviderEnabledParams,
   parseEyesOnAgentsSetLastUserPromptCaptureEnabledParams,
@@ -283,7 +283,6 @@ eyesOnAgentsService = new EyesOnAgentsService({
   // surface and resolve installClaudeBridge/refreshClaudeBridgeStatus/removeClaudeBridge's
   // { environmentId } internally.
   claudeDirectoryConfig,
-  pickClaudeConfigDirectory,
   claudeBridge: claudePluginBridge,
   claudeHookListener: {
     start: startClaudeHookListener,
@@ -519,10 +518,9 @@ export class EyesOnAgentsHandler extends XpcMainHandler implements EyesOnAgentsA
     const { configDirectory } = parseEyesOnAgentsAddClaudeEnvironmentParams(params);
     // addEnvironment canonicalizes and validates the directory (existing, non-symlink, not a
     // filesystem root) and throws a readable message if it does not, which the renderer surfaces.
-    await claudeDirectoryConfig.addEnvironment({
-      label: deriveEyesOnAgentsClaudeEnvironmentLabel(configDirectory),
-      configDirectory
-    });
+    // addEnvironment canonicalizes the directory, derives the label from the canonical form, and
+    // throws a readable message when the path is not an existing directory.
+    await claudeDirectoryConfig.addEnvironment({ configDirectory });
     await claudeObservation.applyEnvironments();
     return claudeDirectoryConfig.listEnvironments();
   }
@@ -555,8 +553,11 @@ export class EyesOnAgentsHandler extends XpcMainHandler implements EyesOnAgentsA
 
   async chooseClaudeEnvironmentDirectory(params: {
     id: string;
+    configDirectory: string;
   }): Promise<EyesOnAgentsClaudeEnvironment[]> {
-    await claudeDirectoryConfig.chooseCustomDirectory(parseEyesOnAgentsClaudeEnvironmentIdParams(params));
+    await claudeDirectoryConfig.setCustomDirectory(
+      parseEyesOnAgentsSetClaudeEnvironmentDirectoryParams(params)
+    );
     await claudeObservation.applyEnvironments();
     return claudeDirectoryConfig.listEnvironments();
   }

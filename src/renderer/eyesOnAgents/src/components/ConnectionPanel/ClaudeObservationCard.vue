@@ -106,7 +106,16 @@
               />
             </div>
             <div class="eyes-connection-card__directories-path">
-              <a-tooltip :content="environmentPath(environment)">
+              <a-input
+                v-if="editingDirectoryId === environment.id"
+                v-model="directoryDraft"
+                size="mini"
+                :max-length="4096"
+                :placeholder="i18nHelper.eyesOnAgents.claudeEnvironment.addDirectoryPlaceholder"
+                :aria-label="i18nHelper.eyesOnAgents.claudeDirectory.pathLabel"
+                @keydown.enter="handleSaveDirectory(environment.id)"
+              />
+              <a-tooltip v-else :content="environmentPath(environment)">
                 <a-input
                   :model-value="environmentPath(environment)"
                   size="mini"
@@ -114,11 +123,27 @@
                   readonly
                 />
               </a-tooltip>
+              <template v-if="editingDirectoryId === environment.id">
+                <a-button
+                  size="mini"
+                  type="primary"
+                  :loading="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(environment.id)"
+                  :disabled="!directoryDraft.trim()
+                    || eyesOnAgentsStore.busyClaudeEnvironmentIds.has(environment.id)"
+                  @click="handleSaveDirectory(environment.id)"
+                >
+                  {{ i18nHelper.eyesOnAgents.claudeEnvironment.save }}
+                </a-button>
+                <a-button size="mini" @click="handleCancelEditDirectory">
+                  {{ i18nHelper.eyesOnAgents.claudeEnvironment.cancel }}
+                </a-button>
+              </template>
               <a-button
+                v-else
                 size="mini"
                 :loading="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(environment.id)"
                 :disabled="eyesOnAgentsStore.busyClaudeEnvironmentIds.has(environment.id)"
-                @click="handleChooseDirectory(environment.id)"
+                @click="handleChooseDirectory(environment)"
               >
                 {{ i18nHelper.eyesOnAgents.claudeEnvironment.changeDirectory }}
               </a-button>
@@ -526,6 +551,9 @@ const addingEnvironment = ref(false);
 const addEnvironmentDirectory = ref('');
 const renamingId = ref<string | null>(null);
 const renameLabelDraft = ref('');
+// Task 092: at most one row edits its directory at a time, mirroring renamingId.
+const editingDirectoryId = ref<string | null>(null);
+const directoryDraft = ref('');
 // Task 089: the id of the row whose setup command was copied last, mirroring the card-level
 // reloadCommandCopied confirmation pattern per row — copying another row moves the confirmation.
 const setupCommandCopiedId = ref<string | null>(null);
@@ -647,8 +675,39 @@ const handleAddEnvironment = async (): Promise<void> => {
 };
 
 const handleStartRename = (environment: EyesOnAgentsClaudeEnvironmentStatus): void => {
+  // Only one inline editor at a time: starting a rename closes an open directory edit rather than
+  // stacking two inputs on the same row.
+  editingDirectoryId.value = null;
+  directoryDraft.value = '';
   renamingId.value = environment.id;
   renameLabelDraft.value = environment.label;
+};
+
+const handleStartEditDirectory = (environment: EyesOnAgentsClaudeEnvironmentStatus): void => {
+  renamingId.value = null;
+  renameLabelDraft.value = '';
+  editingDirectoryId.value = environment.id;
+  // Prefill with the configured directory so a small correction is a small edit. An unconfigured
+  // row has nothing to prefill, so it starts empty rather than with the "Not configured" placeholder.
+  directoryDraft.value = environment.configuredDirectory ?? '';
+};
+
+const handleCancelEditDirectory = (): void => {
+  editingDirectoryId.value = null;
+  directoryDraft.value = '';
+};
+
+const handleSaveDirectory = async (id: string): Promise<void> => {
+  const configDirectory = directoryDraft.value.trim();
+  if (!configDirectory) return;
+  try {
+    await eyesOnAgentsStore.chooseClaudeEnvironmentDirectory(id, configDirectory);
+    editingDirectoryId.value = null;
+    directoryDraft.value = '';
+  } catch {
+    // actionError already reflects the failure (not absolute, or not an existing directory); keep
+    // the editor open with the typed path so a typo is corrected rather than retyped.
+  }
 };
 
 const handleCancelRename = (): void => {
@@ -679,12 +738,16 @@ const handleToggleEnabled = async (id: string, enabled: boolean): Promise<void> 
 // this row's actions fall back to the legacy zero-arg store methods, which resolve entirely on the
 // Main side and preserve the pre-088 "a new directory selection/Use automatic replaces a malformed
 // saved value" recovery contract unchanged.
-const handleChooseDirectory = async (id: string): Promise<void> => {
-  if (id === '') {
+// Task 092: a real row now edits its path inline. The synthetic invalid-hydration row has no
+// environment id to address, so it keeps the legacy zero-arg picker as its recovery affordance.
+const handleChooseDirectory = async (
+  environment: EyesOnAgentsClaudeEnvironmentStatus
+): Promise<void> => {
+  if (environment.id === '') {
     await eyesOnAgentsStore.changeClaudeDirectory().catch(() => undefined);
     return;
   }
-  await eyesOnAgentsStore.chooseClaudeEnvironmentDirectory(id).catch(() => undefined);
+  handleStartEditDirectory(environment);
 };
 
 const handleUseAutomatic = async (id: string): Promise<void> => {

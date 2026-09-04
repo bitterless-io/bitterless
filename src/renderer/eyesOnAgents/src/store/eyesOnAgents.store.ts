@@ -416,9 +416,9 @@ class EyesOnAgentsState {
     );
   }
 
-  async chooseClaudeEnvironmentDirectory(id: string): Promise<void> {
+  async chooseClaudeEnvironmentDirectory(id: string, configDirectory: string): Promise<void> {
     await this.runClaudeEnvironmentAction(id, () =>
-      eyesOnAgentsEmitter.chooseClaudeEnvironmentDirectory({ id }),
+      eyesOnAgentsEmitter.chooseClaudeEnvironmentDirectory({ id, configDirectory }),
     );
   }
 

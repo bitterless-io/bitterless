@@ -302,7 +302,8 @@ value**, so a typo is corrected rather than retyped.
 
 Each row shows: the environment's label (inline **Rename**/**Save**/**Cancel** in place of the
 static label), its resolved path or **Not configured** in a bordered, read-only Arco Input so it can
-be selected and copied but not edited into an untrusted renderer-supplied path, and its mode/state
+be selected and copied; **Change directory** swaps that field for an editable one prefilled with
+the current path, with Save/Cancel mirroring Rename (task 092), and only one row edits at a time, and its mode/state
 text (`Automatic`/`Custom` · `Watching`/`Waiting`/`Degraded`/`Retrying`/`Error`/`Stopped`/`Starting`).
 **Change directory** opens Main's native folder picker scoped to that row; only the one environment
 eligible for automatic mode (the default environment, when it is `custom` or in an `error` state)

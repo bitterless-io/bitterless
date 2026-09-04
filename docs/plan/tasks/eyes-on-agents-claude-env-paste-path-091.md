@@ -158,6 +158,40 @@ next reader sees the boundary as designed rather than as an eroded test.
 
 ## Review
 
+[Independent review 1](../reviews/eyes-on-agents-claude-env-paste-path-091-1.md) passed with no
+blocking findings, and covered both this task and the socket-path fix committed alongside it. It
+mutation-tested every new assertion (all load-bearing) and bound real unix sockets in a scratch
+directory rather than reasoning about the limit. Corrections it produced, all applied:
+
+- **The off-by-one was mine, and measured against me.** The socket guard used 103, on the widespread
+  "104 including the NUL" rule of thumb. That is the *Linux* idiom: macOS's `sockaddr_un` carries a
+  `sun_len` field, and binding real sockets shows 104 succeeds and only 105 fails. The guard is now
+  104, with the measurement recorded in the code comment so the next reader does not "fix" it back.
+- **The label was derived from the RAW input, not the canonical path** — this task's Required
+  behavior, the function comment, and a test comment all three said canonical. Rather than correct
+  three comments to match weaker code, the derivation moved *into*
+  `ClaudeDirectoryConfigService.addEnvironment`, which already canonicalizes, so the documented
+  behavior is now the real one. This also removes the edge the review found, where
+  `/Users/ral/.claude2/.` derived a label of `.`.
+- **The narrowed trust-boundary assertion did not pin what it claimed.** "add is the only path
+  carrying a directory" was a *positive* `assert.match`, which cannot prove exclusivity; the review
+  demonstrated two payloads that passed unnoticed. It is now a negative assertion over the whole
+  renderer tree — only the Claude connection card and the store may mention `configDirectory` at all
+  — and the feature doc's "pins both halves" claim is rewritten to describe what is actually pinned.
+- **The dead `pickClaudeConfigDirectory` dependency** left on `EyesOnAgentsService` after the picker
+  call was removed (TypeScript and eslint cannot see an unread optional dependency) is deleted,
+  along with its handler wiring and its now-false comment. This task's evidence had claimed "no dead
+  dependency"; that claim was wrong.
+- The stale task 085 backlog entry this commit's new test closed has been removed from
+  `docs/plan/backlog.md`, and the socket issue is now registered in `docs/INDEX.md`.
+
+Three findings were judged non-blocking and logged rather than fixed: the loose
+"control-character-free" wording (TAB/`\x1f`/`\x7f` pass the parser and fail later at `stat`), the
+absence of any *location* constraint on an accepted directory, and the hand-maintained `docs/INDEX.md`
+drifting out of sync with `docs/issues/`.
+
+
+
 Not yet independently reviewed — implemented directly at the owner's request while he was blocked
 mid-test. Worth a review pass before this is considered closed, particularly on the trust-boundary
 change above.

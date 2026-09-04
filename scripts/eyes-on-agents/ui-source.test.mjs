@@ -972,7 +972,12 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
   // fails { id }-scoped UUID validation before ever reaching the recovery-aware
   // ClaudeDirectoryConfigService methods) — the single-directory "malformed value" recovery
   // contract stays reachable through the new environment list's default row.
-  assert.match(claudeCard, /if \(id === ''\) \{[\s\S]*eyesOnAgentsStore\.changeClaudeDirectory\(\)/);
+  // Task 092: the directory handler now receives the environment (it needs the row's current path
+  // to prefill the inline editor), so the sentinel check reads environment.id.
+  assert.match(
+    claudeCard,
+    /if \(environment\.id === ''\) \{[\s\S]*eyesOnAgentsStore\.changeClaudeDirectory\(\)/,
+  );
   assert.match(
     claudeCard,
     /if \(id === ''\) \{[\s\S]*eyesOnAgentsStore\.useAutomaticClaudeDirectory\(\)/,
@@ -1008,7 +1013,11 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
   );
   assert.doesNotMatch(claudeCard, /= '__add__'/,
     'the card must not declare its own copy of the Add-environment busy key');
-  assert.match(claudeCard, /eyesOnAgentsStore\.chooseClaudeEnvironmentDirectory\(id\)/);
+  // Task 092: the card sends the inline editor's path alongside the row id.
+  assert.match(
+    claudeCard,
+    /eyesOnAgentsStore\.chooseClaudeEnvironmentDirectory\(id, configDirectory\)/,
+  );
   assert.match(claudeCard, /eyesOnAgentsStore\.useAutomaticClaudeEnvironment\(id\)/);
   assert.match(claudeCard, /eyesOnAgentsStore\.removeClaudeEnvironment\(id\)/);
   // Task 091: the add form sends the pasted absolute CLAUDE_CONFIG_DIR, not a label — the label
@@ -1043,21 +1052,36 @@ test('Claude UI stays provider-qualified, compact, and content-boundary safe', (
   assert.match(sharedTypes, /changeClaudeDirectory\(\): Promise<EyesOnAgentsSnapshot>/);
   assert.doesNotMatch(sharedTypes, /changeClaudeDirectory\([^)]*(?:path|directory|url)/i,
     'the renderer contract must not accept a custom path');
-  // The renderer must never open a native dialog itself, and must never own a directory path for
-  // any EXISTING environment: Change directory / Use automatic stay path-free, so Main remains the
-  // only side that can repoint a configured environment.
+  // The renderer must never open a native directory dialog itself — that stays Main-side.
   assert.doesNotMatch(rendererSource, /showOpenDialog|pickDirectory/);
-  // Task 091 narrows, deliberately, the one case where the renderer does carry a path: ADDING an
-  // environment now sends the absolute CLAUDE_CONFIG_DIR the user pasted, because a Claude config
-  // directory is hidden and the native picker made it awkward to reach. Main still validates it
-  // through requireCanonicalClaudeConfigDirectory (absolute, existing, non-symlink, not a
-  // filesystem root) before it is persisted or watched — the renderer proposes, Main disposes.
-  assert.match(store, /addClaudeEnvironment\(configDirectory: string\)/,
-    'add is the only renderer path that carries a directory, and it is explicitly typed');
+  // Tasks 091/092 deliberately let the renderer carry a user-pasted CLAUDE_CONFIG_DIR, because a
+  // Claude config directory is hidden and the native picker made it awkward to reach. Main still
+  // validates every path through requireCanonicalClaudeConfigDirectory (absolute, existing,
+  // non-symlink, not a filesystem root) before it is persisted, watched, or used to spawn `claude`:
+  // the renderer proposes, Main disposes.
+  //
+  // The exclusivity half has to be a NEGATIVE assertion over the whole renderer tree — a positive
+  // match on the two allowed methods cannot prove that nothing else sends a directory. Review 1 of
+  // task 091 caught exactly that: its positive-only form let a component sending
+  // `{ configDirectory: '/tmp/evil' }` pass unnoticed. So: exactly two store methods may name a
+  // directory parameter, and no other renderer file may construct a configDirectory payload.
+  assert.match(store, /addClaudeEnvironment\(configDirectory: string\)/);
+  assert.match(store, /chooseClaudeEnvironmentDirectory\(id: string, configDirectory: string\)/);
+  const directoryPayloadFiles = walk('src/renderer/eyesOnAgents')
+    .filter((file) => /configDirectory/.test(read(file)))
+    .map((file) => file.replace(/^.*src\/renderer\//u, 'src/renderer/'));
+  assert.deepEqual(
+    directoryPayloadFiles.sort(),
+    [
+      'src/renderer/eyesOnAgents/src/components/ConnectionPanel/ClaudeObservationCard.vue',
+      'src/renderer/eyesOnAgents/src/store/eyesOnAgents.store.ts',
+    ],
+    'only the Claude connection card and the store may handle a CLAUDE_CONFIG_DIR in the renderer',
+  );
   assert.doesNotMatch(
     store,
-    /(?:changeClaudeDirectory|chooseClaudeEnvironmentDirectory|useAutomaticClaudeEnvironment)\([^)]*(?:path|directory|Directory)/,
-    'repointing an existing environment must not accept a renderer-supplied path',
+    /useAutomaticClaudeEnvironment\([^)]*(?:path|directory|Directory)/,
+    'Use automatic must never accept a renderer-supplied path',
   );
   const directorySurface = cssRule(panelStyles, '.eyes-connection-card__directories');
   assert.match(directorySurface, /background:/);

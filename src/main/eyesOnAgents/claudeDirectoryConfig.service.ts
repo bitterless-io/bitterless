@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { requireCanonicalClaudeConfigDirectory } from './claudePath.resolver';
+import { deriveEyesOnAgentsClaudeEnvironmentLabel } from '@shared/eyesOnAgents/eyesOnAgents.contract';
 
 export const CLAUDE_DIRECTORY_SETTING_KEY = 'eyes_on_agents';
 export const CLAUDE_DIRECTORY_SETTING_SUB_KEY = 'claude_directory_v1';
@@ -198,17 +199,20 @@ export class ClaudeDirectoryConfigService {
     return (this.environments ?? []).map((environment) => ({ ...environment }));
   }
 
+  // Task 091: the caller supplies only the directory; the label is derived from it here, AFTER
+  // canonicalization, so `/Users/ral/.claude2/`, `/Users/ral/./.claude2` and a parent-symlinked
+  // spelling of the same directory all yield the same label. Deriving in the caller (from the raw
+  // input) would let `/Users/ral/.claude2/.` become a label of ".".
   async addEnvironment(params: {
-    label: string;
     configDirectory: string;
   }): Promise<EyesOnAgentsClaudeEnvironment> {
     const environments = this.requireEnvironments();
     if (environments.length >= MAX_ENVIRONMENTS) {
       throw new Error('Maximum number of Claude environments reached');
     }
-    const label = parseLabel(params.label);
-    if (label === null) throw new Error('Claude environment label is invalid');
     const configDirectory = requireCanonicalClaudeConfigDirectory(params.configDirectory);
+    const label = parseLabel(deriveEyesOnAgentsClaudeEnvironmentLabel(configDirectory));
+    if (label === null) throw new Error('Claude environment label is invalid');
     const environment: EyesOnAgentsClaudeEnvironment = {
       id: randomUUID(),
       label,
@@ -256,10 +260,24 @@ export class ClaudeDirectoryConfigService {
     this.logLifecycle(params.enabled ? 'enable' : 'disable', next[index]);
   }
 
+  // The picker-based entry point is retained for exactly one caller: ClaudeObservationService's
+  // legacy zero-arg changeDirectory(), used by the synthetic invalid-hydration row, which has no
+  // environment id to address and whose picker is the recovery affordance of last resort. Every
+  // id-addressable row now goes through setCustomDirectory below.
   async chooseCustomDirectory(params: { id: string }): Promise<EyesOnAgentsClaudeEnvironment | null> {
     const selected = await this.dependencies.pickDirectory();
     if (selected === null) return null;
-    const configDirectory = requireCanonicalClaudeConfigDirectory(selected);
+    return await this.setCustomDirectory({ id: params.id, configDirectory: selected });
+  }
+
+  // Task 092: takes the pasted absolute directory instead of opening the native picker, matching the
+  // add flow — a Claude config directory is a hidden dotfile directory the macOS dialog makes
+  // awkward to reach. Every other branch below (recovery reset, unknown id, same-value
+  // short-circuit, lifecycle log) is unchanged from the picker version.
+  async setCustomDirectory(
+    params: { id: string; configDirectory: string }
+  ): Promise<EyesOnAgentsClaudeEnvironment | null> {
+    const configDirectory = requireCanonicalClaudeConfigDirectory(params.configDirectory);
     if (this.environments === null) {
       // Recovery: nothing has been successfully hydrated (fresh install never persisted, or the
       // saved value was malformed). Picking a directory here resets to one known-good custom

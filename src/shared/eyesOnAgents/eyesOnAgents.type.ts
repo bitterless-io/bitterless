@@ -643,7 +643,11 @@ export interface EyesOnAgentsApi {
     id: string;
     enabled: boolean;
   }): Promise<EyesOnAgentsClaudeEnvironment[]>;
-  chooseClaudeEnvironmentDirectory(params: { id: string }): Promise<EyesOnAgentsClaudeEnvironment[]>;
+  // Task 092: repointing an existing environment takes the pasted absolute directory too, so the
+  // card teaches one interaction for both adding and changing a CLAUDE_CONFIG_DIR.
+  chooseClaudeEnvironmentDirectory(
+    params: { id: string; configDirectory: string }
+  ): Promise<EyesOnAgentsClaudeEnvironment[]>;
   useAutomaticClaudeEnvironment(params: { id: string }): Promise<EyesOnAgentsClaudeEnvironment[]>;
   // Task 089: writes that one environment's ready-to-paste CLAUDE_CONFIG_DIR shell wrapper to the
   // clipboard. Takes a required { id } like the environment-CRUD members above, not the bridge

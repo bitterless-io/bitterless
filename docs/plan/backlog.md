@@ -58,10 +58,6 @@ Non-blocking review findings are recorded here after task verification.
   "promotion" path) is thin, and persist-failure behavior is only directly tested on 2 of the 7 CRUD
   methods even though all 7 share the same `persist()` chokepoint. Worth a small follow-up test pass
   if this service gets touched again.
-- Task 085 review: no test constructs two real Claude environment ids and asserts
-  `getClaudeInventoryBridgeEndpoint` produces two distinct socket/named-pipe paths for them — the
-  fix is verified correct by diff/grep inspection, but only exercised indirectly through mocked
-  watchers. Add a direct two-id endpoint-distinctness test if this function is touched again.
 - Task 086 review: a stray blank-line insertion in `src/main/xpc/eyesOnAgents.handler.ts` with no
   functional effect. Cosmetic; fold into the next touch of that file.
 - Task 086 review: `claude-environment-plugin-install.test.mjs` never directly exercises the
@@ -249,6 +245,18 @@ Non-blocking review findings are recorded here after task verification.
   the stated reason multi-environment exists, a wrapper that silently inherits a shell-level API key
   can defeat the whole point — the second environment would run as the first account. Decide whether
   the snippet should unset them (and document the choice either way).
+- Task 091 review: `parseEyesOnAgentsText`'s `CONTROL_CHARACTER_PATTERN` is only `/[\0\r\n]/`, so
+  a pasted `CLAUDE_CONFIG_DIR` containing TAB, `\x1f`, or `\x7f` passes the "control-character-free"
+  check and reaches Main. Harmless today (`requireCanonicalClaudeConfigDirectory` then fails to stat
+  it), but the parser's description is looser than its behavior. Tighten the pattern or the wording.
+- Task 091 review: a Claude environment directory is validated for *shape*, never for *location* —
+  `/etc`, `/Applications`, or another user's home all pass `requireCanonicalClaudeConfigDirectory`.
+  The read surface is bounded to `<dir>/projects/**` and there is no delete path, but a subsequent
+  Install lets the real `claude` CLI write plugin config into whatever directory was named. Consider
+  whether adding an environment should warn (or refuse) outside the user's own home.
+- Task 091 review: `docs/INDEX.md` indexes 18 of 19 eyes-on-agents issue docs; the socket-path issue
+  was the omission. Fixed when noticed, but the INDEX is hand-maintained and silently drifts — a
+  check that every `docs/issues/*.md` is linked from `docs/INDEX.md` would catch the next one.
 - Pre-existing, unrelated to the iTerm2 Open feature: `yarn check:renderer-i18n` crashes on
   `assert(trayCreateIndex > homeCreateIndex, 'Tray must follow Home creation')`
   (`scripts/renderer-i18n/check-renderer-i18n.mjs:186`) because commit `c67ac21` changed

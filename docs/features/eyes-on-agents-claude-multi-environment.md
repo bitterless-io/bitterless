@@ -431,12 +431,26 @@ rename, remove, enable/disable):
   This replaced an earlier label-plus-native-picker form: a Claude config directory is a hidden
   dotfile directory, which the macOS dialog makes awkward to reach, while the absolute path is a
   single paste. Rename remains available for anything the derivation gets wrong.
-  - **Trust boundary note.** This is the one place the renderer supplies a filesystem path; every
-    other directory action (Change directory, Use automatic) stays path-free so Main alone can
-    repoint an existing environment. Main still validates the pasted value through
-    `requireCanonicalClaudeConfigDirectory` — absolute, existing, non-symlink, not a filesystem
-    root — before it is persisted, watched, or used as `CLAUDE_CONFIG_DIR`. The renderer proposes,
-    Main disposes. `scripts/eyes-on-agents/ui-source.test.mjs` pins both halves of that boundary.
+- **Change directory** (task 092) repoints an existing environment the same way: it turns that
+  row's path field into an inline editor prefilled with the current directory, with Save/Cancel
+  mirroring Rename. The native picker survives in exactly one place — the synthetic
+  invalid-hydration row, which has no environment id to address and whose picker is the recovery
+  affordance of last resort. Repointing never re-derives the label, so a renamed environment keeps
+  its name.
+  - **Trust boundary note.** Adding and repointing are the two places the renderer supplies a
+    filesystem path. Main still validates every one through `requireCanonicalClaudeConfigDirectory`
+    — absolute, existing, non-symlink, not a filesystem root — before it is persisted, watched, or
+    used as `CLAUDE_CONFIG_DIR`: the renderer proposes, Main disposes.
+    `scripts/eyes-on-agents/ui-source.test.mjs` pins this with a **negative** assertion over the
+    whole renderer tree (only the Claude connection card and the store may mention
+    `configDirectory` at all), because a positive match on the allowed methods cannot prove
+    exclusivity — review 1 of task 091 caught exactly that weakness in an earlier form of the check.
+    What validation does **not** constrain is *which* real directory: `/etc`, another user's home,
+    or any other readable directory passes. The residual capability is bounded by what Bitterless
+    then does with it — read `<dir>/projects/**` for transcripts, and pass it as `CLAUDE_CONFIG_DIR`
+    to a fixed-argv `claude` invocation with no shell. There is no delete path. Note that a
+    subsequent Install action does let the real `claude` CLI write plugin config into that
+    directory.
 - One short guidance note (replacing the standalone note originally proposed for this section):
   "Each environment needs its own hook install. Point Bitterless at your environment's
   `CLAUDE_CONFIG_DIR`, then Install — and make sure the shell command you use for that environment

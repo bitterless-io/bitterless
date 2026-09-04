@@ -608,6 +608,22 @@ export const parseEyesOnAgentsClaudeEnvironmentLabel = (value: unknown): string 
   return parseEyesOnAgentsText(value, 'Claude environment label', 80, false) as string;
 };
 
+// The one absolute-path rule shared by adding an environment (task 091) and repointing one
+// (task 092). Deliberately does NOT touch the filesystem: existence/symlink/realpath checks stay in
+// requireCanonicalClaudeConfigDirectory on the Main side, the only place allowed to stat.
+const parseEyesOnAgentsClaudeConfigDirectory = (value: unknown): string => {
+  const configDirectory = parseEyesOnAgentsText(
+    value,
+    'Claude config directory',
+    4_096,
+    false
+  ) as string;
+  if (!configDirectory.startsWith('/') && !/^[A-Za-z]:[\\/]/u.test(configDirectory)) {
+    throw new Error('Claude config directory must be an absolute path');
+  }
+  return configDirectory;
+};
+
 // Task 091: an environment is added by pasting its absolute CLAUDE_CONFIG_DIR, not by naming it and
 // then hunting for it in the native picker — a Claude config directory is a hidden dotfile directory,
 // which the macOS dialog makes awkward to reach, while the absolute path is one paste. This parser
@@ -618,16 +634,20 @@ export const parseEyesOnAgentsAddClaudeEnvironmentParams = (
 ): { configDirectory: string } => {
   if (!isEyesOnAgentsRecord(value)) throw new Error('Claude environment params must be an object');
   assertOnlyKeys(value, ['configDirectory'], 'Claude environment params');
-  const configDirectory = parseEyesOnAgentsText(
-    value.configDirectory,
-    'Claude config directory',
-    4_096,
-    false
-  ) as string;
-  if (!configDirectory.startsWith('/') && !/^[A-Za-z]:[\\/]/u.test(configDirectory)) {
-    throw new Error('Claude config directory must be an absolute path');
-  }
-  return { configDirectory };
+  return { configDirectory: parseEyesOnAgentsClaudeConfigDirectory(value.configDirectory) };
+};
+
+// Task 092: repointing an existing environment takes the same pasted-absolute-path shape as adding
+// one, so both share this rule rather than duplicating the regex.
+export const parseEyesOnAgentsSetClaudeEnvironmentDirectoryParams = (
+  value: unknown
+): { id: string; configDirectory: string } => {
+  if (!isEyesOnAgentsRecord(value)) throw new Error('Claude environment params must be an object');
+  assertOnlyKeys(value, ['id', 'configDirectory'], 'Claude environment params');
+  return {
+    id: parseEyesOnAgentsClaudeEnvironmentId(value.id),
+    configDirectory: parseEyesOnAgentsClaudeConfigDirectory(value.configDirectory)
+  };
 };
 
 // Names an environment from its own directory so the user does not have to label a thing they just

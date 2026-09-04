@@ -440,6 +440,22 @@ try {
     );
   });
 
+  await test('the set-directory params parser shares the add parser\'s absolute-path rule', () => {
+    const parse = contractModule.parseEyesOnAgentsSetClaudeEnvironmentDirectoryParams;
+    const id = 'af147ca5-5493-4079-81db-1c6f8841682b';
+    assert.deepEqual(parse({ id, configDirectory: '/Users/ral/.claude2' }),
+      { id, configDirectory: '/Users/ral/.claude2' });
+    // Same rejections as the add parser — the rule is shared, not duplicated.
+    assert.throws(() => parse({ id, configDirectory: '.claude2' }), /absolute/);
+    assert.throws(() => parse({ id, configDirectory: '~/.claude2' }), /absolute/);
+    assert.throws(() => parse({ id, configDirectory: '' }), /Claude config directory/);
+    // Both fields are required, and nothing else is accepted.
+    assert.throws(() => parse({ configDirectory: '/Users/ral/.claude2' }), /Claude environment/);
+    assert.throws(() => parse({ id }), /Claude config directory/);
+    assert.throws(() => parse({ id, configDirectory: '/x', label: 'y' }), /Claude environment params/);
+    assert.throws(() => parse({ id: 'not-a-uuid', configDirectory: '/x' }), /Claude environment/);
+  });
+
   await test('the environment label is derived from its directory', () => {
     const derive = contractModule.deriveEyesOnAgentsClaudeEnvironmentLabel;
     assert.equal(derive('/Users/ral/.claude2'), 'claude2', 'a leading dot is stripped');

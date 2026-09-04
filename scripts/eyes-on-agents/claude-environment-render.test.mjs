@@ -203,7 +203,9 @@ const createStore = (environments, { providerError = null, bridge = {}, ...overr
     renameClaudeEnvironment: async (id, label) => { calls.rename.push([id, label]); },
     removeClaudeEnvironment: async (id) => { calls.remove.push(id); },
     setClaudeEnvironmentEnabled: async (id, enabled) => { calls.setEnabled.push([id, enabled]); },
-    chooseClaudeEnvironmentDirectory: async (id) => { calls.chooseDirectory.push(id); },
+    chooseClaudeEnvironmentDirectory: async (id, configDirectory) => {
+      calls.chooseDirectory.push([id, configDirectory]);
+    },
     useAutomaticClaudeEnvironment: async (id) => { calls.useAutomatic.push(id); },
     copyClaudeEnvironmentSetupCommand: async (id) => { calls.copySetup.push(id); },
     ...overrides,
@@ -544,13 +546,27 @@ try {
     });
     const mounted = await mountCard([first, second]);
     try {
+      // Task 092: Change directory now opens an inline path editor on that row rather than a
+      // native picker, prefilled with the row's own directory, and Save sends the edited path.
       const secondRow = rows(mounted.host)[1];
       const changeButton = rowButton(secondRow, /^Change directory$/);
       assert.ok(changeButton);
       changeButton.click();
       await nextTick();
+      const editor = [...rows(mounted.host)[1].querySelectorAll('input')]
+        .find((element) => !element.readOnly);
+      assert.ok(editor, 'the row switches to an editable path input');
+      assert.equal(editor.value, '/b', 'the editor is prefilled with that row\'s own directory');
+      editor.value = '  /c  ';
+      editor.dispatchEvent(new browserWindow.Event('input'));
+      await nextTick();
+      const saveButton = rowButton(rows(mounted.host)[1], /^Save$/);
+      assert.ok(saveButton);
+      saveButton.click();
+      await nextTick();
       await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
-      assert.deepEqual(mounted.store.calls.chooseDirectory, [second.id]);
+      assert.deepEqual(mounted.store.calls.chooseDirectory, [[second.id, '/c']],
+        'Save sends the trimmed path scoped to that row');
       // A non-default custom environment is never eligible for automatic mode.
       assert.equal(rowButton(secondRow, /^Use automatic$/), undefined);
 

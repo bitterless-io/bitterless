@@ -31,7 +31,6 @@ import {
   isEyesOnAgentsRecord,
   normalizeEyesOnAgentsProviderThreadTitle,
   normalizeEyesOnAgentsThreadStatus,
-  deriveEyesOnAgentsClaudeEnvironmentLabel,
   parseEyesOnAgentsPath,
   parseEyesOnAgentsSessionKey,
   parseEyesOnAgentsText,
@@ -131,13 +130,9 @@ interface EyesOnAgentsServiceDependencies {
     | 'renameEnvironment'
     | 'removeEnvironment'
     | 'setEnvironmentEnabled'
-    | 'chooseCustomDirectory'
+    | 'setCustomDirectory'
     | 'useAutomatic'
   >;
-  // Task 088: reuses eyesOnAgents.handler.ts's existing pickClaudeConfigDirectory free function so
-  // this service's own addClaudeEnvironment delegate can open the same native picker the handler's
-  // real XPC-registered method already uses, rather than duplicating that logic.
-  pickClaudeConfigDirectory?: () => Promise<string | null>;
   claudeBridge?: {
     getStatus(): EyesOnAgentsClaudeBridgeStatus;
     getInstallationId?(): string;
@@ -3057,10 +3052,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     params: { configDirectory: string }
   ): Promise<EyesOnAgentsClaudeEnvironment[]> {
     const directoryConfig = this.requireClaudeDirectoryConfig();
-    await directoryConfig.addEnvironment({
-      label: deriveEyesOnAgentsClaudeEnvironmentLabel(params.configDirectory),
-      configDirectory: params.configDirectory
-    });
+    await directoryConfig.addEnvironment({ configDirectory: params.configDirectory });
     await this.dependencies.claudeObservation?.applyEnvironments?.();
     return directoryConfig.listEnvironments();
   }
@@ -3091,10 +3083,10 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
   }
 
   async chooseClaudeEnvironmentDirectory(
-    params: { id: string }
+    params: { id: string; configDirectory: string }
   ): Promise<EyesOnAgentsClaudeEnvironment[]> {
     const directoryConfig = this.requireClaudeDirectoryConfig();
-    await directoryConfig.chooseCustomDirectory(params);
+    await directoryConfig.setCustomDirectory(params);
     await this.dependencies.claudeObservation?.applyEnvironments?.();
     return directoryConfig.listEnvironments();
   }

@@ -208,6 +208,10 @@ design document.
   implemented; owner runtime verification pending: N independently-managed `CLAUDE_CONFIG_DIR`
   environments (own watcher, own hook install target, Hook-attributed `claude_config_dir`),
   superseding the single-directory model.
+- [Claude inventory socket path exceeds the unix `sun_path` limit](issues/eyes-on-agents-claude-inventory-socket-path-too-long.md) -
+  fixed in source; owner runtime verification pending: the per-environment socket name embedded a raw
+  36-char UUID, producing a 134-byte path that `bind(2)` rejected with `EINVAL`, so every Claude
+  environment sat in `Retrying` despite passing tests.
 - [Omni browser and mini-app cells](features/omni-miniapp-cells.md) - persistent per-cell browser
   or local Todo/EyesOnAgents/Translator/Motto/Trench/Submodules operation views with development and
   packaged runtime mapping.
@@ -319,6 +323,10 @@ design document.
   keyboard-selected modal whose results reuse the complete normal thread card; shortcut/button
   opening focuses the input, and every close path clears transient state without stale callback
   revival; [review 072-1](plan/reviews/eyes-on-agents-search-shortcut-focus-reset-072-1.md) passed.
+- [EyesOnAgents Search shortcut dies when another Omni view holds focus](issues/eyes-on-agents-omni-search-shortcut-focus.md) -
+  diagnosed; repair pending owner choice: `Cmd+F` is a renderer-local `window` listener, so in the
+  Omni Mini App host it only fires while that cell's `WebContentsView` holds keyboard focus, and
+  Omni never focuses a cell's content view.
 - [EyesOnAgents search input loses its store receiver](issues/eyes-on-agents-search-input-unbound-store-method.md) -
   fixed; owner verification pending: receiver-safe component wrappers and mounted Arco interaction
   coverage prevent the first-keystroke crash and the same Focus Search-button failure.

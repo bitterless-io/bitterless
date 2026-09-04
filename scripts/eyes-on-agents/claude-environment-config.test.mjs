@@ -41,9 +41,12 @@ try {
   assert.equal(defaultEnvironment.enabled, true);
 
   // add: always mode 'custom', appended after the default, fresh id.
-  const added = await service.addEnvironment({ label: 'claude2', configDirectory: configA });
+  // Task 091/092: addEnvironment takes only the directory; the label is derived from the canonical
+  // path's basename, so the caller no longer names what it just identified by path.
+  const added = await service.addEnvironment({ configDirectory: configA });
   assert.equal(added.mode, 'custom');
   assert.equal(added.configDirectory, configA);
+  assert.equal(added.label, 'config-a', 'the label is derived from the directory basename');
   assert.equal(added.enabled, true);
   assert.notEqual(added.id, defaultEnvironment.id);
   let environments = service.listEnvironments();
@@ -53,12 +56,10 @@ try {
   assert.equal(environments[0].configDirectory, null,
     'adding a second environment must not mutate the default environment');
 
-  // add validation: an empty label and a nonexistent directory must both be rejected without
-  // mutating state.
+  // add validation: a nonexistent directory must be rejected without mutating state. (There is no
+  // longer an empty-label case to reject — the label is derived, not supplied.)
   const writesBeforeInvalidAdd = settings.writes.length;
-  await assert.rejects(() => service.addEnvironment({ label: '  ', configDirectory: configB }));
   await assert.rejects(() => service.addEnvironment({
-    label: 'missing',
     configDirectory: join(fixtureRoot, 'does-not-exist')
   }));
   assert.equal(settings.writes.length, writesBeforeInvalidAdd,
@@ -86,13 +87,29 @@ try {
   await service.setEnvironmentEnabled({ id: added.id, enabled: true });
   assert.equal(service.listEnvironments()[1].enabled, true);
 
-  // chooseCustomDirectory: reuses the picker and mutates only the targeted environment.
-  pickedDirectory = configB;
-  const chosen = await service.chooseCustomDirectory({ id: added.id });
+  // Task 092: setCustomDirectory takes the pasted path and mutates only the targeted environment.
+  const chosen = await service.setCustomDirectory({ id: added.id, configDirectory: configB });
   assert.equal(chosen.configDirectory, configB);
   assert.equal(service.listEnvironments()[1].configDirectory, configB);
   assert.equal(service.listEnvironments()[0].configDirectory, null,
-    'chooseCustomDirectory on the second environment must not touch the default environment');
+    'setCustomDirectory on the second environment must not touch the default environment');
+  // Repointing must NOT re-derive the label — a user who renamed this environment keeps that name.
+  assert.equal(service.listEnvironments()[1].label, 'renamed',
+    'changing the directory must not overwrite a user-chosen label');
+  const writesAfterSameDirectory = settings.writes.length;
+  await service.setCustomDirectory({ id: added.id, configDirectory: configB });
+  assert.equal(settings.writes.length, writesAfterSameDirectory,
+    'setting the same directory must not rewrite the setting');
+  await assert.rejects(
+    () => service.setCustomDirectory({ id: 'unknown', configDirectory: configB }),
+    /Claude environment was not found/
+  );
+  await assert.rejects(
+    () => service.setCustomDirectory({ id: added.id, configDirectory: join(fixtureRoot, 'nope') }),
+    'a nonexistent directory must be rejected'
+  );
+  // The picker entry point survives for the legacy sentinel path and now delegates to the same
+  // persist logic, so a cancelled picker is still a no-op.
   pickedDirectory = null;
   assert.equal(await service.chooseCustomDirectory({ id: added.id }), null, 'a cancelled picker is a no-op');
 
@@ -106,8 +123,7 @@ try {
     'a rejected useAutomatic call must not mutate the target environment');
   // Switch the default environment to custom and back so useAutomatic exercises a genuine
   // automatic <- custom mode change (a no-op mode change must not persist or log).
-  pickedDirectory = configA;
-  await service.chooseCustomDirectory({ id: defaultEnvironment.id });
+  await service.setCustomDirectory({ id: defaultEnvironment.id, configDirectory: configA });
   assert.equal(service.listEnvironments()[0].mode, 'custom');
   pickedDirectory = null;
   const automatic = await service.useAutomatic({ id: defaultEnvironment.id });

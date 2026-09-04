@@ -29,10 +29,12 @@ const safeString = (value: unknown, label: string): string => {
   return value;
 };
 
-// A unix domain socket address is a fixed-size struct sockaddr_un: sun_path is 104 bytes on macOS
-// and 108 on Linux, INCLUDING the terminating NUL, so the usable path is one byte shorter. bind(2)
-// rejects anything longer with EINVAL. macOS is the tighter of the two and is what we budget for.
-const UNIX_SOCKET_PATH_MAX_BYTES = 103;
+// A unix domain socket address is a fixed-size struct sockaddr_un. macOS's sun_path is 104 bytes
+// and, unlike Linux, the struct carries a sun_len field — so macOS accepts a full 104-byte path and
+// only rejects 105+ with EINVAL. (Verified by binding real sockets, not inferred: the widespread
+// "104 including the NUL, so 103" rule of thumb is the Linux idiom and is off by one here.) macOS is
+// the tighter of the two platforms we ship, so its limit is what we budget for.
+const UNIX_SOCKET_PATH_MAX_BYTES = 104;
 
 // environmentId scopes the endpoint to one configured Claude environment (task 085): each
 // environment now runs its own ClaudeWatcherSupervisor/child process, so without a distinct
@@ -41,7 +43,7 @@ const UNIX_SOCKET_PATH_MAX_BYTES = 103;
 //
 // The scoped unix name is deliberately terse (`ci-<12 hex>.sock`, 20 chars) rather than the obvious
 // `claude-inventory-<id>.sock`. The profile-scoped userData prefix already consumes 65-76 of the
-// 103-byte budget, so on a debug/preview profile even a hashed `claude-inventory-<12 hex>.sock`
+// 104-byte budget, so on a debug/preview profile even a hashed `claude-inventory-<12 hex>.sock`
 // (34 chars) overflows. Hashing alone is not enough here; the base name has to shrink too.
 export const getClaudeInventoryBridgeEndpoint = (
   userDataPath: string,
