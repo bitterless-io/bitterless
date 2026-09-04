@@ -462,6 +462,7 @@ const verifyCoreSchema = (
     'is_archived',
     'archive_state',
     'is_unread',
+    'title_source',
   ])
   assertColumns(db, 'eyes_on_agents_thread_snapshot', [
     'session_key',

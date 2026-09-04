@@ -1,7 +1,8 @@
 # A renamed Claude session keeps its old title in Focus
 
-Status: Root cause confirmed. **Repair blocked on a design decision** — the obvious one-line fix
-breaks a documented policy; see "Why the obvious fix is wrong"
+Status: Root cause confirmed. **Repaired in source by
+[task 095](../plan/tasks/eyes-on-agents-claude-title-provenance-095.md) via Option 1 (record title
+provenance)**; owner runtime verification pending a repackage — see "Resolution"
 
 Reported: 2026-09-04, by the owner, from the packaged Preview build
 
@@ -100,7 +101,30 @@ The blocker is that the schema records a title's **value** but not its **provena
 Recommendation: **2 if the premise holds, else 1.** Option 2 gives a better title for every CLI
 session, not just renamed ones, and avoids a migration; option 1 is the safe fallback.
 
+## Resolution — Option 1 (record title provenance)
+
+Option 2's premise (that `/rename` appends a fresh `ai-title` line) is still unverified, and it
+requires opening transcripts that the inventory path deliberately never opens, so task 095 took
+**Option 1**. `eyes_on_agents_thread.title_source` (`desktop` / `agent_view` / `codex` / `NULL`) is
+added by migration `260904120000`, every title writer stamps its own source, and the merge becomes:
+
+```ts
+// EyesOnAgentsRepositoryDao.reconcileClaudeAgentStates
+const agentViewMayWriteTitle = agent.title !== null &&
+  (row.title === null || row.title_source === 'agent_view');
+```
+
+so the Agent View may replace a title it owns (the rename lands) or fill a missing one (unchanged
+policy), and may never touch a `desktop`/`codex`-owned title. `title_source IS NULL` on a legacy row
+counts as unowned, which keeps a pre-migration Desktop title protected; the honest cost is that a
+legacy CLI-only row keeps its stale title until an inventory or Codex writer refreshes it and records
+a source. Both original assertions in `scripts/eyes-on-agents/repository.test.mjs` still pass
+unmodified, with new cases covering the rename, the null-name poll, the legacy-`NULL` row, and the
+provenance stamped by each writer.
+
+Option 2 remains open only as a *richer title* idea, not as this bug's repair.
+
 ## Not covered by this issue
 
-Nothing was changed in `src/`: the tree is clean apart from this document, and
-`yarn test:eyes-on-agents:repository` passes on the unmodified code.
+Beyond the repair above, no behavior was changed: the visibility gate, Agent View polling cadence,
+and everything the Agent View reports are untouched.

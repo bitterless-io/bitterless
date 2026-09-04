@@ -438,6 +438,7 @@ All view nor Focus is stored as a separate table row.
 | `claude_config_dir` | nullable `CLAUDE_CONFIG_DIR` absolute path captured on `SessionStart` (schema V4); not a foreign key — resolved against currently configured Claude environments at snapshot-read time |
 | `domain_id` | non-null reference to an active EyesOnAgents Domain |
 | `title` | Codex name/preview fallback, display only |
+| `title_source` | which writer owns `title`: `desktop`, `agent_view`, `codex`, or `NULL` for a row migrated from before provenance was recorded; a writer may replace only a title it owns or a missing one, and `NULL` counts as unowned by every writer |
 | `cwd` | working directory when Codex exposes it |
 | `project_key` | normalized nearest Git worktree root used for grouping/filtering |
 | `project_root` | canonical native Git worktree root for display |

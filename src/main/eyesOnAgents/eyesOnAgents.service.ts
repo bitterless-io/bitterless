@@ -50,6 +50,8 @@ import type { LastUserPromptPreferenceService } from './lastUserPromptPreference
 import type { ClaudeDirectoryConfigService } from './claudeDirectoryConfig.service';
 import type { EyesOnAgentsIterm2RevealOutcome } from './iterm2Reveal.helper';
 import { logClaudeIterm2Reveal } from './claudeIterm2Log.helper';
+import { logClaudeHookEvent } from './claudeHookLog.helper';
+import { buildClaudeVisibilityGateLogLine } from './claudeVisibilityLog.helper';
 import { resolveClaudeBridgeEnvironment } from './claudeBridgeEnvironment.resolver';
 import type {
   ClaudeProviderPreferenceHydration,
@@ -756,6 +758,7 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
   private claudeProviderError: string | null = null;
   private claudeProviderEnableCutoff: number | null = null;
   private claudeProviderRevision = 0;
+  private claudeVisibilityGateLogLine: string | null = null;
 
   constructor(private readonly dependencies: EyesOnAgentsServiceDependencies) {
     this.now = dependencies.now ?? Date.now;
@@ -864,6 +867,14 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
           claudeProviderProjectionEnabled &&
           (thread.desktopSessionId !== null || thread.iterm2SessionId !== null)
         ));
+      this.logClaudeVisibilityGate(
+        claudeProviderProjectionEnabled
+          ? persisted.threads
+              .filter((thread) => thread.provider === 'claude' &&
+                thread.desktopSessionId === null && thread.iterm2SessionId === null)
+              .map((thread) => thread.sessionKey)
+          : []
+      );
       const threads = visibleThreads.map((thread) => {
         const observedAt = thread.statusObservedAt === null
           ? null
@@ -928,6 +939,12 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       if (claudeProviderRevision !== this.claudeProviderRevision) continue;
       return snapshot;
     }
+  }
+
+  private logClaudeVisibilityGate(heldSessionKeys: readonly string[]): void {
+    const line = buildClaudeVisibilityGateLogLine(heldSessionKeys);
+    if (line !== null && line !== this.claudeVisibilityGateLogLine) console.info(line);
+    this.claudeVisibilityGateLogLine = line;
   }
 
   async connectAppServer(): Promise<EyesOnAgentsSnapshot> {
@@ -3302,25 +3319,29 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
         activeFlags: []
       };
     }
+    const iterm2SessionId = (delivery.event.schemaVersion === 3 ||
+      delivery.event.schemaVersion === 4) &&
+      delivery.event.payload.terminalApp === 'iterm2'
+      ? delivery.event.payload.terminalSessionId
+      : null;
+    const claudeConfigDir = delivery.event.schemaVersion === 4
+      ? delivery.event.payload.claudeConfigDir ?? null
+      : null;
+    logClaudeHookEvent({
+      hookEventName: payload.hookEventName,
+      sessionId: payload.sessionId,
+      schemaVersion: delivery.event.schemaVersion,
+      terminalApp: iterm2SessionId === null ? null : 'iterm2',
+      terminalSessionId: iterm2SessionId,
+      environmentAttribution: claudeConfigDir !== null,
+      transcript: Boolean(payload.transcriptPath)
+    });
     if (payload.transcriptPath && this.dependencies.validateClaudeTranscript) {
       try {
         const transcriptPath = this.dependencies.validateClaudeTranscript(
           payload.transcriptPath,
           payload.sessionId
         );
-        const iterm2SessionId = (delivery.event.schemaVersion === 3 ||
-          delivery.event.schemaVersion === 4) &&
-          delivery.event.payload.terminalApp === 'iterm2'
-          ? delivery.event.payload.terminalSessionId
-          : null;
-        const claudeConfigDir = delivery.event.schemaVersion === 4
-          ? delivery.event.payload.claudeConfigDir ?? null
-          : null;
-        if (payload.hookEventName === 'SessionStart') {
-          console.info(
-            `[claude-hook] event=SessionStart environmentAttribution=${claudeConfigDir !== null}`
-          );
-        }
         await this.dependencies.repository.upsertClaudeInventory({
           threads: [{
             threadId: payload.sessionId,

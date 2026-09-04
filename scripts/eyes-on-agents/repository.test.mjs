@@ -125,6 +125,7 @@ try {
     ensureEyesOnAgentsLegacyImport,
     ensureEyesOnAgentsProjectMetadataSchema,
     ensureEyesOnAgentsSyncPersistenceSchema,
+    ensureEyesOnAgentsTitleSourceSchema,
     migrateEyesOnAgentsCompletionAlertSchema,
     migrateEyesOnAgentsProviderIdentitySchema
   } = await loadTypeScriptModule(
@@ -155,6 +156,8 @@ try {
   ensureEyesOnAgentsIterm2SessionSchema(repairDb);
   ensureEyesOnAgentsClaudeConfigDirSchema(repairDb);
   ensureEyesOnAgentsClaudeConfigDirSchema(repairDb);
+  ensureEyesOnAgentsTitleSourceSchema(repairDb);
+  ensureEyesOnAgentsTitleSourceSchema(repairDb);
   repairDb.prepare(
     `INSERT INTO eyes_on_agents_hook_delivery_receipt (
       delivery_id, session_key, provider, thread_id, observed_at, committed_at
@@ -239,6 +242,8 @@ try {
   ensureEyesOnAgentsIterm2SessionSchema(oldDb);
   ensureEyesOnAgentsClaudeConfigDirSchema(oldDb);
   ensureEyesOnAgentsClaudeConfigDirSchema(oldDb);
+  ensureEyesOnAgentsTitleSourceSchema(oldDb);
+  ensureEyesOnAgentsTitleSourceSchema(oldDb);
   const migratedColumns = oldDb.prepare('PRAGMA table_info(eyes_on_agents_thread)').all();
   assert.deepEqual(
     migratedColumns
@@ -271,6 +276,18 @@ try {
     migratedColumns.some((column) => column.name === 'claude_config_dir'),
     true,
     'old databases must receive the idempotent claude_config_dir column'
+  );
+  assert.equal(
+    migratedColumns.some((column) => column.name === 'title_source'),
+    true,
+    'old databases must receive the idempotent title_source column'
+  );
+  assert.equal(
+    oldDb.prepare(
+      'SELECT COUNT(*) AS count FROM eyes_on_agents_thread WHERE title_source IS NOT NULL'
+    ).get().count,
+    0,
+    'a migrated row must keep an unrecorded title provenance instead of a guessed one'
   );
   assert.ok(
     oldDb.prepare(
@@ -3544,6 +3561,88 @@ try {
     db.prepare('SELECT title FROM eyes_on_agents_thread WHERE session_key = ?').get(claudeKey(collisionB)).title,
     'Agent View fallback',
     'Agent View names may fill a missing title'
+  );
+
+  // Title provenance (task 095). Both policies above still hold because provenance, not the
+  // presence of a value, now decides who may overwrite a title.
+  const titleProvenance = (sessionKey) => ({ ...db.prepare(
+    'SELECT title, title_source FROM eyes_on_agents_thread WHERE session_key = ?'
+  ).get(sessionKey) });
+  assert.deepEqual(
+    titleProvenance(claudeSessionKey),
+    { title: 'Claude audit renamed', title_source: 'desktop' },
+    'an inventory-supplied title must be stamped as Desktop-sourced'
+  );
+  assert.deepEqual(
+    titleProvenance(claudeKey(collisionB)),
+    { title: 'Agent View fallback', title_source: 'agent_view' },
+    'a filled missing title must be stamped as Agent-View-owned'
+  );
+  await repository.reconcileClaudeAgentStates({
+    agents: [{
+      threadId: collisionB, runtimeState: 'idle', title: 'Agent View renamed', cwd: null,
+      startedAt: null, observedAt: 191_000
+    }],
+    completeSnapshot: false,
+    observedAt: 191_000
+  });
+  assert.deepEqual(
+    titleProvenance(claudeKey(collisionB)),
+    { title: 'Agent View renamed', title_source: 'agent_view' },
+    'a rename must land on a title the Agent View already owns'
+  );
+  await repository.reconcileClaudeAgentStates({
+    agents: [{
+      threadId: collisionB, runtimeState: 'idle', title: null, cwd: null,
+      startedAt: null, observedAt: 192_000
+    }],
+    completeSnapshot: false,
+    observedAt: 192_000
+  });
+  assert.deepEqual(
+    titleProvenance(claudeKey(collisionB)),
+    { title: 'Agent View renamed', title_source: 'agent_view' },
+    'a poll reporting no name must never clear a stored title'
+  );
+  await repository.reconcileClaudeAgentStates({
+    agents: [{
+      threadId: claudeThreadId, runtimeState: 'idle', title: 'Agent View overwrite again',
+      cwd: null, startedAt: null, observedAt: 193_000
+    }],
+    completeSnapshot: false,
+    observedAt: 193_000
+  });
+  assert.deepEqual(
+    titleProvenance(claudeSessionKey),
+    { title: 'Claude audit renamed', title_source: 'desktop' },
+    'a Desktop-owned title must stay protected on every later Agent View poll'
+  );
+  // A pre-migration row records a title with no provenance; it must count as not-Agent-View-owned.
+  db.prepare(
+    'UPDATE eyes_on_agents_thread SET title_source = NULL WHERE session_key = ?'
+  ).run(claudeKey(collisionB));
+  await repository.reconcileClaudeAgentStates({
+    agents: [{
+      threadId: collisionB, runtimeState: 'idle', title: 'Agent View legacy overwrite', cwd: null,
+      startedAt: null, observedAt: 194_000
+    }],
+    completeSnapshot: false,
+    observedAt: 194_000
+  });
+  assert.deepEqual(
+    titleProvenance(claudeKey(collisionB)),
+    { title: 'Agent View renamed', title_source: null },
+    'a legacy row with no recorded provenance must not be treated as Agent-View-owned'
+  );
+  await repository.upsertClaudeInventory({ threads: [{
+    threadId: collisionB, desktopSessionId: null, transcriptPath: null,
+    title: 'Desktop refreshed legacy title', cwd: null, archiveState: 'unknown',
+    lastActivityAt: null, observedAt: 195_000
+  }] });
+  assert.deepEqual(
+    titleProvenance(claudeKey(collisionB)),
+    { title: 'Desktop refreshed legacy title', title_source: 'desktop' },
+    'a later inventory title must record provenance and unstick a legacy row'
   );
 
   const deletionSource = '/tmp/claude-code-sessions/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';

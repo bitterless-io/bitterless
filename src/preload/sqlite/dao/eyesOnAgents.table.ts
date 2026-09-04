@@ -41,6 +41,7 @@ export class EyesOnAgentsTable extends BaseTable {
       transcript_activity_at INTEGER,
       domain_id INTEGER NOT NULL,
       title TEXT,
+      title_source TEXT,
       cwd TEXT,
       project_key TEXT,
       project_root TEXT,

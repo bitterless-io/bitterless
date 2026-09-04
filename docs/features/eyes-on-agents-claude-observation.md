@@ -336,6 +336,16 @@ file metadata admits a session even when title, cwd, or surface cannot be recove
 `claude agents` names may repair a missing title. Existing non-empty titles are not erased by an
 incomplete refresh.
 
+Which writer may replace a stored title is decided by recorded provenance, not by whether a value is
+already present (`eyes_on_agents_thread.title_source`, task 095). The Desktop/inventory upsert stamps
+`desktop` whenever it supplies a title, Agent View reconciliation stamps `agent_view`, and Codex
+title enrichment stamps `codex`. Agent View reconciliation may then overwrite a title it owns — which
+is how a CLI `/rename` reaches Focus — and may still fill a missing title, but never replaces a title
+owned by another source, and a poll reporting no name changes nothing. A row migrated from before
+provenance existed carries `title_source = NULL`; it counts as *not* Agent-View-owned, so a
+pre-migration Desktop title stays protected, at the price that a legacy CLI-only row keeps its stale
+title until an inventory or Codex writer refreshes it and records a source.
+
 ## Claude runtime reconciliation
 
 ### Agent View polling

@@ -430,7 +430,9 @@ test('commitClaudeHookDelivery persists claudeConfigDir and logs only a boolean,
   assert.equal(harness.upsertCalls.length, 1);
   assert.equal(harness.upsertCalls[0].threads[0].claudeConfigDir, VALID_CLAUDE_CONFIG_DIR);
   const logged = capture.lines.join('\n');
-  assert.match(logged, /\[claude-hook\] event=SessionStart environmentAttribution=true/);
+  // Task 095 widened this line; the boolean is still the only thing said about CLAUDE_CONFIG_DIR.
+  assert.match(logged, /\[claude-hook\] event=SessionStart session=/);
+  assert.match(logged, /environmentAttribution=true/);
   assert.equal(logged.includes(VALID_CLAUDE_CONFIG_DIR), false);
 });
 
@@ -448,7 +450,9 @@ test('commitClaudeHookDelivery without CLAUDE_CONFIG_DIR persists null and logs 
   }
   assert.equal(harness.upsertCalls.length, 1);
   assert.equal(harness.upsertCalls[0].threads[0].claudeConfigDir, null);
-  assert.match(capture.lines.join('\n'), /\[claude-hook\] event=SessionStart environmentAttribution=false/);
+  const withoutAttribution = capture.lines.join('\n');
+  assert.match(withoutAttribution, /\[claude-hook\] event=SessionStart session=/);
+  assert.match(withoutAttribution, /environmentAttribution=false/);
 });
 
 test.after(() => rmSync(buildRoot, { recursive: true, force: true }));

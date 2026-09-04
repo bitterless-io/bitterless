@@ -537,3 +537,12 @@ export const ensureEyesOnAgentsClaudeConfigDirSchema = (db: MigrationDatabase): 
   if (!tableExists(db, 'eyes_on_agents_thread')) return;
   addColumnIfMissing(db, 'eyes_on_agents_thread', 'claude_config_dir', 'TEXT');
 };
+
+// Title provenance (task 095): 'desktop' | 'agent_view' | 'codex' | NULL. Existing rows stay NULL
+// on purpose — provenance was never recorded, so a legacy title must be treated as NOT owned by the
+// Agent View (see docs/issues/eyes-on-agents-claude-rename-does-not-propagate.md). Backfilling by
+// guessing would silently hand a Desktop title to the Agent View's short `name`.
+export const ensureEyesOnAgentsTitleSourceSchema = (db: MigrationDatabase): void => {
+  if (!tableExists(db, 'eyes_on_agents_thread')) return;
+  addColumnIfMissing(db, 'eyes_on_agents_thread', 'title_source', 'TEXT');
+};

@@ -113,6 +113,11 @@ const MAX_ARCHIVED_THREAD_IDS = 10_000;
 const MAX_THREAD_SNAPSHOTS = 20_000;
 const MAX_CLAUDE_DELETION_TOMBSTONES = 20_000;
 const THREAD_REFRESH_PAGE_SIZE = 40;
+// `eyes_on_agents_thread.title_source` values (task 095). NULL = provenance never recorded
+// (a legacy row), which every owner check must treat as "not mine".
+const CLAUDE_DESKTOP_TITLE_SOURCE = 'desktop';
+const CLAUDE_AGENT_VIEW_TITLE_SOURCE = 'agent_view';
+const CODEX_TITLE_SOURCE = 'codex';
 type ThreadRefreshColumnValue = string | number | null;
 
 const parsePositiveId = (value: unknown, label: string): number => {
@@ -698,6 +703,7 @@ const reconcileClaudeDeletionTombstonesInTransaction = (
       transcript_identity_ambiguous = 0,
       transcript_activity_at = NULL,
       title = NULL,
+      title_source = NULL,
       cwd = NULL,
       project_key = NULL,
       project_root = NULL,
@@ -736,7 +742,8 @@ const reconcileClaudeDeletionTombstonesInTransaction = (
        )
        AND (
          is_deleted = 0 OR transcript_path IS NOT NULL OR transcript_activity_at IS NOT NULL OR
-         title IS NOT NULL OR cwd IS NOT NULL OR project_key IS NOT NULL OR
+         title IS NOT NULL OR title_source IS NOT NULL OR
+         cwd IS NOT NULL OR project_key IS NOT NULL OR
          project_root IS NOT NULL OR project_name IS NOT NULL OR
          runtime_state <> 'unknown' OR active_flags_json <> '[]' OR active_turn_id IS NOT NULL OR
          last_completed_turn_id IS NOT NULL OR last_completed_at IS NOT NULL OR
@@ -869,19 +876,20 @@ const applyRuntimeEventInTransaction = (
       : null;
   const inserted = sqliteManager.db.prepare(
     `INSERT OR IGNORE INTO eyes_on_agents_thread (
-      session_key, provider, thread_id, domain_id, title, cwd,
+      session_key, provider, thread_id, domain_id, title, title_source, cwd,
       project_key, project_root, project_name, archive_state,
       runtime_state, active_flags_json,
       active_turn_id, last_completed_turn_id, last_completed_at,
       last_opened_turn_id, last_opened_at, is_unread, status_source, status_observed_at,
       status_fresh_until, last_activity_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     buildEyesOnAgentsSessionKey(provider, event.threadId),
     provider,
     event.threadId,
     domainId,
     snapshotTitle,
+    snapshotTitle === null ? null : CODEX_TITLE_SOURCE,
     event.cwd ?? null,
     ...project,
     provider === 'codex' ? 'active' : 'unknown',
@@ -900,9 +908,9 @@ const applyRuntimeEventInTransaction = (
 
   if (snapshotTitle !== null) {
     sqliteManager.db.prepare(
-      `UPDATE eyes_on_agents_thread SET title = ?, updated_at = ?
+      `UPDATE eyes_on_agents_thread SET title = ?, title_source = ?, updated_at = ?
        WHERE provider = ? AND thread_id = ? AND title IS NULL`
-    ).run(snapshotTitle, now, provider, event.threadId);
+    ).run(snapshotTitle, CODEX_TITLE_SOURCE, now, provider, event.threadId);
   }
   const created = Number(inserted.changes) === 1;
 
@@ -1219,8 +1227,9 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           if (current !== next) updates.set(column, next);
         };
 
-        if (thread.title !== undefined) {
-          setIfDifferent('title', row.title, thread.title);
+        if (thread.title !== undefined && thread.title !== row.title) {
+          updates.set('title', thread.title);
+          updates.set('title_source', thread.title === null ? null : CODEX_TITLE_SOURCE);
         }
         if (
           thread.lastActivityAt !== undefined
@@ -1540,15 +1549,19 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       const now = Date.now();
       const statement = sqliteManager.db.prepare(
         `INSERT INTO eyes_on_agents_thread (
-          session_key, provider, thread_id, domain_id, title, cwd,
+          session_key, provider, thread_id, domain_id, title, title_source, cwd,
           project_key, project_root, project_name, archive_state,
           runtime_state, active_flags_json,
           active_turn_id, last_completed_turn_id, last_completed_at,
           last_opened_turn_id, last_opened_at, is_unread, status_source, status_observed_at,
           last_activity_at, created_at, updated_at
-        ) VALUES (?, 'codex', ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, 'codex', ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(provider, thread_id) DO UPDATE SET
           title = COALESCE(excluded.title, eyes_on_agents_thread.title),
+          title_source = CASE
+            WHEN excluded.title IS NULL THEN eyes_on_agents_thread.title_source
+            ELSE excluded.title_source
+          END,
           cwd = COALESCE(excluded.cwd, eyes_on_agents_thread.cwd),
           is_archived = 0,
           archive_state = 'active',
@@ -1626,6 +1639,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           thread.threadId,
           domainId,
           thread.title,
+          thread.title === null ? null : CODEX_TITLE_SOURCE,
           thread.cwd,
           ...project,
           thread.runtimeState,
@@ -1877,10 +1891,10 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
     const threadId = parseEyesOnAgentsUuid(params?.threadId);
     const title = parseEyesOnAgentsText(params?.title, 'thread title', 300, false) as string;
     const result = await sqliteHelper.safeRun(
-      `UPDATE eyes_on_agents_thread SET title = ?, updated_at = ?
+      `UPDATE eyes_on_agents_thread SET title = ?, title_source = ?, updated_at = ?
        WHERE provider = 'codex' AND thread_id = ?
          AND archive_state = 'active' AND title IS NULL`,
-      [title, Date.now(), threadId]
+      [title, CODEX_TITLE_SOURCE, Date.now(), threadId]
     );
     return { changed: Number(result.changes) === 1 };
   }
@@ -2068,7 +2082,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       const select = sqliteManager.db.prepare(
         `SELECT desktop_session_id, desktop_identity_ambiguous, iterm2_session_id,
           claude_config_dir, transcript_path,
-          transcript_identity_ambiguous, title, cwd,
+          transcript_identity_ambiguous, title, title_source, cwd,
           project_key, project_root, project_name, archive_state, last_activity_at,
           transcript_activity_at, runtime_state, status_source, status_fresh_until,
           is_deleted, deleted_at
@@ -2080,7 +2094,8 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           iterm2_session_id: string | null;
           claude_config_dir: string | null;
           transcript_path: string | null; transcript_identity_ambiguous: number;
-          title: string | null; cwd: string | null; project_key: string | null;
+          title: string | null; title_source: string | null;
+          cwd: string | null; project_key: string | null;
           project_root: string | null; project_name: string | null;
           archive_state: string; last_activity_at: number | null;
           transcript_activity_at: number | null; runtime_state: string;
@@ -2172,11 +2187,11 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
               session_key, provider, thread_id, desktop_session_id,
               desktop_identity_ambiguous, iterm2_session_id, claude_config_dir, transcript_path,
               transcript_identity_ambiguous,
-              domain_id, title, cwd, project_key, project_root, project_name,
+              domain_id, title, title_source, cwd, project_key, project_root, project_name,
               is_archived, archive_state, runtime_state, active_flags_json,
               is_unread, status_source, status_observed_at, last_activity_at,
               transcript_activity_at, created_at, updated_at
-            ) VALUES (?, 'claude', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', '[]',
+            ) VALUES (?, 'claude', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', '[]',
               0, 'discovery', ?, ?, ?, ?, ?)`
           ).run(
             buildEyesOnAgentsSessionKey('claude', thread.threadId), thread.threadId,
@@ -2186,7 +2201,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
             thread.claudeConfigDir ?? null,
             thread.clearTranscriptPath ? null : thread.transcriptPath,
             thread.clearTranscriptPath ? 1 : 0,
-            domainId, thread.title,
+            domainId, thread.title, thread.title === null ? null : CLAUDE_DESKTOP_TITLE_SOURCE,
             thread.cwd, ...project, thread.archiveState === 'archived' ? 1 : 0,
             thread.archiveState, thread.observedAt, thread.lastActivityAt,
             thread.transcriptActivityAt, now, now
@@ -2221,6 +2236,10 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
             : thread.transcriptPath ?? row.transcript_path,
           transcriptIdentityAmbiguous: transcriptAmbiguous ? 1 : 0,
           title: thread.title ?? row.title,
+          // Preserve-on-null, like `title` above: an adapter that reports no title (the transcript
+          // inventory always does) must neither clobber the stored title nor rewrite its
+          // provenance. A supplied title is Desktop/inventory-sourced by definition.
+          titleSource: thread.title === null ? row.title_source : CLAUDE_DESKTOP_TITLE_SOURCE,
           cwd: thread.cwd ?? row.cwd,
           projectKey: thread.project === undefined ? row.project_key : project[0],
           projectRoot: thread.project === undefined ? row.project_root : project[1],
@@ -2242,7 +2261,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           next.claudeConfigDir === row.claude_config_dir &&
           next.transcriptPath === row.transcript_path &&
           next.transcriptIdentityAmbiguous === row.transcript_identity_ambiguous &&
-          next.title === row.title &&
+          next.title === row.title && next.titleSource === row.title_source &&
           next.cwd === row.cwd && next.projectKey === row.project_key &&
           next.projectRoot === row.project_root && next.projectName === row.project_name &&
           next.archiveState === row.archive_state && next.lastActivityAt === row.last_activity_at &&
@@ -2254,7 +2273,8 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
             iterm2_session_id = ?,
             claude_config_dir = ?,
             transcript_path = ?, transcript_identity_ambiguous = ?,
-            title = ?, cwd = ?, project_key = ?, project_root = ?, project_name = ?,
+            title = ?, title_source = ?, cwd = ?,
+            project_key = ?, project_root = ?, project_name = ?,
             is_archived = ?, archive_state = ?, last_activity_at = ?,
             transcript_activity_at = ?, status_fresh_until = ?,
             is_deleted = ?, deleted_at = ?,
@@ -2265,7 +2285,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           next.desktopSessionId, next.desktopIdentityAmbiguous, next.iterm2SessionId,
           next.claudeConfigDir,
           next.transcriptPath,
-          next.transcriptIdentityAmbiguous, next.title, next.cwd,
+          next.transcriptIdentityAmbiguous, next.title, next.titleSource, next.cwd,
           next.projectKey, next.projectRoot, next.projectName,
           next.archiveState === 'archived' ? 1 : 0, next.archiveState,
           next.lastActivityAt, next.transcriptActivityAt, next.statusFreshUntil,
@@ -2301,12 +2321,12 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
         if (agent.runtimeState === 'unknown') continue;
         const row = sqliteManager.db.prepare(
           `SELECT runtime_state, status_source, status_observed_at, status_fresh_until,
-            title, cwd, active_turn_id,
+            title, title_source, cwd, active_turn_id,
             last_activity_at
            FROM eyes_on_agents_thread WHERE provider = 'claude' AND thread_id = ?`
         ).get(agent.threadId) as {
           runtime_state: string; status_source: string; status_observed_at: number | null;
-          status_fresh_until: number | null; title: string | null;
+          status_fresh_until: number | null; title: string | null; title_source: string | null;
           cwd: string | null; active_turn_id: string | null; last_activity_at: number | null;
         } | undefined;
         if (
@@ -2328,7 +2348,17 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
             ? startedTurnId
             : row.active_turn_id ?? `claude-agent-${agent.startedAt ?? agent.observedAt}`
           : null;
-        const title = row.title ?? agent.title;
+        // Title provenance merge (task 095). The Agent View owns the titles it wrote and may
+        // replace them — that is what makes `/rename` propagate — and it may still fill a missing
+        // title. It must never overwrite a title owned by another source, and a legacy row with no
+        // recorded provenance (`title_source IS NULL`) counts as not-Agent-View-owned so a
+        // pre-migration Desktop title stays protected. A poll reporting no name changes nothing.
+        const agentViewMayWriteTitle = agent.title !== null &&
+          (row.title === null || row.title_source === CLAUDE_AGENT_VIEW_TITLE_SOURCE);
+        const title = agentViewMayWriteTitle ? agent.title : row.title;
+        const titleSource = agentViewMayWriteTitle
+          ? CLAUDE_AGENT_VIEW_TITLE_SOURCE
+          : row.title_source;
         const cwd = agent.cwd ?? row.cwd;
         const terminalTransition = wasActive && !isActive;
         const activeTransitionObservedAt = isActive && agent.startedAt !== null && agent.startedAt <= agent.observedAt
@@ -2342,7 +2372,7 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
           ? agent.observedAt
           : row.last_activity_at;
         const result = sqliteManager.db.prepare(
-          `UPDATE eyes_on_agents_thread SET title = ?, cwd = ?, runtime_state = ?,
+          `UPDATE eyes_on_agents_thread SET title = ?, title_source = ?, cwd = ?, runtime_state = ?,
             active_flags_json = '[]',
             last_completed_turn_id = CASE WHEN ? THEN active_turn_id ELSE last_completed_turn_id END,
             last_completed_at = CASE WHEN ? THEN ? ELSE last_completed_at END,
@@ -2353,17 +2383,19 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
            WHERE provider = 'claude' AND thread_id = ? AND is_deleted = 0 AND (
              runtime_state <> ? OR COALESCE(status_observed_at, -1) <> ? OR
              COALESCE(status_fresh_until, -1) <> ? OR
-             COALESCE(title, '') <> COALESCE(?, '') OR COALESCE(cwd, '') <> COALESCE(?, '') OR
+             COALESCE(title, '') <> COALESCE(?, '') OR
+             COALESCE(title_source, '') <> COALESCE(?, '') OR
+             COALESCE(cwd, '') <> COALESCE(?, '') OR
              COALESCE(active_turn_id, '') <> COALESCE(?, '') OR
              COALESCE(last_activity_at, -1) <> COALESCE(?, -1)
            )`
         ).run(
-          title, cwd, agent.runtimeState, terminalTransition ? 1 : 0,
+          title, titleSource, cwd, agent.runtimeState, terminalTransition ? 1 : 0,
           terminalTransition ? 1 : 0, agent.observedAt, activeTurnId,
           isActive ? 1 : 0, terminalTransition ? 1 : 0, statusObservedAt,
           statusFreshUntil, lastActivityAt, now, agent.threadId,
-          agent.runtimeState, statusObservedAt, statusFreshUntil, title, cwd, activeTurnId,
-          lastActivityAt
+          agent.runtimeState, statusObservedAt, statusFreshUntil, title, titleSource, cwd,
+          activeTurnId, lastActivityAt
         );
         if (Number(result.changes) === 1) changed = true;
       }
