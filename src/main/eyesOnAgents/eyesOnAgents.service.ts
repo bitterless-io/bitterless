@@ -25,8 +25,8 @@ import {
   buildEyesOnAgentsDeepLink,
   buildEyesOnAgentsClaudeDesktopDeepLink,
   buildEyesOnAgentsClaudeEnvironmentSetupCommand,
-  buildEyesOnAgentsIterm2DeepLink,
   effectiveEyesOnAgentsRuntimeState,
+  extractEyesOnAgentsIterm2SessionUuid,
   isEyesOnAgentsFocused,
   isEyesOnAgentsRecord,
   normalizeEyesOnAgentsProviderThreadTitle,
@@ -48,6 +48,8 @@ import type { CodexHookOutboxCoverageGap } from './codexHookOutbox.service';
 import type { CodexAppServerSupervisor } from './codexAppServer.supervisor';
 import type { LastUserPromptPreferenceService } from './lastUserPromptPreference.service';
 import type { ClaudeDirectoryConfigService } from './claudeDirectoryConfig.service';
+import type { EyesOnAgentsIterm2RevealOutcome } from './iterm2Reveal.helper';
+import { logClaudeIterm2Reveal } from './claudeIterm2Log.helper';
 import { resolveClaudeBridgeEnvironment } from './claudeBridgeEnvironment.resolver';
 import type {
   ClaudeProviderPreferenceHydration,
@@ -95,6 +97,12 @@ interface EyesOnAgentsServiceDependencies {
     replayOutbox(): Promise<void>;
   };
   openExternal: (url: string) => Promise<void>;
+  // Task 094: AppleScript-driven iTerm2 session reveal, injected from the composition root
+  // (src/main/xpc/eyesOnAgents.handler.ts → src/main/eyesOnAgents/iterm2Reveal.helper.ts) so this
+  // service stays free of child-process transport. Optional so every pre-094 harness that builds
+  // this service without it keeps working; openThreadInIterm2 reports a clear error when it is
+  // absent instead of reporting success the way the replaced openExternal route did.
+  revealIterm2Session?: (sessionUuid: string) => Promise<EyesOnAgentsIterm2RevealOutcome>;
   writeClipboardText: (text: string) => void;
   previewAbsoluteTarget?: (path: string) => Promise<void>;
   validateClaudeTranscript?: (path: string, expectedThreadId: string) => string;
@@ -2286,8 +2294,11 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
     return { url, snapshot: await this.getSnapshot() };
   }
 
+  // Task 094: no URL is returned because there is no URL — the iTerm2 open route is an AppleScript
+  // session `select`, not `shell.openExternal`. markOpened runs only after the pane was actually
+  // revealed; the replaced implementation marked opened unconditionally, which is why a completely
+  // inert action still reported success to the renderer.
   async openThreadInIterm2(params: { sessionKey: EyesOnAgentsSessionKey }): Promise<{
-    url: string;
     snapshot: EyesOnAgentsSnapshot;
   }> {
     const sessionKey = parseEyesOnAgentsSessionKey(params?.sessionKey);
@@ -2301,11 +2312,39 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       if (!target?.iterm2SessionId) {
         throw new Error('This Claude session is not matched to an iTerm2 session');
       }
-      const url = buildEyesOnAgentsIterm2DeepLink(target.iterm2SessionId);
-      await this.dependencies.openExternal(url);
+      const sessionUuid = extractEyesOnAgentsIterm2SessionUuid(target.iterm2SessionId);
+      if (sessionUuid === null) {
+        const message = 'The stored iTerm2 identity carries no session UUID';
+        logClaudeIterm2Reveal({ stage: 'failed', sessionKey, sessionUuid: null, error: message });
+        throw new Error(message);
+      }
+      const reveal = this.dependencies.revealIterm2Session;
+      if (!reveal) {
+        const message = 'Revealing an iTerm2 session is not available in this runtime';
+        logClaudeIterm2Reveal({ stage: 'failed', sessionKey, sessionUuid, error: message });
+        throw new Error(message);
+      }
+      logClaudeIterm2Reveal({ stage: 'attempt', sessionKey, sessionUuid });
+      let outcome: EyesOnAgentsIterm2RevealOutcome;
+      try {
+        outcome = await reveal(sessionUuid);
+      } catch (error) {
+        logClaudeIterm2Reveal({ stage: 'failed', sessionKey, sessionUuid, error });
+        throw error;
+      }
+      logClaudeIterm2Reveal({ stage: outcome, sessionKey, sessionUuid });
+      if (outcome === 'denied') {
+        throw new Error(
+          'macOS blocked Bitterless from controlling iTerm2. Allow it under System Settings > '
+          + 'Privacy & Security > Automation, then try again'
+        );
+      }
+      if (outcome === 'not_found') {
+        throw new Error('That iTerm2 session is no longer open');
+      }
       await this.dependencies.repository.markOpened({ sessionKey, openedAt: this.now() });
       this.notify();
-      return { url, snapshot: await this.getSnapshot() };
+      return { snapshot: await this.getSnapshot() };
     });
   }
 

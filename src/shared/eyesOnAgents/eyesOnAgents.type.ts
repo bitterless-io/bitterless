@@ -592,8 +592,10 @@ export interface EyesOnAgentsApi {
     url: string;
     snapshot: EyesOnAgentsSnapshot;
   }>;
+  // Task 094: snapshot only — the iTerm2 route reveals the pane through AppleScript, so unlike
+  // openThread there is no deep link to hand back. A rejection is the failure channel: the stored
+  // pane being gone and macOS refusing the Apple Event are distinct, actionable errors.
   openThreadInIterm2(params: { sessionKey: EyesOnAgentsSessionKey }): Promise<{
-    url: string;
     snapshot: EyesOnAgentsSnapshot;
   }>;
   archiveThread(params: {

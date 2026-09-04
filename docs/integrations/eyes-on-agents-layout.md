@@ -551,8 +551,11 @@ Every openable card participates in card-level keyboard focus; the menu's open i
 observation read after the fixed deep link is accepted. Codex uses `codex://threads/<uuid>`. A
 Claude row with a unique `desktopSessionId` uses
 `claude://claude.ai/epitaxy/<desktopSessionId>`; a Claude row with a captured `iterm2SessionId`
-additionally (or exclusively) offers **Open in iTerm2** via `iterm2:///reveal?sessionid=<id>`, an
-independent overflow action that never replaces the provider-named open item. A Claude row with
+additionally (or exclusively) offers **Open in iTerm2**, an independent overflow action that never
+replaces the provider-named open item. That one action is not a deep link: it drives iTerm2 through
+AppleScript to `select` the session whose id is the UUID half of the stored `ITERM_SESSION_ID`, marks
+the row opened only when the pane was really revealed, and otherwise reports a distinct error (pane
+gone, or macOS Automation permission not granted) instead of silently appearing to succeed. A Claude row with
 neither identity is Main-private inventory and does not render in Focus or modal search results. A
 visible Claude card's More menu exposes **Copy session path** when a canonical JSONL exists.
 Selecting or copying a path never marks read.

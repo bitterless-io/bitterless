@@ -1,6 +1,9 @@
 # Open in iTerm2 does nothing
 
-Status: Root cause confirmed empirically; repair pending
+Status: Repaired in source by
+[task 094](../plan/tasks/eyes-on-agents-iterm2-reveal-applescript-094.md); owner runtime
+verification pending — the Apple Events entitlement only lands in a freshly packaged build, and the
+first use raises the one-time macOS Automation prompt
 
 Reported: 2026-09-04, by the owner, from the packaged Preview build
 
@@ -93,9 +96,17 @@ had succeeded.
 contain `com.apple.security.automation.apple-events`; `extendInfo` does **not** contain
 `NSAppleEventsUsageDescription`. Under the hardened runtime, a signed app without that entitlement is
 refused Apple Events by the OS (`errAEEventNotPermitted`, -1743) and without the usage description
-macOS will not even show the consent prompt. Both must be added, and note that only
-`entitlementsInherit` is configured today — the main app's entitlements file must be set explicitly
-too, or electron-builder signs the app bundle with its own defaults.
+macOS will not even show the consent prompt. Both must be added.
+
+**Correction (task 094).** This section also claimed that, with only `entitlementsInherit`
+configured, "electron-builder signs the app bundle with its own defaults". That is not true for the
+pinned toolchain. In `app-builder-lib` 26.7.0, `MacPackager.getOptionsForFile` resolves the root
+bundle's entitlements as `mac.entitlements` → `<buildResources>/entitlements.mac.plist` (present here
+via `directories.buildResources: build`) → the bundled template, so the project's own plist was
+already being applied to the app bundle by build-resources convention. `mac.entitlements` is now set
+explicitly anyway — it is the difference between relying on a directory listing and stating the
+intent — but the missing entitlement *key*, not a missing config key, is what would have blocked a
+packaged build.
 
 Consequence for the owner: after this ships, the **first** use of Open in iTerm2 raises a one-time
 macOS prompt ("Bitterless wants to control iTerm2"), which must be allowed — and it only appears in

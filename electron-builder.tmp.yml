@@ -160,6 +160,11 @@ mac:
     - Contents/Resources/maestro-tools/fd
     - Contents/Resources/maestro-tools/anydoc/anydoc.node
     - Contents/Resources/maestro-tools/ouch
+  # Task 094: app-builder-lib 26.x already resolves build/entitlements.mac.plist for the root app
+  # bundle by build-resources convention, but the explicit key is what guarantees the app and its
+  # helpers are signed with the same file that carries
+  # com.apple.security.automation.apple-events (required for Open in iTerm2 under hardenedRuntime).
+  entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   hardenedRuntime: true
   gatekeeperAssess: false
@@ -170,6 +175,9 @@ mac:
     NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
     NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
     NSDesktopFolderUsageDescription: Application requests access to the user's Desktop folder.
+    # Task 094: without this string macOS refuses the Apple Event silently instead of prompting.
+    NSAppleEventsUsageDescription: Bitterless controls iTerm2 to bring a Claude Code session's
+      terminal pane to the front.
     CFBundleDocumentTypes:
       - CFBundleTypeName: All Documents
         CFBundleTypeRole: Viewer

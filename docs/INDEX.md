@@ -228,9 +228,13 @@ design document.
   bounded latest user question per thread with content-free offline delivery and tiered All-thread
   App Server recovery.
 - [EyesOnAgents iTerm2 Open](features/eyes-on-agents-iterm2-open.md) - implemented; owner runtime
-  verification pending: Hook-captured iTerm2 terminal identity makes CLI-only Claude sessions
-  visible and adds an independent `iterm2:///reveal` Open action beside the existing Claude Desktop
-  route.
+  verification pending from a freshly packaged build: Hook-captured iTerm2 terminal identity makes
+  CLI-only Claude sessions visible and adds an independent AppleScript-driven **Open in iTerm2**
+  action beside the existing Claude Desktop route.
+- [Open in iTerm2 does nothing](issues/eyes-on-agents-open-in-iterm2-does-nothing.md) - repaired in
+  source; owner runtime verification pending: `iterm2:///reveal` is not a real iTerm2 capability and
+  the value passed to it was the prefixed `ITERM_SESSION_ID` rather than a session id, so the action
+  was inert while still reporting success.
 - [EyesOnAgents Claude Multi-Environment](features/eyes-on-agents-claude-multi-environment.md) -
   implemented; owner runtime verification pending: N independently-managed `CLAUDE_CONFIG_DIR`
   environments (own watcher, own hook install target, Hook-attributed `claude_config_dir`),

@@ -12,5 +12,10 @@
     <true/>
     <key>com.apple.security.device.audio-input</key>
     <true/>
+    <!-- Task 094: EyesOnAgents "Open in iTerm2" drives iTerm2 through AppleScript. Under the
+         hardened runtime a signed app without this entitlement is refused Apple Events outright
+         (errAEEventNotPermitted, -1743) and macOS never shows the consent prompt. -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
   </dict>
 </plist>
