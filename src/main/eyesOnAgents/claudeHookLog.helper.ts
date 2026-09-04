@@ -36,3 +36,40 @@ export const logClaudeHookEvent = (
 ): void => {
   logger.info(buildClaudeHookLogLine(fields));
 };
+
+const MAX_CLAUDE_HOOK_LOG_ERROR_LENGTH = 300;
+
+// The rejection reason can name the transcript path Claude Code reported, so it is bounded AND
+// stripped of anything path-shaped before it reaches main.log — the whole point of this scope is
+// that a line never carries a filesystem path.
+const sanitizeClaudeHookLogError = (error: unknown): string => {
+  const text = error instanceof Error ? error.message : String(error);
+  return (text.trim() || 'Claude hook persistence failed')
+    .replace(/[^\s]*\/[^\s]*/gu, '<path>')
+    .slice(0, MAX_CLAUDE_HOOK_LOG_ERROR_LENGTH);
+};
+
+// A rejected transcript path used to be swallowed by a bare `catch {}`, which is how the identity
+// loss it caused stayed invisible. The delivery is still accepted — content-free lifecycle evidence
+// stays valid — but the rejection is now on the record.
+export const logClaudeHookTranscriptRejection = (
+  sessionId: string,
+  error: unknown,
+  logger: Pick<Console, 'warn'> = console
+): void => {
+  logger.warn(
+    `[claude-hook] stage=transcript_rejected session=${sessionId} `
+    + `reason=${sanitizeClaudeHookLogError(error)}`
+  );
+};
+
+export const logClaudeHookInventoryRejection = (
+  sessionId: string,
+  error: unknown,
+  logger: Pick<Console, 'error'> = console
+): void => {
+  logger.error(
+    `[claude-hook] stage=inventory_rejected session=${sessionId} `
+    + `reason=${sanitizeClaudeHookLogError(error)}`
+  );
+};

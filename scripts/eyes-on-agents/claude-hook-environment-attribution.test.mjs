@@ -284,6 +284,9 @@ const delivery = (params) => ({
       sessionId: SESSION_ID,
       transcriptPath: `/tmp/${SESSION_ID}.jsonl`,
       cwd: '/tmp/project',
+      ...(params.terminalApp === undefined
+        ? {}
+        : { terminalApp: params.terminalApp, terminalSessionId: params.terminalSessionId }),
       ...(params.claudeConfigDir === undefined ? {} : { claudeConfigDir: params.claudeConfigDir })
     }
   }
@@ -298,7 +301,7 @@ const waitFor = async (predicate, label) => {
   throw new Error(`Timed out waiting for ${label}`);
 };
 
-const createServiceHarness = () => {
+const createServiceHarness = ({ rejectTranscript = false } = {}) => {
   const calls = [];
   const upsertCalls = [];
   const repository = {
@@ -367,7 +370,12 @@ const createServiceHarness = () => {
     },
     openExternal: async () => undefined,
     writeClipboardText: () => undefined,
-    validateClaudeTranscript: (path) => path,
+    validateClaudeTranscript: (path) => {
+      // Mirrors requireCanonicalClaudeTranscript's very first act: lstatSync on a JSONL that
+      // Claude Code has not necessarily created yet at SessionStart.
+      if (rejectTranscript) throw new Error('ENOENT: no such file or directory, lstat \'/tmp/x.jsonl\'');
+      return path;
+    },
     claudeObservation: {
       start: async () => calls.push('observation-start'),
       stop: async () => undefined,
@@ -456,3 +464,58 @@ test('commitClaudeHookDelivery without CLAUDE_CONFIG_DIR persists null and logs 
 });
 
 test.after(() => rmSync(buildRoot, { recursive: true, force: true }));
+
+// Issue: a new session never appeared. Terminal identity is carried ONLY by SessionStart, and it was
+// persisted only inside the transcript-validation branch — so an lstat that lost the race with
+// Claude Code creating the JSONL dropped the identity permanently, and the visibility gate
+// (desktopSessionId || iterm2SessionId) then hid the row forever even though its lifecycle state
+// was correct.
+test('a SessionStart whose transcript does not exist yet still persists the terminal identity', async () => {
+  const harness = createServiceHarness({ rejectTranscript: true });
+  await initialize(harness);
+  const capture = captureConsoleInfo();
+  try {
+    await harness.service.commitClaudeHookDelivery(delivery({
+      deliveryId: '66666666-6666-4666-8666-666666666666',
+      occurredAt: 1_000,
+      terminalApp: 'iterm2',
+      terminalSessionId: 'w0t1p1:C1A9D6DE-2E09-4747-9CFA-DA5B6FB15371',
+      claudeConfigDir: VALID_CLAUDE_CONFIG_DIR
+    }));
+  } finally {
+    capture.restore();
+  }
+  assert.equal(harness.upsertCalls.length, 1,
+    'the identity upsert must still happen when the transcript check fails');
+  const thread = harness.upsertCalls[0].threads[0];
+  assert.equal(thread.iterm2SessionId, 'w0t1p1:C1A9D6DE-2E09-4747-9CFA-DA5B6FB15371',
+    'the iTerm2 identity must survive a rejected transcript — it is what makes the row visible');
+  assert.equal(thread.claudeConfigDir, VALID_CLAUDE_CONFIG_DIR);
+  assert.equal(thread.transcriptPath, null,
+    'the transcript path itself must stay unset when validation rejected it');
+});
+
+test('a rejected transcript path is logged instead of silently swallowed, and never as a path', async () => {
+  const harness = createServiceHarness({ rejectTranscript: true });
+  await initialize(harness);
+  const lines = [];
+  const warn = console.warn;
+  console.warn = (...args) => { lines.push(args.join(' ')); };
+  try {
+    await harness.service.commitClaudeHookDelivery(delivery({
+      deliveryId: '77777777-7777-4777-8777-777777777777',
+      occurredAt: 1_000,
+      terminalApp: 'iterm2',
+      terminalSessionId: 'w0t1p1:C1A9D6DE-2E09-4747-9CFA-DA5B6FB15371',
+      claudeConfigDir: VALID_CLAUDE_CONFIG_DIR
+    }));
+  } finally {
+    console.warn = warn;
+  }
+  const logged = lines.join('\n');
+  assert.match(logged, /\[claude-hook\] stage=transcript_rejected session=/);
+  // The rejection reason names the offending path; the log must not.
+  assert.equal(logged.includes('/tmp/x.jsonl'), false,
+    'a transcript rejection must never put a filesystem path in the log');
+  assert.equal(logged.includes('/'), false, 'no [claude-hook] line may contain a path separator');
+});

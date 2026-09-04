@@ -50,7 +50,11 @@ import type { LastUserPromptPreferenceService } from './lastUserPromptPreference
 import type { ClaudeDirectoryConfigService } from './claudeDirectoryConfig.service';
 import type { EyesOnAgentsIterm2RevealOutcome } from './iterm2Reveal.helper';
 import { logClaudeIterm2Reveal } from './claudeIterm2Log.helper';
-import { logClaudeHookEvent } from './claudeHookLog.helper';
+import {
+  logClaudeHookEvent,
+  logClaudeHookInventoryRejection,
+  logClaudeHookTranscriptRejection
+} from './claudeHookLog.helper';
 import { buildClaudeVisibilityGateLogLine } from './claudeVisibilityLog.helper';
 import { resolveClaudeBridgeEnvironment } from './claudeBridgeEnvironment.resolver';
 import type {
@@ -3336,19 +3340,37 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
       environmentAttribution: claudeConfigDir !== null,
       transcript: Boolean(payload.transcriptPath)
     });
+    // The transcript path and the terminal identity are independent facts, and they must be
+    // persisted independently. Identity (ITERM_SESSION_ID / CLAUDE_CONFIG_DIR) comes from the hook's
+    // own environment and is carried ONLY by SessionStart, so there is exactly one chance to store
+    // it. Coupling it to the transcript check lost it whenever that check failed — and it fails
+    // routinely at SessionStart, because requireCanonicalClaudeTranscript lstat()s a JSONL that
+    // Claude Code has not necessarily created yet, and because no environment may have a resolved
+    // projectsRoot during app start. The row then existed with correct lifecycle state but no
+    // identity, and the visibility gate hid it forever.
+    let validatedTranscriptPath: string | null = null;
+    let transcriptRejection: unknown = null;
     if (payload.transcriptPath && this.dependencies.validateClaudeTranscript) {
       try {
-        const transcriptPath = this.dependencies.validateClaudeTranscript(
+        validatedTranscriptPath = this.dependencies.validateClaudeTranscript(
           payload.transcriptPath,
           payload.sessionId
         );
+      } catch (error) {
+        // A path mismatch cannot reject otherwise valid content-free lifecycle evidence — but it
+        // must no longer be silent, and it must not take the identity down with it.
+        transcriptRejection = error;
+      }
+    }
+    if (validatedTranscriptPath !== null || iterm2SessionId !== null || claudeConfigDir !== null) {
+      try {
         await this.dependencies.repository.upsertClaudeInventory({
           threads: [{
             threadId: payload.sessionId,
             desktopSessionId: null,
             iterm2SessionId,
             claudeConfigDir,
-            transcriptPath,
+            transcriptPath: validatedTranscriptPath,
             title: null,
             cwd: payload.cwd,
             archiveState: 'unknown',
@@ -3357,9 +3379,12 @@ export class EyesOnAgentsService implements EyesOnAgentsApi {
             observedAt: delivery.event.occurredAt
           }]
         });
-      } catch {
-        // A path mismatch cannot reject otherwise valid content-free lifecycle evidence.
+      } catch (error) {
+        logClaudeHookInventoryRejection(payload.sessionId, error);
       }
+    }
+    if (transcriptRejection !== null) {
+      logClaudeHookTranscriptRejection(payload.sessionId, transcriptRejection);
     }
     if (!this.isClaudeProviderRuntimeCurrent(runtimeVersion)) {
       throw new Error('Claude hook observation changed before runtime persistence');
