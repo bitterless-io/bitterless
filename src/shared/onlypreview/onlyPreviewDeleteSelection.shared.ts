@@ -86,3 +86,21 @@ export const collapseOnlyPreviewDeleteSelection = (
   }
   return { ok: true, entries, selectedCount: deduplicated.size };
 };
+
+/**
+ * Did a delete run take this path with it?
+ *
+ * The tree uses this to drop what pointed *into* a removed folder — an expanded descendant, a
+ * selection, the previewed row. Containment is tested per path segment, through the same ancestor
+ * walk the collapse uses, so `a1/b10` is not read as living inside `a1/b1`.
+ */
+export const isOnlyPreviewPathRemoved = (
+  removed: readonly string[],
+  relativePath: string
+): boolean => {
+  if (typeof relativePath !== 'string' || !relativePath) return false;
+  const gone = new Set(removed.filter((entry) => typeof entry === 'string' && entry));
+  if (gone.size === 0) return false;
+  if (gone.has(relativePath)) return true;
+  return ancestorPathsOf(relativePath).some((ancestor) => gone.has(ancestor));
+};

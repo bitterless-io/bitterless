@@ -21,7 +21,9 @@ await build({
   tsconfig: join(projectRoot, 'tsconfig.node.json')
 });
 
-const { collapseOnlyPreviewDeleteSelection } = await import(pathToFileURL(bundlePath).href);
+const { collapseOnlyPreviewDeleteSelection, isOnlyPreviewPathRemoved } = await import(
+  pathToFileURL(bundlePath).href
+);
 
 after(() => rmSync(buildRoot, { recursive: true, force: true }));
 
@@ -105,4 +107,27 @@ test('every unusable path shape is refused rather than normalized', () => {
     ok: false,
     reason: 'invalid-path'
   });
+});
+
+test('a removed folder takes its whole subtree with it, by segment and not by prefix', () => {
+  const removed = ['a1/b1', 'a2'];
+  assert.equal(isOnlyPreviewPathRemoved(removed, 'a1/b1'), true, 'the folder itself');
+  assert.equal(isOnlyPreviewPathRemoved(removed, 'a1/b1/c1'), true, 'a child');
+  assert.equal(isOnlyPreviewPathRemoved(removed, 'a1/b1/c1/d.txt'), true, 'a deep descendant');
+  assert.equal(isOnlyPreviewPathRemoved(removed, 'a2'), true);
+  // The whole point of walking segments: a string prefix is not containment, so a sibling whose
+  // name merely starts with a removed one must survive.
+  assert.equal(isOnlyPreviewPathRemoved(removed, 'a1/b10'), false);
+  assert.equal(isOnlyPreviewPathRemoved(removed, 'a1/b10/c.txt'), false);
+  assert.equal(isOnlyPreviewPathRemoved(removed, 'a1'), false, 'the parent stays');
+  assert.equal(isOnlyPreviewPathRemoved(removed, 'a20'), false);
+});
+
+test('the removal test refuses the root and an empty run rather than matching everything', () => {
+  // `''` is the workspace root. Reading it as "removed" would clear the tree selection on every
+  // delete, and reading an empty run as a match would clear it when nothing was deleted at all.
+  assert.equal(isOnlyPreviewPathRemoved(['a1'], ''), false);
+  assert.equal(isOnlyPreviewPathRemoved([], 'a1'), false);
+  assert.equal(isOnlyPreviewPathRemoved([''], 'a1'), false);
+  assert.equal(isOnlyPreviewPathRemoved(['a1'], undefined), false);
 });

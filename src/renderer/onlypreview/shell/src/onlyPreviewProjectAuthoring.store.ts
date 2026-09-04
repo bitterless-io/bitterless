@@ -2,9 +2,11 @@ import { reactive } from 'vue';
 import { xpcRenderer } from 'electron-xpc/renderer';
 import {
   ONLY_PREVIEW_COPY_PROJECT_ITEM_EVENT,
+  ONLY_PREVIEW_PROJECT_DELETE_EVENT,
   ONLY_PREVIEW_PROJECT_NEW_FOLDER_EVENT,
   ONLY_PREVIEW_PROJECT_RENAME_EVENT,
   type OnlyPreviewCopyProjectItemEvent,
+  type OnlyPreviewProjectDeleteEvent,
   type OnlyPreviewProjectNewFolderEvent,
   type OnlyPreviewProjectRenameEvent
 } from '@shared/onlypreview/onlyPreview.types';
@@ -17,6 +19,7 @@ import {
   resolveOnlyPreviewEditCommit,
   type OnlyPreviewEditState
 } from './onlyPreviewProjectAuthoring.service';
+import { isOnlyPreviewPathRemoved } from '@shared/onlypreview/onlyPreviewDeleteSelection.shared';
 import { getOnlyPreviewParentPath } from './onlyPreviewTree.service';
 import { onlyPreviewShellStore } from './onlyPreviewShell.store';
 
@@ -33,6 +36,7 @@ export interface OnlyPreviewProjectAuthoringHost {
   expandedPaths: Set<string>;
   selectedRelativePath: string;
   focusedRelativePath: string;
+  treeSelectedRelativePath: string | null;
   errorMessage: string;
   refreshIndex(): Promise<void>;
 }
@@ -67,6 +71,29 @@ export class OnlyPreviewProjectAuthoringController {
     } finally {
       this.busy = false;
     }
+  }
+
+  /**
+   * Rows Main has already removed from disk.
+   *
+   * The tree itself is re-read rather than patched, but the paths still matter: anything pointing
+   * *into* a removed folder has to go first, or the refresh renders a frame that still selects or
+   * expands a row that no longer exists. The multi-selection prunes itself — it is retained against
+   * the visible rows whenever their count changes.
+   */
+  async settleDeletedEntries(relativePaths: readonly string[]): Promise<void> {
+    const removed = relativePaths.filter((relativePath) => relativePath.length > 0);
+    if (!removed.length) return;
+    const isRemoved = (relativePath: string): boolean =>
+      isOnlyPreviewPathRemoved(removed, relativePath);
+    for (const expanded of [...this.host.expandedPaths]) {
+      if (isRemoved(expanded)) this.host.expandedPaths.delete(expanded);
+    }
+    if (isRemoved(this.host.selectedRelativePath)) this.host.selectedRelativePath = '';
+    if (isRemoved(this.host.focusedRelativePath)) this.host.focusedRelativePath = '';
+    const treeSelected = this.host.treeSelectedRelativePath;
+    if (treeSelected && isRemoved(treeSelected)) this.host.treeSelectedRelativePath = null;
+    await this.host.refreshIndex();
   }
 
   beginRename(relativePath: string): boolean {
@@ -172,6 +199,11 @@ export const subscribeOnlyPreviewProjectIntents = (): void => {
     const event = params as OnlyPreviewProjectRenameEvent;
     if (!isHostEvent(event) || !event.relativePath) return;
     onlyPreviewProjectAuthoring.beginRename(event.relativePath);
+  });
+  xpcRenderer.subscribe(ONLY_PREVIEW_PROJECT_DELETE_EVENT, ({ params }) => {
+    const event = params as OnlyPreviewProjectDeleteEvent;
+    if (!isHostEvent(event) || !Array.isArray(event.relativePaths)) return;
+    void onlyPreviewProjectAuthoring.settleDeletedEntries(event.relativePaths);
   });
   xpcRenderer.subscribe(ONLY_PREVIEW_COPY_PROJECT_ITEM_EVENT, ({ params }) => {
     const event = params as OnlyPreviewCopyProjectItemEvent;

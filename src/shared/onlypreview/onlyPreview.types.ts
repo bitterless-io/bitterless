@@ -455,6 +455,7 @@ export const ONLY_PREVIEW_GLOBAL_SEARCH_REVEAL_DIRECTORY_EVENT =
 export const ONLY_PREVIEW_COPY_PROJECT_ITEM_EVENT = 'onlypreview/copyProjectItem' as const;
 export const ONLY_PREVIEW_PROJECT_NEW_FOLDER_EVENT = 'onlypreview/projectNewFolder' as const;
 export const ONLY_PREVIEW_PROJECT_RENAME_EVENT = 'onlypreview/projectRename' as const;
+export const ONLY_PREVIEW_PROJECT_DELETE_EVENT = 'onlypreview/projectDelete' as const;
 export const ONLY_PREVIEW_SETTINGS_CHANGED_EVENT = 'onlypreview/settingsChanged' as const;
 export const ONLY_PREVIEW_CHARACTER_COUNT_CHANGED_EVENT =
   'onlypreview/characterCountChanged' as const;
@@ -488,6 +489,14 @@ export interface OnlyPreviewProjectNewFolderEvent extends OnlyPreviewHostEvent {
 export interface OnlyPreviewProjectRenameEvent extends OnlyPreviewHostEvent {
   workspaceId: string;
   relativePath: string;
+}
+
+// What Main actually removed from disk. New Folder and Rename each carry one path because each
+// produces one row; a delete run removes a whole collapsed selection, and the tree has to drop
+// every one of them before it renders again.
+export interface OnlyPreviewProjectDeleteEvent extends OnlyPreviewHostEvent {
+  workspaceId: string;
+  relativePaths: string[];
 }
 
 export interface OnlyPreviewFocusSearchEvent extends OnlyPreviewHostEvent {

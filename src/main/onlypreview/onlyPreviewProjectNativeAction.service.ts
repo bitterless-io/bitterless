@@ -22,6 +22,7 @@ import {
 } from './onlyPreviewWorkspace.registry';
 import { onlyPreviewPreviewRegionService } from './views/onlyPreviewPreviewRegion.service';
 import {
+  ONLY_PREVIEW_PROJECT_DELETE_EVENT,
   ONLY_PREVIEW_PROJECT_RENAME_EVENT,
   ONLY_PREVIEW_SELECTION_CHANGED_EVENT
 } from '@shared/onlypreview/onlyPreview.types';
@@ -558,13 +559,45 @@ export class OnlyPreviewProjectNativeActionService {
     request: ProjectItemRequest,
     selection: readonly OnlyPreviewDeleteEntry[]
   ): Promise<void> {
-    await presentOnlyPreviewDeleteDialog(
+    const outcome = await presentOnlyPreviewDeleteDialog(
       { hostToken: request.hostToken, selection, platform: process.platform },
       {
         removeEntry: async (entry) =>
           await this.removeProjectEntry(request.hostToken, request.workspaceId, entry)
       }
-    ).catch(() => undefined);
+    ).catch(() => null);
+    // A partial run still removed rows, so this is driven by what was actually deleted rather than
+    // by whether the run finished.
+    if (outcome?.removed.length) {
+      this.announceDeletedEntries(request, outcome.removed);
+    }
+  }
+
+  /**
+   * Tell the tree what is gone.
+   *
+   * The menu runs entirely in Main, so nothing returns to the renderer the way New Folder and
+   * Rename do — without this the deleted rows stay on screen, and the next right-click, delete or
+   * copy on one of them fails against a path that no longer exists.
+   */
+  private announceDeletedEntries(
+    request: ProjectItemRequest,
+    removed: readonly OnlyPreviewDeleteEntry[]
+  ): void {
+    try {
+      const authority = onlyPreviewWorkspaceRegistry.getProjectAuthorityRootRef(
+        request.hostToken,
+        request.workspaceId
+      );
+      xpcMain.broadcast(ONLY_PREVIEW_PROJECT_DELETE_EVENT, {
+        hostId: authority.host.hostId,
+        workspaceId: authority.workspaceId,
+        relativePaths: removed.map((entry) => entry.relativePath)
+      });
+    } catch {
+      // The workspace changed under the run. Whatever is on screen now belongs to another Project,
+      // so there is nothing to refresh here.
+    }
   }
 
   // One entry, through the same two-phase grant the single-file delete has always used. A prepared

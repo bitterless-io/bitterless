@@ -83,6 +83,11 @@ design document.
   passed.
 - [OnlyPreview sub-application](features/onlypreview.md) - capability-scoped local indexing,
   standalone-only multi-view preview, EyesOnAgents-style MenuBar, settings, and OS file-open routing.
+- [OnlyPreview delete never tells the tree](issues/onlypreview-delete-never-tells-the-tree.md) -
+  fixed; owner verification pending: New Folder and Rename each broadcast their result to the shell
+  but Delete announced nothing, so removed rows stayed on screen and every later right-click, copy or
+  delete on one failed against a path that was gone; a delete now announces what it removed and the
+  tree drops every pointer into a removed folder before re-reading the index.
 - [OnlyPreview folder delete leaves a recovery directory](issues/onlypreview-folder-delete-leaves-a-recovery-directory.md) -
   fixed; owner verification pending: the post-isolate identity check re-`lstat`ed the renamed-away
   original path, so every folder delete failed and left its `.bitterless-delete-recovery-*` directory
