@@ -151,10 +151,32 @@ try {
     debugInstruction,
     /The current `bitterless-debug-prod` server is a test instance for development verification only/
   );
-  assert.match(debugInstruction, /Do not register it as `bitterless`/);
-  assert.match(debugInstruction, /portable skill's production MCP dependency remains `bitterless`/);
+  assert.match(debugInstruction, /Do not register it as `bitterless` or `bitterless-preview`/);
+  assert.match(
+    debugInstruction,
+    /portable skill's real MCP dependency remains `bitterless` or `bitterless-preview`/
+  );
   assert.doesNotMatch(debugInstruction, /current `bitterless` server is the production instance/);
   assert.doesNotMatch(debugInstruction, /[\u3400-\u9fff]/u);
+
+  // Preview is a shipped edition holding the user's real Todo data in its own storage, so a
+  // Preview-only machine must not be told its only server is a test instance (Ral 2026-09-04).
+  const previewInstruction = createTodoAgentSetupInstruction({
+    configJson: createMcpConfigJson(
+      '/Applications/Bitterless Preview.app/bitterless-mcp',
+      'bitterless-preview'
+    ),
+    serverName: 'bitterless-preview',
+    skillPath: canonicalSkillPath,
+    skillVersionCode: TODO_AGENT_SKILL_VERSION_CODE
+  });
+  assert.match(
+    previewInstruction,
+    /The current `bitterless-preview` server is the Preview edition of Bitterless, not a test instance/
+  );
+  assert.match(previewInstruction, /real, personal, multi-device-synchronized Todo data/);
+  assert.doesNotMatch(previewInstruction, /test instance for development verification only/);
+  assert.doesNotMatch(previewInstruction, /[\u3400-\u9fff]/u);
 
   const expectedSkillFiles = [
     'SKILL.md',

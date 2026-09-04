@@ -1,11 +1,12 @@
 ---
 name: bitterless-todo
 metadata:
-  version_code: "260724175151"
+  version_code: "260904151653"
 description: >-
   Manage the user's personal, multi-device-synchronized Bitterless todos and explicitly authorized
-  domains through the local production `bitterless` MCP server. Use when an agent needs to list,
-  create, inspect, update, complete, reopen, move, delete, or monitor personal todos and their
+  domains through the local `bitterless` (Production) or `bitterless-preview` (Preview) MCP server.
+  Use when an agent needs to list, create, inspect, update, complete, reopen, move, delete, or
+  monitor personal todos and their
   independently checkable steps; create or update them with explicit star/unstar,
   important/priority (重点/优先), or Focus placement/removal intent; preserve a concrete user-owned
   follow-up across devices; or record an immediate human action blocking the current session. DEBUG
@@ -15,12 +16,16 @@ description: >-
 # Bitterless Todo
 
 Treat Bitterless as the user's personal Todo manager, synchronized by Bitterless across the user's
-devices. The production `bitterless` MCP writes real, durable personal data. It is not a project
-issue tracker and is not scratch space for steps the agent can perform itself. Bitterless owns
-account/device synchronization; the MCP helper only connects the agent to the running local app.
+devices. Two server names are real editions and both write real, durable personal data:
+`bitterless` (Production) and `bitterless-preview` (Preview), each in its own storage. Use whichever
+one is configured — a machine may have only one installed — and prefer `bitterless` when both are.
+Bitterless is not a project issue tracker and is not scratch space for steps the agent can perform
+itself. Bitterless owns account/device synchronization; the MCP helper only connects the agent to
+the running local app.
 
 Use MCP tools as the only data boundary. Never open or modify Bitterless SQLite directly. Never
-substitute `bitterless-debug`, `bitterless-dev`, or `bitterless-dev-debug` for real work.
+substitute `bitterless-debug`, `bitterless-debug-prod`, `bitterless-debug-dev`, or `bitterless-dev`
+for real work.
 
 ## Decide whether to create a personal todo
 
@@ -102,7 +107,7 @@ For exact arguments and response shapes, read [references/tools.md](references/t
 
 ## Recover setup or connection failures
 
-If the production MCP dependency is missing, or when installing this skill package, read
+If no real MCP dependency is configured, or when installing this skill package, read
 [references/mcp-setup.md](references/mcp-setup.md). If the bridge is unavailable, ask the user to
-start or keep production Bitterless running. Never fall back to a DEBUG instance and never bypass a
-failed helper by reading the database.
+start or keep that edition of Bitterless running — Production or Preview, whichever is configured.
+Never fall back to a DEV or DEBUG instance and never bypass a failed helper by reading the database.

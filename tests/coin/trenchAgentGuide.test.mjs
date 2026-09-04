@@ -153,9 +153,19 @@ test('keeps DEBUG identity test-only and never aliases it to production bitterle
   assert.deepEqual(Object.keys(JSON.parse(info.configJson).mcpServers), ['bitterless-debug-dev']);
   assert.match(info.instruction, /test instance for development verification only/);
   assert.match(info.instruction, /Keep this exact server name/);
-  assert.match(info.instruction, /Do not register it as `bitterless`/);
+  assert.match(info.instruction, /Do not register it as `bitterless` or `bitterless-preview`/);
   assert.match(info.instruction, /do not store real Trench records/i);
   assert.doesNotMatch(info.configJson, /"bitterless"\s*:/);
+});
+
+test('treats the Preview edition as real rather than as a test instance', () => {
+  // Ral 2026-09-04: a Preview-only machine must not be told its only server is for development.
+  const info = createInfo('bitterless-preview');
+  assert.deepEqual(Object.keys(JSON.parse(info.configJson).mcpServers), ['bitterless-preview']);
+  assert.match(info.instruction, /Preview edition of Bitterless, not a test instance/);
+  assert.match(info.instruction, /real Trench records under the Preview edition's own storage/);
+  assert.match(info.instruction, /Keep this exact server name/);
+  assert.doesNotMatch(info.instruction, /test instance for development verification only/);
 });
 
 test('rejects invalid versions and resolves missing or mismatched renderer contracts explicitly', () => {

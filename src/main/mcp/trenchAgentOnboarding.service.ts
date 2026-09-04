@@ -1,6 +1,6 @@
 import { accessSync, constants, lstatSync } from 'fs';
 import { dirname, join } from 'path';
-import { createMcpConfigJson } from '@shared/mcp/mcpBridge.shared';
+import { classifyMcpServerName, createMcpConfigJson } from '@shared/mcp/mcpBridge.shared';
 import type { McpBridgeTransport, McpIntegrationInfo } from '@shared/mcp/mcpBridge.type';
 import { isTrenchAgentSkillVersionCode } from '@shared/trench/trenchAgentSkillVersion.shared';
 
@@ -66,14 +66,19 @@ export const requireTrenchAgentSkillPath = (skillPath: string): string => {
 };
 
 const createInstanceSafetyInstruction = (serverName: string): string => {
-  if (serverName === 'bitterless') {
+  const kind = classifyMcpServerName(serverName);
+  if (kind === 'production') {
     return 'The current `bitterless` server is the production Bitterless instance for real Trench records.';
+  }
+
+  if (kind === 'preview') {
+    return 'The current `bitterless-preview` server is the Preview edition of Bitterless, not a test instance, and holds real Trench records under the Preview edition\'s own storage. Keep this exact server name; if you install Production later, copy that edition\'s Guide and use `bitterless`.';
   }
 
   return [
     `The current \`${serverName}\` server is a test instance for development verification only.`,
-    'Keep this exact server name. Do not register it as `bitterless`, and do not store real Trench records in it.',
-    "The portable skill's production MCP dependency remains `bitterless`; real Trench work must use the production Bitterless instance.",
+    'Keep this exact server name. Do not register it as `bitterless` or `bitterless-preview`, and do not store real Trench records in it.',
+    "The portable skill's real MCP dependency remains `bitterless` or `bitterless-preview`; real Trench work must use one of those editions.",
   ].join(' ');
 };
 

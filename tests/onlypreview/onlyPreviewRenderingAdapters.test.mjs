@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -414,5 +415,64 @@ test('the loading-project pane follows the Project index state on the presentati
   // No Project bound, or a state Main scoped to another workspace, leaves the plain empty state.
   await republish(null);
   assert.equal(store.projectIndexing, false);
+  store.dispose();
+});
+
+test('a Project that has already resolved a file drops the index placeholder for its empty pane', async () => {
+  // Ral 2026-09-04: select a file, delete it, and the pane showed "Loading project" instead of
+  // "Select a file". Main only latches `ready` on a search snapshot that reports it, so a Project
+  // whose index never reports `ready` keeps answering every later deselection with the placeholder.
+  // `PreviewSurface` orders indexing ahead of empty, so the stale state hid the correct pane.
+  const descriptor = officeDescriptor('.txt', 'text');
+  const presentation = {
+    ...officePresentation(descriptor, 401),
+    projectIndexState: 'building'
+  };
+  const harness = createRendererStoreHarness(presentation);
+  globalThis.__onlyPreviewRendererStoreHarness = harness;
+  const previewStoreRuntime = await import(
+    `${pathToFileURL(join(buildRoot, 'previewStore.mjs')).href}?project=index-state-browsed`
+  );
+  const store = previewStoreRuntime.onlyPreviewPreviewStore;
+  await store.initialize();
+
+  // Main built a descriptor for a file in this Project, so the Project is browsable whatever its
+  // index state still claims.
+  assert.equal(store.projectIndexing, false, 'a resolved selection retires the placeholder');
+
+  const republish = async (next) => {
+    harness.presentation = next;
+    harness.subscriptions.get('onlypreview/previewPresentation')({
+      params: { hostId: 'host-for-tests' }
+    });
+    await new Promise((resolveWait) => setImmediate(resolveWait));
+  };
+
+  const emptyForWorkspace = (workspaceId, selectionRevision) => ({
+    hostId: 'host-for-tests',
+    workspaceId,
+    selectionRevision,
+    surface: 'vue',
+    adapterId: 'unsupported',
+    status: 'empty',
+    fileRef: null,
+    descriptor: null,
+    error: null,
+    selectedTextAvailable: false,
+    projectIndexState: 'building'
+  });
+
+  // Exactly what `clearPresentation` publishes when the selected file is deleted.
+  await republish(emptyForWorkspace(descriptor.workspaceId, 402));
+  assert.equal(store.projectIndexing, false);
+  assert.equal(store.loading, false);
+  const deletedHtml = await renderPreviewSurface(store);
+  assert.match(deletedHtml, /name="onlypreview__previewEmpty"/);
+  assert.doesNotMatch(deletedHtml, /name="onlypreview__previewIndexing"/);
+
+  // A different Project has proven nothing yet, so its first build still gets the placeholder.
+  await republish(emptyForWorkspace('another-workspace-for-tests', 403));
+  assert.equal(store.projectIndexing, true, 'an unproven Project keeps the placeholder');
+  assert.match(await renderPreviewSurface(store), /name="onlypreview__previewIndexing"/);
   store.dispose();
 });

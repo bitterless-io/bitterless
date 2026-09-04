@@ -1,6 +1,7 @@
 import { constants } from 'node:fs';
 import { join } from 'node:path';
 import { access, lstat } from 'fs-extra';
+import { classifyMcpServerName } from '@shared/mcp/mcpBridge.shared';
 import type { OnlyPreviewAgentSkillGuideInfo } from '@shared/onlypreview/onlyPreview.types';
 
 export const ONLY_PREVIEW_AGENT_SKILL_NAME = 'bitterless-preview';
@@ -65,13 +66,22 @@ export const requireOnlyPreviewAgentSkillPath = async (skillPath: string): Promi
 };
 
 const createInstanceSafetyInstruction = (serverName: string): string => {
-  if (serverName === 'bitterless') {
+  const kind = classifyMcpServerName(serverName);
+  if (kind === 'production') {
     return 'The current `bitterless` MCP server is the production Bitterless instance.';
+  }
+  if (kind === 'preview') {
+    return [
+      'The current `bitterless-preview` MCP server is the Preview edition of Bitterless, not a test',
+      'instance: keep this exact server name and use it for real Preview work.',
+      "If you install Production later, copy that edition's Guide to replace the skill and use",
+      '`bitterless`.'
+    ].join(' ');
   }
   return [
     `The current \`${serverName}\` MCP server is a test instance for development verification only.`,
-    'Do not register it as `bitterless`.',
-    "The portable skill's production MCP dependency remains `bitterless`."
+    'Do not register it as `bitterless` or `bitterless-preview`.',
+    "The portable skill's real MCP dependency remains `bitterless` or `bitterless-preview`."
   ].join(' ');
 };
 

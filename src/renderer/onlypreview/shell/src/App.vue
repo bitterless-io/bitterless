@@ -491,7 +491,19 @@ const focusProjectTree = (): void => {
   void focusTreePath(onlyPreviewShellStore.focusTree());
 };
 
+// Locate moves the tree anchor to the previewed file, so the tree's own selection must collapse
+// onto it — otherwise `isSelected` keeps answering for whatever was clicked before (an explicit
+// `anchorPath`, or a multi-selection, both of which outrank `treeSelectedRelativePath`) and the
+// located row lands with no highlight. That is exactly what happens after opening a file from
+// global search, where the previewed file was never clicked in the tree at all.
 const locateCurrentFile = async (): Promise<void> => {
+  // Locate moves the tree anchor onto the previewed file, so the tree's own selection collapses onto
+  // it too. Without this, `isSelected` keeps answering for whatever was clicked before — an explicit
+  // `anchorPath`, or a multi-selection, both of which outrank `treeSelectedRelativePath` — and the
+  // located row arrives with no highlight. That is the case after opening a file from global search,
+  // where the previewed file was never clicked in the tree at all. Gated on the same precondition
+  // `locateSelectedFile` uses, so locating nothing cannot wipe a real selection.
+  if (onlyPreviewShellStore.selectedRelativePath) onlyPreviewTreeSelection.clear();
   await focusTreePath(await onlyPreviewShellStore.locateSelectedFile(), true);
 };
 

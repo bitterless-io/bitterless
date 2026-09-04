@@ -238,8 +238,23 @@ test('Guide info exposes three fields and one complete English production or DEB
     skillVersionCode: version.ONLY_PREVIEW_AGENT_SKILL_VERSION_CODE
   });
   assert.match(debug.instruction, /test instance for development verification only/);
-  assert.match(debug.instruction, /Do not register it as `bitterless`/);
+  assert.match(debug.instruction, /Do not register it as `bitterless` or `bitterless-preview`/);
   assert.doesNotMatch(debug.instruction, /[\u3400-\u9fff]/);
+
+  // Preview is a shipped edition, so a Preview-only machine must not be told its only server is a
+  // test instance (Ral 2026-09-04). The Guide window already said this on screen; the copied
+  // instruction is what the agent actually receives, and it said the opposite.
+  const preview = service.createOnlyPreviewAgentSkillGuideInfo({
+    configJson: '{"mcpServers":{"bitterless-preview":{"command":"/tmp/helper"}}}',
+    serverName: 'bitterless-preview',
+    skillPath: '/tmp/bitterless-preview',
+    skillVersionCode: version.ONLY_PREVIEW_AGENT_SKILL_VERSION_CODE
+  });
+  assert.equal(preview.serverName, 'bitterless-preview');
+  assert.match(preview.instruction, /Preview edition of Bitterless, not a test/);
+  assert.match(preview.instruction, /keep this exact server name/i);
+  assert.doesNotMatch(preview.instruction, /test instance for development verification only/);
+  assert.doesNotMatch(preview.instruction, /[\u3400-\u9fff]/);
 });
 
 test('Guide renderer and Main capability wiring remain narrow and one-card only', () => {

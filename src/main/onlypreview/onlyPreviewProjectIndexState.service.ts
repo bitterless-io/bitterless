@@ -25,12 +25,33 @@ import { onlyPreviewWorkspaceRegistry } from './onlyPreviewWorkspace.registry';
  * One workspace at a time: the standalone window holds exactly one Project, and a report for any
  * other workspace is a stale generation that must not overwrite the current one.
  */
+export type OnlyPreviewProjectIndexTrace = (
+  event: string,
+  fields: Record<string, unknown>
+) => void;
+
 export class OnlyPreviewProjectIndexStateService {
   private current: {
     hostId: string;
     workspaceId: string;
     state: OnlyPreviewProjectIndexState;
   } | null = null;
+  // Injected rather than imported so this service stays free of the Electron log runtime and can be
+  // bundled for pure-Node tests. A missed wiring degrades to today's silence, never to a crash.
+  private trace: OnlyPreviewProjectIndexTrace = () => {};
+
+  /**
+   * Record every transition.
+   *
+   * `ready` latches, so a Project whose index never reports it keeps answering `building` for the
+   * whole session — and until 2026-09-04 that was invisible in every record we keep, because the
+   * pane only surfaces the state when nothing else is selected. Diagnosing it meant re-reading the
+   * source instead of reading the log
+   * ([`onlypreview-preview-stuck-loading-after-delete`](../../../docs/issues/onlypreview-preview-stuck-loading-after-delete.md)).
+   */
+  setTrace(trace: OnlyPreviewProjectIndexTrace): void {
+    this.trace = trace;
+  }
 
   markBound(hostId: string, workspaceId: string): void {
     this.publish({ hostId, workspaceId, state: 'building' });
@@ -71,7 +92,15 @@ export class OnlyPreviewProjectIndexStateService {
    */
   clear(workspaceId?: string): void {
     if (workspaceId && this.current?.workspaceId !== workspaceId) return;
+    const previous = this.current;
     this.current = null;
+    if (previous) {
+      this.trace('project-index', {
+        workspaceId: previous.workspaceId,
+        from: previous.state,
+        to: 'cleared'
+      });
+    }
   }
 
   private publish(next: {
@@ -79,7 +108,13 @@ export class OnlyPreviewProjectIndexStateService {
     workspaceId: string;
     state: OnlyPreviewProjectIndexState;
   }): void {
+    const previous = this.current;
     this.current = next;
+    this.trace('project-index', {
+      workspaceId: next.workspaceId,
+      from: previous?.workspaceId === next.workspaceId ? previous.state : 'none',
+      to: next.state
+    });
     xpcMain.broadcast(ONLY_PREVIEW_PREVIEW_PRESENTATION_EVENT, { hostId: next.hostId });
   }
 }

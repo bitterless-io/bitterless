@@ -77,8 +77,76 @@ test('the host contract names every field the delete settle writes', () => {
     'selectedRelativePath',
     'focusedRelativePath',
     'treeSelectedRelativePath',
-    'refreshIndex'
+    'refreshIndex',
+    'browseProjection'
   ]) {
     assert.ok(contract.includes(field), `${field} belongs to the authoring host contract`);
+  }
+});
+
+/**
+ * The ordering guard.
+ *
+ * `refreshIndex()` is a full workspace re-index (`search-engine.mjs` `refreshInternal` counts and
+ * rebuilds the whole root), so a settle that only refreshed left a deleted FOLDER on screen for the
+ * length of that rescan — the tree is drawn from the browse projection, which a search refresh does
+ * not write. The rows must come off before that await, from the paths we were already handed.
+ */
+test('the delete settle drops the rows BEFORE it awaits the full re-index', () => {
+  const authoring = source(AUTHORING);
+  const settle = authoring.slice(
+    authoring.indexOf('async settleDeletedEntries('),
+    authoring.indexOf('beginRename(')
+  );
+  assert.ok(settle.length > 0, 'settleDeletedEntries is still where the guard expects it');
+  const drop = settle.indexOf('dropDeletedRows(removed)');
+  const refresh = settle.indexOf('await this.host.refreshIndex()');
+  assert.ok(drop > 0, 'the settle hands the removed paths to the projection');
+  assert.ok(refresh > 0, 'the settle still reconciles the search index afterwards');
+  assert.ok(drop < refresh, 'the rows must go before the rescan is awaited, not after it');
+});
+
+test('the removal goes to the browse projection, not to the search index', () => {
+  const authoring = source(AUTHORING);
+  const method = authoring.slice(
+    authoring.indexOf('private dropDeletedRows('),
+    authoring.indexOf('beginRename(')
+  );
+  assert.ok(method.includes('this.host.browseProjection.removeDeletedPaths'), 'it reaches the projection');
+  assert.ok(method.includes('this.host.index = dropped.index'), 'and it commits the new projection');
+});
+
+test('the projection is reachable from the store — a private field would strand the controller', () => {
+  const shell = source('src/renderer/onlypreview/shell/src/onlyPreviewShell.store.ts');
+  assert.match(shell, /^\s+readonly browseProjection = new OnlyPreviewBrowseProjectionService\(\);/m);
+});
+
+/**
+ * A delete that already happened must not be reported as a failure.
+ *
+ * `followDeletedSelection` runs AFTER the unlink. It reaches `clearWorkspace` →
+ * `requireRuntime`, which throws HOST_ROLE_DENIED when the preview window is gone. That throw used
+ * to escape `removeProjectEntry`, where the delete loop reads it as "this entry was not removed":
+ * failure alert, entry missing from `outcome.removed`, and the row it just deleted stays on the
+ * tree. The old guard covered only `requireCurrentItem`.
+ */
+test('following the selection cannot turn a completed delete into a reported failure', () => {
+  const source_ = source(NATIVE_ACTION);
+  const method = source_.slice(
+    source_.indexOf('private followDeletedSelection('),
+    source_.indexOf('private requireCurrentItem(')
+  );
+  assert.ok(method.length > 0, 'followDeletedSelection is still where the guard expects it');
+  for (const call of [
+    'this.requireCurrentItem(authority)',
+    'onlyPreviewWorkspaceRegistry.restore(hostToken)',
+    'onlyPreviewWorkspaceRegistry.clearProjectSelection(hostToken)',
+    'onlyPreviewPreviewRegionService.clearWorkspace(hostToken'
+  ]) {
+    const at = method.indexOf(call);
+    assert.ok(at > 0, `${call} is still part of following the selection`);
+    const guard = method.lastIndexOf('try {', at);
+    const closes = method.indexOf('} catch', at);
+    assert.ok(guard > 0 && closes > at, `${call} must sit inside the try, not after it`);
   }
 });

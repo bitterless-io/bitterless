@@ -183,6 +183,53 @@ export class OnlyPreviewBrowseProjectionService {
     return result;
   }
 
+  /**
+   * Rows Main has already removed from disk.
+   *
+   * The delete announcement carries the exact set that went, so the projection drops those rows now
+   * instead of waiting to rediscover them: the only other writer is a re-fetched listing, and the
+   * refresh that would trigger one is a full workspace re-index
+   * (`search-engine.mjs` `refreshInternal`). A folder's row therefore survived for as long as that
+   * rescan took — see `docs/issues/onlypreview-delete-refreshes-the-wrong-index.md`.
+   *
+   * `removeSubtree` alone is not enough: it detaches the folder's own listing and tokens, but the
+   * row itself lives in the PARENT's entry array, which is what `rebuild` reads.
+   */
+  removeDeletedPaths(
+    relativePaths: readonly string[],
+    workspaceId: string,
+    expandedPaths: Set<string>
+  ): OnlyPreviewBrowseProjectionResult {
+    // The root is never a removable row, and an empty run must not match everything.
+    const removed = relativePaths.filter((relativePath) => relativePath.length > 0);
+    if (!removed.length || !this.ready) return unchangedResult(this.projection);
+    let changed = false;
+    for (const relativePath of removed) {
+      const parentPath = getOnlyPreviewParentPath(relativePath);
+      const siblings = this.entriesByPath.get(parentPath);
+      if (siblings) {
+        const remaining = siblings.filter((entry) => entry.relativePath !== relativePath);
+        if (remaining.length !== siblings.length) {
+          this.entriesByPath.set(parentPath, remaining);
+          changed = true;
+        }
+      }
+      if (this.entriesByPath.has(relativePath) || this.directoryTokenByPath.has(relativePath)) {
+        changed = true;
+      }
+      this.removeSubtree(relativePath, expandedPaths);
+    }
+    if (!changed) return unchangedResult(this.projection);
+    this.rebuild(workspaceId);
+    return {
+      changed: true,
+      loaded: true,
+      rootReplaced: false,
+      error: null,
+      index: this.projection
+    };
+  }
+
   private rebuild(workspaceId: string): void {
     const entries: OnlyPreviewIndexEntry[] = [];
     this.excludedPaths.clear();

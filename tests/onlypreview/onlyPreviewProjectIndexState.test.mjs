@@ -104,3 +104,32 @@ test('a failed first build is terminal, and every change republishes exactly onc
     ['host-1', 'host-1', 'host-1', 'host-1']
   );
 });
+
+test('every index-state transition leaves a record', () => {
+  // `ready` latches, so a Project whose index never reports it answers `building` for the whole
+  // session. Until 2026-09-04 that was invisible in every record we keep — the pane only surfaces
+  // the state when nothing else is selected — so diagnosing it meant re-reading the source.
+  const state = service();
+  const traced = [];
+  state.setTrace((event, fields) => traced.push({ event, ...fields }));
+
+  state.markBound('host-1', 'workspace-a');
+  state.markObserved('host-1', 'workspace-a', 'reconciling');
+  state.markObserved('host-1', 'workspace-a', 'ready');
+  state.markObserved('host-1', 'workspace-a', 'building');
+  state.markObserved('host-1', 'workspace-b', 'building');
+  state.clear('workspace-a');
+
+  assert.deepEqual(traced, [
+    { event: 'project-index', workspaceId: 'workspace-a', from: 'none', to: 'building' },
+    { event: 'project-index', workspaceId: 'workspace-a', from: 'building', to: 'reconciling' },
+    { event: 'project-index', workspaceId: 'workspace-a', from: 'reconciling', to: 'ready' },
+    { event: 'project-index', workspaceId: 'workspace-a', from: 'ready', to: 'cleared' }
+  ]);
+});
+
+test('a service without a wired trace still publishes', () => {
+  const state = service();
+  state.markBound('host-1', 'workspace-a');
+  assert.equal(state.get('workspace-a'), 'building');
+});

@@ -9,6 +9,9 @@ import { i18nHelper } from '@main/i18n/i18n.helper';
 // A permanent recursive delete has no undo, so the run is bounded: a select-all on a large tree is
 // refused with a count rather than started.
 export const ONLY_PREVIEW_MAX_DELETE_ENTRIES = 200;
+// How long a delete may run before it says so. Under this, the run is over before a dialog would be
+// worth reading; over it, the owner is waiting with no feedback at all.
+export const ONLY_PREVIEW_DELETE_PROGRESS_DELAY_MS = 250;
 
 type DeleteLabels = ReturnType<typeof i18nHelper.getMessages>['app']['onlyPreviewFileMenu'];
 
@@ -117,29 +120,64 @@ export const presentOnlyPreviewDeleteDialog = async (
   if (!confirmed) return empty;
 
   const removed: OnlyPreviewDeleteEntry[] = [];
-  for (const entry of plan.entries) {
+  // Nothing is shown for a delete that finishes quickly: a dialog that appears and disappears inside
+  // a frame reads as a glitch, not as feedback. A recursive folder removal is what this is for, and
+  // that never returns inside the delay — docs/features/onlypreview-delete-progress.md #2.
+  let progressId = '';
+  const progressTimer = setTimeout(() => {
     try {
-      await executor.removeEntry(entry);
-      removed.push(entry);
+      progressId = onlyPreviewAlertWindowService.showProgress(request.hostToken, {
+        title: labels.deleteProgressTitle,
+        message: labels.deleteProgressMessage,
+        total: plan.entries.length,
+        countLabel: labels.deleteProgressCount
+      });
+      onlyPreviewAlertWindowService.updateProgress(progressId, removed.length);
     } catch {
-      // The run stops at the first failure and says what was actually removed. Continuing would
-      // leave the owner with a partial delete reported as a success.
-      await onlyPreviewAlertWindowService
-        .showError(request.hostToken, {
-          title: plan.entries.length === 1 ? labels.deleteFailureTitle : labels.deletePartialTitle,
-          message:
-            plan.entries.length === 1
-              ? labels.deleteFailureMessage
-              : fill(labels.deletePartialMessage, {
-                  done: String(removed.length),
-                  total: String(plan.entries.length),
-                  name: nameOf(entry.relativePath)
-                }),
-          confirmLabel: labels.alertOk
-        })
-        .catch(() => undefined);
-      return { confirmed: true, removed, failed: entry };
+      // The slot was taken or the window went away. A missing progress dialog must never stop the
+      // delete that is already under way.
     }
+  }, ONLY_PREVIEW_DELETE_PROGRESS_DELAY_MS);
+  const settleProgress = (): void => {
+    clearTimeout(progressTimer);
+    if (progressId) onlyPreviewAlertWindowService.closeProgress(progressId);
+    progressId = '';
+  };
+
+  try {
+    for (const entry of plan.entries) {
+      try {
+        await executor.removeEntry(entry);
+        removed.push(entry);
+        if (progressId) onlyPreviewAlertWindowService.updateProgress(progressId, removed.length);
+      } catch {
+        // The run stops at the first failure and says what was actually removed. Continuing would
+        // leave the owner with a partial delete reported as a success.
+        // Closed before the error, so the report is the only thing on screen rather than a message
+        // stacked over a bar that stopped moving.
+        settleProgress();
+        await onlyPreviewAlertWindowService
+          .showError(request.hostToken, {
+            title:
+              plan.entries.length === 1 ? labels.deleteFailureTitle : labels.deletePartialTitle,
+            message:
+              plan.entries.length === 1
+                ? labels.deleteFailureMessage
+                : fill(labels.deletePartialMessage, {
+                    done: String(removed.length),
+                    total: String(plan.entries.length),
+                    name: nameOf(entry.relativePath)
+                  }),
+            confirmLabel: labels.alertOk
+          })
+          .catch(() => undefined);
+        return { confirmed: true, removed, failed: entry };
+      }
+    }
+    return { confirmed: true, removed, failed: null };
+  } finally {
+    // Also covers a throw from the executor path itself — a dialog nobody can dismiss must not
+    // outlive the work it describes.
+    settleProgress();
   }
-  return { confirmed: true, removed, failed: null };
 };

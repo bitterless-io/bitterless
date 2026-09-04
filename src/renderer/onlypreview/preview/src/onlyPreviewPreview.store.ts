@@ -81,6 +81,8 @@ class OnlyPreviewPreviewStore {
   selectionReportingRevision = '';
   private initialized = false;
   private generation = 0;
+  // The last Project that resolved a real file here. Read by `projectIndexing`.
+  private browsedWorkspaceId: string | null = null;
   private presentation: OnlyPreviewPreviewPresentation | null = null;
   private appliedDescriptorRevision = -1;
   private loadedRevision = -1;
@@ -284,9 +286,20 @@ class OnlyPreviewPreviewStore {
   // snapshot and scopes it to the presentation's workspace, so a state left over from a previous
   // Project can never be applied here. `failed` reads as not-loading: the Project rail already
   // reports the failure, and an endless animation beside it would be a lie.
+  //
+  // The placeholder covers a Project that cannot be browsed yet — it exists so an empty pane does
+  // not read "Select a file" before there is anything to select. Once this Project has resolved a
+  // real file it is demonstrably usable, so from then on an empty pane means "nothing is selected",
+  // and the placeholder must stop outranking the empty state (`PreviewSurface.vue` orders indexing
+  // ahead of empty). Main only latches `ready` on a search snapshot that reports it, so a Project
+  // whose index never reports `ready` would otherwise answer every later deselection — deleting the
+  // selected file, above all — with "Loading project" for the rest of the session.
   get projectIndexing(): boolean {
-    const state = this.presentation?.projectIndexState ?? null;
-    return state === 'building' || state === 'reconciling';
+    const presentation = this.presentation;
+    const state = presentation?.projectIndexState ?? null;
+    if (state !== 'building' && state !== 'reconciling') return false;
+    const workspaceId = presentation?.workspaceId ?? null;
+    return !workspaceId || this.browsedWorkspaceId !== workspaceId;
   }
 
   private subscribe(): void {
@@ -384,6 +397,12 @@ class OnlyPreviewPreviewStore {
     else {
       this.presentation = presentation;
       this.currentRef = presentation.fileRef ? { ...presentation.fileRef } : null;
+    }
+    // Main resolved a descriptor for a file in this Project, so the Project is browsable whatever
+    // its index state still claims. Recorded on every surface, because a Chrome-surface selection
+    // proves the same thing a Vue one does.
+    if (presentation.workspaceId && presentation.fileRef && presentation.descriptor) {
+      this.browsedWorkspaceId = presentation.workspaceId;
     }
     this.applyFindSelectionSuppression();
 

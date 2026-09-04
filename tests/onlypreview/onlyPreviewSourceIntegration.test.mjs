@@ -166,13 +166,18 @@ test('window sources delegate dual Preview isolation and preserve generic Omni r
     standaloneStartup,
     /previewView\.webContents\.openDevTools\(\{ mode: 'detach', activate: false \}\)/
   );
-  // The owner asked for the OnlyPreview window's own DevTools on the Preview channel too. Detached
-  // and inactive, because an activating DevTools window takes key status from the BaseWindow.
+  // Detached and inactive, because an activating DevTools window takes key status from the
+  // BaseWindow.
   assert.match(
     standaloneStartup,
     /shellView\.webContents\.openDevTools\(\{ mode: 'detach', activate: false \}\)/
   );
   assert.equal((standaloneStartup.match(/openDevTools\(/g) ?? []).length, 2);
+  // Ral 2026-09-04, reversing the earlier Preview-channel auto-open: a packaged build must never
+  // open DevTools by itself. Every auto-open — shell view included — is gated on the debug-only
+  // predicate, and `isOnlyPreviewDevToolsEnabled` now only decides whether the shortcut is bound.
+  assert.equal((standaloneStartup.match(/shouldAutoOpenOnlyPreviewDevTools\(\)/g) ?? []).length, 2);
+  assert.doesNotMatch(standaloneStartup, /isOnlyPreviewDevToolsEnabled\(\)/);
   const loadViewBody = standalone.slice(
     standalone.indexOf('private async loadView('),
     standalone.indexOf('private applyInitialBounds(')

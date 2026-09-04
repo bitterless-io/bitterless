@@ -303,3 +303,32 @@ test('Preview routes selected-file watch commits through the Main-owned Region r
   assert.match(region, /await this\.present\(runtime\.host\.hostToken, fileRef\)/);
   assert.doesNotMatch(previewStore, /SEARCH_WATCH_COMMIT|WatchReload/);
 });
+
+test('every Project index snapshot is observed, returned ones included', () => {
+  // Ral 2026-09-04: first open showed "Loading project" and stayed there after the tree rendered.
+  // `initialize` and `refresh` hand their snapshot back through the RPC result, so it never passes
+  // the relay's `broadcast` callback — which was the only place the index state was observed. A
+  // Project whose index was already usable by the time `initialize` answered therefore rendered its
+  // whole tree while Main still reported the `building` it set at bind time.
+  const handler = source('src/main/xpc/onlyPreviewSearchRuntime.handler.ts');
+  assert.match(handler, /const observeReturnedSnapshot = \(/);
+  assert.match(handler, /onlyPreviewProjectIndexStateService\.markObserved\(/);
+  assert.match(handler, /if \(!result\.ok\) return result;/);
+  for (const method of ['initialize', 'refresh']) {
+    const body = handler.slice(
+      handler.indexOf(`'${method}'`) - 400,
+      handler.indexOf(`'${method}'`) + 200
+    );
+    assert.match(
+      body,
+      /observeReturnedSnapshot\(/,
+      `${method} must observe the snapshot it returns`
+    );
+  }
+  // Best effort: bookkeeping about a search call that already succeeded must never fail it.
+  assert.match(handler, /\} catch \{[\s\S]*?\}\s*return result;/);
+
+  // The broadcast path stays — a watch-driven snapshot never passes through a return value.
+  const windowHelper = source('src/main/windows/onlyPreviewWindow.helper.ts');
+  assert.match(windowHelper, /ONLY_PREVIEW_SEARCH_SNAPSHOT_EVENT[\s\S]*markObserved\(/);
+});

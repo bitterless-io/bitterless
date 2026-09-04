@@ -1,6 +1,7 @@
 # OnlyPreview — a delete never tells the tree, so removed rows stay on screen
 
-- Status: fixed, awaiting owner verification
+- Status: fixed in `82d826c`, **still awaiting a post-fix run** — the owner's second report was
+  produced by a build that predates the fix (see *Second report* below)
 - Found: 2026-09-04, owner report immediately after the folder-delete repair
   ([onlypreview-folder-delete-leaves-a-recovery-directory](./onlypreview-folder-delete-leaves-a-recovery-directory.md))
 - Severity: every action on a deleted row fails, and the failures look unrelated to each other
@@ -76,3 +77,34 @@ uses.
   have caught this: **every** Project mutation Main performs must declare an event, broadcast it,
   and be subscribed to in the shell. New Folder and Rename were never guarded either, which is how
   Delete shipped without one.
+
+## Second report (2026-09-04) — the evidence predates the fix
+
+The owner reported the same three symptoms again ("还是有问题") with this log line:
+
+```
+12:54:10.561 › [onlypreview] operation=showFileContextMenu errorCode=PATH_NOT_FOUND
+```
+
+That line cannot say whether the fix works, because it was produced before the fix existed:
+
+| when | what |
+| --- | --- |
+| 2026-09-04 12:53:15 | `dist/version_info.json` written — `version 0.0.90`, `versionCode 260903122011` (packaged 09-03) |
+| 2026-09-04 12:54:10 | the reported `PATH_NOT_FOUND` |
+| 2026-09-04 13:02:04 | `82d826c` — the fix |
+
+So the screenshot is a recording of the original defect, eight minutes before the repair landed, from
+a package built the previous day.
+
+What *can* be checked without a run was checked, and holds: the chain is continuous from Main to the
+tree — `announceDeletedEntries` broadcasts `ONLY_PREVIEW_PROJECT_DELETE_EVENT`, the shared constant
+exists, `subscribeOnlyPreviewProjectIntents` subscribes to it, and `settleDeletedEntries` drops the
+stale pointers before `refreshIndex()`. `tests/onlypreview/onlyPreviewDeleteSelection.test.mjs` and
+`onlyPreviewProjectMutationRefresh.test.mjs` pass, 15/15, including the guard that every Project
+mutation Main performs must be announced.
+
+**This issue stays open until a build that contains `82d826c` is run.** If it still reproduces there,
+the next suspect is the index behind `refreshIndex()`: the announcement now reaches the shell, so a
+row that survives the refresh would mean the snapshot returned by `OnlyPreviewSearchRuntimeHandler.refresh`
+still carries the deleted entry — a different defect from this one, and it would need its own issue.

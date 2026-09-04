@@ -234,3 +234,36 @@ test('the selection is dropped when its rows go away', () => {
   // And once more before every gesture, so a range starts from what is actually on screen.
   assert.match(controller, /apply\(intent[\s\S]*?this\.retain\(\);/);
 });
+
+test('locating the previewed file collapses the tree selection onto it', () => {
+  // Ral 2026-09-04: open a file from global search, click locate, and the row arrived without a
+  // highlight. `isSelected` answers from `anchorPath` (or an explicit multi-selection) before it
+  // falls back to `treeSelectedRelativePath`, and a file opened from search was never clicked in the
+  // tree, so the stale anchor kept the highlight.
+  const app = source('src/renderer/onlypreview/shell/src/App.vue');
+  const locate = app.slice(
+    app.indexOf('const locateCurrentFile'),
+    app.indexOf('const handleTreeKeydown')
+  );
+  assert.match(locate, /onlyPreviewTreeSelection\.clear\(\)/);
+  // Gated on the same precondition `locateSelectedFile` uses, so locating nothing cannot wipe a
+  // real selection.
+  assert.match(locate, /if \(onlyPreviewShellStore\.selectedRelativePath\)/);
+  assert.ok(
+    locate.indexOf('onlyPreviewTreeSelection.clear()') <
+      locate.indexOf('locateSelectedFile()'),
+    'the selection collapses before the anchor moves'
+  );
+
+  // The fallback the fix depends on: with no explicit anchor and no multi-selection, the tree
+  // highlight follows `treeSelectedRelativePath`.
+  const controller = source('src/renderer/onlypreview/shell/src/onlyPreviewTreeSelection.store.ts');
+  assert.match(
+    controller,
+    /clear\(\): void \{\s*this\.paths = \[\];\s*this\.anchorPath = null;/
+  );
+  assert.match(
+    controller,
+    /get anchor\(\): string \| null \{\s*return this\.anchorPath \?\? this\.host\.treeSelectedRelativePath;/
+  );
+});

@@ -9,6 +9,8 @@ import {
   type OnlyPreviewAlertErrorDialog,
   type OnlyPreviewAlertErrorRequest,
   type OnlyPreviewAlertNewFolderRequest,
+  type OnlyPreviewAlertProgressDialog,
+  type OnlyPreviewAlertProgressRequest,
   type OnlyPreviewAlertResolution,
   type OnlyPreviewAlertSnapshot
 } from '@shared/onlypreview/onlyPreviewAlert.types';
@@ -65,9 +67,15 @@ const sameBounds = (left: Rectangle, right: Rectangle): boolean =>
 
 const cloneDialog = (dialog: OnlyPreviewAlertDialog | null): OnlyPreviewAlertDialog | null => {
   if (!dialog) return null;
-  if (dialog.kind === 'new-folder') return { ...dialog };
+  // Only `confirm` carries a nested array; the other kinds are flat, and reaching for `entries` on
+  // one of them would throw inside the snapshot read rather than anywhere near the caller.
+  if (dialog.kind !== 'confirm') return { ...dialog };
   return { ...dialog, entries: dialog.entries.map((entry) => ({ ...entry })) };
 };
+
+/** Empty for a single item — a `1 of 1` count says nothing the bar does not already say. */
+const fillProgressCount = (template: string, done: number, total: number): string =>
+  total > 1 ? template.replace('{done}', String(done)).replace('{total}', String(total)) : '';
 
 export class OnlyPreviewAlertViewService {
   private runtime: OnlyPreviewAlertViewRuntime | null = null;
@@ -83,6 +91,7 @@ export class OnlyPreviewAlertViewService {
   private error: OnlyPreviewAlertErrorDialog | null = null;
   private pendingDialog: PendingDialog | null = null;
   private pendingError: PendingError | null = null;
+  private progressCountTemplate = '';
   // Where focus was when the dialog opened, so closing it puts the caret back rather than dropping
   // the owner somewhere else in the window.
   private opener: WebContents | null = null;
@@ -234,6 +243,12 @@ export class OnlyPreviewAlertViewService {
       pending?.resolve();
       return;
     }
+    // The owner asked for a progress dialog that cannot be dismissed. Leaving that to the renderer
+    // (no buttons) would still let Escape or a hand-made resolve call close it, so it is refused
+    // here — docs/features/onlypreview-delete-progress.md #3.
+    if (this.dialog?.kind === 'progress' && this.dialog.dialogId === resolution.dialogId) {
+      throw new OnlyPreviewContractError('INVALID_INPUT', 'Alert progress cannot be resolved.');
+    }
     if (this.pendingDialog?.dialogId !== resolution.dialogId) {
       // A resolution for a dialog Main no longer holds is not an error state — the window may have
       // closed under the renderer — but it must never resolve the current dialog.
@@ -344,9 +359,60 @@ export class OnlyPreviewAlertViewService {
   }
 
   private requireFreeDialogSlot(): void {
-    if (this.pendingDialog) {
+    // `pendingDialog` covers the answerable dialogs; a progress dialog has no pending promise, so it
+    // has to be checked separately or a later dialog would silently replace it and leave its owner
+    // updating something nobody can see.
+    if (this.pendingDialog || this.dialog?.kind === 'progress') {
       throw new OnlyPreviewContractError('INVALID_INPUT', 'An alert dialog is already open.');
     }
+  }
+
+  /**
+   * Work in flight. Opened, updated and closed by Main — there is nothing to answer.
+   *
+   * See `docs/features/onlypreview-delete-progress.md`. `total` is a count of the caller's work
+   * items; the renderer shows an indeterminate bar when it is 1, because a single item tells us
+   * nothing about what is happening inside it.
+   */
+  showProgress(hostToken: string, request: OnlyPreviewAlertProgressRequest): string {
+    this.requireRuntime(hostToken);
+    this.requireFreeDialogSlot();
+    const total = Math.max(1, Math.trunc(request.total));
+    this.progressCountTemplate = request.countLabel;
+    const dialog: OnlyPreviewAlertProgressDialog = {
+      kind: 'progress',
+      dialogId: randomUUID(),
+      title: boundOnlyPreviewAlertLabel(request.title, 'Alert title'),
+      message: boundOnlyPreviewAlertText(request.message, 'Alert message'),
+      completed: 0,
+      total,
+      countLabel: fillProgressCount(request.countLabel, 0, total)
+    };
+    this.openDialog(dialog);
+    return dialog.dialogId;
+  }
+
+  /** Ignored unless it names the progress dialog actually on screen. */
+  updateProgress(dialogId: string, completed: number): void {
+    const dialog = this.dialog;
+    if (dialog?.kind !== 'progress' || dialog.dialogId !== dialogId) return;
+    const next = Math.max(0, Math.min(dialog.total, Math.trunc(completed)));
+    if (next === dialog.completed) return;
+    this.dialog = {
+      ...dialog,
+      completed: next,
+      countLabel: fillProgressCount(this.progressCountTemplate, next, dialog.total)
+    };
+    this.publish();
+  }
+
+  /** The only way a progress dialog leaves the screen. Its owner calls this from a `finally`. */
+  closeProgress(dialogId: string): void {
+    const dialog = this.dialog;
+    if (dialog?.kind !== 'progress' || dialog.dialogId !== dialogId) return;
+    this.dialog = null;
+    this.publish();
+    this.present();
   }
 
   private publish(): void {

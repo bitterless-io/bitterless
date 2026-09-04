@@ -3,6 +3,7 @@ import type {
   OnlyPreviewAlertConfirmDialog,
   OnlyPreviewAlertErrorDialog,
   OnlyPreviewAlertNewFolderDialog,
+  OnlyPreviewAlertProgressDialog,
   OnlyPreviewAlertSnapshot
 } from '@shared/onlypreview/onlyPreviewAlert.types';
 import { onlyPreviewAlertClient } from './onlyPreviewAlert.client';
@@ -32,6 +33,12 @@ class OnlyPreviewAlertStore {
   get confirm(): OnlyPreviewAlertConfirmDialog | null {
     const dialog = this.snapshot.dialog;
     return dialog && dialog.kind === 'confirm' ? dialog : null;
+  }
+
+  /** Reports work in flight. Nothing here can answer it — Main opens, updates and closes it. */
+  get progress(): OnlyPreviewAlertProgressDialog | null {
+    const dialog = this.snapshot.dialog;
+    return dialog && dialog.kind === 'progress' ? dialog : null;
   }
 
   get error(): OnlyPreviewAlertErrorDialog | null {

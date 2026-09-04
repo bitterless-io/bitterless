@@ -58,7 +58,33 @@ export interface OnlyPreviewAlertErrorDialog {
   confirmLabel: string;
 }
 
-export type OnlyPreviewAlertDialog = OnlyPreviewAlertNewFolderDialog | OnlyPreviewAlertConfirmDialog;
+/**
+ * Work in flight, with no answer to give.
+ *
+ * Every other dialog here exists to collect a decision; this one only reports. It carries no button
+ * labels because it has no buttons — see `docs/features/onlypreview-delete-progress.md` #3, which is
+ * also why `resolve()` refuses its id rather than trusting the renderer not to send one.
+ *
+ * `completed`/`total` are counted in SELECTION ENTRIES, the only unit the delete loop steps through.
+ * A single recursive folder removal is one entry, so `total === 1` means we cannot see inside the
+ * work and the renderer shows an indeterminate bar rather than inventing a percentage (#1).
+ */
+export interface OnlyPreviewAlertProgressDialog {
+  kind: 'progress';
+  dialogId: string;
+  title: string;
+  message: string;
+  completed: number;
+  total: number;
+  // Already filled in by Main, because the renderer owns no wording — the same rule the confirm
+  // dialog's `moreLabel` follows. Empty when `total` is 1: there is no honest count to show.
+  countLabel: string;
+}
+
+export type OnlyPreviewAlertDialog =
+  | OnlyPreviewAlertNewFolderDialog
+  | OnlyPreviewAlertConfirmDialog
+  | OnlyPreviewAlertProgressDialog;
 
 export interface OnlyPreviewAlertSnapshot {
   revision: number;
@@ -98,6 +124,14 @@ export interface OnlyPreviewAlertConfirmRequest {
   cancelLabel: string;
   confirmHint: string;
   destructive: boolean;
+}
+
+export interface OnlyPreviewAlertProgressRequest {
+  title: string;
+  message: string;
+  total: number;
+  // A template with `{done}` and `{total}`; the service refills it on every update.
+  countLabel: string;
 }
 
 export interface OnlyPreviewAlertErrorRequest {

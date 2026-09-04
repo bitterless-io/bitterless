@@ -36,6 +36,25 @@ export const getMcpServerName = (appName: string): string => {
   return suffix ? `bitterless-${suffix}` : 'bitterless';
 };
 
+/**
+ * Which kind of Bitterless an MCP server name denotes.
+ *
+ * `production` and `preview` are both shipped, signed, notarized editions that hold the user's real
+ * data in their own isolated storage, so agent guidance must accept either. Everything else — the
+ * `bitterless-dev*` and `bitterless-debug*` names — is a development build that must never be
+ * registered as a real instance.
+ *
+ * One classifier because the three onboarding services and the workspace skills each phrase the
+ * consequence in their own domain, but must never disagree about which names are real.
+ */
+export type McpServerKind = 'production' | 'preview' | 'development';
+
+export const classifyMcpServerName = (serverName: string): McpServerKind => {
+  if (serverName === 'bitterless') return 'production';
+  if (serverName === 'bitterless-preview') return 'preview';
+  return 'development';
+};
+
 export const getMcpBridgeEndpoint = (userDataPath: string): McpBridgeEndpoint => {
   if (process.platform === 'win32') {
     const suffix = createHash('sha1').update(userDataPath).digest('hex').slice(0, 12);

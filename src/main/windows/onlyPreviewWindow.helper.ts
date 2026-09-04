@@ -151,8 +151,13 @@ const isCurrentFileFindShortcut = (input: Input): boolean => {
 const shouldAutoOpenOnlyPreviewDevTools = (): boolean =>
   import.meta.env.VITE_MODE === 'debug' && process.env.BITTERLESS_E2E !== '1';
 
-// Preview is the owner-facing test channel, so it carries the DevTools shortcut even though it is a
-// packaged release build. Stable keeps DevTools closed. Auto-open stays debug-only either way.
+// Preview is the owner-facing test channel, so it carries the DevTools *shortcut* even though it is
+// a packaged release build. Stable keeps DevTools closed.
+//
+// Auto-open is debug-only for every channel, shell view included (Ral 2026-09-04, reversing the
+// earlier Preview-channel auto-open): a packaged build must never open DevTools by itself. Use
+// `shouldAutoOpenOnlyPreviewDevTools()` for anything that opens a pane without being asked, and this
+// predicate only to decide whether the keyboard shortcut is bound.
 const isOnlyPreviewDevToolsEnabled = (): boolean =>
   import.meta.env.VITE_MODE === 'debug' ||
   import.meta.env.VITE_RELEASE_CHANNEL === 'preview' ||
@@ -1050,7 +1055,7 @@ export class OnlyPreviewWindowHelper {
     // a debug build. Detached and inactive: a detached DevTools window is a separate NSWindow, and
     // activating it takes key status away from the BaseWindow — which is how Cmd+F went dead.
     if (
-      isOnlyPreviewDevToolsEnabled() &&
+      shouldAutoOpenOnlyPreviewDevTools() &&
       this.baseWindow === window &&
       this.shellView === shellView &&
       !window.isDestroyed() &&

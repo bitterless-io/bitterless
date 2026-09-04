@@ -5,7 +5,8 @@ import type { OnlyPreviewHostCapability } from '@main/onlypreview/onlyPreviewHos
 import type {
   OnlyPreviewAlertConfirmRequest,
   OnlyPreviewAlertErrorRequest,
-  OnlyPreviewAlertNewFolderRequest
+  OnlyPreviewAlertNewFolderRequest,
+  OnlyPreviewAlertProgressRequest
 } from '@shared/onlypreview/onlyPreviewAlert.types';
 import {
   onlyPreviewAlertViewService,
@@ -66,6 +67,18 @@ export class OnlyPreviewAlertWindowService {
     request: OnlyPreviewAlertConfirmRequest
   ): Promise<boolean> {
     return await onlyPreviewAlertViewService.requestConfirm(hostToken, request);
+  }
+
+  showProgress(hostToken: string, request: OnlyPreviewAlertProgressRequest): string {
+    return onlyPreviewAlertViewService.showProgress(hostToken, request);
+  }
+
+  updateProgress(dialogId: string, completed: number): void {
+    onlyPreviewAlertViewService.updateProgress(dialogId, completed);
+  }
+
+  closeProgress(dialogId: string): void {
+    onlyPreviewAlertViewService.closeProgress(dialogId);
   }
 
   async showError(hostToken: string, request: OnlyPreviewAlertErrorRequest): Promise<void> {

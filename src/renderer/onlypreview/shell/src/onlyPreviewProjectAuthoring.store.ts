@@ -12,7 +12,10 @@ import {
 } from '@shared/onlypreview/onlyPreview.types';
 import { onlyPreviewEnv } from '../../common/contextBridge/onlyPreviewEnv.bridge';
 import { unwrapOnlyPreviewResult } from '@shared/onlypreview/onlyPreview.contract';
-import type { OnlyPreviewProjectEntry } from '@shared/onlypreview/onlyPreview.types';
+import type {
+  OnlyPreviewIndex,
+  OnlyPreviewProjectEntry
+} from '@shared/onlypreview/onlyPreview.types';
 import { onlyPreviewClient } from '../../common/onlyPreviewClient';
 import { onlyPreviewI18n } from '../../common/onlyPreviewI18n';
 import {
@@ -39,6 +42,17 @@ export interface OnlyPreviewProjectAuthoringHost {
   treeSelectedRelativePath: string | null;
   errorMessage: string;
   refreshIndex(): Promise<void>;
+  /**
+   * The tree is drawn from this projection, so a delete has to reach it directly. The work is done
+   * here rather than behind a store method because the shell store sits on its 800-line budget.
+   */
+  browseProjection: {
+    removeDeletedPaths(
+      relativePaths: readonly string[],
+      workspaceId: string,
+      expandedPaths: Set<string>
+    ): { changed: boolean; index: OnlyPreviewIndex | null };
+  };
 }
 
 /**
@@ -93,7 +107,34 @@ export class OnlyPreviewProjectAuthoringController {
     if (isRemoved(this.host.focusedRelativePath)) this.host.focusedRelativePath = '';
     const treeSelected = this.host.treeSelectedRelativePath;
     if (treeSelected && isRemoved(treeSelected)) this.host.treeSelectedRelativePath = null;
+    // The rows go NOW, from the paths we were handed. `refreshIndex` cannot do this job: it is a
+    // full workspace re-index, so a folder kept its row for as long as that rescan took, and every
+    // click on it failed against a path that was gone
+    // (docs/issues/onlypreview-delete-refreshes-the-wrong-index.md).
+    this.dropDeletedRows(removed);
+    // Still reconciled afterwards — the search index has to learn about this too, and a refresh
+    // repairs the projection if the local removal was somehow wrong.
     await this.host.refreshIndex();
+  }
+
+  /**
+   * Rows Main has already removed, taken off the tree now.
+   *
+   * `refreshIndex()` cannot do this: it re-indexes the whole workspace
+   * (`search-engine.mjs` `refreshInternal` counts and rebuilds the entire root), and the tree is
+   * drawn from the browse projection, which a search refresh never writes. A deleted FOLDER
+   * therefore kept its row until the watcher caught up much later, and every click on it failed
+   * with PATH_NOT_FOUND — docs/issues/onlypreview-delete-refreshes-the-wrong-index.md.
+   */
+  private dropDeletedRows(removed: readonly string[]): void {
+    const workspaceId = this.host.workspace?.workspaceId;
+    if (!workspaceId) return;
+    const dropped = this.host.browseProjection.removeDeletedPaths(
+      removed,
+      workspaceId,
+      this.host.expandedPaths
+    );
+    if (dropped.changed) this.host.index = dropped.index;
   }
 
   beginRename(relativePath: string): boolean {

@@ -43,7 +43,15 @@ below are quoted against **that** baseline, not the repo's. Scratch was deleted 
 the only file I created inside the repo is this review document. Three other working-tree entries
 appeared during the review and are **not** mine: `docs/INDEX.md` and `package.json` (modified by the
 concurrent session / a running profile switch) and an untracked `undefined/bundles/auditRunner.cjs`
-emitted by `scripts/sqlite-migrations/audit.mjs`, which I never ran — left untouched.
+— left untouched.
+
+> **Correction (2026-09-04).** The attribution above was wrong: `audit.mjs` writes to
+> `mkdtempSync(join(tmpdir(), …))`, an absolute path with no `bundles` segment, and cleans it up in a
+> `finally`. The stray came from a one-off `node -e` esbuild command in another session
+> (`b8553903`, 04:43:48Z) whose shell did `SP=… && node -e '…process.env.SP…'` — an assignment
+> **without `export`**, so the child read `undefined`, computed `undefined/bundles`, and esbuild
+> resolved that relative path against the repo root. Reproduced. The same command was rerun 30
+> seconds later with `export SP` and landed correctly. Directory removed; no repo code was at fault.
 
 The one syscall probe I ran (`net.createServer().listen()` inside a `mktemp -d`, immediately closed
 and unlinked) is described in **B4** below.

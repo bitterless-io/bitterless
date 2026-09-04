@@ -11,6 +11,7 @@ export * from '../../src/main/onlypreview/onlyPreviewAsset.registry';
 export * from '../../src/main/onlypreview/onlyPreviewClassifier.service';
 export * from '../../src/main/onlypreview/onlyPreviewOpenRouter.service';
 export * from '../../src/renderer/onlypreview/shell/src/onlyPreviewProjectWidthPersistence.service';
+export * from '../../src/renderer/onlypreview/shell/src/onlyPreviewBrowseProjection.service';
 export * from '../../src/main/onlypreview/onlyPreviewWindowBounds.service';
 export * from '../../src/main/onlypreview/onlyPreviewGlobalSearchFocus.service';
 export * from '../../src/main/onlypreview/onlyPreviewRecentDirectory.service';

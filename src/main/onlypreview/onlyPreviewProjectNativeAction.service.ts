@@ -15,6 +15,7 @@ import {
   ONLY_PREVIEW_UNTITLED_FOLDER_MAX_INDEX,
   onlyPreviewUntitledFolderName
 } from '@shared/onlypreview/onlyPreviewEntryName.shared';
+import { onlyPreviewOpenDiagnostics } from './onlyPreviewOpenDiagnostics.runtime';
 import { onlyPreviewSelectionCoordinator } from './onlyPreviewSelectionCoordinator.service';
 import {
   onlyPreviewWorkspaceRegistry,
@@ -162,8 +163,7 @@ export class OnlyPreviewProjectNativeActionService {
         id: 'onlypreview-copy-item',
         label: item.nodeKind === 'file' ? labels.copyFile : labels.copyFolder,
         accelerator: 'CommandOrControl+C',
-        click: () =>
-          void this.copyProjectItemFromUi(window, currentRequest, 'item', menuSelection)
+        click: () => void this.copyProjectItemFromUi(window, currentRequest, 'item', menuSelection)
       },
       {
         id: 'onlypreview-copy-path',
@@ -182,8 +182,7 @@ export class OnlyPreviewProjectNativeActionService {
         id: 'onlypreview-copy-name',
         label: labels.copyName,
         accelerator: 'CommandOrControl+Alt+C',
-        click: () =>
-          void this.copyProjectItemFromUi(window, currentRequest, 'name', menuSelection)
+        click: () => void this.copyProjectItemFromUi(window, currentRequest, 'name', menuSelection)
       }
     );
     // Delete now covers folders as well as files, and it acts on the whole tree selection when the
@@ -369,13 +368,17 @@ export class OnlyPreviewProjectNativeActionService {
           name: onlyPreviewUntitledFolderName(index)
         });
       } catch (error) {
-        if (!(error instanceof OnlyPreviewContractError) || error.code !== 'NAME_EXISTS') throw error;
+        if (!(error instanceof OnlyPreviewContractError) || error.code !== 'NAME_EXISTS')
+          throw error;
         lastError = error;
       }
     }
     throw lastError instanceof Error
       ? lastError
-      : new OnlyPreviewContractError('NAME_EXISTS', 'Too many untitled folders already exist here.');
+      : new OnlyPreviewContractError(
+          'NAME_EXISTS',
+          'Too many untitled folders already exist here.'
+        );
   }
 
   async createProjectFolder(request: {
@@ -641,22 +644,41 @@ export class OnlyPreviewProjectNativeActionService {
     nodeKind: 'file' | 'directory'
   ): void {
     const hostToken = authority.host.hostToken;
+    // The file is ALREADY off the disk by the time this runs, so nothing in here may throw out of
+    // `removeProjectEntry`: the delete loop reads a throw as "this entry was not removed", shows the
+    // failure alert, and leaves the entry out of `outcome.removed` — so the row it just deleted
+    // stays on the tree and every later click on it fails. The guard used to cover only
+    // `requireCurrentItem`, while `clearWorkspace` reaches `requireRuntime`, which throws
+    // HOST_ROLE_DENIED whenever the preview window is gone or being torn down.
+    //
+    // Following the selection is bookkeeping about a delete that already happened. It can fail
+    // without changing what is on disk, so it fails quietly here rather than turning a completed
+    // delete into a reported failure.
     try {
       this.requireCurrentItem(authority);
-    } catch {
-      return;
+      onlyPreviewSelectionCoordinator.invalidatePendingSelection(hostToken, {
+        workspaceId: authority.workspaceId,
+        relativePath: authority.relativePath
+      });
+      const selected = onlyPreviewWorkspaceRegistry.restore(hostToken)?.selectedRelativePath;
+      const deletedFile = nodeKind === 'file' && selected === authority.relativePath;
+      const deletedAncestor = selected?.startsWith(`${authority.relativePath}/`) ?? false;
+      if (!deletedFile && !deletedAncestor) return;
+      onlyPreviewWorkspaceRegistry.clearProjectSelection(hostToken);
+      onlyPreviewPreviewRegionService.clearWorkspace(hostToken, authority.workspaceId);
+      xpcMain.broadcast(ONLY_PREVIEW_SELECTION_CHANGED_EVENT, { hostId: authority.host.hostId });
+    } catch (error) {
+      // Still non-fatal: the removal succeeded and the tree gets its delete announcement either way.
+      // But silence here is not free — every statement above is skipped, starting with the
+      // `requireCurrentItem()` authority check, which leaves the selection and the preview pointing
+      // at a file that is already off disk. Leave the record so the next occurrence is diagnosable
+      // from the log rather than from a re-read of this function.
+      onlyPreviewOpenDiagnostics.emit('delete-follow-selection-failed', {
+        workspaceId: authority.workspaceId,
+        nodeKind,
+        reason: error instanceof Error ? error.message : String(error)
+      });
     }
-    onlyPreviewSelectionCoordinator.invalidatePendingSelection(hostToken, {
-      workspaceId: authority.workspaceId,
-      relativePath: authority.relativePath
-    });
-    const selected = onlyPreviewWorkspaceRegistry.restore(hostToken)?.selectedRelativePath;
-    const deletedFile = nodeKind === 'file' && selected === authority.relativePath;
-    const deletedAncestor = selected?.startsWith(`${authority.relativePath}/`) ?? false;
-    if (!deletedFile && !deletedAncestor) return;
-    onlyPreviewWorkspaceRegistry.clearProjectSelection(hostToken);
-    onlyPreviewPreviewRegionService.clearWorkspace(hostToken, authority.workspaceId);
-    xpcMain.broadcast(ONLY_PREVIEW_SELECTION_CHANGED_EVENT, { hostId: authority.host.hostId });
   }
 
   private requireCurrentItem(expected: OnlyPreviewProjectAuthorityRef): void {
@@ -677,16 +699,19 @@ export class OnlyPreviewProjectNativeActionService {
     request: { hostToken: string; workspaceId: string },
     params: { parentRelativePath: string; destinationName: string }
   ): void {
-    void presentOnlyPreviewNewFolderDialog({
-      hostId,
-      hostToken: request.hostToken,
-      workspaceId: request.workspaceId,
-      parentRelativePath: params.parentRelativePath,
-      destinationName: params.destinationName
-    }, {
-      createUntitled: async (target) => await this.createUntitledProjectFolder(target),
-      createNamed: async (target) => await this.createProjectFolder(target)
-    }).catch(() => {
+    void presentOnlyPreviewNewFolderDialog(
+      {
+        hostId,
+        hostToken: request.hostToken,
+        workspaceId: request.workspaceId,
+        parentRelativePath: params.parentRelativePath,
+        destinationName: params.destinationName
+      },
+      {
+        createUntitled: async (target) => await this.createUntitledProjectFolder(target),
+        createNamed: async (target) => await this.createProjectFolder(target)
+      }
+    ).catch(() => {
       // A revoked host or a closed window simply gets no dialog; nothing has been written.
     });
   }

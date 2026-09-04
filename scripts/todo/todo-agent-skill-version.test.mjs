@@ -17,7 +17,7 @@ const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(scriptDirectory, '..', '..');
 const readProjectFile = (path) => readFileSync(join(projectRoot, path), 'utf8');
 
-assert.equal(TODO_AGENT_SKILL_VERSION_CODE, '260724175151');
+assert.equal(TODO_AGENT_SKILL_VERSION_CODE, '260904151653');
 assert.equal(TODO_AGENT_SKILL_BASELINE_VERSION_CODE, '000000000000');
 assert.deepEqual(resolveTodoAgentSkillVersionState(TODO_AGENT_SKILL_BASELINE_VERSION_CODE), {
   status: 'install-required',
@@ -34,9 +34,9 @@ assert.deepEqual(resolveTodoAgentSkillVersionState(TODO_AGENT_SKILL_VERSION_CODE
   acknowledgedVersionCode: TODO_AGENT_SKILL_VERSION_CODE,
   attention: false,
 });
-assert.deepEqual(resolveTodoAgentSkillVersionState('260724175152'), {
+assert.deepEqual(resolveTodoAgentSkillVersionState('260904151654'), {
   status: 'future',
-  acknowledgedVersionCode: '260724175152',
+  acknowledgedVersionCode: '260904151654',
   attention: false,
 });
 for (const invalid of [null, undefined, '', '26072417515', '26072417515x', 260724175151]) {
@@ -66,7 +66,7 @@ assert.deepEqual(resolveMcpIntegrationSkillState({
 const sharedVersion = readProjectFile('src/shared/mcp/todoAgentSkillVersion.shared.ts');
 assert.match(
   sharedVersion,
-  /TODO_AGENT_SKILL_VERSION_CODE = '260724175151'/,
+  /TODO_AGENT_SKILL_VERSION_CODE = '260904151653'/,
   'application skill revision must remain a quoted hard-coded string',
 );
 
@@ -77,7 +77,7 @@ assert.equal(
   parseYaml(skillFrontmatter).metadata?.version_code,
   TODO_AGENT_SKILL_VERSION_CODE,
 );
-assert.match(skillFrontmatter, /version_code: ["']260724175151["']/);
+assert.match(skillFrontmatter, /version_code: ["']260904151653["']/);
 
 const settingDao = readProjectFile('src/preload/sqlite/dao/setting.dao.ts');
 assert.match(settingDao, /async insertIfAbsent/);

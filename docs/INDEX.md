@@ -88,6 +88,28 @@ design document.
   but Delete announced nothing, so removed rows stayed on screen and every later right-click, copy or
   delete on one failed against a path that was gone; a delete now announces what it removed and the
   tree drops every pointer into a removed folder before re-reading the index.
+- [The Project index never latches ready, so the pane stays on "Loading project"](issues/onlypreview-index-never-latches-ready.md) -
+  implemented; owner verification pending: `initialize` and `refresh` hand their snapshot back as an
+  RPC result, which never passed the only place the index state was observed, so a Project whose
+  index was already usable rendered its whole tree while Main still reported `building`; both
+  methods now observe the snapshot they return.
+- [Locate file leaves the row unhighlighted after opening from global search](issues/onlypreview-locate-file-leaves-no-highlight.md) -
+  implemented; owner verification pending: the tree highlight answers from the click anchor before it
+  falls back to the located row, and a file opened from search was never clicked, so locate now
+  collapses the tree selection onto the row it locates.
+- [Agent onboarding calls the Preview edition a test instance](issues/preview-edition-treated-as-test-instance.md) -
+  implemented; owner verification pending: `bitterless-preview` is a shipped edition with its own
+  bridge and storage, but the copied setup instruction, all three bundled skills, and the workspace
+  rules classified it as development-only, so a Preview-only machine had no sanctioned server; one
+  shared classifier now marks it real and the setup docs name its helper path directly.
+- [Packaged Preview opens OnlyPreview DevTools by itself](issues/onlypreview-devtools-auto-open-in-packaged-preview.md) -
+  implemented; owner verification pending: the shell view's auto-open used the shortcut-binding
+  predicate instead of the debug-only one, so the packaged Preview build opened DevTools on startup;
+  every auto-open is now debug-only while the Preview shortcut stays.
+- [Deleting the selected file shows "Loading project" instead of "Select a file"](issues/onlypreview-preview-stuck-loading-after-delete.md) -
+  fixed; owner verification pending: the index placeholder is ordered ahead of the empty state and a
+  Project whose index never latches `ready` kept it true all session, so the first pane with nothing
+  else to render was the delete; the placeholder now retires once a Project has resolved a real file.
 - [OnlyPreview folder delete leaves a recovery directory](issues/onlypreview-folder-delete-leaves-a-recovery-directory.md) -
   fixed; owner verification pending: the post-isolate identity check re-`lstat`ed the renamed-away
   original path, so every folder delete failed and left its `.bitterless-delete-recovery-*` directory

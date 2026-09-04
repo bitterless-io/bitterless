@@ -7,6 +7,7 @@
     <div name="onlypreview__alertScrim" class="onlypreview-alert-scrim"></div>
     <AlertNewFolder v-if="onlyPreviewAlertStore.newFolder" />
     <AlertConfirm v-else-if="onlyPreviewAlertStore.confirm" />
+    <AlertProgress v-else-if="onlyPreviewAlertStore.progress" />
     <AlertError v-if="onlyPreviewAlertStore.error" />
   </main>
 </template>
@@ -15,6 +16,7 @@
 import { onBeforeUnmount, onMounted } from 'vue';
 import AlertConfirm from './components/AlertConfirm/AlertConfirm.vue';
 import AlertError from './components/AlertError/AlertError.vue';
+import AlertProgress from './components/AlertProgress/AlertProgress.vue';
 import AlertNewFolder from './components/AlertNewFolder/AlertNewFolder.vue';
 import { onlyPreviewAlertStore } from './onlyPreviewAlert.store';
 

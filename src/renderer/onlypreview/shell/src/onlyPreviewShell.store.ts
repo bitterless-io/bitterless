@@ -92,7 +92,7 @@ export class OnlyPreviewShellStore {
   private selectionGeneration = 0;
   private searchWorkspaceGeneration = 0;
   private previewPresentationFetchGeneration = 0;
-  private readonly browseProjection = new OnlyPreviewBrowseProjectionService();
+  readonly browseProjection = new OnlyPreviewBrowseProjectionService();
   private indexProgressState: OnlyPreviewSearchProgressState = createOnlyPreviewSearchProgressState();
   private readonly characterCountGate = new OnlyPreviewCharacterCountHostGate();
   private pendingCharacterCount = 0;

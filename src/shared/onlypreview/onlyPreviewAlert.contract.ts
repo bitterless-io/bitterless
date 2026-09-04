@@ -3,6 +3,7 @@ import {
   ONLY_PREVIEW_ALERT_MAX_LISTED_ENTRIES,
   ONLY_PREVIEW_ALERT_MAX_TEXT_LENGTH,
   type OnlyPreviewAlertConfirmDialog,
+  type OnlyPreviewAlertProgressDialog,
   type OnlyPreviewAlertDialog,
   type OnlyPreviewAlertErrorDialog,
   type OnlyPreviewAlertListedEntry,
@@ -89,7 +90,10 @@ export const parseOnlyPreviewAlertResolution = (value: unknown): OnlyPreviewAler
   // The dialog id is Main's, so a renderer that answers a dialog Main has already replaced cannot
   // resolve the current one by accident.
   const dialogId = expectToken(record.dialogId, 'Alert dialog');
-  if (typeof record.value !== 'string' || record.value.length > ONLY_PREVIEW_ALERT_MAX_TEXT_LENGTH) {
+  if (
+    typeof record.value !== 'string' ||
+    record.value.length > ONLY_PREVIEW_ALERT_MAX_TEXT_LENGTH
+  ) {
     throw new OnlyPreviewContractError('INVALID_INPUT', 'Alert value is out of range.');
   }
   return {
@@ -119,9 +123,7 @@ const parseListedEntry = (value: unknown): OnlyPreviewAlertListedEntry => {
   };
 };
 
-const parseNewFolderDialog = (
-  record: Record<string, unknown>
-): OnlyPreviewAlertNewFolderDialog => {
+const parseNewFolderDialog = (record: Record<string, unknown>): OnlyPreviewAlertNewFolderDialog => {
   expectExactKeys(
     record,
     [
@@ -171,7 +173,10 @@ const parseConfirmDialog = (record: Record<string, unknown>): OnlyPreviewAlertCo
     ],
     'Confirm dialog'
   );
-  if (!Array.isArray(record.entries) || record.entries.length > ONLY_PREVIEW_ALERT_MAX_LISTED_ENTRIES) {
+  if (
+    !Array.isArray(record.entries) ||
+    record.entries.length > ONLY_PREVIEW_ALERT_MAX_LISTED_ENTRIES
+  ) {
     throw new OnlyPreviewContractError('INVALID_INPUT', 'Alert entries are out of range.');
   }
   if (typeof record.destructive !== 'boolean') {
@@ -189,6 +194,36 @@ const parseConfirmDialog = (record: Record<string, unknown>): OnlyPreviewAlertCo
     cancelLabel: boundOnlyPreviewAlertLabel(record.cancelLabel, 'Alert cancel label'),
     confirmHint: boundOnlyPreviewAlertOptionalLabel(record.confirmHint, 'Alert confirm hint'),
     destructive: record.destructive
+  };
+};
+
+const parseProgressCount = (value: unknown, label: string): number => {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new OnlyPreviewContractError('INVALID_INPUT', `${label} is invalid.`);
+  }
+  return value;
+};
+
+const parseProgressDialog = (record: Record<string, unknown>): OnlyPreviewAlertProgressDialog => {
+  expectExactKeys(
+    record,
+    ['kind', 'dialogId', 'title', 'message', 'completed', 'total', 'countLabel'],
+    'Progress dialog'
+  );
+  const total = parseProgressCount(record.total, 'Alert progress total');
+  const completed = parseProgressCount(record.completed, 'Alert progress count');
+  // A count past the total would render a bar over 100%, and it can only mean the caller lost track.
+  if (completed > total) {
+    throw new OnlyPreviewContractError('INVALID_INPUT', 'Alert progress count exceeds its total.');
+  }
+  return {
+    kind: 'progress',
+    dialogId: expectToken(record.dialogId, 'Alert dialog'),
+    title: boundOnlyPreviewAlertLabel(record.title, 'Alert title'),
+    message: boundOnlyPreviewAlertText(record.message, 'Alert message'),
+    completed,
+    total,
+    countLabel: boundOnlyPreviewAlertOptionalLabel(record.countLabel, 'Alert progress count')
   };
 };
 
@@ -219,6 +254,7 @@ export const parseOnlyPreviewAlertSnapshot = (value: unknown): OnlyPreviewAlertS
     const dialogRecord = expectRecord(record.dialog, 'Alert dialog');
     if (dialogRecord.kind === 'new-folder') dialog = parseNewFolderDialog(dialogRecord);
     else if (dialogRecord.kind === 'confirm') dialog = parseConfirmDialog(dialogRecord);
+    else if (dialogRecord.kind === 'progress') dialog = parseProgressDialog(dialogRecord);
     else throw new OnlyPreviewContractError('INVALID_INPUT', 'Alert dialog kind is invalid.');
   }
   return {

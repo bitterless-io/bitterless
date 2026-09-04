@@ -36,7 +36,40 @@ import type {
   OnlyPreviewSearchSnapshot
 } from '@shared/onlypreview/onlyPreviewSearch.type';
 import { fileSearchRuntimeRelayService } from '@main/fileSearch/fileSearchRuntimeRelay.service';
+import { onlyPreviewHostRegistry } from '@main/onlypreview/onlyPreviewHost.registry';
+import { onlyPreviewProjectIndexStateService } from '@main/onlypreview/onlyPreviewProjectIndexState.service';
 import { onlyPreviewSearchBootstrapRegistry } from '@main/onlypreview/onlyPreviewSearchBootstrap.registry';
+
+/**
+ * Record the index state of a snapshot that is *returned* rather than broadcast.
+ *
+ * `initialize` and `refresh` hand their snapshot back through the RPC result, so it never passes the
+ * relay's `broadcast` callback — the only other place the index state is observed
+ * (`onlyPreviewWindow.helper.ts`). A Project whose index is already usable by the time `initialize`
+ * answers therefore rendered its whole tree while Main still reported the `building` it set at bind
+ * time, and the preview pane sat on "Loading project" for the rest of the session
+ * ([`onlypreview-index-never-latches-ready`](../../../docs/issues/onlypreview-index-never-latches-ready.md)).
+ *
+ * Best effort by design: this is diagnostics-grade bookkeeping about a search call that already
+ * succeeded, so it must never turn a good result into a failure.
+ */
+const observeReturnedSnapshot = (
+  hostToken: string,
+  result: OnlyPreviewResult<OnlyPreviewSearchSnapshot>
+): OnlyPreviewResult<OnlyPreviewSearchSnapshot> => {
+  if (!result.ok) return result;
+  try {
+    const host = onlyPreviewHostRegistry.require(hostToken, ['content']);
+    onlyPreviewProjectIndexStateService.markObserved(
+      host.hostId,
+      result.value.workspaceId,
+      result.value.state
+    );
+  } catch {
+    // The search result stands on its own; the index-state trace records the miss.
+  }
+  return result;
+};
 
 const CONTROL_TIMEOUT_MS = 10 * 60_000;
 const SEARCH_TIMEOUT_MS = 60_000;
@@ -71,12 +104,9 @@ export class OnlyPreviewSearchRuntimeHandler
         request.workspaceId,
         app.getPath('userData')
       );
-      return await this._call(
+      return observeReturnedSnapshot(
         request.hostToken,
-        'initialize',
-        request,
-        CONTROL_TIMEOUT_MS,
-        bootstrap
+        await this._call(request.hostToken, 'initialize', request, CONTROL_TIMEOUT_MS, bootstrap)
       );
     } catch (error) {
       return failedRuntimeResult(error);
@@ -88,7 +118,10 @@ export class OnlyPreviewSearchRuntimeHandler
   ): Promise<OnlyPreviewResult<OnlyPreviewSearchSnapshot>> {
     try {
       const request = parseOnlyPreviewSearchInitializeRequest(params);
-      return await this._call(request.hostToken, 'refresh', request, CONTROL_TIMEOUT_MS);
+      return observeReturnedSnapshot(
+        request.hostToken,
+        await this._call(request.hostToken, 'refresh', request, CONTROL_TIMEOUT_MS)
+      );
     } catch (error) {
       return failedRuntimeResult(error);
     }

@@ -1,12 +1,13 @@
 ---
 name: bitterless-trench
 metadata:
-  version_code: "260813155645"
+  version_code: "260904151653"
 description: >-
   Research and persist BL Trench CA analyses, derived Index Wallet evidence, and explicitly
-  human-tagged Negative Wallet holdings for BSC, Solana, or Robinhood through the production
-  `bitterless` MCP server. Use when the user asks to analyze a token contract address, save a
-  source-backed multi-chain CA record, inspect the current positive/negative wallet dictionaries,
+  human-tagged Negative Wallet holdings for BSC, Solana, or Robinhood through the `bitterless`
+  (Production) or `bitterless-preview` (Preview) MCP server. Use when the user asks to analyze a
+  token contract address, save a source-backed multi-chain CA record, inspect the current
+  positive/negative wallet dictionaries,
   tag a negative wallet with the user's reason, refresh that wallet's separate holdings record, or
   convert and import a human-supplied person-wallet JSON file without overwriting existing data.
   This skill is read-only toward providers, never trades, and never handles credentials or writes
@@ -15,10 +16,12 @@ description: >-
 
 # Bitterless Trench
 
-Use read-only research to build bounded evidence, then persist it only through the production
-`bitterless` MCP server. Bitterless Main validates, canonicalizes, atomically writes, and rereads the
-record. Never open or modify Bitterless `userData`, SQLite, or Trench JSON directly. Never substitute
-a DEBUG MCP alias for real work.
+Use read-only research to build bounded evidence, then persist it only through a real Bitterless MCP
+server: `bitterless` (Production) or `bitterless-preview` (Preview), each holding its own records.
+Use whichever one is configured — a machine may have only one installed — and prefer `bitterless`
+when both are. Bitterless Main validates, canonicalizes, atomically writes, and rereads the record.
+Never open or modify Bitterless `userData`, SQLite, or Trench JSON directly. Never substitute a DEV
+or DEBUG MCP alias for real work.
 
 ## Keep the boundary strict
 
@@ -107,6 +110,6 @@ membership. Equal names on different addresses never merge people.
 
 ## Recover setup or provider failures
 
-If the production MCP server or skill is not installed, read
+If no real MCP server or the skill is not installed, read
 [references/mcp-setup.md](references/mcp-setup.md). If a provider is not already configured, keep the
 provider-dependent result unavailable; do not enter a credential-setup flow from this skill.
