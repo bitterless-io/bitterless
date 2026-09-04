@@ -399,6 +399,28 @@ select {
   flex: 1;
 }
 
+.onlypreview-shell__inline-error-copy {
+  flex: 0 0 auto;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--onlypreview-divider);
+  border-radius: 4px;
+  background: var(--onlypreview-surface);
+  color: var(--onlypreview-muted);
+  font-size: 11px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.onlypreview-shell__inline-error-copy:hover {
+  color: var(--onlypreview-ink);
+}
+
+.onlypreview-shell__inline-error-copy:focus-visible {
+  outline: 2px solid var(--onlypreview-focus);
+  outline-offset: -2px;
+}
+
 .onlypreview-shell__inline-error-dismiss {
   width: 22px;
   height: 22px;

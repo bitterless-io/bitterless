@@ -110,7 +110,7 @@ test('Project errors are dismissible and Project tree typography increases by on
   assert.match(i18n, /INDEX_PROTOCOL_ERROR:\s*'项目搜索索引返回了无效响应。'/);
   assert.match(i18n, /PROTOCOL_ERROR:\s*'The preview data stream could not be opened\.'/);
   assert.match(i18n, /PROTOCOL_ERROR:\s*'无法打开预览数据流。'/);
-  assert.match(store, /dismissError\(\): void \{\s*this\.errorMessage = '';\s*\}/);
+  assert.match(store, /dismissError\(\): void \{\s*this\.errorMessage = '';\s*onlyPreviewErrorDetail\.clear\(\);\s*\}/);
   assert.match(
     style,
     /\.onlypreview-shell__inline-error-dismiss \{[\s\S]*width:\s*22px;[\s\S]*cursor:\s*pointer;/

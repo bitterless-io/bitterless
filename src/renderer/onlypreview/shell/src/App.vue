@@ -139,6 +139,20 @@
             {{ onlyPreviewShellStore.errorMessage }}
           </span>
           <button
+            v-if="onlyPreviewErrorDetail.available"
+            name="onlypreview__copyIndexErrorDetail"
+            class="onlypreview-shell__inline-error-copy"
+            type="button"
+            :title="onlyPreviewI18n.project.copyErrorDetail"
+            @click="onlyPreviewErrorDetail.copy()"
+          >
+            {{
+              onlyPreviewErrorDetail.copied
+                ? onlyPreviewI18n.project.errorDetailCopied
+                : onlyPreviewI18n.project.copyErrorDetail
+            }}
+          </button>
+          <button
             name="onlypreview__dismissIndexError"
             class="onlypreview-shell__inline-error-dismiss"
             type="button"
@@ -384,6 +398,7 @@ import PreviewToolbar from './components/PreviewToolbar/PreviewToolbar.vue';
 import { onlyPreviewProjectWidthPersistence } from './onlyPreviewProjectWidthPersistence.service';
 import type { OnlyPreviewIndexEntry } from '@shared/onlypreview/onlyPreview.types';
 import { onlyPreviewShellStore } from './onlyPreviewShell.store';
+import { onlyPreviewErrorDetail } from './onlyPreviewErrorDetail.store';
 import {
   onlyPreviewTreeSelection,
   showOnlyPreviewTreeContextMenu

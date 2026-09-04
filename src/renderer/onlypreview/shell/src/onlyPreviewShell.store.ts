@@ -1,8 +1,5 @@
 import { reactive } from 'vue';
-import {
-  OnlyPreviewContractError,
-  unwrapOnlyPreviewResult
-} from '@shared/onlypreview/onlyPreview.contract';
+import { unwrapOnlyPreviewResult } from '@shared/onlypreview/onlyPreview.contract';
 import {
   type OnlyPreviewBounds,
   type OnlyPreviewFileRef,
@@ -23,8 +20,9 @@ import {
   type OnlyPreviewSearchSnapshot
 } from '@shared/onlypreview/onlyPreviewSearch.type';
 import { onlyPreviewClient } from '../../common/onlyPreviewClient';
+import { describeOnlyPreviewError, onlyPreviewErrorDetail } from './onlyPreviewErrorDetail.store';
 import { onlyPreviewEnv } from '../../common/contextBridge/onlyPreviewEnv.bridge';
-import { getOnlyPreviewErrorMessage, onlyPreviewI18n } from '../../common/onlyPreviewI18n';
+import { onlyPreviewI18n } from '../../common/onlyPreviewI18n';
 import { OnlyPreviewCharacterCountHostGate } from '../../common/onlyPreviewCharacterCountGate.service';
 import { sameOnlyPreviewSelection } from '../../common/onlyPreviewPresentation.service';
 import type { OnlyPreviewTreeRow } from './onlyPreviewShell.type';
@@ -66,10 +64,6 @@ import {
 import { onlyPreviewProjectWidthPersistence as projectWidthPersistence } from './onlyPreviewProjectWidthPersistence.service';
 import { OnlyPreviewDeferredIndexService } from './onlyPreviewDeferredIndex.service';
 
-const errorMessage = (error: unknown): string =>
-  error instanceof OnlyPreviewContractError
-    ? getOnlyPreviewErrorMessage(error.code)
-    : onlyPreviewI18n.errors.OPERATION_FAILED;
 export class OnlyPreviewShellStore {
   private readonly deferredIndex: OnlyPreviewDeferredIndexService;
   constructor(private readonly diagnostics: OnlyPreviewSearchDiagnostics = createOnlyPreviewSearchDiagnostics()) {
@@ -175,7 +169,7 @@ export class OnlyPreviewShellStore {
       if (!workspace) return;
       // The workspace-change event is the single authoritative update path for both views.
     } catch (error) {
-      this.errorMessage = errorMessage(error);
+      this.errorMessage = describeOnlyPreviewError(error);
     } finally {
       this.targetLoading = false;
     }
@@ -186,6 +180,7 @@ export class OnlyPreviewShellStore {
   }
   dismissError(): void {
     this.errorMessage = '';
+    onlyPreviewErrorDetail.clear();
   }
   async openSettings(): Promise<void> {
     const hostToken = onlyPreviewEnv.hostToken;
@@ -193,7 +188,7 @@ export class OnlyPreviewShellStore {
     try {
       unwrapOnlyPreviewResult(await onlyPreviewClient.openSettings({ hostToken }));
     } catch (error) {
-      this.errorMessage = errorMessage(error);
+      this.errorMessage = describeOnlyPreviewError(error);
     }
   }
   async openAgentSkillGuide(): Promise<void> {
@@ -202,7 +197,7 @@ export class OnlyPreviewShellStore {
     try {
       unwrapOnlyPreviewResult(await onlyPreviewClient.openAgentSkillGuide({ hostToken }));
     } catch (error) {
-      this.errorMessage = errorMessage(error);
+      this.errorMessage = describeOnlyPreviewError(error);
     }
   }
   async minimizeWindow(): Promise<void> {
@@ -258,7 +253,7 @@ export class OnlyPreviewShellStore {
     try {
       unwrapOnlyPreviewResult(await onlyPreviewClient.showFileContextMenu(request));
     } catch (error) {
-      this.errorMessage = errorMessage(error);
+      this.errorMessage = describeOnlyPreviewError(error);
     }
   }
   async copyProjectItem(
@@ -325,7 +320,7 @@ export class OnlyPreviewShellStore {
         })
       );
     } catch (error) {
-      this.errorMessage = errorMessage(error);
+      this.errorMessage = describeOnlyPreviewError(error);
     }
   }
 
@@ -415,7 +410,7 @@ export class OnlyPreviewShellStore {
     try {
       unwrapOnlyPreviewResult(await command());
     } catch (error) {
-      this.errorMessage = errorMessage(error);
+      this.errorMessage = describeOnlyPreviewError(error);
     }
   }
   private projectItemRequest(relativePath: string): (OnlyPreviewHostRequest & OnlyPreviewFileRef) | null {
@@ -452,7 +447,7 @@ export class OnlyPreviewShellStore {
       }
       await this.applyWorkspace(workspace, deferInitialIndex);
     } catch (error) {
-      if (generation === this.restoreGeneration) this.errorMessage = errorMessage(error);
+      if (generation === this.restoreGeneration) this.errorMessage = describeOnlyPreviewError(error);
     }
   }
   private async applyWorkspace(workspace: OnlyPreviewWorkspace, deferInitialIndex = false): Promise<void> {
@@ -500,7 +495,7 @@ export class OnlyPreviewShellStore {
       await this.loadSelectedParentListings();
       this.reportGlobalSearchContext();
     } catch (error) {
-      if (generation === this.restoreGeneration) this.errorMessage = errorMessage(error);
+      if (generation === this.restoreGeneration) this.errorMessage = describeOnlyPreviewError(error);
     }
   }
 
@@ -555,7 +550,7 @@ export class OnlyPreviewShellStore {
   }
   private failIndex(hostToken: string, workspaceId: string, error: unknown): void {
     this.indexLoading = false;
-    this.errorMessage = errorMessage(error);
+    this.errorMessage = describeOnlyPreviewError(error);
     this.indexProgressState = settleOnlyPreviewSearchProgress(this.indexProgressState);
     void onlyPreviewClient.reportProjectIndexFailed({ hostToken, workspaceId });
   }
@@ -660,7 +655,7 @@ export class OnlyPreviewShellStore {
     try {
       this.settings = unwrapOnlyPreviewResult(await onlyPreviewClient.getSettings({ hostToken }));
     } catch (error) {
-      this.errorMessage = errorMessage(error);
+      this.errorMessage = describeOnlyPreviewError(error);
     }
   }
 
@@ -719,7 +714,7 @@ export class OnlyPreviewShellStore {
       if (generation !== this.selectionGeneration) return;
       await this.syncSelection();
       if (generation !== this.selectionGeneration) return;
-      this.errorMessage = errorMessage(error);
+      this.errorMessage = describeOnlyPreviewError(error);
     }
   }
 
@@ -743,7 +738,7 @@ export class OnlyPreviewShellStore {
       this.applyPreviewPresentation(presentation);
     } catch (error) {
       if (generation !== this.previewPresentationFetchGeneration) return;
-      this.errorMessage = errorMessage(error);
+      this.errorMessage = describeOnlyPreviewError(error);
     }
   }
 
@@ -787,7 +782,7 @@ export class OnlyPreviewShellStore {
           : await onlyPreviewClient.revealInFolder({ hostToken, ...fileRef });
       unwrapOnlyPreviewResult(result);
     } catch (error) {
-      this.previewActionError = errorMessage(error);
+      this.previewActionError = describeOnlyPreviewError(error);
     }
   }
 
