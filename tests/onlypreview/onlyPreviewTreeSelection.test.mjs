@@ -124,10 +124,6 @@ test('the tree renders the selection and marks which row the preview came from',
   const app = source('src/renderer/onlypreview/shell/src/App.vue');
   assert.match(app, /aria-multiselectable="true"/);
   assert.match(app, /onlyPreviewTreeSelection\.isSelected\(row\.entry\.relativePath\)/);
-  assert.match(
-    app,
-    /'onlypreview-shell__tree-row--previewed':\s*\n?\s*onlyPreviewTreeSelection\.isPreviewed/
-  );
   // A modified click must return before the activation that loads a document.
   assert.match(
     app,
@@ -135,7 +131,11 @@ test('the tree renders the selection and marks which row the preview came from',
   );
   assert.match(app, /event\.shiftKey \? 'extend' : 'replace'/);
   assert.match(app, /apply\('all', null\)/);
-  assert.match(source('src/renderer/onlypreview/shell/src/App.less'), /tree-row--previewed/);
+  assert.doesNotMatch(app, /tree-row--previewed/);
+  assert.doesNotMatch(
+    source('src/renderer/onlypreview/shell/src/App.less'),
+    /tree-row--previewed/
+  );
 });
 
 test('the context menu carries the selection and the store stays inside its budget', () => {

@@ -201,7 +201,7 @@ export class OnlyPreviewProjectNativeActionService {
         id: 'onlypreview-delete',
         label:
           menuSelection.length > 1
-            ? fillLabel(labels.deleteManyMenu, { count: String(deleteSelection.length) })
+            ? fillLabel(labels.deleteManyMenu, { count: String(menuSelection.length) })
             : labels.delete,
         click: () => void this.deleteProjectSelectionFromMenu(currentRequest, menuSelection)
       }

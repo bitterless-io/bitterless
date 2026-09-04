@@ -14,7 +14,6 @@ import { onlyPreviewShellStore } from './onlyPreviewShell.store';
 export interface OnlyPreviewTreeSelectionHost {
   visibleRows: readonly { entry: { relativePath: string; nodeKind: string } }[];
   treeSelectedRelativePath: string | null;
-  selectedRelativePath: string;
 }
 
 /**
@@ -63,12 +62,6 @@ export class OnlyPreviewTreeSelectionController {
 
   isAnchor(relativePath: string): boolean {
     return this.anchor === relativePath;
-  }
-
-  // The row whose document the preview is showing. With several rows selected this is the only way
-  // to tell which one the content came from.
-  isPreviewed(relativePath: string): boolean {
-    return !!relativePath && this.host.selectedRelativePath === relativePath;
   }
 
   get count(): number {
