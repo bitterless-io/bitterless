@@ -180,8 +180,8 @@
             :class="{
               'onlypreview-shell__tree-row--selected':
                 onlyPreviewTreeSelection.isSelected(row.entry.relativePath),
-              'onlypreview-shell__tree-row--anchor':
-                onlyPreviewTreeSelection.isAnchor(row.entry.relativePath),
+              'onlypreview-shell__tree-row--previewed':
+                onlyPreviewTreeSelection.isPreviewed(row.entry.relativePath),
               'onlypreview-shell__tree-row--symlink': row.entry.nodeKind === 'symlink',
               'onlypreview-shell__tree-row--search-excluded': row.searchExcluded
             }"

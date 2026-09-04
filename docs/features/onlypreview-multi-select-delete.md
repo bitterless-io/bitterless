@@ -20,14 +20,31 @@ This feature keeps that machinery and widens it. It does not loosen any of its c
 
 ## Selection model
 
-The tree gains an ordered selection plus an **anchor**. The anchor is the row the preview belongs to;
-the selection is what an action applies to.
+The tree is a tree, but on screen it is a **one-dimensional list**: the flattened visible rows, in
+the order they are drawn. That order is what a range runs over, and it is recomputed from the tree on
+every gesture, so expanding or collapsing a folder re-aims the next range with no state to keep in
+step. Selecting row 1 (a collapsed folder), expanding it, and Shift-clicking row 5 therefore takes
+in `2`, `2/a` … `2/e` — every row visible between them.
+
+The tree gains an ordered selection plus an **anchor**: the last row the owner clicked, plainly or
+with Cmd/Ctrl. A Shift click does **not** move it, so ranging again re-aims the range from the same
+point instead of walking it. Owner rule, 2026-09-03: 「shift 就是 选中和最后一次选中文件之间的可见文件」.
+
+```text
+Cmd 2, Cmd 6      selection {2, 6}          anchor 6
+Shift 1           selection {1,2,3,4,5,6}   anchor 6   ← range 1 → 6
+Shift 3           selection {3,4,5,6}       anchor 6   ← re-aimed, not extended
+```
+
+A Shift range **replaces** the selection rather than adding to it, so the second Shift above drops 1
+and 2. The anchor is **not** the previewed row: a Cmd click moves the anchor without loading a
+document.
 
 | gesture | selection | anchor | preview |
 | --- | --- | --- | --- |
 | click | just that row | that row | follows |
 | ⌘/Ctrl + click | toggles that row | that row | **unchanged** |
-| ⇧ + click | anchor → clicked row, over the flattened visible rows | unchanged | **unchanged** |
+| ⇧ + click | replaced by anchor → clicked row, over the flattened visible rows | unchanged | **unchanged** |
 | ↑ / ↓ | just that row | that row | follows |
 | ⇧ + ↑ / ↓ | extends by one visible row | unchanged | **unchanged** |
 | ⌘/Ctrl + A | every visible row | unchanged | **unchanged** |
@@ -42,8 +59,9 @@ subtree, because the folder itself is selected.
 
 Every selected row keeps the existing blue surface
 ([onlypreview-project-selection-blue-091](../plan/tasks/onlypreview-project-selection-blue-091.md)).
-The anchor additionally carries a left rail, so it is always clear which of several selected rows the
-preview came from.
+The **previewed** row additionally carries a left rail, so it is always clear which of several
+selected rows the shown document came from. That is the previewed row, not the anchor — a Cmd click
+moves the anchor and must not move the rail.
 
 A selection is dropped when the workspace changes, when the rows are replaced by a search result
 list, or when an entry disappears from the listing — a selection that outlives its rows would let an
@@ -72,6 +90,10 @@ more than one row do:
 With more than one row targeted, the four copy actions cover the whole selection and Delete reads
 `Delete N Items…`. `Delete…` on a folder row is new. The root is still never deletable, never
 renameable, and never part of a multi-selection.
+
+**New Folder and Rename are disabled while several rows are targeted** (owner rule, 2026-09-03).
+Creating inside several folders at once, or renaming several rows to one name, has no meaning, so the
+items are shown and inert rather than silently picking one row.
 
 ## Copy
 

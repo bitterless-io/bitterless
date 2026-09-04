@@ -54,7 +54,9 @@ test('a toggle adds and removes without moving the preview', () => {
 test('toggling the last row off leaves nothing selected', () => {
   const result = resolveOnlyPreviewSelection('toggle', state(['a'], 'a'), 'a', ROWS);
   assert.deepEqual(result.paths, []);
-  assert.equal(result.anchor, null);
+  // The anchor stays where the click was: it is the last row the owner clicked, and a Shift click
+  // after this should still range from there.
+  assert.equal(result.anchor, 'a');
 });
 
 test('a range runs over the visible rows and keeps the anchor', () => {
@@ -122,7 +124,10 @@ test('the tree renders the selection and marks which row the preview came from',
   const app = source('src/renderer/onlypreview/shell/src/App.vue');
   assert.match(app, /aria-multiselectable="true"/);
   assert.match(app, /onlyPreviewTreeSelection\.isSelected\(row\.entry\.relativePath\)/);
-  assert.match(app, /'onlypreview-shell__tree-row--anchor':\s*\n?\s*onlyPreviewTreeSelection\.isAnchor/);
+  assert.match(
+    app,
+    /'onlypreview-shell__tree-row--previewed':\s*\n?\s*onlyPreviewTreeSelection\.isPreviewed/
+  );
   // A modified click must return before the activation that loads a document.
   assert.match(
     app,
@@ -130,7 +135,7 @@ test('the tree renders the selection and marks which row the preview came from',
   );
   assert.match(app, /event\.shiftKey \? 'extend' : 'replace'/);
   assert.match(app, /apply\('all', null\)/);
-  assert.match(source('src/renderer/onlypreview/shell/src/App.less'), /tree-row--anchor/);
+  assert.match(source('src/renderer/onlypreview/shell/src/App.less'), /tree-row--previewed/);
 });
 
 test('the context menu carries the selection and the store stays inside its budget', () => {
@@ -151,4 +156,71 @@ test('the context menu carries the selection and the store stays inside its budg
   assert.match(controller, /selection: onlyPreviewTreeSelection\.entries\(\)/);
   // The root row keeps the store's own menu; it has no selection to carry.
   assert.match(controller, /entry\.relativePath === ''[\s\S]*onlyPreviewShellStore\.showFileContextMenu/);
+});
+
+test('a Shift range runs from the last clicked row and re-aims instead of walking', () => {
+  // Owner rule: 「shift 就是 选中和最后一次选中文件之间的可见文件」. Cmd-click 2 then 6, Shift on 1 gives
+  // 1-6; Shift on 3 after that gives 3-6, because the Shift click does not move the anchor.
+  const rows = ['1', '2', '3', '4', '5', '6'];
+  const afterTwo = resolveOnlyPreviewSelection('toggle', state([], null), '2', rows);
+  const afterSix = resolveOnlyPreviewSelection('toggle', afterTwo, '6', rows);
+  assert.deepEqual(afterSix.paths, ['2', '6']);
+  assert.equal(afterSix.anchor, '6', 'a Cmd click is the last selected row');
+
+  const toOne = resolveOnlyPreviewSelection('extend', afterSix, '1', rows);
+  assert.deepEqual(toOne.paths, ['1', '2', '3', '4', '5', '6']);
+  assert.equal(toOne.anchor, '6');
+
+  const toThree = resolveOnlyPreviewSelection('extend', toOne, '3', rows);
+  assert.deepEqual(toThree.paths, ['3', '4', '5', '6']);
+  assert.equal(toThree.anchor, '6');
+});
+
+test('a Cmd click that empties the selection still leaves the anchor where it clicked', () => {
+  const rows = ['1', '2', '3'];
+  const emptied = resolveOnlyPreviewSelection('toggle', state(['2'], '2'), '2', rows);
+  assert.deepEqual(emptied.paths, []);
+  assert.equal(emptied.anchor, '2');
+  assert.deepEqual(resolveOnlyPreviewSelection('extend', emptied, '3', rows).paths, ['2', '3']);
+});
+
+test('the range follows the tree as folders open and close', () => {
+  // The one-dimensional order is the flattened visible rows, so expanding a folder puts its children
+  // into the next range without any state to keep in step.
+  const collapsed = ['1', '2', '5'];
+  const expanded = ['1', '2', '2/a', '2/b', '5'];
+  const anchored = state(['1'], '1');
+  assert.deepEqual(resolveOnlyPreviewSelection('extend', anchored, '5', collapsed).paths, [
+    '1',
+    '2',
+    '5'
+  ]);
+  assert.deepEqual(resolveOnlyPreviewSelection('extend', anchored, '5', expanded).paths, [
+    '1',
+    '2',
+    '2/a',
+    '2/b',
+    '5'
+  ]);
+});
+
+test('the Shift anchor is the controller own state, not the tree highlight', () => {
+  const controller = source('src/renderer/onlypreview/shell/src/onlyPreviewTreeSelection.store.ts');
+  // `treeSelectedRelativePath` also decides where New Folder lands, so a Cmd click must not move it.
+  assert.match(controller, /anchorPath: string \| null = null;/);
+  assert.match(controller, /this\.anchorPath = result\.anchor;/);
+  assert.doesNotMatch(controller, /host\.treeSelectedRelativePath =/);
+  assert.match(controller, /this\.anchorPath \?\? this\.host\.treeSelectedRelativePath/);
+});
+
+test('actions that only make sense for one row are inert while several are selected', () => {
+  const actions = source('src/main/onlypreview/onlyPreviewProjectNativeAction.service.ts');
+  const menuBody = actions.slice(
+    actions.indexOf('async showFileContextMenu('),
+    actions.indexOf('async showProjectRootContextMenu(')
+  );
+  const newFolder = menuBody.slice(menuBody.indexOf("id: 'onlypreview-new-folder'"));
+  assert.match(newFolder.slice(0, 400), /enabled: menuSelection\.length <= 1/);
+  const rename = menuBody.slice(menuBody.indexOf("id: 'onlypreview-rename'"));
+  assert.match(rename.slice(0, 400), /enabled: menuSelection\.length <= 1/);
 });

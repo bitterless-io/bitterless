@@ -141,6 +141,10 @@ export class OnlyPreviewProjectNativeActionService {
       template.push({
         id: 'onlypreview-new-folder',
         label: labels.newFolder,
+        // Owner rule, 2026-09-03: with several rows selected, New Folder is inert. Creating inside
+        // several folders at once has no meaning, so the item is shown and disabled rather than
+        // silently picking one of them.
+        enabled: menuSelection.length <= 1,
         click: () =>
           this.requestNewFolder(authority.host.hostId, currentRequest, {
             parentRelativePath: item.relativePath,
@@ -153,6 +157,8 @@ export class OnlyPreviewProjectNativeActionService {
     template.push({
       id: 'onlypreview-rename',
       label: labels.rename,
+      // Rename edits one row's name; there is no meaning for several at once.
+      enabled: menuSelection.length <= 1,
       click: () =>
         this.requestRename(authority.host.hostId, currentRequest.workspaceId, item.relativePath)
     });

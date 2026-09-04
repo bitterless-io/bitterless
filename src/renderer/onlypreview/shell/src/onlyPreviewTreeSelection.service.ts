@@ -5,8 +5,15 @@ export type OnlyPreviewSelectionIntent = 'replace' | 'toggle' | 'extend' | 'all'
 
 export interface OnlyPreviewSelectionState {
   paths: readonly string[];
-  // The row the preview belongs to. A multi-select gesture never moves it, which is what keeps a
-  // shift-click across forty rows from starting forty previews.
+  /**
+   * The row a Shift range runs from: the last row the owner clicked, plainly or with Cmd/Ctrl.
+   *
+   * Owner rule, 2026-09-03: 「shift 就是 选中和最后一次选中文件之间的可见文件」. A Shift click does not
+   * move it, so ranging again from the same anchor re-aims the range instead of walking it — after
+   * Cmd-clicking 2 then 6, Shift on 1 gives 1-6 and Shift on 3 then gives 3-6.
+   *
+   * It is not the previewed row. A Cmd click moves the anchor without loading a document.
+   */
   anchor: string | null;
 }
 
@@ -52,15 +59,24 @@ export const resolveOnlyPreviewSelection = (
     const paths = present
       ? state.paths.filter((path) => path !== target)
       : [...withoutRoot(state.paths), target];
-    // Deselecting the last row leaves nothing selected, and the anchor goes with it.
-    return { paths, anchor: paths.length ? target : null, previews: false };
+    // The anchor follows the click even when the toggle empties the selection: it is the last row
+    // the owner clicked, and a Shift click after that should still range from there.
+    return { paths, anchor: target, previews: false };
   }
   const from = state.anchor ?? target;
-  return { paths: withoutRoot(rangeBetween(rows, from, target)), anchor: state.anchor, previews: false };
+  return {
+    paths: withoutRoot(rangeBetween(rows, from, target)),
+    anchor: state.anchor,
+    previews: false
+  };
 };
 
 /**
  * Drop selected rows that are no longer in the tree.
+ *
+ * `rows` is the tree's one-dimensional topology — the flattened visible order, which is what the
+ * owner sees and what a range runs over. It is recomputed from the tree on every call, so expanding
+ * or collapsing a folder re-aims the next range without any state to keep in step.
  *
  * A selection that outlives its rows would let an action target a path that is not there any more —
  * after a delete, an external change, or a workspace swap.

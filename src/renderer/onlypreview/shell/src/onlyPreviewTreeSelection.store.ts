@@ -14,6 +14,7 @@ import { onlyPreviewShellStore } from './onlyPreviewShell.store';
 export interface OnlyPreviewTreeSelectionHost {
   visibleRows: readonly { entry: { relativePath: string; nodeKind: string } }[];
   treeSelectedRelativePath: string | null;
+  selectedRelativePath: string;
 }
 
 /**
@@ -25,6 +26,14 @@ export interface OnlyPreviewTreeSelectionHost {
  */
 export class OnlyPreviewTreeSelectionController {
   paths: string[] = [];
+  /**
+   * The row a Shift range runs from.
+   *
+   * Its own field, not the tree's `treeSelectedRelativePath`: a Cmd click moves the anchor without
+   * moving the tree highlight or the preview, and `treeSelectedRelativePath` also decides where New
+   * Folder lands. Conflating them would move the create destination on every Cmd click.
+   */
+  anchorPath: string | null = null;
 
   // A getter, not the store itself: the shell store imports this module for `withTreeSelection`, so
   // reading `onlyPreviewShellStore` at construction time would hit its temporal dead zone whenever
@@ -39,8 +48,10 @@ export class OnlyPreviewTreeSelectionController {
     return this.host.visibleRows.map((row) => row.entry.relativePath);
   }
 
+  // With nothing clicked yet, a range starts from whatever the tree already highlights, which is the
+  // row the owner is looking at.
   private get anchor(): string | null {
-    return this.host.treeSelectedRelativePath;
+    return this.anchorPath ?? this.host.treeSelectedRelativePath;
   }
 
   isSelected(relativePath: string): boolean {
@@ -52,6 +63,12 @@ export class OnlyPreviewTreeSelectionController {
 
   isAnchor(relativePath: string): boolean {
     return this.anchor === relativePath;
+  }
+
+  // The row whose document the preview is showing. With several rows selected this is the only way
+  // to tell which one the content came from.
+  isPreviewed(relativePath: string): boolean {
+    return !!relativePath && this.host.selectedRelativePath === relativePath;
   }
 
   get count(): number {
@@ -73,12 +90,13 @@ export class OnlyPreviewTreeSelectionController {
       this.rows
     );
     this.paths = result.previews ? [] : result.paths;
-    if (result.anchor !== this.anchor) this.host.treeSelectedRelativePath = result.anchor;
+    this.anchorPath = result.anchor;
     return result.previews;
   }
 
   clear(): void {
     this.paths = [];
+    this.anchorPath = null;
   }
 
   // Called after the tree's rows change, so an action can never target a row that is gone.
