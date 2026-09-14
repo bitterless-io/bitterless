@@ -196,6 +196,13 @@ design document.
   fixed 2026-09-12; restart verification pending: [task 173](plan/tasks/maestro-sqlite-agent-build-173.md)
   refreshes DEBUG timestamps, aligns both SQLite preloads to the compiled version and uses
   Maestro diagnostics; migration audit and the original DEBUG_PROD build pass.
+- [打包被产物审计拦下:`canvas` 缺失 + asar 268 MiB 超限](issues/preview-package-audit-canvas-and-vendored-cli.md) —
+  fixed(2026-09-14):两条同日(09-12)进来的独立原因。① 主进程新引入 linkedom,而它的
+  `try { require("canvas") } catch { shim }` 被 Vite 原样内联,审计把这个**自带回退的可选 require**
+  当成了缺包 —— 现在由 `OPTIONAL_EXTERNAL_PACKAGES` 白名单放行(表外仍硬红)。② AI-CRMS 退役契约
+  D3 说「`packages/micromeet-cli/` 整目录删」,builder 排除行与 .gitignore 行删了、目录没删,于是
+  61MB 的 mac-arm64 CLI 二进制先被 `chore: sync` 提交进仓库、又被打进 asar(+60.8 MiB,正好是全部
+  增量)—— 补做删除后 asar 回到 ~207 MiB。
 - [`tools:init` entry and unaudited packaged tool platform](issues/tools-init-entry-and-unaudited-packaged-tool-platform.md) —
   implemented; owner initialization/package verification pending (2026-09-10): the initialization
   command is now `yarn tools:init` in both this repository and `micromeet-cowork` (all three stores,

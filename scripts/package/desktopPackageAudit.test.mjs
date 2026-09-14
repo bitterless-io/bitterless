@@ -595,6 +595,37 @@ test('synthetic app.asar missing an external runtime package root fails', async 
   );
 });
 
+test('an optional external package may be absent, and is still reported as referenced', async () => {
+  // linkedom inlines `try { require("canvas") } catch { shim }`; canvas is deliberately not a
+  // dependency, so its absence is the intended path rather than a missing runtime package.
+  const fixture = await createSyntheticApplication({
+    archiveFiles: {
+      'out/main/app.main.js': 'module.exports = require("canvas");\n',
+    },
+  });
+
+  const result = auditDesktopPackage(fixture.applicationPath);
+  assert.deepEqual(result.externalPackageRoots, ['canvas']);
+});
+
+test('the optional allowlist does not excuse any other absent package root', async () => {
+  const fixture = await createSyntheticApplication({
+    archiveFiles: {
+      'out/main/app.main.js': [
+        'const canvas = require("canvas");',
+        'const other = require("missing-runtime");',
+        'module.exports = { canvas, other };',
+        '',
+      ].join('\n'),
+    },
+  });
+
+  assert.throws(
+    () => auditDesktopPackage(fixture.applicationPath),
+    /missing external package roots: missing-runtime \(required by \/out\/main\/app\.main\.js\)/,
+  );
+});
+
 test('synthetic package subpath imports pass when their package root is present', async () => {
   const fixture = await createSyntheticApplication({
     archiveFiles: {

@@ -50,6 +50,18 @@ const RUNTIME_PROFILE_MARKER_ENTRY = '/out/.bitterless-runtime-profile.json';
 const ELECTRON_BUILTINS = new Set(['electron', 'original-fs']);
 const NODE_BUILTINS = new Set(builtinModules.map((moduleName) => moduleName.replace(/^node:/, '')));
 
+// External roots a packaged main bundle may reference WITHOUT shipping them. Only optional
+// requires with a real fallback belong here — everything else missing is a runtime crash.
+//
+//   canvas — linkedom's commonjs/canvas.cjs is `try { require('canvas') } catch { canvas-shim }`,
+//            a native accelerator it deliberately does not depend on (it needs a build toolchain).
+//            Vite inlines that try/catch into out/main, so the AST scan sees a bare require. Absent
+//            means the shim runs, which is what linkedom intends; src/main/net/articleExtract.ts
+//            only parses HTML for Readability and never touches canvas pixels.
+const OPTIONAL_EXTERNAL_PACKAGES = Object.freeze(new Set([
+  'canvas',
+]));
+
 const BANNED_PACKAGES = Object.freeze([
   '@arco-design/web-vue',
   '@electron/asar',
@@ -823,9 +835,17 @@ const auditDesktopPackage = (inputPath, options = {}) => {
     failures.push(`could not inspect packaged runtime imports: ${error.message}`);
   }
   if (externalPackageReferences) {
-    const missingExternalPackages = [...externalPackageReferences]
+    const absentExternalPackages = [...externalPackageReferences]
       .filter(([packageName]) => !packageIsPresent(archiveEntries, packageName))
       .sort(([left], [right]) => left.localeCompare(right));
+    for (const [packageName] of absentExternalPackages) {
+      if (!OPTIONAL_EXTERNAL_PACKAGES.has(packageName)) continue;
+      console.log(
+        `[desktop-package-audit] optional external package ${packageName} is absent; its in-bundle fallback runs`,
+      );
+    }
+    const missingExternalPackages = absentExternalPackages
+      .filter(([packageName]) => !OPTIONAL_EXTERNAL_PACKAGES.has(packageName));
     if (missingExternalPackages.length > 0) {
       const details = missingExternalPackages.map(([packageName, entries]) => {
         return `${packageName} (required by ${[...entries].sort().join(', ')})`;
