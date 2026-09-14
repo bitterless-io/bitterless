@@ -5,6 +5,7 @@ import { MAESTRO_PARTITION } from '@maestro-main/data/maestroDataRoot'
 export interface ShortcutActions {
   newTab: () => void
   closeActiveTab: () => void
+  searchSessions: () => boolean
 }
 
 const shortcutContents = new WeakSet<WebContents>()
@@ -41,6 +42,7 @@ export const guardWindowCloseShortcut = (contents: WebContents): void => {
 }
 
 const runShortcut = (key: string, actions: ShortcutActions, contents: WebContents): boolean => {
+  if (key === 'f') return actions.searchSessions()
   if (key !== 't' && key !== 'w') return false
   const now = Date.now()
   const last = lastShortcutAt.get(key) || 0
@@ -80,12 +82,13 @@ const installShortcutsForWebContents = (contents: WebContents, actions: Shortcut
   if (!claimsShortcuts || shortcutContents.has(contents)) return
   shortcutContents.add(contents)
   contents.on('before-input-event', (event, input) => {
-    if (input.type !== 'keyDown') return
+    if (input.type !== 'keyDown' || input.isComposing) return
     const mod = process.platform === 'darwin' ? input.meta : input.control
     if (!mod || input.alt || input.shift) return
     // A terminal owns Cmd+W outright: let the key through untouched so its own handler closes a
     // pane. Cmd+T is still ours — the terminal has no use for it.
     const key = String(input.key || '').toLowerCase()
+    if (key === 'f' && input.isAutoRepeat) { event.preventDefault(); return }
     if (key === 'w' && terminalKeyboardOwners.has(contents)) return
     if (runShortcut(key, actions, contents)) event.preventDefault()
   })

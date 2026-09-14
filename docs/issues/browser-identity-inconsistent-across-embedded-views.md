@@ -141,6 +141,12 @@ for Chrome 140 and silently wrong for 144 and 150.
 - Toggling the per-tab debugger back on republishes `attachReady`, so a navigation issued right
   after the toggle waits for the re-applied override.
 
+**2026-09-14 Maestro navigation amendment:** first navigation now waits for required identity,
+interception and document-start setup through `prepareNavigation`, after real blank-document
+prewarming. It no longer waits for the complete `attachReady`/current-document evaluation promise
+or navigates unconfigured after the old three-second fallback. A required-setup failure has an
+explicit retry path. See [restored browser tab navigation](restored-browser-tab-navigation-delay.md).
+
 Deliberately **not** fixed: omni cells still have no CDP override, so they retain stock-Electron
 client-hint behaviour (no `Sec-CH-UA` on top-level navigations, no `Google Chrome` brand). Adding
 one would mean attaching a debugger to those views, which would take DevTools away from them. The

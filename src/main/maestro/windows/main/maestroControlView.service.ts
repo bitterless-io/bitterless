@@ -1,4 +1,5 @@
 import { WebContentsView } from 'electron'
+import { xpcMain } from 'electron-xpc/main'
 import type { BrowserWindow } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { injectable } from 'inversify'
@@ -19,6 +20,7 @@ export const shouldOpenControlDevTools = (): boolean => {
 
 export interface MaestroControlViewServiceState {
   browserWindow: BrowserWindow | null
+  dismissBrowserHistory?(): void;
   emitTrace(event: TraceEvent): void
   /**
    * Where a web link clicked INSIDE the panel lands: a new operation tab (Ral 2026-09-08, ported
@@ -32,6 +34,7 @@ export interface MaestroControlViewServiceState {
 @injectable()
 export class MaestroControlViewService extends CommonService<MaestroControlViewServiceState> {
   private view: WebContentsView | null = null
+  private focusSearchOnLayout = false
   private readonly applyBounds = createBoundsApplier()
 
   create(): Promise<void> {
@@ -48,13 +51,17 @@ export class MaestroControlViewService extends CommonService<MaestroControlViewS
     })
     view.setVisible(false)
     this.view = view
-    // These two chords belong to the focused chat, not the app menu's macOS Hide action.
+    view.webContents.on('before-mouse-event', (_event, mouse) => {
+      if (mouse.type === 'mouseDown') this._state.dismissBrowserHistory?.();
+    });
+    view.webContents.on('focus', () => this._state.dismissBrowserHistory?.());
+    // Chat shortcuts reach DOM handlers; editable controls retain Chromium's native text undo.
     // Keep DOM events intact; every other key (including key-up) restores normal menu routing.
     view.webContents.on('before-input-event', (_event, input) => {
       const command = process.platform === 'darwin' ? input.meta : input.control
       view.webContents.setIgnoreMenuShortcuts(Boolean(
         input.type === 'keyDown' && command && !input.alt && !input.shift &&
-        !input.isComposing && ['h', 'n'].includes(input.key.toLowerCase())
+        !input.isComposing && ['h', 'n', 'z'].includes(input.key.toLowerCase())
       ))
     })
     win.contentView.addChildView(view)
@@ -93,16 +100,31 @@ export class MaestroControlViewService extends CommonService<MaestroControlViewS
     this.setBounds(bounds)
   }
 
+  openSessionSearch(): boolean {
+    const view = this.view
+    if (!view || view.webContents.isDestroyed()) return false
+    const bounds = view.getBounds()
+    this.focusSearchOnLayout = bounds.width <= 0 || bounds.height <= 0
+    if (!this.focusSearchOnLayout) view.webContents.focus()
+    xpcMain.broadcast('maestro/session-search', {})
+    return true
+  }
+
   setBounds(rect: ViewRect): void {
     const view = this.view
     if (!view || view.webContents.isDestroyed()) return
     this.applyBounds(view, rect)
     view.setVisible(Math.round(rect.width) > 0 && Math.round(rect.height) > 0)
+    if (this.focusSearchOnLayout && Math.round(rect.width) > 0 && Math.round(rect.height) > 0) {
+      this.focusSearchOnLayout = false
+      view.webContents.focus()
+    }
   }
 
   reset(): void {
     const view = this.view
     this.view = null
+    this.focusSearchOnLayout = false
     if (!view || view.webContents.isDestroyed()) return
     try {
       view.webContents.close()

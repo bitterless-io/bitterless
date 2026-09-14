@@ -15,6 +15,11 @@ export const resolveZellijChildEnvironment = (
   env.CLICOLOR = '1';
   for (const key of ['NO_COLOR', 'NODE_DISABLE_COLORS', 'FORCE_COLOR', 'CLICOLOR_FORCE'])
     delete env[key];
+  // launchd starts a GUI app with no locale, and under C/POSIX the macOS system encoding is Mac OS
+  // Roman — UTF-8 leaving the terminal through it arrives as `Ê≤°Êúâ` instead of `没有`. Fills the
+  // gap only: any locale the launcher set, or the user's KDL env sets later, is theirs.
+  if (options.platform === 'darwin' && !env.LANG && !env.LC_ALL && !env.LC_CTYPE)
+    env.LANG = 'en_US.UTF-8';
   if (options.platform !== 'darwin' || env.ZELLIJ_SOCKET_DIR) return env;
   const uid = options.uid;
   if (typeof uid !== 'number' || !Number.isInteger(uid) || uid < 0 || uid > 0xffffffff) {

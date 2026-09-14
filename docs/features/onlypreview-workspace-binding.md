@@ -1,5 +1,10 @@
 # 会话的工作区和 OnlyPreview 绑在一起
 
+> **2026-09-14 当前规则**：停用 workspace 只解绑匹配的 Project，保留 OnlyPreview tab / window
+> 及进程，显示选择工作区引导；再次选择复用该承载和有效索引。下文 2026-09-10
+> “收掉 / destroyStandalone”实现记录已被替代，详见
+> [清除 workspace 保留 tab](../issues/onlypreview-workspace-clear-retains-tab.md)。
+
 Ral 2026-09-10：
 
 > 2. 选择 workspace 后自动就打开 onlypreview 如果关闭 workspace（clear workspace）onlypreview
@@ -14,11 +19,11 @@ Ral 2026-09-10：
 | --- | --- |
 | 选中一个工作区 | 打开它 |
 | 换成另一个目录 | 加载换过之后那个目录 |
-| 停用（原「clear」） | 收掉——但**只在开着的正是它**时 |
+| 停用（原「clear」） | 仅解绑匹配的 Project，保留承载并展示选择工作区引导 |
 
 「替换」不需要单独一条路径：显式打开会把项目根换成新的那个目录，所以选中和替换是**同一个调用**。
 
-## 三个判断
+## 2026-09-10 实现记录（关闭承载部分已被替代）
 
 **1. 挂在人的动作上，不挂在状态同步上。**
 
@@ -95,7 +100,7 @@ tooltip 从此说同一个名字。
 bl 走端口是因为 `check:maestro` 的别名边界禁止 maestro 那棵树 import OnlyPreview；cowork 没有这条
 边界，宿主适配器直接导出函数。
 
-## 验证
+## 2026-09-10 验证记录（关闭承载断言需按当前契约更新）
 
 - **源码守卫 12 条 / 两仓各一份**：`tests/onlypreview/onlyPreviewWorkspaceBinding.test.mjs` ·
   cowork `tests/unit/onlyPreviewWorkspaceBinding.test.mjs`。

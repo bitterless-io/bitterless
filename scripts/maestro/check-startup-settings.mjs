@@ -1,4 +1,5 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { throws } from 'node:assert/strict'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -62,7 +63,7 @@ const assert = (condition, message) => {
 }
 
 const { CoachSettingsService, DEFAULT_START_URL, isDefaultStartUrl, normalizeUrl } = loadTsModule('@maestro-main/settings/coachSettings.service')
-const { DEFAULT_PRESET_MODEL, LLM_PRESETS, normalizeLlmTarget } = loadTsModule('@maestro-main/llm/llmModels')
+const { DEFAULT_PRESET_MODEL, LLM_PRESETS, normalizeLlmTarget, requireSelectableLlmTarget } = loadTsModule('@maestro-main/llm/llmModels')
 const { defaultLlmEffort } = loadTsModule('@maestro-shared/coach.api')
 const settingsSource = readFileSync(join(root, 'main/maestro/settings/coachSettings.service.ts'), 'utf8')
 const controllerSource = readFileSync(join(root, 'main/maestro/windows/main/maestroWindow.controller.ts'), 'utf8')
@@ -111,6 +112,16 @@ try {
     !LLM_PRESETS.some((preset) => preset.model === 'gpt-5.5'),
     'GPT-5.5 已退役,不该再出现在预设列表里'
   )
+  assert(
+    JSON.stringify(LLM_PRESETS.filter((preset) => preset.provider === 'openai-codex').map((preset) => preset.model)) ===
+      JSON.stringify(['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']),
+    'Codex choices must run from Astra through Sol and Terra to Luna, without retired Mini'
+  )
+  throws(
+    () => requireSelectableLlmTarget({ provider: 'openai-codex', model: 'gpt-5.4-mini', effort: 'low' }),
+    /Unknown LLM model/,
+    'a new explicit model selection must reject retired Mini'
+  )
   for (const retired of [
     { provider: 'openai-codex', model: 'gpt-5.5', effort: 'xhigh' },
     { provider: 'claude', model: 'claude-opus-4-8', effort: 'high' }
@@ -135,7 +146,7 @@ try {
   )
 
   // Ral 2026-09-11:「默认模型统一到 gpt-6-astra medium effort」。
-  // **默认档不是 `efforts[0]`** —— astra 的列表按升序给 picker 用(low..max),默认落在中间。
+  // **默认档不是 `efforts[0]`** —— astra 的列表按降序给 picker 用(max..low),默认落在中间。
   // 2026-09-11 之前 bl 三处都写 `efforts[0]`,等于把 medium 静静改成 low,且**不报错**。
   const astra = LLM_PRESETS.find((preset) => preset.model === 'gpt-6-astra')
   assert(astra?.effort === 'medium', `astra 预设默认档必须是 medium,实得 ${astra?.effort}`)
@@ -147,6 +158,37 @@ try {
     normalizeLlmTarget({ provider: 'openai-codex', model: 'gpt-6-astra', effort: 'bogus' }).effort === 'medium',
     '非法 effort 应回落到预设声明的默认档(medium),不是 efforts[0]'
   )
+
+  // 老设置必须从磁盘读出 Luna,随后保存也要落盘为 Luna;会话 target 走另一条归一化入口。
+  const legacyDir = mkdtempSync(join(dir, 'legacy-model-'))
+  const legacyFile = join(legacyDir, 'coach-settings.json')
+  const legacyService = new CoachSettingsService(legacyDir)
+  for (const effort of ['low', 'medium', 'high', 'xhigh', 'max']) {
+    writeFileSync(legacyFile, JSON.stringify({ llmProvider: 'codex', llmModel: ' gpt-5.4-mini ', llmEffort: effort }))
+    const migrated = legacyService.read()
+    assert(migrated.llmProvider === 'openai-codex' && migrated.llmModel === 'gpt-5.6-luna', 'saved Mini settings must load as Codex Luna')
+    assert(migrated.llmEffort === effort, `saved Mini settings must retain supported effort ${effort}`)
+    legacyService.save({ startUrl: 'clinic.example.test' })
+    const persisted = JSON.parse(readFileSync(legacyFile, 'utf8'))
+    assert(persisted.llmModel === 'gpt-5.6-luna' && persisted.llmEffort === effort, 'saving migrated settings must persist Luna and its effort')
+    for (const provider of ['openai-codex', 'codex', 'openai']) {
+      const target = normalizeLlmTarget({ provider, model: ' gpt-5.4-mini ', effort })
+      assert(target.provider === 'openai-codex' && target.model === 'gpt-5.6-luna', `saved ${provider} Mini conversation targets must migrate to Luna`)
+      assert(target.effort === effort, `migrated Mini conversation targets must retain supported effort ${effort}`)
+    }
+  }
+  assert(
+    normalizeLlmTarget({ provider: 'openai-codex', model: 'gpt-5.4-mini', effort: 'bogus' }).effort === 'low',
+    'a migrated Mini target with unsupported effort must use the Luna default'
+  )
+  for (const preset of LLM_PRESETS) {
+    for (const { id: effort } of preset.efforts) {
+      const target = requireSelectableLlmTarget({ provider: preset.provider, model: preset.model, effort })
+      assert(target.model === preset.model && target.effort === effort, `active ${preset.model}/${effort} targets must remain unchanged`)
+      const activeSettings = legacyService.save({ llmProvider: preset.provider, llmModel: preset.model, llmEffort: effort })
+      assert(activeSettings.llmModel === preset.model && activeSettings.llmEffort === effort, `active ${preset.model}/${effort} settings must remain unchanged`)
+    }
+  }
 
   const reset = service.save({ startUrl: '' })
   assert(reset.startUrl === DEFAULT_START_URL, 'blank saved startUrl should reset to default')

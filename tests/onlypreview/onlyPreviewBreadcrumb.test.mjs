@@ -83,3 +83,31 @@ test('the resolver needs no index, so the breadcrumb is correct before the index
   // 这里两者一视同仁所以不查 —— 于是索引未就绪时面包屑已经是对的,而不是先空着再补上。
   assert.equal(tree.resolveOnlyPreviewBreadcrumb.length, 3, '签名不该多出一个 index 参数');
 });
+
+const footer = (previewPresentation, options = {}) => tree.resolveOnlyPreviewStatusBreadcrumb({
+  workspace: { ...workspace, workspaceId: 'project-a' },
+  treeSelectedRelativePath: 'old-selection.md', selectedRelativePath: 'old-selection.md',
+  previewPresentation, ...options
+});
+
+test('footer follows internal preview while the independent tree selection stays unchanged', () => {
+  assert.equal(footer({ fileRef: { workspaceId: 'project-a', relativePath: 'new.md' } }).title,
+    workspace.displayPath + '/new.md');
+});
+
+test('footer follows external preview with or without a Project and handles Windows paths', () => {
+  for (const currentWorkspace of [null, { ...workspace, workspaceId: 'project-a' }]) {
+    const crumb = footer({ fileRef: { workspaceId: 'external', relativePath: 'report.md' },
+      fileDisplayPath: '/outside/report.md' }, { workspace: currentWorkspace });
+    assert.equal(crumb.title, '/outside/report.md');
+    assert.deepEqual(crumb.segments, ['outside', 'report.md']);
+  }
+  assert.deepEqual(footer({ fileRef: { workspaceId: 'external', relativePath: 'report.md' },
+    fileDisplayPath: 'C:\\outside\\report.md' }).segments, ['C:', 'outside', 'report.md']);
+});
+
+test('footer uses the presented directory, then falls back to tree selection with an empty preview', () => {
+  assert.equal(footer({ fileRef: null, directory: { workspaceId: 'project-a', relativePath: 'docs' } }).title,
+    workspace.displayPath + '/docs');
+  assert.equal(footer(null).title, workspace.displayPath + '/old-selection.md');
+});

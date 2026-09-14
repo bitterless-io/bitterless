@@ -380,17 +380,16 @@ test('deep Project rows stay complete while HTML routes to the isolated Chrome s
     shellStyle.indexOf('.onlypreview-shell__tree-row {'),
     shellStyle.indexOf('.onlypreview-shell__tree-row:hover')
   );
-  assert.match(treeRow, /width:\s*max-content/);
   // 「深层行的底色不能被截短」这个**意图不变**,承载它的机制换了(Ral 2026-09-11:「背景色应该占用
   // 行宽度,而不是到文字结尾」)。原来是行上的 `width: max-content; min-width: 100%` —— 那一对在
   // **没有横向溢出时**是对的,一旦有长文件名撑出滚动,`100%` 是可视宽而不是滚动宽,短行的底色就断了。
-  // 现在由容器的单列 grid `minmax(100%, max-content)` ＋ `justify-items: stretch` 保证,所以断言
+  // 现在由容器的单列 grid `minmax(max-content, 1fr)` ＋ `justify-items: stretch` 保证,所以断言
   // 挪到容器上;行上**不该**再有自己的宽度。
   const treeContainer = shellStyle.slice(
     shellStyle.indexOf('.onlypreview-shell__tree {'),
     shellStyle.indexOf('.onlypreview-shell__tree::-webkit-scrollbar')
   );
-  assert.match(treeContainer, /grid-template-columns:\s*minmax\(100%,\s*max-content\)/);
+  assert.match(treeContainer, /grid-template-columns:\s*minmax\(max-content,\s*1fr\)/);
   assert.doesNotMatch(treeRow.replace(/\/\*[\s\S]*?\*\//g, ''), /(^|[^-])width:\s*max-content/);
   assert.match(treeRow, /height:\s*22px/);
   assert.match(treeRow, /overflow:\s*visible/);

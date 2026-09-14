@@ -112,6 +112,7 @@ export class FileSearchRuntime implements OnlyPreviewSearchRuntimeApi {
   private active: ActiveRuntime | null = null;
   private sessionId = 0;
   private hostToken: string | null = null;
+  private targetWorkspaceId: string | null = null;
 
   constructor(
     private readonly registration: FileSearchRuntimeRegistration,
@@ -146,6 +147,7 @@ export class FileSearchRuntime implements OnlyPreviewSearchRuntimeApi {
       // why it went stale rather than wrong.
       const bootstrap = requireBootstrap(internalBootstrap, request.workspaceId);
       this._adoptHost(request.hostToken);
+      this.targetWorkspaceId = request.workspaceId;
       const sessionId = ++this.sessionId;
       this._requireCurrentSession(sessionId);
       await this._shutdownActive();
@@ -309,8 +311,15 @@ export class FileSearchRuntime implements OnlyPreviewSearchRuntimeApi {
   }
 
   async dispose(): Promise<void> {
+    this.targetWorkspaceId = null;
     this.sessionId += 1;
     await this._shutdownActive();
+  }
+
+  /** Stop only this Project's search/build/watch, keeping the host runtime and external readers. */
+  async revokeWorkspace(workspaceId: string): Promise<void> {
+    if (this.targetWorkspaceId !== workspaceId) return;
+    await this.dispose();
   }
 
   private async _initializeCoordinator(active: ActiveRuntime): Promise<OnlyPreviewSearchSnapshot> {

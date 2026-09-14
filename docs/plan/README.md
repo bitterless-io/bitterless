@@ -134,6 +134,9 @@ no-copy progress rail—remains part of the current feature contract.
 
 Current EyesOnAgents fixes:
 
+- [Restore Read all 102](tasks/eyes-on-agents-restore-read-all-102.md) — implemented; owner verification pending;
+  place Read all after Search and persistently clear all non-active red dots, including unknown.
+
 - [Search IME rerender 101](tasks/eyes-on-agents-search-ime-render-101.md) — implemented; owner verification pending;
   preserve composing text across background updates while keeping the computed v-model adapter.
 

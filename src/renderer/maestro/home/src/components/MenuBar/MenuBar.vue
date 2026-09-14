@@ -7,6 +7,8 @@ import {
   IconCommon
 } from '@arco-design/web-vue/es/icon'
 import {
+  IconApps,
+  IconHistory,
   IconCameraSpark,
   IconCircleFilled,
   IconLoader2,
@@ -20,6 +22,7 @@ import type { TabInfo } from '@maestro-shared/coach.api'
 import { MAESTRO_WORKBENCH_DISPLAY_URL } from '@maestro-shared/coach.api'
 import IconBtn from '../../../../../common/components/IconBtn/IconBtn.vue'
 import { menuBarStore } from './menuBar.store'
+import { browserHistoryStore } from './browserHistory.store';
 import { tabStore } from './tab.store'
 import { updateStore } from '../../store/update.store'
 import { layoutStore } from '../../store/layout.store'
@@ -92,6 +95,18 @@ function armNewTabMenu(): void {
   }, NEW_TAB_MENU_DELAY_MS)
 }
 onUnmounted(cancelNewTabMenu)
+onUnmounted(() => menuBarStore.bindAddressInput(null));
+
+// 页面类型切换器。按钮自己测 rect —— main 侧的 `Menu.popup` 需要一个锚点坐标(DIP),而只有
+// renderer 知道那个 rect。菜单是原生的:操作区那个原生 view 画在这份 DOM 之上,超过一行的
+// 下拉必被它盖住(和 + 的 hover 菜单、tab 右键菜单同一条理由)。
+const pageTypeButton = ref<HTMLButtonElement | null>(null)
+function openPageTypeMenu(): void {
+  const el = pageTypeButton.value
+  if (!el) return
+  const rect = el.getBoundingClientRect()
+  void tabStore.showPageTypeMenu({ left: rect.left, bottom: rect.bottom })
+}
 
 onMounted(() => {
   menuBarStore.bindAddressInput(addressInput.value)
@@ -103,8 +118,16 @@ onMounted(() => {
   void workbenchStore.init()
 })
 
-// Tab label: page <title> when known, else the URL host, else the localized new-tab label.
+// Tab label: the operator's own alias when they set one, else the page <title>, else the URL host,
+// else the localized new-tab label.
+//
+// The alias is checked BEFORE the fixed-Home short-circuit on purpose: a custom homepage is a
+// composite mini-app tab that CAN be aliased (Ral 2026-09-14), and the default Home tab never has
+// one because its `Alias…` menu item is disabled. Whitespace-only == no alias, so "clear and save"
+// really does fall back to the page title.
 function tabLabel(tab: TabInfo): string {
+  const alias = tab.alias?.trim()
+  if (alias) return alias
   if (tab.kind === 'home') return i18nHelper.menuBar.maestro.homeTab
   if (tab.title?.trim()) return tab.title.trim()
   try {
@@ -352,6 +375,22 @@ function fixedTabClass(tab: TabInfo): string {
           <IconRefresh />
         </button>
       </div>
+      <!-- Page-type switcher (Website ⇄ any registered composite mini app). Sits between the nav
+           cluster and the address input, and opens a NATIVE Electron menu for the same reason the
+           + button's hover menu does: the operation view is a native view painted OVER this DOM.
+           See docs/features/maestro-page-type-switcher.md. -->
+      <button
+        ref="pageTypeButton"
+        name="menubar__pagetype__button"
+        :class="navBtn"
+        :disabled="workbenchStore.visible"
+        :title="i18nHelper.menuBar.maestro.pageType"
+        :aria-label="i18nHelper.menuBar.maestro.pageType"
+        type="button"
+        @click="openPageTypeMenu()"
+      >
+        <IconApps :size="18" stroke="1.8" />
+      </button>
       <!-- First-party fixed-purpose tabs expose a stable display address but cannot be
            navigated away from their trusted entry; ordinary browser tabs keep the normal
            schemeless/pasted-address behavior. -->
@@ -362,8 +401,23 @@ function fixedTabClass(tab: TabInfo): string {
         :title="workbenchStore.visible || tabStore.activeLocked ? i18nHelper.menuBar.maestro.fixedAddressLocked : ''"
         class="maestro-menu-bar__address"
         :placeholder="i18nHelper.menuBar.maestro.addressPlaceholder"
-        @keydown.enter="menuBarStore.go()"
+        name="browser-history-address"
+        role="combobox"
+        aria-autocomplete="list"
+        aria-haspopup="listbox"
+        :aria-expanded="browserHistoryStore.open"
+        :aria-label="i18nHelper.menuBar.maestro.addressPlaceholder"
+        @focus="browserHistoryStore.focus()"
+        @click="browserHistoryStore.focus()"
+        @input="browserHistoryStore.inputChanged()"
+        @blur="browserHistoryStore.blur()"
+        @compositionstart="browserHistoryStore.compositionStart()"
+        @compositionend="browserHistoryStore.compositionEnd()"
+        @keydown="menuBarStore.keydown($event)"
       />
+
+      <IconBtn name="browser-history-toggle" class="maestro-menu-bar__history" size="mini" :aria-label="browserHistoryStore.open ? i18nHelper.browserHistory.hide : i18nHelper.browserHistory.show" :title="browserHistoryStore.open ? i18nHelper.browserHistory.hide : i18nHelper.browserHistory.show" :aria-expanded="browserHistoryStore.open" @mousedown.prevent @click="browserHistoryStore.toggle()"><IconHistory :size="18" /></IconBtn>
+      <span v-if="browserHistoryStore.error && !browserHistoryStore.open" class="maestro-menu-bar__history-error" role="status">{{ i18nHelper.browserHistory.error }}</span>
 
       <!-- Trailing actions (data-slot="actions"): a hairline divider sets the cluster off from the
            address field, then Snapshot, panel, Workbench, and the conditional Update pill. -->

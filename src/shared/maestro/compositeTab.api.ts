@@ -70,6 +70,16 @@ export interface MaestroCompositeTabSpec {
    * start-on-boot apps, which nobody asked for.
    */
   restorable?: boolean
+  /**
+   * 没设过主页时,固有槽位装我。至多一个 spec 可以声明。
+   *
+   * 住在 spec 上而不是 settings 的 `DEFAULT_SETTINGS` 里,理由和 `singleton` / `restorable` 同一条:
+   * 「哪个 mini app 是默认主页」是**宿主**的事实,而 `check:maestro` 的别名边界不许 maestro 那棵树
+   * 认识任何一个具体 mini app。写进默认设置还会有第二个后果 —— 每台机器都被写进一个
+   * `homeCompositeId`,于是「还原默认主页」清空之后又得立刻写回默认值,清空变成假的。
+   * 见 `docs/features/onlypreview-default-homepage.md` #1。
+   */
+  defaultHome?: boolean
   /** Build the mini app onto this tab. Rejecting leaves no tab behind. */
   open(host: MaestroCompositeTabHostApi): Promise<void>
   /**

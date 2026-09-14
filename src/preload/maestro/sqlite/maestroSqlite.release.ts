@@ -37,8 +37,21 @@ const CREATE_TABS = `
     position INTEGER NOT NULL DEFAULT 0,
     kind TEXT NOT NULL DEFAULT '',
     instance_id TEXT NOT NULL DEFAULT '',
+    alias TEXT NOT NULL DEFAULT '',
     updated_at INTEGER NOT NULL
   );
+`
+
+const CREATE_BROWSER_HISTORY = `
+  CREATE TABLE IF NOT EXISTS browser_history (
+    url TEXT PRIMARY KEY NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    favicon TEXT NOT NULL DEFAULT '',
+    visit_count INTEGER NOT NULL DEFAULT 1,
+    last_visited_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_browser_history_recency
+    ON browser_history(last_visited_at DESC, visit_count DESC, url ASC);
 `
 
 const CREATE_MAESTRO_CHAT_SESSION = `
@@ -214,6 +227,7 @@ export const createMaestroSqliteSchema = (db: Database.Database): void => {
   db.exec(CREATE_CONFIG)
   db.exec(CREATE_CAPTURE_FILTER)
   db.exec(CREATE_TABS)
+  db.exec(CREATE_BROWSER_HISTORY)
   db.exec(CREATE_MAESTRO_CHAT_SESSION)
   db.exec(CREATE_MAESTRO_CHAT_MESSAGE)
   db.exec(CREATE_INJECT_BTNS)
@@ -336,6 +350,22 @@ export const maestroSqliteMigrations: readonly SqliteMigration[] = [
     runner: (db) => {
       addMaestroColumnIfMissing(db, 'tabs', 'kind', "TEXT NOT NULL DEFAULT ''")
       addMaestroColumnIfMissing(db, 'tabs', 'instance_id', "TEXT NOT NULL DEFAULT ''")
+    },
+  },
+  {
+    // Tab alias(docs/features/tab-alias.md #4)。与上面 `CREATE_TABS` 的新列**成对**:那一条管
+    // 全新安装,这一条管升级 —— 只改一个,坏掉的那一半装机永远复现不了另一半的问题。
+    // `addColumnIfMissing` 形式是硬要求:`runMigrations` 之外的老版本曾经吞掉异常照样记成已执行,
+    // 非幂等的 ALTER 会在那种库上永久留下一个缺列。
+    versionCode: '260914120000',
+    runner: (db) => {
+      addMaestroColumnIfMissing(db, 'tabs', 'alias', "TEXT NOT NULL DEFAULT ''")
+    },
+  },
+  {
+    versionCode: '260914160000',
+    runner: (db) => {
+      db.exec(CREATE_BROWSER_HISTORY)
     },
   },
 ]

@@ -122,7 +122,7 @@ assert(empty === null, 'empty event list should not persist latest evidence')
 
 const startBody = boundedSource(
   captureServiceSource,
-  '  async startCapture(params?: { mode?: CaptureMode } & Partial<CaptureOptions>): Promise<CaptureState> {',
+  '  async startCapture(',
   '  async stopCapture(): Promise<CaptureState> {',
   'CaptureService should keep a bounded startCapture implementation'
 )

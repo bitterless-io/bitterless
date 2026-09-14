@@ -1,4 +1,6 @@
 import { nextTick, reactive } from 'vue'
+import { addressSubmissionTarget } from '@maestro-shared/browserAddress.service';
+import { browserHistoryStore } from './browserHistory.store';
 import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer'
 import type { CoachXpcContract, TabInfo } from '@maestro-shared/coach.api'
 
@@ -38,6 +40,7 @@ class MenuBarState {
 
   async init(): Promise<void> {
     xpcRenderer.subscribe('coach/nav', (payload) => {
+      browserHistoryStore.hide();
       this.url = stripScheme(String(payload.params || ''))
     })
     xpcRenderer.subscribe('coach/title', (payload) => {
@@ -46,6 +49,7 @@ class MenuBarState {
     xpcRenderer.subscribe('coach/tabs', (payload) => {
       const tabs = (payload.params as TabInfo[]) || []
       const active = tabs.find((tab) => tab.active)
+      browserHistoryStore.setActiveTab(active?.id ?? '');
       if (active) this.url = stripScheme(active.displayUrl || active.url || '')
     })
     xpcRenderer.subscribe('coach/nav-state', (payload) => {
@@ -60,11 +64,13 @@ class MenuBarState {
     // (also covers a coach/nav broadcast that may have fired before we subscribed).
     const tabs = await coach.getTabs()
     const active = tabs.find((t) => t.active)
+    browserHistoryStore.setActiveTab(active?.id ?? '');
     this.url = stripScheme(active?.displayUrl || active?.url || '')
   }
 
   bindAddressInput(el: HTMLInputElement | null): void {
     this.addressInput = el
+    browserHistoryStore.bind(el);
   }
 
   async focusAddress(): Promise<void> {
@@ -76,8 +82,14 @@ class MenuBarState {
     this.addressInput?.select()
   }
 
+  keydown(event: KeyboardEvent): void {
+    if (browserHistoryStore.keydown(event)) return;
+    if (event.key === 'Enter') { event.preventDefault(); void this.go(); }
+  }
+
   async go(): Promise<void> {
-    const v = this.url.trim()
+    browserHistoryStore.hide();
+    const v = addressSubmissionTarget(this.url)
     if (v) await coach.navigate({ url: v })
   }
 

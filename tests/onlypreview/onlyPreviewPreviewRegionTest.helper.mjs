@@ -327,6 +327,9 @@ const hostRegistry = {
 };
 
 const workspaceRegistry = {
+  requireWorkspace: (_hostToken, workspaceId) => ({
+    displayPath: workspaceId === "external-workspace-id" ? "/external/private" : "/workspace"
+  }),
   getPreviewAuthorityItemRef: (_hostToken, fileRef) => ({
     workspaceId: fileRef.workspaceId,
     workspaceGeneration: fileRef.workspaceId === 'external-workspace-id' ? 1 : 17,

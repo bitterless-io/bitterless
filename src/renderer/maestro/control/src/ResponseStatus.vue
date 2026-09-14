@@ -26,7 +26,7 @@ interface StatusView {
 
 const tick = ref(Date.now())
 const turn = computed(() => props.session.turn)
-const live = computed(() => taskStore.tasks.filter((task) => isTaskLive(task)))
+const live = computed(() => taskStore.tasks.filter((task) => task.sessionId === props.session.id && isTaskLive(task)))
 const confirming = computed(() => live.value.find((task) => task.state.pendingConfirm))
 const waiting = computed(() => live.value.find((task) => task.state.waitingFor))
 
@@ -131,7 +131,7 @@ const status = computed<StatusView | null>(() => {
 })
 
 const canRetry = computed(() =>
-  Boolean(props.session.retryable && !messageStore.turnService.activeTurn())
+  Boolean(props.session.retryable && !props.session.turn && !messageStore.turnService.busyElsewhere(props.session.id))
 )
 const retriedLabel = computed(() => {
   const retry = props.session.retryable

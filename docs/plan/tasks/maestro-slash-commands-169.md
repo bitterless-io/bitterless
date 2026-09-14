@@ -13,6 +13,9 @@ verify: focused command/runtime tests plus Vue, Less and TypeScript compilation
 Implement the screenshot's `/clear` and `/view_context` menu and actions in Bitterless, using
 Cowork as a read-only reference. Preserve existing BL New chat restrictions and prompt semantics.
 
+Follow-up (2026-09-14): [browseruse-new-chat-003](browseruse-new-chat-003.md) explicitly removes
+the running-turn restriction for New chat and /clear; this task's original restriction is historical.
+
 ## Context
 
 - [Command contract](../../features/maestro-slash-commands.md) is the source of truth.

@@ -802,3 +802,16 @@ test('a stale Office prepare is cancelled and cannot replace the newer Markdown 
     true
   );
 });
+
+test('Shell receives current-file display identity while Vue receives only file authority', async () => {
+  const { service } = createHarness();
+  service.updateBounds(host.hostToken, bounds);
+  await service.present(host.hostToken, fileRef('old.md'));
+  assert.equal(service.snapshot(host.hostToken).fileDisplayPath, '/workspace/old.md');
+  await service.present(host.hostToken, { workspaceId: 'external-workspace-id', relativePath: 'new.md' });
+  assert.equal(service.snapshot(host.hostToken).fileDisplayPath, '/external/private/new.md');
+  const vue = acknowledgeCurrentVue(service);
+  assert.equal(service.snapshotForVue(host.hostToken, vue.previewRuntimeToken).fileDisplayPath, undefined);
+  service.clearWorkspace(host.hostToken, 'workspace-id');
+  assert.equal(service.snapshot(host.hostToken).fileDisplayPath, undefined);
+});

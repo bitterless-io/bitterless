@@ -460,10 +460,10 @@ latest-question data; activation and manual Refresh retain full inventory reconc
 
 ## Focus column
 
-The Focus header has one right-aligned, icon-only Search button. There is no `Focus` heading,
-persistent input, visible **Read all**, count, inline edit, overflow menu, Delete action, drag handle,
-or reorder affordance. The Search tooltip includes the platform shortcut and its accessible label
-remains plain Search.
+The Focus header has right-aligned controls in this order: icon-only Search, then a compact
+borderless **Read all** text button. There is no `Focus` heading, persistent input, count, inline
+edit, overflow menu, Delete action, drag handle or reorder affordance. The Search tooltip includes
+the platform shortcut and its accessible label remains plain Search.
 
 Focus paints nothing at all: no surface, no radius, no padding of its own. Hierarchy comes from the
 canvas → white card contrast alone, so the header needs no divider and the column needs no border,
@@ -475,8 +475,14 @@ region. It retains 9px horizontal and bottom padding for
 column-edge spacing.
 
 `Cmd+F` / `Ctrl+F` toggles the modal defined in [Focus search](#focus-search). There is no Project
-filter and no board narrowing state. Main-side Project metadata and the bulk-read mutation remain
-stored/reachable below the renderer; neither is exposed in this header.
+filter and no board narrowing state. Main-side Project metadata remains unexposed. Read all uses
+the retained bulk-read mutation for enabled providers, independent of search or scroll position:
+it clears unread flags regardless of stored runtime, including active latent flags, while preserving
+archived/deleted exclusions. Only the unread bit changes; no Open receipt or runtime state changes.
+This also covers stored-active rows that project as unknown and show a red dot after authority expires.
+The button stays visible but disabled without eligible dots or while an action is busy, loads
+until its returned snapshot applies, and leaves existing cards intact on failure. Old in-flight
+snapshots cannot restore cleared dots; later real completions may create new dots.
 
 Thread cards are not draggable and there is no drop target: Domain assignment has no UI. Stored
 `domain_id` values keep their last value and are never rewritten from this surface.
@@ -611,7 +617,8 @@ resolves. An unread `unknown` row shows its dot and belongs to the visible unrea
 | latest question available | one muted, ellipsized question line; tooltip/accessibility retain the bounded preview and disclose truncation |
 | latest question pending | one muted localized pending line; no spinner or false claim that a request is running |
 | latest question unavailable/default-off | no question line and no additional card height |
-| search closed | complete board plus one Search button |
+| search closed | complete board plus Search followed by Read all |
+| Read all succeeds | all non-active unread dots clear; cards and working states remain |
 | search open, empty query | focused modal input plus start-typing prompt; no result cards |
 | search query has no matches | modal-specific no-results text; board unchanged behind it |
 | `Cmd+F` pressed again | modal closes and clears transient query/selection |
@@ -665,7 +672,7 @@ EyesOnAgentsApp
   │         └─ ClaudeEnvironmentCard
   ├─ AgentBoard
   │    └─ FocusColumn (every visible thread)
-  │         ├─ header Search button
+  │         ├─ header Search button, then Read all
   │         └─ ThreadCard × N
   └─ ThreadSearch modal
        ├─ fixed search input

@@ -1,4 +1,6 @@
 import './coach.handler'
+import './tabAlias.handler'
+import './browserHistory.handler';
 import '@maestro-main/security/sqliteKey.service'
 
 // Bitterless initializes the shared electron-xpc center. Importing this module registers

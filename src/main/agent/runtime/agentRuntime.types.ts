@@ -77,17 +77,8 @@ export interface AgentRuntimeSessionOptions {
   /** Enable pi's own builtin tools alongside the host tools. Names are allow-listed together with
    * every host tool name, because pi's allowlist filters builtin AND custom tools. */
   builtinTools?: string[]
-  /**
-   * **整段接管运行时的 system 提示词。** 给了就用它,不给就随运行时自己的默认。
-   *
-   * 之所以是「整段」而不是「追加」:pi 的口子只有替换那一种 —— `system-prompt.js:15` 的
-   * `if (customPrompt)` 一旦成立就提前 return,原厂 A1–A5 整块不生成;追加式的
-   * `appendSystemPrompt` 拼在 A5 之后,删不掉前面任何一段(`system-prompt.js:99-101`)。
-   *
-   * 运行时怎么把它送进去是运行时自己的事(pi 这边要构造一个最小 resourceLoader)——
-   * 这一层只描述意图。
-   */
-  systemPrompt?: string
+  /** Complete host-authored instructions; required, nonblank, and preserved exactly by runtimes. */
+  systemPrompt: string
 }
 
 

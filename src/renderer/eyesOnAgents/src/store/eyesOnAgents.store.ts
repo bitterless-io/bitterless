@@ -117,7 +117,7 @@ class EyesOnAgentsState {
   private refreshTimer: number | null = null;
   private subscribed = false;
   private highestClaudeProviderRevision = -1;
-  // Local deletion invalidates in-flight responses, not later provider discovery.
+  // Local mutations invalidate in-flight responses, not later provider discovery.
   private snapshotGeneration = 0;
 
   get threads(): EyesOnAgentsThread[] {
@@ -126,6 +126,10 @@ class EyesOnAgentsState {
 
   get focusThreads(): EyesOnAgentsThread[] {
     return sortedSnapshotThreads(this.snapshot, this.threads);
+  }
+
+  get readableFocusThreads(): EyesOnAgentsThread[] {
+    return this.focusThreads.filter((thread) => thread.isUnread && !isActiveRuntimeState(thread));
   }
 
   get threadSearchResults(): EyesOnAgentsThread[] {
@@ -544,6 +548,11 @@ class EyesOnAgentsState {
     );
   }
 
+  async markAllRead(): Promise<void> {
+    if (this.readableFocusThreads.length === 0) return;
+    await this.runSnapshotAction('read-all', () => eyesOnAgentsEmitter.markAllRead());
+  }
+
   clearActionError(): void {
     this.actionError = null;
   }
@@ -625,7 +634,7 @@ class EyesOnAgentsState {
           : this.errorMessage(refreshError));
         throw new Error(message.slice(0, MAX_ACTION_ERROR_LENGTH));
       }
-      if (action.startsWith('thread-delete:')) {
+      if (action.startsWith('thread-delete:') || action === 'read-all') {
         this.snapshotGeneration += 1;
         this.applySnapshot(snapshot, this.snapshotGeneration);
       } else {

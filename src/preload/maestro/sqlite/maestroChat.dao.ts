@@ -55,6 +55,17 @@ const parseJson = <T>(value: string, fallback: T): T => {
 
 const normalizeDetail = (detail: MaestroChatDetail | undefined): MaestroChatDetail => ({
   compressedContext: detail?.compressedContext || '',
+  titleCustomized: detail?.titleCustomized === true || undefined,
+  draft: detail?.draft
+    ? {
+        text: typeof detail.draft.text === 'string' ? detail.draft.text : '',
+        files: Array.isArray(detail.draft.files)
+          ? detail.draft.files
+              .filter((file) => typeof file.path === 'string' && typeof file.name === 'string')
+              .map((file) => ({ name: file.name, path: file.path, isDirectory: file.isDirectory === true || undefined }))
+          : []
+      }
+    : undefined,
   compressedUntilMessageId: detail?.compressedUntilMessageId || undefined,
   compressedAt: detail?.compressedAt || undefined,
   workspace: detail?.workspace?.path
@@ -223,13 +234,16 @@ export class MaestroChatDao extends XpcPreloadHandler implements MaestroChatApi 
     return { ok: true }
   }
 
-  async deleteSession(params: { id: string }): Promise<{ ok: boolean }> {
+  async deleteSession(params: { id: string; onlyIfEmpty?: boolean }): Promise<{ ok: boolean }> {
     const db = sqliteManager.db
-    db.transaction(() => {
+    return db.transaction(() => {
+      if (params.onlyIfEmpty && db.prepare('SELECT 1 FROM cowork_chat_message WHERE session_id = ? LIMIT 1').get(params.id)) {
+        return { ok: false }
+      }
       db.prepare('DELETE FROM cowork_chat_message WHERE session_id = ?').run(params.id)
       db.prepare('DELETE FROM cowork_chat_session WHERE id = ?').run(params.id)
+      return { ok: true }
     })()
-    return { ok: true }
   }
 }
 

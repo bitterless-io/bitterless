@@ -47,6 +47,8 @@ const output = await build({
       export * from './src/main/agent/runtime/contextExportLimit.service';
       export { buildAgentTurnPrompt } from './src/main/agent/runtime/agentPrompt';
       export { MAESTRO_SYSTEM_PROMPT } from './src/main/agent/prompt/maestroSysPrompt';
+      export { BASE_SYSTEM_PROMPT } from './src/main/agent/prompt/sysPrompt';
+      export { PiRuntimeSession } from './src/main/agent/runtime/piRuntimeSession';
     `,
     resolveDir: root, loader: 'ts'
   },
@@ -58,13 +60,10 @@ const noopBudget = { record: () => undefined, get turnIndexNow() { return 0; } }
 const noopIoLog = { append: () => undefined, dirForSession: async () => null };
 const { BaseAgent } = load(join(sdk, 'BaseAgent.ts'), {
   './runtime/inputBudget': { inputBudget: noopBudget, subjectOf: () => '' },
-  './runtime/modelIoLog': { modelIoLog: noopIoLog }
+  './runtime/modelIoLog': { modelIoLog: noopIoLog },
+  './prompt/sysPrompt': { BASE_SYSTEM_PROMPT: real.BASE_SYSTEM_PROMPT }
 });
-const { PiRuntimeSession } = load(join(sdk, 'runtime/piRuntimeAdapter.ts'), {
-  './errorSanitizer': { sanitizeRuntimeError: value => value },
-  './toolResultFailure': { toolResultLooksFailed: () => false },
-  '../steering/steeringPolicy': { decideStreamingBehavior: () => { throw new Error('Must not prompt'); } }
-});
+const { PiRuntimeSession } = real;
 
 const method = (path, name, bindings = {}) => {
   const source = read(path);
@@ -92,16 +91,23 @@ const mainHarness = () => {
     assertAgentRuntimeActive: () => undefined,
     agentSessionKey: value => value.trim() || 'default',
     _state: {
+      agentBrowserSession: sessionId => ({sessionId, tabs: []}),
       currentUrl: 'https://example.com', existingSkillRegistry: () => registry,
+      describeActiveTabContent: () => ({ type: 'browser', url: 'https://example.com' }),
       ensureServices: () => { throw new Error('Export must not initialize services'); },
       replaySkill: () => { throw new Error('Export must not replay'); },
       syncWorkspaceFromContext: () => { throw new Error('Export must not mutate workspace'); }
     }
   };
   const servicePath = 'src/main/agent/maestroAgent.service.ts';
-  owner.agentSkillBriefs = method(servicePath, 'agentSkillBriefs');
+  owner.agentSkillBriefs = method(servicePath, 'agentSkillBriefs', {
+    DRILL_BUILTIN_SKILL: { id: 'drill', name: 'drill', description: 'Fixture skill', triggers: [], inputs: [], seed: {}, missing: [] }
+  });
   owner.copyNextTurnContext = method(servicePath, 'copyNextTurnContext', {
-    ...real, clipboard: { writeText: text => clipboardWrites.push(text) }
+    ...real, clipboard: { writeText: text => clipboardWrites.push(text) },
+    localNow: () => '2026-09-14 12:00:00',
+    maestroUserChainDir: () => '/fixture/user-chain',
+    chainFilePath: (directory, session) => `${directory}/${session}.jsonl`
   });
   const controller = { agentService: owner };
   controller.copyNextTurnContext = method('src/main/maestro/windows/main/maestroWindow.controller.ts', 'copyNextTurnContext');
@@ -181,7 +187,7 @@ test('typed handler/controller/service export truthful first-turn pending contex
     sessionId: 'chat-1', draft: ' draft ',
     context: { workspace: { path: '/workspace' }, attachedPaths: ['/unread/attachment.png'], recentMessages: [{ role: 'human', content: 'restored memory', ts: 1 }] }
   });
-  assert.equal(result.ok, true);
+  assert.equal(result.ok, true, result.error);
   assert.equal(result.entries, 0);
   assert.equal(h.owner.maestroAgents.size, 0);
   assert.equal(h.owner.hydratedMaestroAgentSessions.size, 0);
@@ -190,7 +196,7 @@ test('typed handler/controller/service export truthful first-turn pending contex
   assert.match(text, /no model-side history yet/);
   // 还没有 agent 时系统段退回静态提示词 —— 它就是下一轮会注入的那份。
   assert.ok(text.includes(real.MAESTRO_SYSTEM_PROMPT.trim().slice(0, 80)));
-  assert.match(text, /Selected workspace: \/workspace/);
+  assert.match(text, /Active workspace: \/workspace/);
   assert.match(text, /restored memory/);
   assert.match(text, /\/unread\/attachment\.png/);
   // 附件只是路径:没有读过、没有校验过、没有上传过 —— 结果里不该出现文件内容或结构化回传。
@@ -208,6 +214,7 @@ test('live context uses runtime entry history, existing memory hydration and the
   });
   h.owner.hydratedMaestroAgentSessions.add('chat-1');
   const result = await h.copy({ sessionId: 'chat-1', draft: 'next', context: { recentMessages: [{ role: 'human', content: 'must not replay', ts: 1 }] } });
+  assert.equal(result.ok, true, result.error);
   assert.equal(result.entries, 1);
   assert.match(h.clipboardWrites[0], /native system/);
   assert.match(h.clipboardWrites[0], /full result/);

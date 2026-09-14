@@ -20,6 +20,10 @@ Steering 已作为 [Cowork chat core 089](../plan/tasks/maestro-cowork-chat-core
 steering 使用显式 intent、Turn id 和 generation；renderer 重建可恢复 active/finished Turn，Stop
 有界，旧回调不能污染新 Turn。Control、Workbench 和 Main 同时锁定活跃 Turn 的 LLM target。
 
+2026-09-14：浏览器 tab 与聊天选择解耦。每次 root 或 steering 发送均附带当次活动页面的上下文
+和站点技能；固定 system 指令、session id、turn id/generation 不随切 tab 重建。见
+[参考链接与页面上下文](../issues/reference-link-tab-chat-tooltip.md)。
+
 [独立 review](../plan/reviews/maestro-cowork-chat-core-089-1.md) 已通过，当前无未解决 P0-P2。
 按 Ral 要求未运行 tests、typecheck、lint、build、Electron/E2E、应用脚本或网络验证。
 
@@ -151,7 +155,9 @@ if (!session || session.archivedAt || !text || session.busy || this.globalBusySe
 ```
 
 `globalBusySessionId`(`:173` / `:267` / `:275` / `:344`)= **全应用一次只准一个会话跑一个回合**。
-上游没有这条。而 maestro 是**每个 operation tab 一个 chat**(`channel.store.ts:13 maestroSessionByTabId`)。
+上游没有这条。此处原来的「每个 operation tab 一个 chat」绑定已被 Ral 于 2026-09-14 取消；
+见 [tab/chat 解耦](../issues/reference-link-tab-chat-tooltip.md)。浏览器切 tab 只改变后续消息的页面
+上下文，不切换聊天；本节的全局并发约束保持原样。
 
 **决定:同会话 steering 绕过它,跨会话仍拦。**
 

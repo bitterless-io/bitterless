@@ -374,6 +374,7 @@ export class OnlyPreviewFileAuthorityRuntime
         workspace.workspaceId,
         workspace.workspaceGeneration
       );
+      await runtime.revokeWorkspace(workspace.workspaceId);
       return onlyPreviewSuccess(undefined);
     } catch (error) {
       return onlyPreviewFailure(error);

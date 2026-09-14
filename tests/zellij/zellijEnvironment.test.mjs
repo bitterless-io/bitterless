@@ -116,6 +116,53 @@ test('socket and temporary-directory overrides remain unchanged while GUI color 
   }
 });
 
+test('a launcher without any locale gets UTF-8, and every locale it does set is kept', () => {
+  // launchd gives a GUI app no LANG, and the C locale makes the macOS system encoding Mac OS Roman:
+  // `没有` copied out of the terminal comes back as `Ê≤°Êúâ`.
+  const launcher = { TMPDIR: '/preserved' };
+  const supplied = resolveZellijChildEnvironment('production', {
+    platform: 'darwin',
+    env: launcher,
+    uid: 501
+  });
+  assert.equal(supplied.LANG, 'en_US.UTF-8');
+  assert.equal(launcher.LANG, undefined);
+  // The socket-directory override returns early, and must not step over the locale on its way out.
+  assert.equal(
+    resolveZellijChildEnvironment('production', {
+      platform: 'darwin',
+      env: { ZELLIJ_SOCKET_DIR: '/private/chosen-path' },
+      uid: 501
+    }).LANG,
+    'en_US.UTF-8'
+  );
+  for (const locale of [{ LANG: 'ja_JP.eucJP' }, { LC_ALL: 'C' }, { LC_CTYPE: 'zh_CN.GB18030' }]) {
+    const kept = resolveZellijChildEnvironment('production', {
+      platform: 'darwin',
+      env: locale,
+      uid: 501
+    });
+    assert.deepEqual(
+      { LANG: kept.LANG, LC_ALL: kept.LC_ALL, LC_CTYPE: kept.LC_CTYPE },
+      {
+        LANG: locale.LANG,
+        LC_ALL: locale.LC_ALL,
+        LC_CTYPE: locale.LC_CTYPE
+      }
+    );
+  }
+  // Windows has no POSIX locale to lose.
+  assert.equal(
+    resolveZellijChildEnvironment('production', { platform: 'win32', env: {} }).LANG,
+    undefined
+  );
+  // The user's KDL env is still the override point, applied after this normalization.
+  assert.equal(
+    resolveZellijSessionEnvironment(supplied, 'env {\n LANG "zh_CN.UTF-8"\n}\n').env.LANG,
+    'zh_CN.UTF-8'
+  );
+});
+
 test('explicit KDL shell and color environment wins after launcher normalization', () => {
   const gui = resolveZellijChildEnvironment('production', {
     platform: 'win32',

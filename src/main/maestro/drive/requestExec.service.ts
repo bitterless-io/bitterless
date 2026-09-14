@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { navigateAgentBrowser, type BrowserNavigationAction } from './browserNavigation'
 import type { BrowserWindow } from 'electron'
 import { injectable } from 'inversify'
 import {
@@ -74,14 +76,14 @@ export interface RequestExecServiceState {
 
   ensureServices(): RequestExecRuntimeServices
   warmAndLoad(tab: OperationTab): Promise<void>
-  drainNewTabsNote(): string
+  drainNewTabsNote(sessionId?: string): string
   replaySkill(params: { skillId: string; variables: Record<string, string> }): Promise<ReplayResult>
   emitTrace(event: TraceEvent): void
   debugCodex(event: CodexDebugEvent): void
   broadcastActivity(phase: AgentActivityStep['phase'], label: string, ok?: boolean): void
   pushHostApprovalEvent(event: Omit<HostApprovalEvent, 'id' | 'requestedAt'>): Promise<string>
   resolveHostApprovalEvent(id: string, status: HostApprovalEvent['status']): Promise<void>
-  confirmBrowserInterceptionRule(rule: NetworkInterceptionRule): Promise<boolean>
+  confirmBrowserInterceptionRule(rule: NetworkInterceptionRule, tabId: string): Promise<boolean>
 }
 
 /**
@@ -92,15 +94,66 @@ export interface RequestExecServiceState {
  */
 @injectable()
 export class RequestExecService extends CommonService<RequestExecServiceState> {
-  browserInterceptionRules: NetworkInterceptionRule[] = []
+  private readonly interceptionByTab = new Map<string, NetworkInterceptionRule[]>()
+
+  private get browserInterceptionRules(): NetworkInterceptionRule[] {
+    const target = this.browserTarget.getStore()
+    if (!target) throw new Error('browser_intercept requires a resolved browser target.')
+    if (!this.interceptionByTab.has(target.tab.id)) this.interceptionByTab.set(target.tab.id, [])
+    return this.interceptionByTab.get(target.tab.id)!
+  }
+
+  private set browserInterceptionRules(rules: NetworkInterceptionRule[]) {
+    const target = this.browserTarget.getStore()
+    if (!target) throw new Error('browser_intercept requires a resolved browser target.')
+    this.interceptionByTab.set(target.tab.id, rules)
+  }
 
   private browserInterceptionSeq = 0
+  private readonly browserTarget = new AsyncLocalStorage<{ tab: OperationTab; capture: DebuggerCapture; replay: ReplayEngine; url: string; sessionId?: string }>()
+
+  async withBrowserTarget<T>(tab: OperationTab, work: () => Promise<T>, sessionId?: string): Promise<T> {
+    return this.browserTarget.run({ tab, capture: tab.capture!, replay: tab.replay!, url: tab.url, sessionId }, work)
+  }
+
+  private get targetReplay(): ReplayEngine | null {
+    const target = this.browserTarget.getStore()
+    if (target) {
+      const wc = target.tab.view?.webContents
+      if (!this._state.tabs.includes(target.tab) || !wc || wc.isDestroyed() || wc.isCrashed() || target.tab.browserError || target.tab.replay !== target.replay) {
+        throw new Error(`Tab ${target.tab.id}: browser target became unavailable. Reopen its intended URL explicitly; no action was retried.`)
+      }
+      return target.replay
+    }
+    return this._state.replayEngine
+  }
+
+  private get targetCapture(): DebuggerCapture | null {
+    return this.browserTarget.getStore()?.capture ?? this._state.capture
+  }
+
+  private get targetUrl(): string {
+    return this.browserTarget.getStore()?.url ?? this._state.currentUrl
+  }
+
+  async toolWebNav(rawAction: string): Promise<string> {
+    const action = rawAction.trim().toLowerCase() || 'where'
+    const target = this.browserTarget.getStore()
+    if (!target) return 'ERROR: web_nav requires this chat\'s resolved browser target.'
+    if (!['back', 'forward', 'reload', 'where'].includes(action)) return `ERROR: Tab ${target.tab.id}: action must be back | forward | reload | where.`
+    // Validate ownership before and after the await; a replaced view cannot stand in for this one.
+    this.targetReplay
+    const wc = target.tab.view!.webContents
+    const result = await navigateAgentBrowser(wc, target.tab.id, action as BrowserNavigationAction)
+    this.targetReplay
+    return result
+  }
 
   async replayBrowserRequest(
     params: BrowserRequestReplayRequest
   ): Promise<BrowserRequestReplayResult> {
     const startedAt = Date.now()
-    if (!this._state.replayEngine) {
+    if (!this.targetReplay) {
       return {
         ok: false,
         status: 0,
@@ -118,8 +171,8 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
       }
     }
     const method = String(params.method || 'GET').toUpperCase()
-    const auth = readApiProfile(hostFromUrl(url || this._state.currentUrl))
-    const result = await this._state.replayEngine.apiFetch(
+    const auth = readApiProfile(hostFromUrl(url || this.targetUrl))
+    const result = await this.targetReplay.apiFetch(
       {
         url,
         method,
@@ -132,7 +185,7 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     this.broadcastApiActivity(method, url, result.ok, result.auth)
     this._state.emitTrace({
       kind: result.ok ? 'info' : 'error',
-      msg: `workbench replay: ${method} ${apiActivityPath(url, this._state.currentUrl)} -> ${result.status || result.error || 'failed'}`,
+      msg: `workbench replay: ${method} ${apiActivityPath(url, this.targetUrl)} -> ${result.status || result.error || 'failed'}`,
       ts: Date.now()
     })
     return {
@@ -155,7 +208,7 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     const authText = describeApiAuthResolution(auth)
     this._state.broadcastActivity(
       apiActivityPhase(verb),
-      `${verb} ${apiActivityPath(url, this._state.currentUrl)}${authText ? ` · auth ${authText}` : ''}`,
+      `${verb} ${apiActivityPath(url, this.targetUrl)}${authText ? ` · auth ${authText}` : ''}`,
       ok
     )
   }
@@ -213,7 +266,7 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
           })
           continue
         }
-        const allowed = await this._state.confirmBrowserInterceptionRule(normalized.rule)
+        const allowed = await this._state.confirmBrowserInterceptionRule(normalized.rule, this.browserTarget.getStore()!.tab.id)
         if (!allowed) {
           results.push({
             ok: false,
@@ -255,18 +308,10 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
   }
 
   async applyBrowserInterceptionRules(): Promise<void> {
-    const tasks: Promise<void>[] = []
-    for (const tab of this._state.tabs) {
-      if (!tab.capture) continue
-      tasks.push(tab.capture.setInterceptionRules(this.browserInterceptionRules))
-    }
-    if (
-      this._state.capture &&
-      !this._state.tabs.some((tab) => tab.capture === this._state.capture)
-    ) {
-      tasks.push(this._state.capture.setInterceptionRules(this.browserInterceptionRules))
-    }
-    await Promise.all(tasks)
+    this.targetReplay
+    const target = this.browserTarget.getStore()
+    if (!target) throw new Error('browser_intercept requires a resolved browser target.')
+    await target.capture.setInterceptionRules(this.browserInterceptionRules)
   }
 
   async toolPageSnapshot(tabId?: string): Promise<string> {
@@ -277,8 +322,8 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     if (tab && (!tab.capture || !tab.view || tab.view.webContents.isDestroyed())) {
       await this._state.warmAndLoad(tab)
     }
-    const capture = tab ? tab.capture : this._state.capture
-    const url = tab ? tab.url : this._state.currentUrl
+    const capture = tab ? tab.capture : this.targetCapture
+    const url = tab ? tab.url : this.targetUrl
     if (!capture) return 'ERROR: page capture is not ready.'
     const snapshot = await capture.snapshot()
     if (!snapshot.ok) {
@@ -308,7 +353,7 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
   }
 
   async toolUiAct(actionsJson: string): Promise<string> {
-    if (!this._state.replayEngine) return 'ERROR: browser view is not ready.'
+    if (!this.targetReplay) return 'ERROR: browser view is not ready.'
     let parsed: unknown
     try {
       parsed = JSON.parse(actionsJson)
@@ -319,7 +364,7 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     if (actions.length === 0) {
       return 'ERROR: no valid actions. Each needs {"action":"click|fill|select|check|submit","ref":"<eN from the snapshot>", ...} (or "selector":"<css>").'
     }
-    const run = await this._state.replayEngine.runUiActions(actions)
+    const run = await this.targetReplay.runUiActions(actions)
     for (const result of run.results) {
       const label = `${result.action} ${describeUiActionResult(result)}`
       this._state.broadcastActivity('act', label, result.ok)
@@ -346,7 +391,7 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
       }
     }
     await new Promise((resolve) => setTimeout(resolve, 700))
-    return clipText(JSON.stringify(run, null, 1)) + this._state.drainNewTabsNote()
+    return clipText(JSON.stringify(run, null, 1)) + this._state.drainNewTabsNote(this.browserTarget.getStore()?.sessionId)
   }
 
   toolSkillContract(skillId: string): string {
@@ -387,7 +432,7 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
   }
 
   async toolBrowserExec(commandsJson: string): Promise<string> {
-    if (!this._state.replayEngine) return 'ERROR: browser view is not ready.'
+    if (!this.targetReplay) return 'ERROR: browser view is not ready.'
     let parsed: unknown
     try {
       parsed = JSON.parse(commandsJson)
@@ -401,7 +446,7 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     if (commands.length === 0) {
       return 'ERROR: no valid commands. Each needs {"command":"read_context"|"fetch"|"parallel", ...}. Arbitrary eval is not exposed to the agent.'
     }
-    const domainAuth = readApiProfile(hostFromUrl(this._state.currentUrl))
+    const domainAuth = readApiProfile(hostFromUrl(this.targetUrl))
     const results: CommandResult[] = []
     for (const command of commands) {
       results.push(...(await this.executeBrowserCommand(command, domainAuth)))
@@ -442,14 +487,14 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
             .join('; ')}`,
       ts: Date.now()
     })
-    return clipText(JSON.stringify(run, null, 1)) + this._state.drainNewTabsNote()
+    return clipText(JSON.stringify(run, null, 1)) + this._state.drainNewTabsNote(this.browserTarget.getStore()?.sessionId)
   }
 
   async toolRunSkillScript(
     skillId: string,
     variablesJson: string
   ): Promise<string> {
-    if (!this._state.replayEngine) return 'ERROR: browser view is not ready.'
+    if (!this.targetReplay) return 'ERROR: browser view is not ready.'
     const services = this._state.ensureServices()
     const recipe = services.registry.readRecipe(skillId)
     if (!recipe) {
@@ -483,13 +528,13 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     }
     let host = ''
     try {
-      host = new URL(recipe.sourceUrl || this._state.currentUrl).hostname.replace(
+      host = new URL(recipe.sourceUrl || this.targetUrl).hostname.replace(
         /^www\./,
         ''
       )
     } catch {
       try {
-        host = new URL(this._state.currentUrl).hostname.replace(/^www\./, '')
+        host = new URL(this.targetUrl).hostname.replace(/^www\./, '')
       } catch {
         // Keep the empty host; readApiProfile will return no hints.
       }
@@ -504,7 +549,7 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     try {
       const run = await runSkillScript({
         script: recipe.script,
-        replay: this._state.replayEngine,
+        replay: this.targetReplay,
         vars: variables,
         auth,
         signal: controller.signal,
@@ -556,7 +601,7 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
           : `run_skill_script failed: ${run.error}`,
         ts: Date.now()
       })
-      return clipText(JSON.stringify(run, null, 1)) + this._state.drainNewTabsNote()
+      return clipText(JSON.stringify(run, null, 1)) + this._state.drainNewTabsNote(this.browserTarget.getStore()?.sessionId)
     } finally {
       clearTimeout(watchdog)
     }
@@ -584,7 +629,9 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
         return 'ERROR: variables_json is not valid JSON.'
       }
     }
-    const replay = await this._state.replaySkill({ skillId, variables })
+    const recipe = services.registry.readRecipe(skillId)
+    if (!recipe) return 'ERROR: skill recipe was not found.'
+    const replay = await this.replayRecipe(recipe, variables)
     this._state.lastAgentRun = { skill, skills: [skill], replay }
     await new Promise((resolve) => setTimeout(resolve, 700))
     return (
@@ -592,7 +639,7 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
         ok: replay.ok,
         stepsRun: replay.stepsRun,
         errors: replay.errors
-      }) + this._state.drainNewTabsNote()
+      }) + this._state.drainNewTabsNote(this.browserTarget.getStore()?.sessionId)
     )
   }
 
@@ -600,7 +647,7 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     recipe: SkillRecipe,
     variables: Record<string, string>
   ): Promise<ReplayResult> {
-    if (!this._state.replayEngine) {
+    if (!this.targetReplay) {
       return {
         ok: false,
         skillId: recipe.id,
@@ -608,7 +655,7 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
         errors: ['Browser view is not ready.']
       }
     }
-    return await this._state.replayEngine.replay(recipe, variables)
+    return await this.targetReplay.replay(recipe, variables)
   }
 
   private async handleSkillApiSafety(
@@ -617,14 +664,14 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     request?: { query?: Record<string, unknown> | null; body?: unknown }
   ): Promise<void> {
     if (decision.safety === 'safe') return
-    const label = `${decision.method} ${apiActivityPath(url, this._state.currentUrl)}`
+    const label = `${decision.method} ${apiActivityPath(url, this.targetUrl)}`
     if (decision.safety === 'unsafe') {
       await this._state.pushHostApprovalEvent({
         kind: 'api',
         status: 'blocked',
         label,
         method: decision.method,
-        path: apiActivityPath(url, this._state.currentUrl),
+        path: apiActivityPath(url, this.targetUrl),
         reason: decision.reason
       })
       this._state.broadcastActivity(
@@ -649,7 +696,7 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
       url,
       reason: decision.reason,
       payload: buildUnknownConfirmPayload({
-        summary: `${decision.method} ${apiActivityPath(url, this._state.currentUrl)}`,
+        summary: `${decision.method} ${apiActivityPath(url, this.targetUrl)}`,
         query: request?.query,
         body: request?.body
       })
@@ -668,7 +715,7 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     reason: string
     payload?: Parameters<typeof taskRegistry.askOperator>[0]['payload']
   }): Promise<boolean> {
-    const path = apiActivityPath(params.url, this._state.currentUrl)
+    const path = apiActivityPath(params.url, this.targetUrl)
     const eventId = await this._state.pushHostApprovalEvent({
       kind: 'api',
       status: 'pending',
@@ -691,14 +738,14 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     )
     this._state.broadcastActivity(
       'api-call',
-      `${allowed ? 'approved' : 'denied'} ${params.method} ${apiActivityPath(params.url, this._state.currentUrl)}`,
+      `${allowed ? 'approved' : 'denied'} ${params.method} ${apiActivityPath(params.url, this.targetUrl)}`,
       allowed
     )
     this._state.debugCodex({
       scope: 'agent',
       phase: allowed ? 'api-confirmed' : 'api-denied',
       level: allowed ? 'info' : 'warn',
-      message: `${params.method} ${apiActivityPath(params.url, this._state.currentUrl)} ${allowed ? 'approved' : 'denied'} by operator.`,
+      message: `${params.method} ${apiActivityPath(params.url, this.targetUrl)} ${allowed ? 'approved' : 'denied'} by operator.`,
       detail: {
         method: params.method,
         url: params.url,
@@ -713,7 +760,7 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     command: BrowserCommand,
     domainAuth: AuthHint[]
   ): Promise<CommandResult[]> {
-    if (!this._state.replayEngine) {
+    if (!this.targetReplay) {
       return [
         {
           command: command.command,
@@ -751,7 +798,7 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
           url: command.url,
           reason: 'browser_exec mutating API request',
           payload: buildUnknownConfirmPayload({
-            summary: `${normalizeHttpMethod(command.method)} ${apiActivityPath(command.url, this._state.currentUrl)}`,
+            summary: `${normalizeHttpMethod(command.method)} ${apiActivityPath(command.url, this.targetUrl)}`,
             query: command.query,
             body: command.body
           })
@@ -759,7 +806,7 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
         if (!allowed) {
           this._state.broadcastActivity(
             'api-call',
-            `denied ${normalizeHttpMethod(command.method)} ${apiActivityPath(command.url, this._state.currentUrl)}`,
+            `denied ${normalizeHttpMethod(command.method)} ${apiActivityPath(command.url, this.targetUrl)}`,
             false
           )
           return [
@@ -768,12 +815,12 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
               id: command.id,
               ok: false,
               status: 0,
-              error: `operator denied ${normalizeHttpMethod(command.method)} ${apiActivityPath(command.url, this._state.currentUrl)}`
+              error: `operator denied ${normalizeHttpMethod(command.method)} ${apiActivityPath(command.url, this.targetUrl)}`
             }
           ]
         }
       }
-      const result = await this._state.replayEngine.apiFetch(
+      const result = await this.targetReplay.apiFetch(
         {
           url: command.url,
           method: command.method,
@@ -801,7 +848,7 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
         }
       ]
     }
-    const single = await this._state.replayEngine.runCommands([command])
+    const single = await this.targetReplay.runCommands([command])
     return single.results
   }
 }

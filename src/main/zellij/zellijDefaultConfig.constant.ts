@@ -10,7 +10,7 @@
 export const ZELLIJ_THEME_NAME = 'bitterless';
 
 /** Bump when an existing installation must receive a fresh application-owned template. */
-export const ZELLIJ_CONFIG_VERSION_CODE = '260913170717';
+export const ZELLIJ_CONFIG_VERSION_CODE = '260914150147';
 
 /**
  * Replaced with the binds derived from `defaultZellijShortcuts`.
@@ -31,6 +31,18 @@ export const ZELLIJ_DEFAULT_CONFIG_TEMPLATE = `// Written by Bitterless. Templat
 // edit of this file and leaves everything else byte for byte.
 
 keybinds {
+  // Option+Left/Right must reach the program as word movement, the way they do in a native macOS
+  // input. The web client already sends the right thing (\\x1b[1;3D / \\x1b[1;3C, see its
+  // assets/key-handler.js); it is Zellij's own default bind of "Alt left"/"Alt right" to
+  // MoveFocusOrTab that consumes them before the pane ever sees them. Unbound globally, not just in
+  // normal mode, because the defaults install them through \`shared_except "locked"\`.
+  //
+  // Left/right pane focus keeps working through "Alt h"/"Alt l" — also a Zellij default, and usable
+  // only because \`mac_option_is_meta\` is set below. "Alt up"/"Alt down" are deliberately left
+  // bound: no editing key needs them, so pane focus keeps a pair of arrows.
+  unbind "Alt left"
+  unbind "Alt right"
+
   normal {
 ${ZELLIJ_BINDS_PLACEHOLDER}
   }
@@ -61,6 +73,11 @@ explicit_theme_hue "dark"
 // The web terminal's ANSI palette. Programs choose which colors to emit; these slots render them.
 web_client {
     font "monospace"
+    // Option is Meta, as every terminal-as-editor setup has it: Option+Backspace deletes a word,
+    // Option+letter reaches the program instead of typing an accent (Option+h was producing "˙"),
+    // and Zellij's own "Alt h"/"Alt l" focus binds become reachable at all. xterm.js defaults this
+    // to false, which is why none of that worked.
+    mac_option_is_meta true
     theme {
         background "#1a1b26"
         foreground "#c0caf5"

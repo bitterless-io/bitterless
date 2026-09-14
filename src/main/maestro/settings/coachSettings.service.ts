@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { DEFAULT_COACH_START_URL, type CoachSettings, type LlmTarget } from '@maestro-shared/coach.api'
-import { DEFAULT_PRESET_MODEL, LLM_PRESETS } from '@maestro-main/llm/llmModels'
+import { DEFAULT_PRESET_MODEL, LLM_PRESETS, normalizeStoredLlmModel } from '@maestro-main/llm/llmModels'
 
 export const DEFAULT_START_URL = DEFAULT_COACH_START_URL
 
@@ -64,13 +64,25 @@ export class CoachSettingsService {
 function normalizeSettings(value: Partial<CoachSettings>): CoachSettings {
   const provider = normalizeLlmProvider(value.llmProvider || DEFAULT_SETTINGS.llmProvider)
   const fallbackModel = DEFAULT_MODEL_BY_PROVIDER[provider] || DEFAULT_SETTINGS.llmModel
-  const rawModel = (value.llmModel || fallbackModel).trim()
+  const rawModel = normalizeStoredLlmModel(provider, value.llmModel || fallbackModel)
   const llmModel = normalizeLlmModel(rawModel, fallbackModel)
+  const homeCompositeId = String(value.homeCompositeId || '').trim()
+  const homeInstanceId = String(value.homeInstanceId || '').trim()
+  const homeAlias = String(value.homeAlias || '').trim()
   return {
     startUrl: normalizeStartUrl(value.startUrl),
     llmProvider: provider,
     llmModel,
-    llmEffort: normalizeLlmEffort(value.llmEffort, llmModel)
+    llmEffort: normalizeLlmEffort(value.llmEffort, llmModel),
+    // 这里只做「空串 = 没设」,**不查 registry**:settings 服务在 registry 注册之前就会被读到,
+    // 拿它当判据会把一个合法的 id 在启动早期擦掉。id 认不认识由读取方 fail closed
+    // (`resolveHomeCompositeId`),那里 registry 一定是满的。
+    ...(homeCompositeId ? { homeCompositeId } : {}),
+    // 这两格**依附于** `homeCompositeId`:没有自定义主页,就既没有「它的身份」也没有「它的名字」。
+    // 一起落、一起清,否则「还原默认主页」之后再设一个新主页,会捡到上一个主页的会话和别名 ——
+    // 而那条会话此刻可能还活着,接回去就是两个 tab 抢一条 Zellij 会话。
+    ...(homeCompositeId && homeInstanceId ? { homeInstanceId } : {}),
+    ...(homeCompositeId && homeAlias ? { homeAlias } : {})
   }
 }
 
@@ -86,8 +98,7 @@ export function isDefaultStartUrl(url?: string): boolean {
 
 function normalizeLlmModel(model: string, fallbackModel: string): string {
   const trimmed = model.trim()
-  // 存量的退役 target(gpt-5.5、claude-*)在这里一并降级 —— 判据是"还是不是一个活着的预设",
-  // 不再逐个点名,所以下次退役模型不用回来改这里。
+  // 已知替代模型由 `normalizeStoredLlmModel` 先迁移;其余退役 target 按当前预设降级。
   if (presetFor(trimmed)) return trimmed
   return presetFor(fallbackModel) ? fallbackModel : LLM_PRESETS[0]?.model || fallbackModel
 }
@@ -103,9 +114,7 @@ function normalizeLlmProvider(provider: string): string {
 /**
  * effort 的合法集**按模型从预设取**,不再手写。
  *
- * 手写那版有两个死角:`gpt-5.6-sol` 不支持 `low` 要单独打补丁(那正是预设里
- * `CODEX_SOL_EFFORTS` 已经表达过的事),而 `gpt-5.4-mini` 不支持 `max` 却没人补 ——
- * 存一个 `max` 进去会原样留着,直到发消息时才被拒。
+ * 例如 `gpt-5.6-sol` 不支持 `low`,由预设里的 `CODEX_SOL_EFFORTS` 统一表达。
  */
 function normalizeLlmEffort(effort: string | undefined, model: string): CoachSettings['llmEffort'] {
   const preset = presetFor(model)

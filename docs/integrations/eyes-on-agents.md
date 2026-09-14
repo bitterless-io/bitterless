@@ -41,7 +41,7 @@ by [EyesOnAgents Claude Observation](../features/eyes-on-agents-claude-observati
 - Persist the stored Domain value and the last thread opened through EyesOnAgents across restarts.
 - Persist unread explicitly: every observed running state or terminal event sets unread; a
   successful Open from EyesOnAgents or explicit per-thread **Mark as read** clears attention until
-  activity is observed again. The retained bulk-read mutation remains unexposed by this renderer.
+  activity is observed again. Read all is exposed immediately right of Search in the Focus header.
 - Refresh thread discovery metadata, including changed titles, whenever the EyesOnAgents window is
   activated again.
 - Hide archived Codex threads and restore unarchived threads without losing their Domain or local
@@ -616,13 +616,16 @@ Both acknowledgement paths share one positive terminal allowlist — `idle`, `fa
   writes `last_opened_*`, runtime evidence, `updated_at`, or archive state, so it can neither forge an
   Open nor disturb the `COALESCE(last_activity_at, updated_at)` refresh ordering. Observation stays
   authoritative — a later accepted Hook or App Server event may overwrite a manual value, which is
-  what keeps "unread" meaning observed-and-unacknowledged. On an active or `unknown` row the flag is
-  latent until the row settles.
-- The retained, renderer-unexposed bulk-read mutation clears `is_unread` for every non-archived unread terminal row belonging to the
+  what keeps "unread" meaning observed-and-unacknowledged. On an active row the flag is latent until
+  the row settles; an `unknown` row displays its red dot.
+- The header Read all action clears `is_unread` for every non-archived, non-deleted unread row belonging to the
   Main-provided visible-provider allowlist in one repository mutation. It is not filtered by
   renderer DOM, current scroll position, Project, or search query, it does not deep-link to Codex,
   and it never changes runtime evidence or `last_opened_*`. When Claude is paused the allowlist is
-  Codex-only, so hidden Claude attention is preserved. EyesOnAgents exposes no bulk-clear control.
+  Codex-only, so hidden Claude attention is preserved. The mutation has no stored-runtime filter:
+  active latent flags are acknowledged too, covering stored-active rows projected as unknown after
+  authority expires. It never ends working/waiting states. The returned snapshot updates the board,
+  with older in-flight snapshots rejected so they cannot restore acknowledged dots.
 
 Acknowledged terminal rows lose the unread rank and dot but remain in the complete Focus board. A
 newer lifecycle observation committed after either mutation may set a cleared thread unread again,
@@ -631,7 +634,7 @@ preserving newer activity. Metadata polling cannot do so.
 `last_opened_*` changes only after `shell.openExternal(codex://threads/<id>)` resolves successfully.
 Selecting a card, moving it, or opening the same thread directly inside Codex does not mark it read.
 This means "unread" precisely means "attention observed by EyesOnAgents and not yet acknowledged by
-a successful Open or explicit per-thread acknowledgement". Bitterless cannot observe arbitrary manual
+a successful Open, explicit per-thread acknowledgement or Read all". Bitterless cannot observe arbitrary manual
 navigation inside Codex Desktop.
 
 A `Stop` Hook proves only that the turn stopped; it is not a read receipt and contains no supported

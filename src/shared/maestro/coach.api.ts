@@ -169,6 +169,13 @@ export interface CoachXpcContract {
   // `x`/`y` are window-content-relative DIP, measured by the button itself.
   showNewTabMenu(params: { x: number; y: number }): Promise<void>
   /**
+   * 地址栏左侧 `menubar__pagetype__button` → 原生菜单:把这个 tab 换成 Website 或某个 mini-app。
+   *
+   * 只送锚点,不送选择结果 —— 菜单项的 click 在 main 里直接改状态并 `broadcastTabs()`,
+   * 所以没有对应的 `setTabKind` 上线。`x`/`y` 是窗口内容坐标系的 DIP,由按钮自己测。
+   */
+  showPageTypeMenu(params: { tabId: string; x: number; y: number }): Promise<void>
+  /**
    * 在 OnlyPreview 的 tab 里打开一个绝对目录。
    *
    * 与「切换工作区」是两件事:那个开选择器,这个显示你已经在的那个目录。
@@ -182,6 +189,8 @@ export interface CoachXpcContract {
   reorderTabs(params: { ids: string[] }): Promise<void>
   closeTab(params: { id: string }): Promise<void>
   getTabs(): Promise<TabInfo[]>
+  getAgentBrowserSession(params: { sessionId: string }): Promise<AgentBrowserSessionState>
+  showAgentBrowserTab(params: { sessionId: string; tabId: string }): Promise<{ ok: boolean; error?: string }>
   // Restore persisted tabs the home renderer read from the sqlite store (renderer-driven
   // persistence): main recreates them as cold tabs after the pinned Home tab. Idempotent.
   restoreTabs(params: { tabs: SavedTab[] }): Promise<void>
@@ -284,6 +293,23 @@ export type ActiveTabContent =
   | { readonly state: 'file'; readonly fileUrl: string; readonly app: string }
   | { readonly state: 'miniapp'; readonly app: string }
   | { readonly state: 'web'; readonly url: string; readonly title: string }
+
+export interface AgentBrowserTabState {
+  id: string
+  title: string
+  url: string
+  status: 'ready' | 'cold' | 'loading' | 'crashed' | 'destroyed' | 'closed' | 'load-failed' | 'unavailable'
+  error?: string
+}
+
+export interface AgentBrowserSessionState {
+  sessionId: string
+  selectedTabId?: string
+  initiatingTab?: AgentBrowserTabState
+  /** Current task markers; independent of historical targets and drill recording members. */
+  activeUseTabIds?: string[]
+  tabs: AgentBrowserTabState[]
+}
 export type WorkbenchPane =
   | 'recording'
   | 'skills'
@@ -376,6 +402,19 @@ export interface TabInfo {
   id: string
   kind: TabKind
   title: string
+  /**
+   * The operator's own name for this tab, when they gave it one.
+   *
+   * A SEPARATE field from `title` on purpose: six writers overwrite `title` without asking — every
+   * `page-title-updated`, the composite `setTitle` seam (OnlyPreview pushes on every file change),
+   * the two tab factories, `setTabKind`, and restore. Storing the operator's name in `title` means
+   * any one of them silently wipes it (docs/features/tab-alias.md #1).
+   *
+   * Empty / absent = no alias, show the page title. It is USER TEXT, not a trusted instruction —
+   * `list_tabs` puts the whole `TabInfo` in front of the model, so treat it exactly like a page
+   * title that a page chose for itself.
+   */
+  alias?: string
   /** Main-owned real targets (such as the bundled Home file URL) are never exposed here. */
   url: string
   /** Stable renderer-facing URL for first-party local tabs. */
@@ -392,7 +431,7 @@ export interface TabInfo {
   /** Page load in flight; the tab chip shows a spinner until stop/failure/teardown/watchdog. */
   loading: boolean
   /**
-   * The agent is DRIVING this tab right now (deep_fetch rendering it, ui_act clicking in it, …).
+   * A task has active browser use on this tab, or temporary page work is still in flight.
    *
    * Why it is on the wire and not merely a main-side fact: a tab that moves on its own with no
    * visible cause reads as the app misbehaving. The chip animates its favicon slot while this is
@@ -426,6 +465,35 @@ export interface CoachSettings {
   llmProvider: string
   llmModel: string
   llmEffort: LlmEffort
+  /**
+   * 固有槽位装哪个 composite mini-app。`undefined` / 空串 / registry 不认识的 id = 内置本地 Home。
+   *
+   * **刻意不与 `startUrl` 合并**:`startUrl` 说的是「除固有 tab 之外再开一个网页」,而且明确拒绝
+   * mini-app;这一条说的是「固有槽位装哪个 mini-app」。取值域不相交,合并等于让一个键同时表达两件
+   * 互斥的事(docs/features/custom-homepage-tab.md #2)。
+   */
+  homeCompositeId?: string
+  /**
+   * 固有槽位那个 mini-app 的 `instanceId` —— 设为主页那一刻它**真实的**身份,原样记下来。
+   *
+   * 非存不可的理由是一条结构性的事实:固有 tab 是 `pinned` 的,而 pinned tab 按设计**不进**
+   * SavedTab 持久化(`tab.store.ts` 的 `isRestorableComposite` 要求 `!t.pinned`)。这一格的 tab
+   * 每次启动都是从这份设置里重建的,设置里没有的东西就等于不存在。少了它,重建只能按 spec id
+   * 推导一个身份,而 Zellij 这类 `restorable` mini app「`instanceId` 就是它回到自己那条会话的
+   * 依据」—— 设主页那一刻在槽位里的那条会话从此再没人接管、也没人关掉:每设一次主页留一条孤儿。
+   *
+   * 空 = 这份设置写于本字段之前的版本,读取方回退到那个按 spec id 推导的值(见
+   * `homeCompositeInstanceId`)。**只作存量兜底**,新写入一律记真实 id。
+   */
+  homeInstanceId?: string
+  /**
+   * 固有槽位那个 tab 的别名(`Alias…` 起的名字)。
+   *
+   * 同上一条同一个理由:pinned tab 不进 SavedTab,设置是它唯一的落脚点。而且这里比别处更严重
+   * —— `Set as homepage` 会顺手关掉旧的 Home tab,连第二份带着名字的副本都不存在
+   * (docs/features/tab-alias.md G5)。空串 = 没别名,显示页面标题。
+   */
+  homeAlias?: string
 }
 
 export type LlmProviderId = 'openai-codex' | 'anthropic' | string
@@ -445,11 +513,11 @@ export interface LlmTarget {
   /** Compact display label for dense controls, e.g. 5.5 or Opus 4.8. */
   shortLabel: string
   /** The preset's DEFAULT effort — what a fresh switch to this model selects. Not necessarily
-   * `efforts[0]`: the option list stays in ascending order for the picker, while the default can
-   * sit anywhere in it (gpt-6-astra lists low..max but defaults to medium). Read it through
+   * `efforts[0]`: the option list stays in descending order for the picker, while the default can
+   * sit anywhere in it (gpt-6-astra lists max..low but defaults to medium). Read it through
    * `defaultLlmEffort()`, never as `efforts[0]`. */
   effort: LlmEffort
-  /** Selectable efforts for this model, in picker order (ascending). */
+  /** Selectable efforts for this model, in picker order (descending). */
   efforts: LlmEffortOption[]
   /** Context length as integer K units, e.g. 256 means 256K tokens. */
   contextLengthK: number
@@ -958,10 +1026,12 @@ export interface AgentTurnFinished {
   reply?: AgentReply
 }
 
-/** Active owner plus unacknowledged finishes, replayable after a renderer reload. */
+/** All active owners plus unacknowledged finishes, replayable after a renderer reload. */
 export interface AgentTurnRecoverySnapshot {
   revision: number
+  /** First active turn retained for older callers; new callers must reconcile all turns. */
   turn: AgentTurnSnapshot | null
+  turns: AgentTurnSnapshot[]
   finished: AgentTurnFinished[]
 }
 

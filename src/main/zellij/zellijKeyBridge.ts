@@ -1,4 +1,4 @@
-import type { Input, WebContents } from 'electron';
+import { clipboard, type Input, type WebContents } from 'electron';
 
 /**
  * macOS line-editing keys that Zellij's web client cannot receive, translated before they reach it.
@@ -9,9 +9,11 @@ import type { Input, WebContents } from 'electron';
  *
  *     "Backspace".charCodeAt(0) === 66   // 'B'
  *     "Delete".charCodeAt(0)    === 68   // 'D'
+ *     "ArrowLeft".charCodeAt(0) === 65   // 'A'  — and so do Right, Up and Down
  *
- * So Cmd+Delete arrives at Zellij as Super+B. No keybind can fix that — the sequence never carried
- * the key. Translating here is the only layer that still has the real event.
+ * So Cmd+Delete arrives at Zellij as Super+B, and all four Cmd+Arrow combinations arrive as the
+ * SAME sequence, `\x1b[65;9u`, indistinguishable from each other. No keybind can fix that — the
+ * sequence never carried the key. Translating here is the only layer that still has the real event.
  *
  * The translation targets are the readline bindings every shell already implements, so nothing has
  * to be configured for them to work.
@@ -25,7 +27,9 @@ interface KeyTranslation {
 }
 
 const MAC_COMMAND_TRANSLATIONS: readonly KeyTranslation[] = [
-  { from: 'Backspace', toKey: 'u', why: 'Cmd+Delete = delete to start of line (readline Ctrl+U)' }
+  { from: 'Backspace', toKey: 'u', why: 'Cmd+Delete = delete to start of line (readline Ctrl+U)' },
+  { from: 'ArrowLeft', toKey: 'a', why: 'Cmd+Left = start of line (readline Ctrl+A)' },
+  { from: 'ArrowRight', toKey: 'e', why: 'Cmd+Right = end of line (readline Ctrl+E)' }
 ];
 
 export const translateZellijCommandKey = (input: Input): KeyTranslation | undefined => {
@@ -36,8 +40,56 @@ export const translateZellijCommandKey = (input: Input): KeyTranslation | undefi
 };
 
 /**
+ * Cmd+C and Cmd+V in the terminal. Both are performed from Main, because neither works on its own.
+ *
+ * Cmd+C never reaches the browser: `hasModifiersToHandle` in Zellij's `assets/key-handler.js`
+ * returns true for `ev.metaKey` ALONE, so the handler calls `preventDefault()` and encodes a Kitty
+ * sequence instead. It exempts exactly two combinations — Ctrl+Shift+V and, on macOS, Cmd+V — and
+ * copy is not one of them.
+ *
+ * Cmd+V *is* exempted there and still does nothing, for an unrelated reason: the terminal view runs
+ * with `setIgnoreMenuShortcuts(true)` so menu accelerators cannot fire while the terminal owns the
+ * keyboard, and on macOS the native paste action is delivered by the Edit menu's `paste` role. With
+ * the menu silenced, nothing is left to perform it.
+ */
+export type ZellijClipboardAction = 'copy' | 'paste';
+
+export const zellijClipboardAction = (input: Input): ZellijClipboardAction | undefined => {
+  if (input.type !== 'keyDown' || !input.meta) return undefined;
+  // Plain Cmd only, for the same reason the key translations are: Cmd+Shift+C and friends may be
+  // real Zellij binds, and guessing at them is how someone's config quietly breaks.
+  if (input.control || input.alt || input.shift) return undefined;
+  if (input.key === 'c') return 'copy';
+  if (input.key === 'v') return 'paste';
+  return undefined;
+};
+
+/**
+ * Reads the selection from xterm itself, not from the document.
+ *
+ * `webContents.copy()` is the obvious call and it copies nothing here: Zellij loads the WebGL
+ * renderer, which DRAWS the selection rather than putting it in the DOM, so Blink's copy command is
+ * disabled and the `copy` listener xterm attaches to its container never fires. `window.term` is
+ * Zellij's own global (`assets/app.js`), and `term.getSelection()` returns the selected text
+ * whichever renderer is loaded.
+ */
+export const copyZellijSelection = async (webContents: WebContents): Promise<void> => {
+  const selection: unknown = await webContents.executeJavaScript(
+    'typeof window.term?.getSelection === "function" ? window.term.getSelection() : ""'
+  );
+  // An empty selection must leave the clipboard alone: Cmd+C with nothing selected is a no-op, not
+  // a way to lose whatever was copied a moment earlier.
+  if (typeof selection === 'string' && selection.length > 0) clipboard.writeText(selection);
+};
+
+/**
  * Only on macOS: elsewhere Cmd is not a key users press, and `input.meta` is the Windows/Super key
- * where these translations would be wrong.
+ * where these translations — and the clipboard keys — would be wrong.
+ *
+ * Shift+Enter and Option+Enter used to be handled here too, by re-dispatching Alt+Enter for xterm.js
+ * to encode. They moved to `zellijPageKeyPatch.ts`: that trick depended on how xterm.js treats Alt,
+ * which is precisely what `mac_option_is_meta` changes, so one config flag would have silently
+ * decided whether the newline still worked.
  */
 export const bindZellijKeyBridge = (
   webContents: WebContents,
@@ -45,6 +97,21 @@ export const bindZellijKeyBridge = (
 ): void => {
   if (platform !== 'darwin') return;
   webContents.on('before-input-event', (event, input) => {
+    const clipboardAction = zellijClipboardAction(input);
+    if (clipboardAction) {
+      event.preventDefault();
+      if (clipboardAction === 'paste') {
+        // The focused element is xterm's helper textarea, so Blink's paste command is enabled and
+        // dispatches a real `paste` event. Going through it — instead of writing
+        // `clipboard.readText()` to the PTY — keeps xterm's bracketed paste and its own sanitizing.
+        webContents.paste();
+        return;
+      }
+      void copyZellijSelection(webContents).catch((error) => {
+        console.error('[zellij] terminal copy failed', error);
+      });
+      return;
+    }
     const translation = translateZellijCommandKey(input);
     if (!translation) return;
     event.preventDefault();

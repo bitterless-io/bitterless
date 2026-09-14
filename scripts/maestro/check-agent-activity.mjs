@@ -9,7 +9,7 @@ const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const root = join(projectRoot, 'src')
 const require = createRequire(import.meta.url)
 const baseAgent = readFileSync(join(root, 'main/agent/BaseAgent.ts'), 'utf8')
-const piRuntimeAdapter = readFileSync(join(root, 'main/agent/runtime/piRuntimeAdapter.ts'), 'utf8')
+const piRuntimeProtocol = readFileSync(join(root, 'main/agent/runtime/piRuntimeProtocol.ts'), 'utf8')
 const maestroWindow = readFileSync(join(root, 'main/maestro/windows/main/maestroWindow.controller.ts'), 'utf8')
 const agentBroadcast = readFileSync(join(root, 'main/agent/runtime/agentBroadcast.ts'), 'utf8')
 const skillService = readFileSync(join(root, 'main/maestro/skills/skill.service.ts'), 'utf8')
@@ -40,7 +40,9 @@ const loadAgentActivityInternals = () => {
   wrapped(
     mod.exports,
     (specifier) => {
-      if (specifier === './runtime/coachRuntimeAdapter') return { CoachRuntimeAdapter: class CoachRuntimeAdapter {} }
+      if (specifier === './runtime/inputBudget') return { inputBudget: {} }
+      if (specifier === './runtime/modelIoLog') return { modelIoLog: {} }
+      if (specifier === './prompt/sysPrompt') return { BASE_SYSTEM_PROMPT: 'STUB' }
       return require(specifier)
     },
     mod,
@@ -50,11 +52,11 @@ const loadAgentActivityInternals = () => {
   return mod.exports.__checkAgentActivity
 }
 
-assert(piRuntimeAdapter.includes("type === 'tool_execution_start'"), 'pi runtime should normalize tool start events')
-assert(piRuntimeAdapter.includes("type === 'tool_execution_end'"), 'pi runtime should normalize tool end events')
-assert(piRuntimeAdapter.includes("inner.type === 'thinking_start'"), 'pi runtime should normalize thinking start')
-assert(piRuntimeAdapter.includes("inner.type === 'thinking_delta'"), 'pi runtime should normalize thinking deltas')
-assert(piRuntimeAdapter.includes("inner.type === 'thinking_end'"), 'pi runtime should normalize thinking end')
+assert(piRuntimeProtocol.includes("type === 'tool_execution_start'"), 'pi runtime should normalize tool start events')
+assert(piRuntimeProtocol.includes("type === 'tool_execution_end'"), 'pi runtime should normalize tool end events')
+assert(piRuntimeProtocol.includes("inner.type === 'thinking_start'"), 'pi runtime should normalize thinking start')
+assert(piRuntimeProtocol.includes("inner.type === 'thinking_delta'"), 'pi runtime should normalize thinking deltas')
+assert(piRuntimeProtocol.includes("inner.type === 'thinking_end'"), 'pi runtime should normalize thinking end')
 
 assert(baseAgent.includes('onThinking?: (state: Omit<AgentThinkingState'), 'BaseAgent should expose live thinking state separately from activity')
 assert(baseAgent.includes('this.opts.onThinking?.({ active, ts: Date.now() })'), 'BaseAgent should emit live thinking state changes')

@@ -7,6 +7,7 @@ import { sqliteWindowHelper as maestroSqliteWindowHelper } from '@maestro-main/w
 import { initMaestroXpc } from '@maestro-main/xpc/xpc.helper'
 import { acquireMaestroProxyDispatcher } from '@maestro-main/net/proxy'
 import { activateShortcuts } from '@maestro-main/common/shortcutsHelper/shortcuts.helper'
+import { setApplicationSessionSearchDispatch } from '@main/menu/applicationFindMenu.service'
 import { maestroDataRoot } from '@maestro-main/data/maestroDataRoot'
 import { runCrmsResidueCleanupOnce } from '@maestro-main/retirement/crmsResidueCleanup'
 import {
@@ -192,9 +193,18 @@ class MaestroWindowHandler extends XpcMainHandler {
     if (this.runtimeInitialized) return
     initMaestroXpc()
     deviceHelper.getDeviceInfo()
+    const searchSessions = (): boolean => {
+      const window = maestroWindowHelper.browserWindow
+      if (!window || window.isDestroyed() || BrowserWindow.getFocusedWindow() !== window) return false
+      return maestroWindowHelper.controlView.openSessionSearch()
+    }
+    setApplicationSessionSearchDispatch((window) =>
+      window === maestroWindowHelper.browserWindow && searchSessions()
+    )
     activateShortcuts({
       newTab: () => void maestroWindowHelper.newTab(),
-      closeActiveTab: () => void maestroWindowHelper.closeActiveTab()
+      closeActiveTab: () => void maestroWindowHelper.closeActiveTab(),
+      searchSessions
     })
     this.runtimeInitialized = true
   }

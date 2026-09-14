@@ -11,6 +11,24 @@ export const HOST_TOOL_CATALOG: HostToolCatalogEntry[] = [
     safety: 'Read-only; does not inspect page/customer data.'
   },
   {
+    name: 'start_browser_use',
+    scopes: ['cowork'],
+    category: 'tab',
+    risk: 'read',
+    summary: 'Mark an exact existing tab ID as being used by this task.',
+    useWhen: 'Announce active use before page work; page tools also begin use automatically.',
+    safety: 'Status only: no navigation, foreground or target selection, and no drill/recording changes. Idempotent.'
+  },
+  {
+    name: 'end_browser_use',
+    scopes: ['cowork'],
+    category: 'tab',
+    risk: 'read',
+    summary: 'Release this task\'s active-use marker for an exact tab ID.',
+    useWhen: 'When this task has finished using a tab; terminal cleanup also releases ordinary use.',
+    safety: 'Does not close the tab or alter target, foreground, drill/recording membership. Other owners remain active. Idempotent.'
+  },
+  {
     name: 'page_snapshot',
     scopes: ['cowork'],
     category: 'observe',
@@ -245,11 +263,29 @@ export const HOST_TOOL_CATALOG: HostToolCatalogEntry[] = [
     safety: 'Read-only.'
   },
   {
+    name: 'web_nav',
+    scopes: ['cowork'],
+    category: 'tab',
+    risk: 'write',
+    summary: 'Navigate this chat\'s exact browser target back/forward one page, reload it, or read its location/history.',
+    useWhen: 'Recover from a wrong page autonomously: web_nav back, then page_snapshot the same returned tab_id and continue.',
+    safety: 'Never follows human foreground changes. No-history, load failure, crash, destruction and timeout return errors; reload can resubmit a POST.'
+  },
+  {
+    name: 'open_tab',
+    scopes: ['cowork'],
+    category: 'tab',
+    risk: 'write',
+    summary: 'Open a URL in a new background tab and select it as this chat\'s browser target; show=true displays it on explicit request.',
+    useWhen: 'Open a requested page or explicitly recover a closed/crashed target at its intended URL.',
+    safety: 'Does not replay the failed action. Inspect the new page before continuing.'
+  },
+  {
     name: 'activate_tab',
     scopes: ['cowork'],
     category: 'tab',
     risk: 'write',
-    summary: 'Switch the active operation-view tab.',
+    summary: 'Select this task\'s browser target without changing the human foreground by default.',
     useWhen: 'When later page_snapshot/ui_act should target a specific tab.',
     safety: 'Prefer page_snapshot(tab_id) when only observing a result tab.'
   }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import MarkdownRender from 'markstream-vue'
 import { Trigger } from '@arco-design/web-vue'
 import { createXpcRendererEmitter } from 'electron-xpc/renderer'
@@ -11,11 +11,15 @@ import AttachmentCard from './AttachmentCard.vue'
 import ChatConfirm from './task/ChatConfirm.vue'
 import ChatErrorCard from './task/ChatErrorCard.vue'
 import TaskPart from './task/TaskPart.vue'
+import { dismissMarkdownLinkTooltip } from './markdownLinkTooltip.service'
 import './MessageItem.less'
 
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
 const props = defineProps<{ message: ChatMessage }>()
+const messageRoot = ref<HTMLElement | null>(null)
 const fileStatuses = ref<Record<string, FileStatusResult>>({})
+
+onBeforeUnmount(() => dismissMarkdownLinkTooltip(messageRoot.value))
 
 const ACTIVITY_TAGS: Record<AgentActivityStep['phase'], { tag: string; cls: string }> = {
   think: { tag: 'think', cls: 'message-activity__tag--think' },
@@ -163,6 +167,7 @@ watch(artifactPathKey, () => void refreshFileStatuses(), { immediate: true })
 
 <template>
   <div
+    ref="messageRoot"
     name="messageItem"
     class="message-item"
     :class="[messageAlignClass(props.message), { 'message-item--jumped': isJumped }]"

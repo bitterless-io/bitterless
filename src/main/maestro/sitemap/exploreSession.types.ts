@@ -1,8 +1,22 @@
 import type { WebContents } from 'electron'
 import type { NavExtractResult } from '@maestro-main/sitemap/navExtract'
+import type { AgentBrowserTabState } from '@maestro-shared/coach.api'
 import type { SiteSitemap } from '@maestro-shared/sitemap.types'
 
+export interface DrillTabState {
+  id: string
+  url: string
+  role: 'main' | 'branch'
+  parentTabId?: string
+  status: 'active' | 'closed' | 'unavailable'
+  error?: string
+}
+
 export interface ExploreSessionDeps {
+  describeTab?(id: string): AgentBrowserTabState | undefined
+  onTabScopeChanged?(ids: string[] | null): Promise<void>
+  onMainTabUnavailable?(error: string): void
+  onBrowserUsePaused?(): void
   /**
    * 激活 tab 的 view。**钻探认领自己的 tab 之前**才用它(启动那几步),之后一律走
    * `webContentsForTab` —— 见 `ExploreSessionService.drillWc()` 与契约 PQ-5 / conn-009。
@@ -25,7 +39,7 @@ export interface ExploreSessionDeps {
    * a11y 快照。`walkControls` 是【折叠前】walk 自己数出的控件键,**只用于对账**
    * (#12:漏斗分母目前来自另一次枚举,先量三个口径再换源)。
    */
-  pageSnapshot(): Promise<{ yaml: string; nodeCount: number; walkControls?: string[] } | null>
+  pageSnapshot(tabId?: string): Promise<{ yaml: string; nodeCount: number; walkControls?: string[] } | null>
   /**
    * 此刻还有几发请求在飞(0 = 网络安静)。**读页面之前要等它归零。**
    *

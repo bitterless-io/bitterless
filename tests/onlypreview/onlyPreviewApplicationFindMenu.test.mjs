@@ -22,7 +22,7 @@ await build({
   alias: { electron: join(projectRoot, 'tests/onlypreview/fixtures/electronMenu.stub.mjs') }
 });
 
-const { buildApplicationFindMenuTemplate, setApplicationFindDispatch } = await import(
+const { buildApplicationFindMenuTemplate, setApplicationFindDispatch, setApplicationSessionSearchDispatch } = await import(
   pathToFileURL(bundlePath).href
 );
 const { state, resetElectronMenuStub } = await import(
@@ -56,6 +56,7 @@ const createContents = () => {
 beforeEach(() => {
   resetElectronMenuStub();
   setApplicationFindDispatch(null);
+  setApplicationSessionSearchDispatch(null);
 });
 
 test('the menu carries both find accelerators', () => {
@@ -119,4 +120,26 @@ test('a chord pressed with no dispatcher registered still reaches the focused co
 test('a chord with nothing focused is dropped instead of throwing', () => {
   setApplicationFindDispatch(() => false);
   assert.doesNotThrow(() => findItem('Command+F').click());
+});
+
+test('Maestro session search owns Find only in its own window, leaving project Find intact', () => {
+  const maestro = {};
+  const preview = {};
+  const searches = [];
+  const previewCommands = [];
+  setApplicationSessionSearchDispatch((window) => {
+    if (window !== maestro) return false;
+    searches.push(window);
+    return true;
+  });
+  setApplicationFindDispatch((command) => { previewCommands.push(command); return true; });
+  state.focusedWindow = maestro;
+  findItem('Command+F').click();
+  assert.equal(searches.length, 1);
+  assert.deepEqual(previewCommands, []);
+  findItem('Shift+Command+F').click();
+  state.focusedWindow = preview;
+  findItem('Command+F').click();
+  assert.deepEqual(previewCommands, ['focus-search', 'find-in-file']);
+  assert.equal(searches.length, 1);
 });

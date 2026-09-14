@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import { agentBrowserStore } from './store/agentBrowser.store'
+import type { AgentBrowserSessionState } from '@maestro-shared/coach.api'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Button, Message, Notification, Spin, Trigger } from '@arco-design/web-vue'
-import { IconLogin2, IconSparkle2, IconX } from '@tabler/icons-vue'
+import { IconLogin2, IconX } from '@tabler/icons-vue'
 import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer'
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
 import { defaultLlmEffort } from '@maestro-shared/coach.api'
@@ -20,15 +22,21 @@ import type {
   TabInfo
 } from '@maestro-shared/coach.api'
 import ChatPanel from './ChatPanel.vue'
+import SessionTitle from './SessionTitle.vue'
+import SessionsDrawer from './SessionsDrawer.vue'
+import SessionSearchModal from './SessionSearchModal.vue'
+import { sessionActions } from './store/sessionActions.store'
 import ResponseStatus from './ResponseStatus.vue'
 import ChatConfirmSheet from './task/ChatConfirmSheet.vue'
 import { channelStore } from './store/channel.store'
 import { messageStore } from './store/message.store'
 import { isRejection } from './store/turn.service'
 import { taskStore } from './store/task.store'
+import { installMarkdownLinkTooltipCleanup } from './markdownLinkTooltip.service'
 import './ControlApp.less'
 
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
+let disposeMarkdownLinkTooltip: (() => void) | undefined
 
 const status = ref('idle')
 const controlLoading = ref(true)
@@ -40,6 +48,13 @@ const providerPickerVisible = ref(false)
 const modelPickerVisible = ref(false)
 const effortPickerVisible = ref(false)
 const activeSession = computed(() => channelStore.activeSession)
+const chatPanelRef = ref<InstanceType<typeof ChatPanel> | null>(null)
+const focusComposer = (): void => {
+  void nextTick(() => {
+    if (!sessionActions.historyVisible && !sessionActions.searchVisible) chatPanelRef.value?.focusComposer()
+  })
+}
+sessionActions.init()
 const llmLocked = computed(
   () =>
     llmSwitching.value ||
@@ -59,7 +74,7 @@ const syncLlmContextWindow = (cfg: LlmConfig): void => {
   messageStore.setContextWindow(preset?.contextLengthK || 256, preset?.contextLengthLabel || '256K', preset?.compressionRemainingPercent || 10)
 }
 
-// 预设声明的默认档优先(astra 列 low..max 但默认 medium);`efforts[0]` 只是它不在自己列表里时的兜底。
+// 预设声明的默认档优先(astra 列 max..low 但默认 medium);`efforts[0]` 只是它不在自己列表里时的兜底。
 const firstEffort = (model: LlmTarget): LlmEffort => defaultLlmEffort(model)
 
 /**
@@ -266,6 +281,7 @@ const onPanelBlur = (): void => {
 }
 
 onBeforeUnmount(() => {
+  disposeMarkdownLinkTooltip?.()
   window.removeEventListener('focus', onPanelFocus)
   window.removeEventListener('blur', onPanelBlur)
   onResizeEnd()
@@ -345,6 +361,7 @@ const loadControlConfig = async (): Promise<void> => {
 }
 
 onMounted(async () => {
+  disposeMarkdownLinkTooltip = installMarkdownLinkTooltipCleanup()
   panelFocused.value = document.hasFocus()
   window.addEventListener('focus', onPanelFocus)
   window.addEventListener('blur', onPanelBlur)
@@ -379,6 +396,9 @@ onMounted(async () => {
   })
   xpcRenderer.subscribe('coach/agent-activity', (payload) => {
     messageStore.pushActivity(payload.params as AgentActivityStep)
+  })
+  xpcRenderer.subscribe('coach/agent-browser-session', (payload) => {
+    agentBrowserStore.accept(payload.params as AgentBrowserSessionState)
   })
   xpcRenderer.subscribe('coach/agent-stream', (payload) => {
     messageStore.pushStream(payload.params as AgentStreamDelta)
@@ -418,18 +438,8 @@ onMounted(async () => {
       :class="{ 'control-app__card--focused': panelFocused }"
     >
       <div class="control-app__toolbar">
-        <div class="control-app__channels">
-          <button
-            type="button"
-            class="control-app__channel"
-            :class="{ 'control-app__channel--active': channelStore.activeSource === 'cowork' }"
-            :disabled="controlLoading"
-            @click="channelStore.selectSource('cowork')"
-          >
-            <IconSparkle2 :size="14" />
-            <span>Maestro</span>
-          </button>
-        </div>
+        <SessionTitle v-if="activeSession" :session="activeSession" />
+        <span v-else class="control-app__session-placeholder">Maestro</span>
 
         <div class="control-app__toolbar-actions">
           <button
@@ -456,6 +466,7 @@ onMounted(async () => {
         </div>
       </div>
       <ChatPanel
+        ref="chatPanelRef"
         v-else-if="activeSession"
         :key="activeSession.id"
         :session="activeSession"
@@ -602,6 +613,8 @@ onMounted(async () => {
           </div>
         </template>
       </ChatPanel>
+      <SessionsDrawer @close="focusComposer" />
+      <SessionSearchModal @close="focusComposer" />
     </div>
   </div>
 

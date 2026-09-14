@@ -120,6 +120,31 @@ export class CaptureService extends CommonService<CaptureServiceState> {
   capturing = false
   captureMode: CaptureMode = 'ui'
   captureTargetTabId: string | null = null
+  private drillTabIds: Set<string> | null = null
+  private drillScopeRevision = 0
+
+  isCaptureTab(tabId: string): boolean {
+    return this.capturing && (this.drillTabIds ? this.drillTabIds.has(tabId) : this.captureTargetTabId === tabId)
+  }
+
+  async setDrillCaptureTabs(ids: string[] | null): Promise<void> {
+    const revision = ++this.drillScopeRevision
+    const previous = this.drillTabIds
+    this.drillTabIds = ids === null ? null : new Set(ids)
+    if (!this.capturing) return
+    if (ids === null && this.captureStartedBy === 'agent') { await this.stopCapture(); return }
+    const next = this.drillTabIds ?? new Set(this.captureTargetTabId ? [this.captureTargetTabId] : [])
+    for (const tab of this._state.getOperationTabs()) {
+      if (previous?.has(tab.id) && !next.has(tab.id)) await tab.capture?.stopRecording()
+      if (revision !== this.drillScopeRevision || !this.capturing) return
+      if (next.has(tab.id) && !previous?.has(tab.id) && tab.id !== this.captureTargetTabId && this.isCapturableTab(tab)) {
+        await tab.capture.prepareNavigation()
+        if (revision !== this.drillScopeRevision || !this.capturing || !this.drillTabIds?.has(tab.id)) return
+        await tab.capture.startRecording()
+      }
+    }
+  }
+  private captureTargetRequest = 0
   traceFile: string | null = null
   captureStartedAt = 0
 
@@ -232,8 +257,10 @@ export class CaptureService extends CommonService<CaptureServiceState> {
    */
   async startCapture(
     params?: { mode?: CaptureMode } & Partial<CaptureOptions>,
-    opts?: { startedBy?: CaptureStartedBy }
+    opts?: { startedBy?: CaptureStartedBy; tabId?: string }
   ): Promise<CaptureState> {
+    const target = opts?.tabId ? this._state.getOperationTabs().find((tab) => tab.id === opts.tabId) : this.currentCaptureTarget()
+    if (!this.isCapturableTab(target) || (this.drillTabIds && !this.drillTabIds.has(target.id))) return this.getCaptureState()
     if (params?.mode) this.captureMode = params.mode
     if (params) await this.setCaptureOptions(params)
     /**
@@ -247,14 +274,8 @@ export class CaptureService extends CommonService<CaptureServiceState> {
     const effectiveStartedBy: CaptureStartedBy = replacingOperatorCapture
       ? 'operator'
       : opts?.startedBy || 'operator'
-    const active = this._state.getOperationTabs().find((tab) => tab.id === this._state.getActiveOperationTabId())
-    if (active && active.kind !== 'browser') {
-      this.emitTrace({ kind: 'info', msg: `capture unavailable on ${active.kind} tab`, ts: Date.now() })
-      return this.getCaptureState()
-    }
     if (this.capturing) await this.discardActiveCaptureForRestart()
-    const target = this.currentCaptureTarget()
-    if (!target?.capture) return this.getCaptureState()
+    if (!this._state.getOperationTabs().includes(target) || !this.isCapturableTab(target)) return this.getCaptureState()
 
     const dir = join(maestroDataRoot(), 'traces')
     mkdirSync(dir, { recursive: true })
@@ -278,6 +299,9 @@ export class CaptureService extends CommonService<CaptureServiceState> {
     this.traceEvents = []
     await this.clearCaptureRecordEdits()
     await target.capture.startRecording()
+    for (const id of this.drillTabIds ?? []) {
+      if (id !== target.id) await this._state.getOperationTabs().find((tab) => tab.id === id)?.capture?.startRecording()
+    }
     xpcMain.broadcast('coach/capture-started', {
       file: this.traceFile,
       mode: this.captureMode,
@@ -295,7 +319,8 @@ export class CaptureService extends CommonService<CaptureServiceState> {
     this.captureStartedBy = 'operator'
     this.captureStartedAt = 0
     const target = this.captureTargetTab()
-    await target?.capture?.stopRecording()
+    const recordingIds = new Set([...(this.drillTabIds ?? []), ...(target ? [target.id] : [])])
+    await Promise.all([...recordingIds].map((id) => this._state.getOperationTabs().find((tab) => tab.id === id)?.capture?.stopRecording()))
     this.captureTargetTabId = null
     if (this.traceStream) {
       this.traceStream.end()
@@ -358,6 +383,10 @@ export class CaptureService extends CommonService<CaptureServiceState> {
 
   currentCaptureTarget(): OperationTab | undefined {
     const tabs = this._state.getOperationTabs()
+    if (this.drillTabIds) {
+      const target = this.captureTargetTab()
+      return target && this.drillTabIds.has(target.id) && this.isCapturableTab(target) ? target : undefined
+    }
     const active = tabs.find((tab) => tab.id === this._state.getActiveOperationTabId())
     if (active && active.kind !== 'browser') return undefined
     if (active && !active.debuggerEnabled) return undefined
@@ -370,14 +399,21 @@ export class CaptureService extends CommonService<CaptureServiceState> {
   }
 
   async switchCaptureTarget(next: OperationTab): Promise<void> {
+    if (this.drillTabIds && !this.drillTabIds.has(next.id)) return
+    const request = ++this.captureTargetRequest
     if (!this.capturing) return
     if (next.kind !== 'browser') {
       await this.stopCapture()
       return
     }
     if (!this.isCapturableTab(next) || this.captureTargetTabId === next.id) return
+    const view = next.view
     const prev = this.captureTargetTab()
-    if (prev && prev.id !== next.id) await prev.capture?.stopRecording()
+    if (!this.drillTabIds && prev && prev.id !== next.id) await prev.capture?.stopRecording()
+    await next.documentReady
+    await next.capture?.prepareNavigation()
+    if (request !== this.captureTargetRequest || !this.capturing || next.view !== view || next.closeReady ||
+      !this._state.getOperationTabs().includes(next) || !this.isCapturableTab(next)) return
     this.captureTargetTabId = next.id
     await next.capture?.startRecording()
   }
@@ -392,9 +428,9 @@ export class CaptureService extends CommonService<CaptureServiceState> {
    * 目标解析走 `currentCaptureTarget()`(激活 → 既有录制目标 → 任一可录 tab),
    * 与录制目标同一个口径 —— 钻探自己那只 tab 由 `webContentsForTab()` 单独取,不经这条。
    */
-  async pageSnapshotForAgent(): Promise<{ yaml: string; nodeCount: number; walkControls?: string[] } | null> {
-    const target = this.currentCaptureTarget()
-    if (!target?.capture) return null
+  async pageSnapshotForAgent(tabId?: string): Promise<{ yaml: string; nodeCount: number; walkControls?: string[] } | null> {
+    const target = tabId ? this._state.getOperationTabs().find((tab) => tab.id === tabId) : this.currentCaptureTarget()
+    if (!this.isCapturableTab(target) || (this.drillTabIds && !this.drillTabIds.has(target.id))) return null
     const result = await target.capture.snapshot({ shot: false })
     if (!result.ok) return null
     this.emitTrace({
@@ -601,7 +637,7 @@ export class CaptureService extends CommonService<CaptureServiceState> {
   }
 
   onCapturedEvent(event: TraceEvent, tabId: string): void {
-    if (tabId !== this.captureTargetTabId || !this.capturing) return
+    if (!this.isCaptureTab(tabId)) return
     this.emitTrace(event)
   }
 
@@ -639,9 +675,9 @@ export class CaptureService extends CommonService<CaptureServiceState> {
     return !this.captureOptions.networkBlacklist.some((rule) => captureRuleMatches(rule, url, host))
   }
 
-  async toolStartRecording(modeArg: string): Promise<string> {
+  async toolStartRecording(modeArg: string, tabId?: string): Promise<string> {
     const mode = normalizeCaptureToolMode(modeArg)
-    const state = await this.startCapture(mode ? { mode } : undefined)
+    const state = await this.startCapture(mode ? { mode } : undefined, { startedBy: 'agent', tabId })
     const ok = Boolean(state.capturing)
     this._state.broadcastActivity('tool', `start_recording${state.mode ? ` (${state.mode})` : ''}`, ok)
     return JSON.stringify(
@@ -912,6 +948,8 @@ export class CaptureService extends CommonService<CaptureServiceState> {
   }
 
   reset(): void {
+    this.drillTabIds = null
+    this.drillScopeRevision += 1
     if (this.traceStream) this.traceStream.end()
     this.traceStream = null
     this.capturing = false

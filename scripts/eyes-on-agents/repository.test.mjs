@@ -2933,6 +2933,9 @@ try {
   for (const fixture of readAllFixtures) {
     assert.equal(seedReadAllRow.run(...fixture).changes, 1);
   }
+  const readAllBefore = new Map(db.prepare(
+    'SELECT * FROM eyes_on_agents_thread'
+  ).all().map((row) => [row.thread_id, { ...row }]));
   assert.deepEqual(
     await repository.markAllRead({ providers: ['codex', 'claude'] }),
     { changed: true },
@@ -2974,9 +2977,18 @@ try {
   ]) {
     assert.equal(
       readAllRows.get(threadId).is_unread,
-      1,
-      'Read all must clear only confirmed terminal rows, never active or unknown attention'
+      0,
+      'Read all must also clear unknown and latent active unread flags'
     );
+  }
+  for (const fixture of readAllFixtures) {
+    const threadId = fixture.at(-1);
+    const before = readAllBefore.get(threadId);
+    const after = { ...db.prepare('SELECT * FROM eyes_on_agents_thread WHERE thread_id = ?').get(threadId) };
+    assert.deepEqual(after, {
+      ...before,
+      is_unread: before.archive_state === 'archived' ? 1 : 0,
+    }, 'Read all writes only unread, preserving runtime, Open receipts, and every timestamp');
   }
   assert.equal(readAllRows.get(readAllArchivedId).is_archived, 1);
   assert.equal(
@@ -3144,8 +3156,21 @@ try {
     db.prepare('SELECT is_unread FROM eyes_on_agents_thread WHERE thread_id = ?')
       .get(claudeThreadId).is_unread,
     0,
-    'visible-provider Read all may acknowledge Claude terminal unread evidence'
+    'visible-provider Read all may acknowledge Claude unread evidence'
   );
+
+  db.prepare(
+    `UPDATE eyes_on_agents_thread SET runtime_state = 'unknown', is_unread = 1, is_deleted = 1
+     WHERE thread_id = ?`
+  ).run(claudeThreadId);
+  assert.deepEqual(await repository.markAllRead({ providers: ['codex', 'claude'] }), { changed: false });
+  assert.equal(db.prepare('SELECT is_unread FROM eyes_on_agents_thread WHERE thread_id = ?')
+    .get(claudeThreadId).is_unread, 1, 'Read all must leave deleted rows untouched');
+  db.prepare('UPDATE eyes_on_agents_thread SET is_deleted = 0 WHERE thread_id = ?').run(claudeThreadId);
+  assert.deepEqual(await repository.markAllRead({ providers: ['codex', 'claude'] }), { changed: true });
+  assert.deepEqual({ ...db.prepare(
+    'SELECT runtime_state, is_unread FROM eyes_on_agents_thread WHERE thread_id = ?'
+  ).get(claudeThreadId) }, { runtime_state: 'unknown', is_unread: 0 });
 
   // Manual per-thread read state: writes only is_unread, on any runtime state, both providers.
   const manualReadSessionKey = `codex:${readAllIdleId}`;

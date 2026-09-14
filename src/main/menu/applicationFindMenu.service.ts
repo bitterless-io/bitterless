@@ -8,10 +8,17 @@ export interface ApplicationFindDispatch {
 }
 
 let dispatch: ApplicationFindDispatch | null = null;
+let sessionSearchDispatch: ((window: BaseWindow | null) => boolean) | null = null;
 let installedMenu: Menu | null = null;
 
 export const setApplicationFindDispatch = (next: ApplicationFindDispatch | null): void => {
   dispatch = next;
+};
+
+export const setApplicationSessionSearchDispatch = (
+  next: ((window: BaseWindow | null) => boolean) | null
+): void => {
+  sessionSearchDispatch = next;
 };
 
 // macOS resolves every Command chord through the main menu's key-equivalent path first, and only
@@ -24,6 +31,7 @@ export const setApplicationFindDispatch = (next: ApplicationFindDispatch | null)
 const runFindCommand = (command: ApplicationFindCommand): void => {
   const window = BaseWindow.getFocusedWindow() ?? null;
   const focused = webContents.getFocusedWebContents() ?? null;
+  if (command === 'find-in-file' && sessionSearchDispatch?.(window)) return;
   const handled = dispatch?.(command, window) ?? false;
   console.info(
     `[onlypreview] event=menu-find command=${command} window=${window ? 'focused' : 'none'} focus=${focused ? 'view' : 'none'} handled=${handled}`

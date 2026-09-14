@@ -11,7 +11,7 @@ import type { PiToolSpec } from '@main/agent/BaseAgent'
  * 一个文件、逐个给它的相对依赖打桩。本文件不在那张图里,用 `@main` 别名是安全的。)
  */
 export interface DrillToolHost {
-  toolExploreSession(params: { action: string; startUrl?: string; focus?: string[]; sessionKey?: string }): Promise<string>
+  toolExploreSession(params: { action: string; startUrl?: string; tabId?: string; focus?: string[]; sessionKey?: string }): Promise<string>
   toolExploreVisit(params: { url?: string; tab?: string; from?: string }): Promise<string>
   toolExploreRecord(findingsJson: string): Promise<string>
 }
@@ -51,7 +51,7 @@ export const buildDrillTools = (host: DrillToolHost, sessionKey: string | undefi
       description:
         'Agent-driven site exploration (v2) — YOU drive the walk, the host only keeps state. action: "begin" | "state" | "end" | "need_login".\n' +
         '"begin" opens a session on the current site and returns the navigation log + the site\'s rules + the first page\'s COMPLETE anchor list and controls. ' +
-        '"state" re-reads the navigation log — current host vs target host, whether you have left the site, the recording directory, the worklist. Call it whenever you are unsure where you are. ' +
+        '"state" reports drill_tabs with mainTabId, currentTabId, activeTabIds and member lifecycle, plus the navigation log and worklist. Drilling controls its listed tab IDs independently of the human foreground. Unselected human tabs are excluded. Call it whenever you are unsure where you are. ' +
         '"end" writes the run journal and closes. ' +
         '"need_login" PAUSES the drill and asks the user to log in — call it when the app requires login and you are BLOCKED from its content; it returns once the user has logged in (they click 继续, or login is auto-detected).\n' +
         'The loop is yours: read the page, decide what is a module and what is a function, queue what to visit next with explore_record, go there with explore_visit. ' +
@@ -73,6 +73,7 @@ export const buildDrillTools = (host: DrillToolHost, sessionKey: string | undefi
       execute: async (args) =>
         host.toolExploreSession({
           action: String(args.action ?? 'state'),
+          tabId: args.tab_id ? String(args.tab_id) : undefined,
           startUrl: args.start_url ? String(args.start_url) : '',
           focus: parseFocusList(args.focus),
           sessionKey
@@ -84,10 +85,10 @@ export const buildDrillTools = (host: DrillToolHost, sessionKey: string | undefi
         'Go to one URL inside the exploration session (or "back" to undo a wrong turn), and get the page evidence back: the COMPLETE anchor list, the controls, and the navigation log. ' +
         'It refuses a URL that leaves the target site or that a site rule forbids, and it tells you when a same-site URL got REDIRECTED off-site so you can recover instead of reading a stranger\'s page. ' +
         'Use "back" the moment the navigation log says you are off the target site or the menu you expected is gone (a standalone page such as login/profile). ' +
-        'MULTI-TAB: when a page opens in a NEW TAB (target=_blank / window.open), it steals focus and the nav log lists it. Pass tab to switch: {"tab":"<id>"} explores that tab (its traffic is recorded too), {"tab":"home"} returns to your starting tab. Explore same-site new tabs, then {"tab":"home"} to continue — your exploration state spans all same-site tabs. For an off-site new tab, {"tab":"home"} (NOT "back": a fresh tab has no history).',
+        'MULTI-TAB: when a page opens in a NEW TAB (target=_blank / window.open), it joins as a background branch and the nav log lists it. An explicit tab selection takes over that page and adds it to this drill; merely opening a human tab does not. Pass tab to switch: {"tab":"<id>"} explores that tab (its traffic is recorded too), {"tab":"home"} returns to your starting tab. Explore same-site new tabs, then {"tab":"home"} to continue — your exploration state spans all same-site tabs. For an off-site new tab, {"tab":"home"} (NOT "back": a fresh tab has no history).',
       params: [
         { name: 'url', required: false, description: 'Absolute or relative URL, or the literal "back". Omit when using tab.' },
-        { name: 'tab', required: false, description: 'A tab id from the nav log, or "home" for your starting tab. Switches the active tab and reads it.' },
+        { name: 'tab', required: false, description: 'A tab id from the nav log, or "home" for your starting tab. Selects this drill target and reads it without switching the human foreground.' },
         { name: 'from', required: false, description: 'The anchor/menu name you followed — used in the journal and in uncovered entries.' }
       ],
       execute: async (args) =>

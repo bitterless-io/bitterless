@@ -32,6 +32,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 export interface AgentRunScratch {
   lastAgentRun: { skill?: unknown; skills?: unknown; replay?: unknown }
   lastAgentArtifacts: unknown[]
+  tabsOpenedThisTurn: unknown[]
 }
 
 export interface AgentSessionContext {
@@ -45,7 +46,7 @@ const storage = new AsyncLocalStorage<AgentSessionContext>()
 
 /** 在某个会话的上下文里跑一段(回合执行、工具循环都在里面)。 */
 export const runInAgentSession = async <T>(sessionKey: string, fn: () => Promise<T>): Promise<T> =>
-  await storage.run({ sessionKey, run: { lastAgentRun: {}, lastAgentArtifacts: [] } }, fn)
+  await storage.run({ sessionKey, run: { lastAgentRun: {}, lastAgentArtifacts: [], tabsOpenedThisTurn: [] } }, fn)
 
 /**
  * 本回合的暂存;不在回合里返回 `undefined`(调用方回退到 service 上那份 —— 非回合路径仍然要能用)。

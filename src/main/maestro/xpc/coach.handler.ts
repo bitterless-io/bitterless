@@ -65,6 +65,14 @@ import type { SavedTab } from '@maestro-shared/tabs.api'
 import type { CaptureMode } from '@maestro-shared/trace.types'
 
 export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract {
+  async getAgentBrowserSession(params: { sessionId: string }): ReturnType<CoachXpcContract['getAgentBrowserSession']> {
+    return maestroWindowHelper.getAgentBrowserSession(params)
+  }
+
+  async showAgentBrowserTab(params: { sessionId: string; tabId: string }): ReturnType<CoachXpcContract['showAgentBrowserTab']> {
+    return maestroWindowHelper.showAgentBrowserTab(params)
+  }
+
   async homeRendererReady(params: HomeRendererReadyParams): Promise<HomeRendererReadyResult> {
     return maestroWindowHelper.markHomeRendererReady(params)
   }
@@ -107,6 +115,10 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
 
   async showNewTabMenu(params: { x: number; y: number }): Promise<void> {
     await maestroWindowHelper.showNewTabMenu(params)
+  }
+
+  async showPageTypeMenu(params: { tabId: string; x: number; y: number }): Promise<void> {
+    await maestroWindowHelper.showPageTypeMenu(params)
   }
 
   async showTabMenu(params: { id: string }): Promise<void> {
@@ -410,10 +422,10 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
   }
 
   /**
-   * 会话解除了和这个工作区的绑定 → 预览应用开着的正是它时,一起收掉(Ral 2026-09-10)。
+   * 会话解除工作区绑定时,同时解绑预览中匹配的 Project,保留预览 tab/窗口。
    *
    * 没有注册预览应用的构建里这是一个**无操作**,不是错误:那种构建里工作区从来没有被打开过,
-   * 所以也没有什么要关。
+   * 所以也没有预览绑定需要解除。
    */
   async closeWorkspacePreview(params: { path: string }): Promise<{ ok: boolean; error?: string }> {
     const target = String(params?.path || '').trim()

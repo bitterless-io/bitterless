@@ -1,7 +1,12 @@
 import { realpath } from 'node:fs/promises';
+import { basename } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { fileSearchWindowService } from '@main/fileSearch/fileSearchWindow.service';
+import { OnlyPreviewFileTabSurface } from '@main/windows/onlyPreviewFileTab.service';
 
 import { registerMaestroPreviewOpener } from '@maestro-main/windows/main/previewOpener.registry';
 import { onlyPreviewWorkspaceRegistry } from '@main/miniapps/onlypreview/onlyPreviewWorkspace.registry';
+import { clearOnlyPreviewWorkspace } from '@main/miniapps/onlypreview/onlyPreviewClearWorkspace.service';
 import { registerOnlyPreviewDisplayUrlSink } from '@main/miniapps/onlypreview/onlyPreviewDisplayUrl.registry';
 import { maestroWindowHelper } from '@maestro-main/windows/main/maestroWindow.controller';
 import { onlyPreviewWindowHelper } from '@main/windows/onlyPreviewWindow.helper';
@@ -52,6 +57,35 @@ export const registerOnlyPreviewMaestroOpener = (): void => {
   });
   registerMaestroPreviewOpener({
     displayName: 'OnlyPreview',
+    openInTab: openOnlyPreviewOsTarget,
+    createFileTabSpec: (absolutePath) => {
+      let surface: OnlyPreviewFileTabSurface | null = null;
+      return {
+        id: 'file',
+        title: basename(absolutePath),
+        favicon: '',
+        displayUrl: pathToFileURL(absolutePath).href,
+        open: async (host) => {
+          const window = host.window();
+          if (!window) throw new Error('The file preview window is unavailable.');
+          surface = new OnlyPreviewFileTabSurface({
+            window,
+            path: absolutePath,
+            isOpen: () => host.isOpen(),
+            bounds: () => {
+              const bounds = host.contentRect();
+              if (!bounds) throw new Error('The file preview tab has no content bounds.');
+              return bounds;
+            },
+            attach: (container) => host.attach(container)
+          });
+          await surface.open();
+        },
+        close: () => { surface?.dispose(); surface = null; },
+        setActive: (_host, active) => surface?.setActive(active),
+        refresh: () => surface?.refresh()
+      };
+    },
     open: async (absolutePath: string) => {
       // **承载已经存在、只是它现在是一个窗口时,不要再建 tab。**
       //
@@ -105,21 +139,17 @@ export const registerOnlyPreviewMaestroOpener = (): void => {
       if (!result.ok) throw new Error(result.error || 'OnlyPreview could not open that path.');
     },
     /**
-     * 会话不再用这个工作区了 → 如果 OnlyPreview 现在开着的**正是它**,把 OnlyPreview 收掉。
+     * 会话不再用这个工作区时只解除匹配的 Project 绑定,保留当前 OnlyPreview tab/窗口。
      *
      * 比对是在**真实路径**上做的,两边都经过 `realpath`:芯片给的是人选的那一串,而绑定时存的是
      * `inspectTarget` 产出的 `rootRealPath` —— 不统一的话,一个软链拼法或 macOS 的
-     * `/tmp` vs `/private/tmp` 就会比不上,表现是「关了工作区但预览还开着」。
-     *
-     * `destroyStandalone()` 按承载各走各的:独立窗口关窗口,Cowork tab 关那一个 tab
-     * (它自己那行注释就是这么写的),所以这里不需要分情况。
+     * `/tmp` vs `/private/tmp` 就会比不上。最终匹配与解绑在同一目标变更 FIFO 中进行。
      */
     closeForPath: async (absolutePath: string) => {
       const host = onlyPreviewWindowHelper.getStandaloneHost();
       if (!host) return;
       const rootRealPath = await realpath(absolutePath).catch(() => absolutePath);
-      if (!onlyPreviewWorkspaceRegistry.isActiveProjectRoot(host.hostToken, rootRealPath)) return;
-      onlyPreviewWindowHelper.destroyStandalone();
+      await clearOnlyPreviewWorkspace(host.hostToken, rootRealPath);
     },
     /**
      * 地址栏那一串是不是一条本机文件路径,以及该怎么落。
@@ -130,4 +160,17 @@ export const registerOnlyPreviewMaestroOpener = (): void => {
      */
     resolveLocalTarget: (input: string) => resolveLocalPathTarget(input)
   });
+};
+
+/** OS regular files always receive a fresh tab; directories retain the existing Project route. */
+export const openOnlyPreviewOsTarget = async (
+  absolutePath: string,
+  options: { tabId?: string } = {}
+): Promise<void> => {
+  const inspected = await fileSearchWindowService.inspectTarget(absolutePath);
+  if (!inspected.selectedRelativePath) {
+    await openRegisteredOnlyPreviewExplicitTarget(absolutePath);
+    return;
+  }
+  await maestroWindowHelper.openFilePreviewTab({ path: absolutePath, ...options });
 };

@@ -19,17 +19,19 @@ const fixture = {
   copySessionPath: async () => ({ ok: true, path: '/tmp/session-io' }),
   readContextGraph: async () => ({ ok: true, graph: { sessionId: 'b', systemChars: 10, systemPreview: 'S', blocks: [], turns: 0, totalChars: 10, byType: [], pending: { chars: 0 }, noHistory: true } }),
   messageStore: vue.reactive({
-    historySessions: [],
+    sessionListItems: [],
+    refreshHistory: async () => undefined,
     turnService: {
       activeTurn: () => fixture.activeTurn,
       send: async () => { fixture.calls.push('send'); return { text: 'ok' }; }
     },
-    clearWorkspace: async (id) => fixture.calls.push(['clear', id]),
+    stopUsingWorkspace: async (id) => fixture.calls.push(['clear', id]),
     buildAgentContext: (session, _messageId, attachedPaths) => ({ workspace: session.detail.workspace, attachedPaths })
   }),
   get activeTurn() { return activeTurn.value; },
   set activeTurn(value) { activeTurn.value = value; }
 };
+fixture.sessionActions = vue.reactive({ historyVisible: false, searchVisible: false, closeSearch() { this.searchVisible = false; }, toggleHistory() { this.historyVisible = !this.historyVisible; } });
 globalThis.__historyFixture = fixture;
 globalThis.__historyVue = vue;
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
@@ -69,15 +71,16 @@ const mocks = {
     globalThis.__historyFixture.calls.push(['graph', params]); return globalThis.__historyFixture.readContextGraph(params);
   } });`,
   '@renderer/common/i18n/i18n.helper': `export const i18nHelper = { maestroControl: { chat: {
-    clearWorkspaceTitle: 'Clear?', clearWorkspaceContent: 'Clear {name}?', clearWorkspace: 'Clear', keepWorkspace: 'Keep',
+    stopUsingWorkspaceTitle: 'Clear?', stopUsingWorkspaceContent: 'Clear {name}?', stopUsingWorkspace: 'Clear', keepWorkspace: 'Keep',
     slashClear: 'Start a fresh chat; keep this conversation', slashViewContext: 'Copy model context and pending input',
-    slashCopied: 'Copied {chars} / {entries}', newChatUnavailable: 'New chat is unavailable while a turn is running.',
+    slashCopied: 'Copied {chars} / {entries}', newChatUnavailable: 'The source chat is inactive or archived.',
     slashCopySessionPath: 'Copy the model I/O jsonl folder for this session', slashPathCopied: 'Session jsonl path copied',
     slashViewContextGraph: 'Show the structure of the context the next send would give the model'
   }, contextGraph: { readFailed: 'Could not read the context' } } };`,
+  './store/sessionActions.store': 'export const sessionActions = globalThis.__historyFixture.sessionActions;',
   './store/message.store': 'export const messageStore = globalThis.__historyFixture.messageStore;',
   './store/channel.store': `export const channelStore = {
-    startNewMaestroSession: async (id) => globalThis.__historyFixture.calls.push(['new', id]),
+    startNewMaestroSession: (id) => globalThis.__historyFixture.startNewSession(id),
     selectMaestroHistorySession: async (id) => globalThis.__historyFixture.calls.push(['history', id])
   };`,
   './store/turn.service': 'export const isRejection = () => false;',
@@ -89,6 +92,7 @@ const mocks = {
 const output = await build({
   stdin: { contents: `${script.content}\nexport default component;`, resolveDir: resolve(root, 'src/renderer/maestro/control/src'), loader: 'ts' },
   bundle: true, write: false, platform: 'node', format: 'esm',
+  tsconfig: resolve(root, 'tsconfig.web.json'),
   plugins: [{ name: 'history-boundaries', setup(context) {
     context.onResolve({ filter: /.*/ }, ({ path }) =>
       Object.hasOwn(mocks, path) || /\.(vue|less)$/.test(path) ? { path, namespace: 'history-mock' } : undefined);
@@ -108,8 +112,11 @@ const harness = (t, archivedAt) => {
   fixture.readContextGraph = async () => ({ ok: true, graph: { sessionId: 'b', systemChars: 10, systemPreview: 'S', blocks: [], turns: 0, totalChars: 10, byType: [], pending: { chars: 0 }, noHistory: true } });
   fixture.listeners.clear();
   fixture.focused = true;
+  fixture.sessionActions.historyVisible = false;
+  fixture.sessionActions.searchVisible = false;
   fixture.activeTurn = null;
-  fixture.messageStore.historySessions = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+  fixture.startNewSession = async (id) => { fixture.calls.push(['new', id]); return true; };
+  fixture.messageStore.sessionListItems = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
   const props = vue.reactive({ session: { id: 'b', archivedAt, messages: [], detail: { workspace: { name: 'Project' } } } });
   const ui = component.setup(props, { expose: () => undefined, emit: () => undefined });
   let focused = 0;
@@ -129,89 +136,57 @@ test('SFC compiles and footer uses workspace-before-attachment with mutually exc
   assert.ok(source.indexOf('name="maestro__composer__workspace"') < source.indexOf('name="maestro__composer__attach"'));
   assert.match(source, /<IconBtn\s+v-else\s+name="maestro__composer__send"/);
   assert.doesNotMatch(source, /context-meter|contextTooltipLines|IconRefresh/);
+  const newButton = source.match(/<Button\s+name="maestro__new_chat"[\s\S]*?>/)[0];
+  assert.doesNotMatch(newButton, /turnLocked/);
+  assert.match(newButton, /session\.archivedAt/);
 });
 
-test('history defaults to current chat, wraps cursor, and current activation is a no-op', async (t) => {
-  const { ui, key } = harness(t);
-  key('h', { metaKey: true });
-  assert.equal(ui.historyVisible.value, true);
-  assert.equal(ui.historyCursor.value, 1);
-  key('Enter');
-  await tick();
-  assert.deepEqual(fixture.calls, []);
-  assert.equal(ui.historyVisible.value, true);
-  key('ArrowUp');
-  key('ArrowUp');
-  assert.equal(ui.historyCursor.value, 2);
-  key('ArrowDown');
-  assert.equal(ui.historyCursor.value, 0);
-  const enter = key('Enter');
-  ui.onComposerKeydown(enter);
-  await tick();
-  assert.deepEqual(fixture.calls, [['history', 'a']]);
-  assert.equal(ui.historyVisible.value, false);
-  assert.equal(enter.stopped, true);
-});
-
-test('Escape/toggle close restore composer focus; mount and listener cleanup are paired', async (t) => {
-  const { ui, key, focused } = harness(t);
+test('composer mount exposes focus and pairs its New chat listener cleanup', async (t) => {
+  const { ui, focused } = harness(t);
   await tick();
   assert.equal(focused(), 1);
   assert.equal(fixture.listeners.get('keydown').capture, true);
-  key('h', { ctrlKey: true });
-  key('Escape');
-  await tick();
-  assert.equal(ui.historyVisible.value, false);
+  ui.focusComposer();
   assert.equal(focused(), 2);
-  key('h', { metaKey: true });
-  key('h', { metaKey: true });
-  await tick();
-  assert.equal(focused(), 3);
 });
 
-test('shortcuts respect focus, IME, repeated activation, and the existing turn lock', async (t) => {
+test('New chat shortcuts work while busy and still respect focus, IME and repeated activation', async (t) => {
   const { ui, key } = harness(t);
   for (const options of [{ isComposing: true }, { keyCode: 229 }, { repeat: true }, { altKey: true }, { shiftKey: true }]) {
-    key('h', { metaKey: true, ...options });
-    assert.equal(ui.historyVisible.value, false);
+    key('n', { metaKey: true, ...options });
+    assert.deepEqual(fixture.calls, []);
   }
   fixture.focused = false;
-  key('h', { metaKey: true });
-  assert.equal(ui.historyVisible.value, false);
+  key('n', { metaKey: true });
+  assert.deepEqual(fixture.calls, []);
   fixture.focused = true;
   fixture.activeTurn = {};
   key('n', { metaKey: true });
   await tick();
-  assert.deepEqual(fixture.calls, []);
-  fixture.activeTurn = null;
-  key('n', { metaKey: true, repeat: true });
-  key('n', { metaKey: true });
-  await tick();
   assert.deepEqual(fixture.calls, [['new', 'b']]);
-});
-
-test('empty history is safe and archived composers are not auto-focused', async (t) => {
-  const { ui, key, focused } = harness(t, 1);
-  fixture.messageStore.historySessions = [];
-  key('h', { metaKey: true });
-  key('ArrowUp');
-  key('Enter');
-  key('Escape');
+  key('n', { ctrlKey: true, repeat: true });
+  key('n', { ctrlKey: true });
   await tick();
-  assert.equal(ui.historyCursor.value, 0);
-  assert.deepEqual(fixture.calls, []);
-  assert.equal(focused(), 0);
+  assert.deepEqual(fixture.calls, [['new', 'b'], ['new', 'b']]);
 });
 
-test('workspace clear waits for confirmation and rechecks a turn that started meanwhile', async (t) => {
-  const { ui } = harness(t);
-  await ui.clearWorkspace();
+test('archived composers are not auto-focused and cannot start New chat', async (t) => {
+  const { ui, focused } = harness(t, 1);
+  await tick();
+  assert.equal(focused(), 0);
+  assert.equal(await ui.startNewChat(), false, 'archived chats remain protected');
+});
+
+test('workspace clear ignores another session turn and rechecks its own turn after confirmation', async (t) => {
+  const { ui, props } = harness(t);
+  fixture.activeTurn = {};
+  await ui.stopUsingWorkspace();
   assert.deepEqual(fixture.calls, []);
   assert.match(fixture.confirmations[0].content, /Project/);
-  fixture.activeTurn = {};
+  props.session.turn = {};
   await fixture.confirmations[0].onOk();
   assert.deepEqual(fixture.calls, []);
-  fixture.activeTurn = null;
+  delete props.session.turn;
   await fixture.confirmations[0].onOk();
   assert.deepEqual(fixture.calls, [['clear', 'b']]);
 });
@@ -237,7 +212,7 @@ test('slash menu triggers only at a line start, filters predictably and wraps it
   await draft(ui, '/clear/file', 6);
   assert.equal(ui.slashVisible.value, false);
   await draft(ui, 'Question\n/');
-  assert.deepEqual(ui.shortcutStore.matches.map(item => item.name), ['/clear', '/copy_session_path', '/view_context', '/view_context_graph']);
+  assert.deepEqual(ui.shortcutStore.matches.map(item => item.name), ['/clear', '/copy_session_path', '/test_show_error', '/view_context', '/view_context_graph']);
   assert.equal(ui.shortcutStore.active.name, '/clear');
   composerKey(ui, 'ArrowUp');
   assert.equal(ui.shortcutStore.active.name, '/view_context_graph');
@@ -266,20 +241,48 @@ test('Tab completes, Escape preserves text, and IME/repeats do not execute a com
   assert.equal(ui.slashVisible.value, false);
 });
 
-test('/clear delegates New chat without sending/deleting history and explains a refused action', async (t) => {
+test('/clear delegates New chat during a running turn without sending or deleting history', async (t) => {
   const { ui } = harness(t);
   await draft(ui, '/clear');
   fixture.activeTurn = {};
   composerKey(ui, 'Enter');
   await tick();
-  assert.deepEqual(fixture.calls, []);
-  assert.equal(ui.input.value, '/clear');
-  assert.match(fixture.notices.at(-1).text, /running/);
-  fixture.activeTurn = null;
-  composerKey(ui, 'Enter');
-  await tick();
   assert.deepEqual(fixture.calls, [['new', 'b']]);
   assert.equal(ui.input.value, '');
+  assert.deepEqual(fixture.notices, []);
+});
+
+test('failed or refused New chat and /clear preserve input and attachments', async (t) => {
+  const { ui } = harness(t);
+  const files = [{ name: 'keep.txt', path: '/test/keep.txt' }];
+  for (const fail of [async () => false, async () => { throw new Error('create failed'); }]) {
+    fixture.startNewSession = fail;
+    await draft(ui, 'keep this draft'); ui.selectedFiles.value = files;
+    assert.equal(await ui.startNewChat(), false);
+    assert.equal(ui.input.value, 'keep this draft');
+    assert.deepEqual(ui.selectedFiles.value, files);
+    await draft(ui, '/clear'); composerKey(ui, 'Enter'); await tick();
+    assert.equal(ui.input.value, '/clear');
+    assert.deepEqual(ui.selectedFiles.value, files);
+  }
+});
+
+test('pending New chat creates once and late success preserves edited or switched composers', async (t) => {
+  const { ui, props, key } = harness(t);
+  for (const switchSession of [false, true]) {
+    let finish; let calls = 0;
+    fixture.startNewSession = () => { calls++; return new Promise(resolve => { finish = resolve; }); };
+    await draft(ui, 'original');
+    const pending = ui.startNewChat();
+    key('n', { metaKey: true });
+    assert.equal(calls, 1);
+    if (switchSession) props.session = { ...props.session, id: 'c' };
+    await draft(ui, 'newly edited');
+    ui.selectedFiles.value = [{ name: 'new.txt', path: '/test/new.txt' }];
+    finish(true); assert.equal(await pending, true);
+    assert.equal(ui.input.value, 'newly edited');
+    assert.equal(ui.selectedFiles.value[0].name, 'new.txt');
+  }
 });
 
 test('/view_context removes only its slash token and sends references rather than file bytes', async (t) => {

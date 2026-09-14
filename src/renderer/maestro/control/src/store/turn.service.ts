@@ -32,7 +32,7 @@ const CHAT_TURN_TIMEOUT_MS = 11 * 60_000
  *
  * 放开并发 = 改 renderer + Main 两道 gate,再补上述归属,**不需要改状态结构**。
  */
-const MAX_CONCURRENT_TURNS = 1
+const MAX_CONCURRENT_TURNS = 4
 
 /**
  * 投递**之前**那四档的墙钟预算。
@@ -164,7 +164,7 @@ interface RootDispatchWaiter {
 export class TurnService extends CommonService<MessageStoreState> {
   private readonly rootDispatchWaiters = new Map<string, RootDispatchWaiter>()
 
-  /** 当前活跃的回合所属会话。`MAX_CONCURRENT_TURNS = 1` 时至多一个。 */
+  /** Any running session, used only for global controls; ownership always uses sessionId. */
   activeSession(): MessageSession | undefined {
     return this._state.sessions.find((session) => session.turn)
   }
@@ -173,10 +173,16 @@ export class TurnService extends CommonService<MessageStoreState> {
     return this.activeSession()?.turn
   }
 
-  /** 全局回合槽被【别的会话】占着。调用方必须在清空输入框之前问这个。 */
+  runningTurnCount(): number {
+    const ids = new Set(this._state.sessions.filter((session) => session.turn).map((session) => session.id))
+    for (const snapshot of this._state.activeAgentTurnSnapshots) ids.add(snapshot.sessionId)
+    return ids.size
+  }
+
+  /** Existing turns accept steering; new turns are blocked only when all four slots are occupied. */
   busyElsewhere(sessionId: string): boolean {
-    const holder = this.activeSession()
-    return Boolean(holder) && holder!.id !== sessionId
+    if (this._state.getSession(sessionId)?.turn) return false
+    return this.runningTurnCount() >= MAX_CONCURRENT_TURNS
   }
 
   /**
@@ -404,7 +410,7 @@ export class TurnService extends CommonService<MessageStoreState> {
       turnDiagnostics.emit('send-start', { sessionId, route: 'steering', turnId: session.turn.id })
       return await this.sendSteering(session, text)
     }
-    if (this._state.sessions.filter((item) => item.turn).length >= MAX_CONCURRENT_TURNS) {
+    if (this.busyElsewhere(sessionId)) {
       turnDiagnostics.emit('reject', { sessionId, reason: 'busy-elsewhere', at: 'max-concurrent' })
       return { ok: false, reason: 'busy-elsewhere' }
     }
@@ -497,7 +503,7 @@ export class TurnService extends CommonService<MessageStoreState> {
         store.withTokenCount({ id: uid(), source: 'cowork', role: 'human', content: text, streaming: false, ts: Date.now() })
       )
       turn.rootHumanMessageId = humanMessage.id
-      if (session.title === 'Maestro') session.title = summarizeTitle(text)
+      if (!session.detail.titleCustomized && session.title === 'Maestro') session.title = summarizeTitle(text)
       store.updateSessionContextUsage(session)
       void store.persistSession(session)
       await turnDiagnostics.stage(turn.id, 'compaction', () =>
@@ -551,7 +557,7 @@ export class TurnService extends CommonService<MessageStoreState> {
           store.withTokenCount({ id: uid(), source: 'cowork', role: 'human', content: text, streaming: false, ts: Date.now() })
         )
         turn.rootHumanMessageId = humanMessage.id
-        if (session.title === 'Maestro') session.title = summarizeTitle(text)
+        if (!session.detail.titleCustomized && session.title === 'Maestro') session.title = summarizeTitle(text)
         store.updateSessionContextUsage(session)
       }
       reply = { ok: false, text: error, ts: Date.now(), error }

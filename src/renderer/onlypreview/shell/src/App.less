@@ -252,9 +252,9 @@ select {
  * 文件名把树撑出横向滚动,`100%` 解析出来的是**可视内容宽**而不是滚动宽 —— 于是短行的底色在滚动
  * 出去的那段里就断在文字末尾。
  *
- * 单列 grid 把这件事交给布局:`minmax(100%, max-content)` 让那一列至少满宽、最多等于最宽的行,
- * 而 `justify-items` 默认 `stretch` 让每一行都铺满这一列。不需要改 DOM(那是 vendored 的模板),
- * 也不需要给行算宽度。
+ * 单列 grid 用 `max-content` 作下限,保证最宽的行撑开整列;`1fr` 让短内容也铺满可视宽度。
+ * `minmax(100%, max-content)` 只把内容宽度设为上限,列仍可能停在可视宽度,文字溢出而底色不延伸。
+ * `justify-items` 默认 `stretch` 让每一行都铺满这一列,不需要改 DOM 或给行算宽度。
  *
  * `align-content: start` 是**必须的**:grid 的默认 `stretch` 会把多余的竖向空间摊到行轨道之间,
  * 表现是行数少的时候行与行之间凭空多出间距。 */
@@ -262,7 +262,7 @@ select {
   min-height: 0;
   flex: 1;
   display: grid;
-  grid-template-columns: minmax(100%, max-content);
+  grid-template-columns: minmax(max-content, 1fr);
   align-content: start;
   overflow: auto;
   padding: 2px 5px 8px;
@@ -285,7 +285,7 @@ select {
 }
 
 .onlypreview-shell__tree-row {
-  /* 宽度交给上面那一列(`minmax(100%, max-content)` ＋ `justify-items: stretch`)。
+  /* 宽度交给上面那一列(`minmax(max-content, 1fr)` ＋ `justify-items: stretch`)。
    * 这里**不能**再写 `width: max-content` —— 那会让行重新按自己的内容收缩,底色又停在文字末尾。 */
   height: 22px;
   display: flex;
@@ -524,16 +524,19 @@ select {
 }
 
 .onlypreview-shell__empty-mark {
-  width: 46px;
-  height: 46px;
+  width: 24px;
+  height: 24px;
   display: grid;
   place-items: center;
-  margin-bottom: 11px;
-  border: 1px solid var(--onlypreview-divider);
-  border-radius: 7px;
+  margin-bottom: 8px;
   color: var(--onlypreview-royal);
-  background: var(--onlypreview-surface);
-  box-shadow: 5px 5px 0 #e7e9f1;
+}
+
+.onlypreview-shell__project-empty {
+  flex: 0 0 auto;
+  align-items: flex-start;
+  padding: 18px 14px;
+  text-align: left;
 }
 
 .onlypreview-shell__project-empty h1 {
@@ -548,6 +551,30 @@ select {
   margin: 7px 0 0;
   font-size: 11px;
   line-height: 1.5;
+}
+
+.onlypreview-shell__choose-workspace.arco-btn {
+  height: 28px;
+  margin-top: 12px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--onlypreview-royal);
+  color: var(--onlypreview-surface);
+  font-size: 12px;
+}
+
+.onlypreview-shell__choose-workspace.arco-btn:hover:not(:disabled) {
+  opacity: 0.88;
+}
+
+.onlypreview-shell__choose-workspace.arco-btn:focus-visible {
+  outline: 2px solid var(--onlypreview-focus);
+  outline-offset: 2px;
+}
+
+.onlypreview-shell__choose-workspace.arco-btn:disabled {
+  opacity: 0.55;
 }
 
 .onlypreview-shell__no-results {

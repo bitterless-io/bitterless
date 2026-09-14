@@ -396,8 +396,16 @@ export interface OnlyPreviewSettings {
  *
  * **联合就地声明**,不从 `@shared/mcp/*` 借 —— 这一面与 micromeet-cowork 逐字节共用,而那个模块是
  * bitterless 独有的(cowork 侧是 `host/onlyPreviewMcpBridge` 适配)。
+ *
+ * 取值表是**运行时元组**、类型由它派生:Guide 渲染层要在运行时校验 main 发来的 `kind`,
+ * 而把这三个取值在校验处再抄一遍,正是下一次契约漂移的来源。
  */
-export type OnlyPreviewMcpServerKind = 'production' | 'preview' | 'development';
+export const ONLY_PREVIEW_MCP_SERVER_KINDS = ['production', 'preview', 'development'] as const;
+
+export type OnlyPreviewMcpServerKind = (typeof ONLY_PREVIEW_MCP_SERVER_KINDS)[number];
+
+export const isOnlyPreviewMcpServerKind = (value: unknown): value is OnlyPreviewMcpServerKind =>
+  typeof value === 'string' && (ONLY_PREVIEW_MCP_SERVER_KINDS as readonly string[]).includes(value);
 
 export interface OnlyPreviewAgentSkillGuideInfo {
   serverName: string;
@@ -442,6 +450,8 @@ export interface OnlyPreviewDirectoryTargetEntry {
 }
 
 export interface OnlyPreviewPreviewPresentation extends OnlyPreviewHostEvent {
+  /** Display-only absolute identity for Shell; never accepted as file authority. */
+  fileDisplayPath?: string;
   fragment?: string;
   workspaceId: string | null;
   selectionRevision: number;

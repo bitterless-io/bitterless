@@ -168,7 +168,7 @@ describe('maestro navigate 走预览端口', () => {
   test('本机路径的判据与落法都问端口,不自己判', () => {
     assert.match(navigate, /getMaestroPreviewOpener\(\)/);
     assert.match(navigate, /resolveLocalTarget\(raw\)/);
-    assert.match(navigate, /localTarget\?\.kind === 'preview'[\s\S]{0,80}\.open\(localTarget\.path\)/);
+    assert.match(navigate, /localTarget\?\.kind === 'preview'[\s\S]{0,220}\.openInTab\(localTarget\.path, \{ tabId: active\.id \}\)/);
   });
 
   test('路径那一支不过 normalizeUrl —— 否则被补成 https:///Users/…', () => {

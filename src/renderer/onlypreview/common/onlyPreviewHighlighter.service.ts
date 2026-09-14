@@ -178,6 +178,19 @@ const ensureLanguage = async (core: HighlighterCore, language: string): Promise<
   return pending;
 };
 
+/** Monaco 的纯文本路径也需要已加载的主题,但不应因此加载任何语法。 */
+export const prepareHighlightTheme = async (
+  theme: string = ONLY_PREVIEW_HIGHLIGHT_THEME
+): Promise<{ core: HighlighterCore; theme: string } | null> => {
+  try {
+    const core = await highlighter();
+    await ensureTheme(core, theme);
+    return { core, theme };
+  } catch {
+    return null;
+  }
+};
+
 /**
  * 备好一个语言的高亮器。返回归一后的 id,拿不到就 `null`。
  *

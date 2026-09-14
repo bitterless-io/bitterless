@@ -14,6 +14,7 @@ const modules = [
   'maestroBrowserView.service.ts',
   'maestroControlView.service.ts',
   'maestroWorkbenchView.service.ts',
+  'maestroTabAliasView.service.ts',
   'viewBounds.ts',
   'compositeTab.registry.ts'
 ].map((name) => join(viewRoot, name));
@@ -83,6 +84,7 @@ const bundle = await build({
       export { MaestroBrowserViewService as Browser } from './maestroBrowserView.service';
       export { MaestroControlViewService as Control } from './maestroControlView.service';
       export { MaestroWorkbenchViewService as Workbench } from './maestroWorkbenchView.service';
+      export { MaestroTabAliasViewService as TabAlias } from './maestroTabAliasView.service';
       export { registerMaestroCompositeTab } from './compositeTab.registry';
       export { WebContentsView as NativeView } from 'electron';
     `,
@@ -119,7 +121,7 @@ const bundle = await build({
     }
   ]
 });
-const { Controller, Browser, Control, Workbench, NativeView, registerMaestroCompositeTab } =
+const { Controller, Browser, Control, Workbench, TabAlias, NativeView, registerMaestroCompositeTab } =
   await import(
     `data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`
   );
@@ -149,11 +151,15 @@ const fixture = async () => {
   const browser = new Browser();
   const control = new Control();
   const workbench = new Workbench();
+  // The real alias overlay, not a stub: it is one of the services the two layout paths dispatch to,
+  // so a stub here would let a missing `setBounds` wiring pass (the first dialog would be 0×0).
+  const tabAlias = new TabAlias();
   const controller = new Controller(
     service(),
     browser,
     control,
     workbench,
+    tabAlias,
     service(),
     service(),
     service(),
@@ -184,7 +190,7 @@ const fixture = async () => {
   controller.operationView = new NativeView();
   await control.create();
   const controlNative = children[0];
-  return { controller, browser, control, workbench, children, window, controlNative };
+  return { controller, browser, control, workbench, tabAlias, children, window, controlNative };
 };
 
 const assertLayout = (fixture, expected) => {

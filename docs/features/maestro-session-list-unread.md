@@ -46,11 +46,11 @@ get unreadSessionCount(): number
 的即时 `container.get` 会把环变成**启动崩溃** —— cowork 那侧在 `serviceBag.types.ts` 顶部记过同一个坑。
 所以 `message.store` 不读 `channel.store`，由后者在切换时写入。
 
-**bl 与 cowork 在这里有一处真实差异**：cowork 是单一 `activeSessionId`，
-bl 是**按 operation tab 存会话**（`maestroSessionByTabId[currentOperationTabId]`），
-且 `activeSource === 'connector'` 时 `activeSession` 为 undefined。
-所以 bl 侧收敛成一处 `syncActiveSession()`，由 `channel.store` 的每个切换点调用，
-从既有的 `activeSession` getter 取真源 —— 不新增第二份「当前是谁」的状态。
+**2026-09-14 更新：两边均由独立的当前会话选择决定显示内容，不再按 operation tab 存会话。**
+BL 原来的 `maestroSessionByTabId` 绑定已取消，见
+[tab/chat 解耦](../issues/reference-link-tab-chat-tooltip.md)。`channel.store` 仍单向把实际显示的
+会话写给 `message.store`，并在明确切换聊天时置读；普通浏览器 tab 更新不切会话、不新建会话。
+BL 的 `activeSource === 'connector'` 分支仍返回 undefined，保留该分支原有的可见性语义。
 
 连接器 tab 活跃时 `activeSessionId` 为空串，于是那时候结束的回合**会**置未读。
 这是对的：人正看着 connector，那条结论他确实没看到。

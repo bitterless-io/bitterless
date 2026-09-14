@@ -44,13 +44,13 @@
         name="onlypreview__recentRow"
         class="onlypreview-recents__row"
         :class="{
-          'onlypreview-recents__row--selected': entry.id === onlyPreviewRecentsStore.selectedEntryId
+          'onlypreview-recents__row--selected': entry.id === onlyPreviewRecentsStore.snapshot?.activeEntryId
         }"
         :data-recent-id="entry.id"
         :title="entry.relativePath"
         type="button"
         role="option"
-        :aria-selected="entry.id === onlyPreviewRecentsStore.selectedEntryId"
+        :aria-selected="entry.id === onlyPreviewRecentsStore.snapshot?.activeEntryId"
         :tabindex="entry.id === onlyPreviewRecentsStore.selectedEntryId ? 0 : -1"
         @click="onlyPreviewRecentsStore.select(entry.id)"
         @dblclick.prevent="open(entry.id)"

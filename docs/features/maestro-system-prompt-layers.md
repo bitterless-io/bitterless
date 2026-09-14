@@ -5,7 +5,16 @@ Ral 2026-09-11：「`prompt/sysPrompt.ts` 下要有完整的系统提示词并�
 
 设计与逐层取舍：[`areas/agent-runtime/chat/prompt-structure.html`](../../../../areas/agent-runtime/chat/prompt-structure.html) #2。
 
-## 今天的状况（实测，不是推断）
+## 2026-09-14 的 runtime 契约
+
+完整提示词由 `BaseAgent.fullSystemPrompt()` 生成，包含表 1、当前模型身份和表 2；
+`systemPrompt: string` 为所有 runtime 必填的非空输入。公共提示词模块确定 cwd 及末尾说明，
+pi 仅将已定稿内容映射到 SDK，不能选择默认人格。与 CoWork 的 AI-CRMS 使用同一契约，
+相同输入应得到相同的最终 system 文本。
+实现与验证进度见 [adapter 职责重构](../issues/runtime-adapter-responsibility.md)。
+下文保留初次接管时的设计依据；首条 user 前缀、可选提示词等旧描述不再代表当前契约。
+
+## 接管前的状况（历史实测）
 
 `piRuntimeAdapter.ts:156` 的 `createAgentSession` 不传 `resourceLoader` → pi 自建
 `DefaultResourceLoader`（`sdk.js:75-79`）→ 找不到 `SYSTEM.md` → `customPrompt` 为 `undefined`
@@ -36,7 +45,7 @@ A1 有一处例外：宿主名换成本产品 —— Ral 2026-09-11「bitterless
 - 新增 `src/main/agent/prompt/sysPrompt.ts`：A1/A2/A3/A4 + `SESSION_ROLE_HINT` 五个模块私有常量，`join('\n\n')` 成
   导出的 `BASE_SYSTEM_PROMPT`（1456 字符）。**只导出这一个常量** —— 曾经加过一个带 `session?` 参数的
   `buildSysPrompt()`，那是为尚无内容的会话层先付抽象税（和刚删掉的 `CoachRuntimeAdapter` 同一个毛病），已删
-- `AgentRuntimeSessionOptions` 加 `systemPrompt?: string`
+- `AgentRuntimeSessionOptions.systemPrompt: string` 为必填契约
 - `BaseAgent.createSession()` 把它传给运行时
 - `PiRuntimeAdapter.createSession()` 收到它就构造一个**最小 loader**，`getSystemPrompt()` 返回它
 

@@ -32,19 +32,17 @@ export const DEFAULT_COMPRESSION_REMAINING_PERCENT = 20
  * 「`max` 位于 `xhigh` 之上,只有目录条目声明它的模型才接受 —— 预设的 effort 列表就是那道闸」)。
  *
  * 2026-09-11 实测 pi 目录(`getSupportedThinkingLevels`):`gpt-6-astra` 与 `gpt-5.6-*` 三个
- * **都支持 max**,`gpt-5.4-mini` 只到 `xhigh`。此前 bl 一律只给到 `xhigh`,等于把这些模型
+ * **都支持 max**。此前 bl 一律只给到 `xhigh`,等于把这些模型
  * 最高一档算力关在外面。
  */
 const CODEX_EFFORTS: LlmEffortOption[] = [
-  { id: 'low', label: 'low' },
-  { id: 'medium', label: 'medium' },
-  { id: 'high', label: 'high' },
+  { id: 'max', label: 'Max' },
   { id: 'xhigh', label: 'Extra' },
-  { id: 'max', label: 'Max' }
+  { id: 'high', label: 'high' },
+  { id: 'medium', label: 'medium' },
+  { id: 'low', label: 'low' }
 ]
 const CODEX_SOL_EFFORTS: LlmEffortOption[] = CODEX_EFFORTS.filter((item) => item.id !== 'low')
-/** `gpt-5.4-mini` 的目录条目不声明 `max`,给了也用不上。 */
-const CODEX_MINI_EFFORTS: LlmEffortOption[] = CODEX_EFFORTS.filter((item) => item.id !== 'max')
 
 export const LLM_PROVIDERS: LlmProviderDefinition[] = [
   {
@@ -59,10 +57,10 @@ export const LLM_PROVIDERS: LlmProviderDefinition[] = [
 ]
 
 /**
- * 可选模型(Ral 2026-09-11 定:「不用 claude 的了,也不用 gpt-5.5 了;5.4mini 用、5.6 都用、6 astra 也用」)。
+ * 可选模型(Ral 2026-09-14 定):由上到下 Astra、Sol、Terra、Luna,退役的 Mini 不再可选。
  *
  * **`contextLengthK` / `contextLengthLabel` 只是兜底** —— 运行时由
- * `applyResolvedContextWindows()` 用 pi 目录里的真值覆盖。写 266 是因为实测这 5 个模型
+ * `applyResolvedContextWindows()` 用 pi 目录里的真值覆盖。写 266 是因为实测这 4 个模型
  * 在 pi 里都是 `contextWindow = 272000`(≈266K);此前手写的 372K / 256K / 1M **全部是错的**,
  * 而压缩的触发线、reserve 预算、summary 上限都乘在这个数上 —— 372K 那三个模型的触发线
  * 曾落在真实窗口的 136%,也就是**永远不触发直到溢出**。
@@ -75,21 +73,8 @@ export const LLM_PRESETS: LlmTarget[] = [
     label: 'GPT-6 Astra',
     shortLabel: '6 Astra',
     // Ral 2026-09-11:「默认模型统一到 gpt-6-astra medium effort」(cowork 2026-09-07 已是此值)。
-    // **不是 `efforts[0]`** —— 列表按升序给 picker 用,默认档可以落在中间,读它必须走 `defaultLlmEffort()`。
+    // **不是 `efforts[0]`** —— 列表按降序给 picker 用,默认档可以落在中间,读它必须走 `defaultLlmEffort()`。
     effort: 'medium',
-    efforts: CODEX_EFFORTS.slice(),
-    contextLengthK: 266,
-    contextLengthLabel: '266K',
-    compressionRemainingPercent: DEFAULT_COMPRESSION_REMAINING_PERCENT,
-    authLabel: 'Coding agent subscription'
-  },
-  {
-    provider: 'openai-codex',
-    providerLabel: 'Codex',
-    model: 'gpt-5.6-luna',
-    label: 'GPT-5.6 Luna',
-    shortLabel: '5.6 Luna',
-    effort: 'low',
     efforts: CODEX_EFFORTS.slice(),
     contextLengthK: 266,
     contextLengthLabel: '266K',
@@ -125,11 +110,11 @@ export const LLM_PRESETS: LlmTarget[] = [
   {
     provider: 'openai-codex',
     providerLabel: 'Codex',
-    model: 'gpt-5.4-mini',
-    label: 'GPT-5.4 Mini',
-    shortLabel: '5.4 Mini',
+    model: 'gpt-5.6-luna',
+    label: 'GPT-5.6 Luna',
+    shortLabel: '5.6 Luna',
     effort: 'low',
-    efforts: CODEX_MINI_EFFORTS.slice(),
+    efforts: CODEX_EFFORTS.slice(),
     contextLengthK: 266,
     contextLengthLabel: '266K',
     compressionRemainingPercent: DEFAULT_COMPRESSION_REMAINING_PERCENT,
@@ -159,6 +144,12 @@ export const normalizeLlmProvider = (providerId: string): string => {
   if (id === 'claude' || id === 'cloud' || id === 'claude-code') return 'anthropic'
   if (id === 'codex' || id === 'openai') return 'openai-codex'
   return id || 'openai-codex'
+}
+
+/** 仅归一化存量选择;新选择仍由 `requireSelectableLlmTarget` 按当前预设严格校验。 */
+export const normalizeStoredLlmModel = (provider: string, model: string): string => {
+  const id = model.trim()
+  return provider === 'openai-codex' && id === 'gpt-5.4-mini' ? 'gpt-5.6-luna' : id
 }
 
 export const isLlmProviderSelectable = (providerId: string): boolean => {
@@ -249,9 +240,12 @@ export const normalizeLlmTarget = (value: { provider?: string; model?: string; e
   const provider = normalizeLlmProvider(value.provider || 'openai-codex')
   const presets = LLM_PRESETS.filter((item) => item.provider === provider)
   const fallback = presets[0] || LLM_PRESETS[0]
-  const requestedModel = (value.model || DEFAULT_PRESET_MODEL[provider] || fallback.model).trim()
+  const requestedModel = normalizeStoredLlmModel(provider, value.model || DEFAULT_PRESET_MODEL[provider] || fallback.model)
   const preset = presets.find((item) => item.model === requestedModel) || fallback
-  const requestedEffort = value.effort === 'max' && preset.efforts.some((item) => item.id === 'xhigh') ? 'xhigh' : value.effort
+  const requestedEffort =
+    value.effort === 'max' && !preset.efforts.some((item) => item.id === 'max') && preset.efforts.some((item) => item.id === 'xhigh')
+      ? 'xhigh'
+      : value.effort
   const defaultEffort = defaultLlmEffort(preset)
   const effort = preset.efforts.some((item) => item.id === requestedEffort) ? (requestedEffort as LlmEffort) : defaultEffort
   return {

@@ -58,6 +58,8 @@ export interface MaestroChatMessage {
 
 export interface MaestroChatDetail {
   compressedContext: string
+  titleCustomized?: boolean
+  draft?: { text: string; files: { name: string; path: string; isDirectory?: boolean }[] }
   compressedUntilMessageId?: string
   compressedAt?: number
   workspace?: WorkspaceRef
@@ -89,7 +91,7 @@ export interface MaestroChatApi {
   listSessions(params?: { operationTabId?: string }): Promise<MaestroChatSessionSummary[]>
   getSession(params: { id: string }): Promise<MaestroChatSession | null>
   saveSession(params: { session: MaestroChatSession }): Promise<{ ok: boolean }>
-  deleteSession(params: { id: string }): Promise<{ ok: boolean }>
+  deleteSession(params: { id: string; onlyIfEmpty?: boolean }): Promise<{ ok: boolean }>
 }
 
 /**

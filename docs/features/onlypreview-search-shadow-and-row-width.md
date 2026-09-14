@@ -42,11 +42,15 @@ box-shadow:
 
 ## #2 Project 树行的底色铺满整行
 
+2026-09-14 更正：此前的 `minmax(100%, max-content)` 仍把轨道限制在可视内容宽度，
+长文件名溢出时背景没有跟着扩展。实测与修复见
+[横向滚动行底色缺陷](../issues/onlypreview-tree-background-scroll-width.md)。下面更新为修复后的声明。
+
 ```less
 /* 容器 */
 .onlypreview-shell__tree {
   display: grid;
-  grid-template-columns: minmax(100%, max-content);
+  grid-template-columns: minmax(max-content, 1fr);
   align-content: start;
 }
 /* 行：删掉 `width: max-content; min-width: 100%` */
@@ -56,8 +60,9 @@ box-shadow:
 文件名把树撑出横向滚动，`min-width: 100%` 解析出来的是**可视内容宽**而不是滚动宽，短行的底色就在滚动
 出去的那段里断在文字末尾。
 
-单列 grid 把宽度交给布局：那一列至少满宽、最多等于最宽的行，`justify-items` 默认 `stretch` 让每一行
-都铺满这一列。**不改 DOM**（模板是 vendored 的），也不用给行算宽度。
+单列 grid 的 `max-content` 下限保证轨道容纳最宽一行，`1fr` 在内容较短时填满可用宽度。
+`justify-items` 默认 `stretch` 让每一行都铺满这一列。**不改 DOM**（模板是 vendored 的），
+也不用给行算宽度。旧方案把 `max-content` 放在上限，实际不会强制轨道超过视口宽度。
 
 `align-content: start` 是**必须的**：grid 默认 `stretch` 会把多余的竖向空间摊到行轨道之间，表现是
 行数少的时候行与行之间凭空多出间距。变异测试里专门有一条。
@@ -82,7 +87,10 @@ onlypreview 的 `main.ts` 一个都不 import 它。真正的 Royal Blue 阶梯�
 第 2–10 行）。**不去改那条规则**，因为那超出这次的范围；记在这里，免得下次有人按规则去 theme.less
 找蓝色。
 
-## 验证
+## 2026-09-11 历史验证
+
+以下记录是当时的声明检查结果，不能证明浏览器里行背景确实覆盖滚动内容；2026-09-14 的
+实际布局测量已推翻旧列宽方案，最新验证记录见上述 issue。
 
 - **两组编译产物断言，两仓各一份**：`tests/onlypreview/onlyPreviewGlobalSearchShadow.test.mjs` ·
   cowork `tests/unit/onlyPreviewGlobalSearchShadow.test.mjs`（各 10 条）。

@@ -170,12 +170,12 @@ describe('编译后的 CSS：树行底色铺满整行', () => {
   const container = shellRuleOf('.onlypreview-shell__tree');
   const row = shellRuleOf('.onlypreview-shell__tree-row');
 
-  test('容器是单列 grid，列宽下限满宽、上限最宽那一行', () => {
+  test('容器是单列 grid，列宽至少容纳最宽内容并填满可视宽度', () => {
     assert.match(container, /display:\s*grid/);
     assert.match(
       container,
-      /grid-template-columns:\s*minmax\(100%,\s*max-content\)/,
-      '少了它，行就回到各自按内容收缩'
+      /grid-template-columns:\s*minmax\(max-content,\s*1fr\)/,
+      '内容宽度必须是下限，否则文字可能溢出行底色'
     );
   });
 

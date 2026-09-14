@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { IconArrowRight, IconFolderOpen, IconFolderSearch, IconListDetails, IconPaperclip, IconPlayerStop, IconPlus, IconSend2, IconX } from '@tabler/icons-vue'
+import { IconFolderOpen, IconFolderSearch, IconListDetails, IconPaperclip, IconPlayerStop, IconPlus, IconSend2, IconX } from '@tabler/icons-vue'
 import AttachmentCard from './AttachmentCard.vue'
-import { Button, Drawer, Message, Modal, Tooltip } from '@arco-design/web-vue'
+import { Button, Message, Modal, Tooltip } from '@arco-design/web-vue'
 import { createXpcRendererEmitter } from 'electron-xpc/renderer'
 import { CONTEXT_GRAPH_MATCH_HEAD_CHARS } from '@maestro-shared/coach.api'
 import { MAESTRO_ONLY_PREVIEW_APP_NAME } from '@maestro-shared/compositeTab.identity'
@@ -10,6 +10,8 @@ import type { AgentReply } from '@maestro-shared/coach.api'
 import type { CoachXpcContract } from '@maestro-shared/coach.api'
 import type { ContextGraphView } from '@maestro-shared/coach.api'
 import ContextGraphModal from './ContextGraphModal.vue'
+import AgentBrowserTabs from './AgentBrowserTabs.vue'
+import { sessionActions } from './store/sessionActions.store'
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
 import IconBtn from '../../../common/components/IconBtn/IconBtn.vue'
 import ChatErrorModal from './task/ChatErrorModal.vue'
@@ -26,10 +28,10 @@ const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
 const props = defineProps<{ session: MessageSession; sendDisabled?: boolean }>()
 const emit = defineEmits<{ sent: [reply: AgentReply] }>()
 
-const input = ref('')
+const input = ref(props.session.detail.draft?.text || '')
 // Composer attachments: picked/dropped files, kept as {name, absolute path}. On send the
 // paths (never bytes) are registered with main; the agent reads them via read_file.
-const selectedFiles = ref<ChatAttachment[]>([])
+const selectedFiles = ref<ChatAttachment[]>(props.session.detail.draft?.files.slice() || [])
 const fileInput = ref<HTMLInputElement | null>(null)
 const composerRef = ref<HTMLTextAreaElement | null>(null)
 const composerCaret = ref(0)
@@ -50,18 +52,17 @@ let draftRevision = 0
 let composerDisposed = false
 let newChatPending = false
 watch(input, () => { draftRevision += 1 }, { flush: 'sync' })
+watch([input, selectedFiles], () => {
+  props.session.detail.draft = { text: input.value, files: selectedFiles.value.slice() }
+}, { deep: true, flush: 'sync' })
 watch([input, composerCaret], () => shortcutStore.update(slashToken.value), { flush: 'post' })
 watch(() => props.session.id, () => { draftRevision += 1; shortcutStore.close() }, { flush: 'sync' })
 onBeforeUnmount(() => { composerDisposed = true; shortcutStore.close() })
-const historyVisible = ref(false)
-const historyContainer = ref<HTMLElement | null>(null)
-const historyList = ref<HTMLElement | null>(null)
-const historyCursor = ref(0)
 const shortcut = (key: string): string => `${navigator.platform.toLowerCase().includes('mac') ? '⌘' : 'Ctrl+'}${key}`
 
 // i18n 文案里的 `{count}` 占位替换。不用 `$t()` / `useI18n()` —— 本项目一律走 i18nHelper。
 const withCount = (copy: string, count: number): string => copy.replace('{count}', String(count))
-const turnLocked = computed(() => Boolean(messageStore.turnService.activeTurn()))
+const turnLocked = computed(() => Boolean(props.session.turn))
 
 const workspace = computed(() => props.session.detail.workspace)
 const workspaceLabel = computed(() => workspace.value?.name || 'Workspace')
@@ -70,11 +71,6 @@ const openWorkspaceLabel = computed(() =>
   i18nHelper.maestroControl.chat.openWorkspaceInPreview.replace('{app}', MAESTRO_ONLY_PREVIEW_APP_NAME)
 )
 
-const formatSessionTime = (ts: number): string => {
-  if (!ts) return ''
-  const date = new Date(ts)
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-}
 
 function resizeComposer(): void {
   const el = composerRef.value
@@ -220,7 +216,7 @@ function removeFile(i: number): void {
 
 async function startNewChat(): Promise<boolean> {
   if (newChatPending) return false
-  if (turnLocked.value || props.session.archivedAt) {
+  if (props.session.archivedAt) {
     Message.warning(i18nHelper.maestroControl.chat.newChatUnavailable)
     return false
   }
@@ -230,6 +226,8 @@ async function startNewChat(): Promise<boolean> {
   try {
     const opened = await channelStore.startNewMaestroSession(sessionId)
     if (!opened) { Message.warning(i18nHelper.maestroControl.chat.newChatUnavailable); return false }
+    sessionActions.historyVisible = false
+    sessionActions.closeSearch()
     if (!composerDisposed && props.session.id === sessionId && draftRevision === revision) {
       input.value = ''
       selectedFiles.value = []
@@ -245,74 +243,24 @@ async function startNewChat(): Promise<boolean> {
   }
 }
 
-async function selectHistory(sessionId: string): Promise<void> {
-  if (sessionId === props.session.id) return
-  await channelStore.selectMaestroHistorySession(sessionId)
-  historyVisible.value = false
-}
-
 function focusComposer(): void {
   if (!props.session.archivedAt) composerRef.value?.focus()
 }
-
-function closeHistory(): void {
-  historyVisible.value = false
-  void nextTick(focusComposer)
-}
-
-function scrollHistoryCursor(): void {
-  void nextTick(() => historyList.value?.querySelector<HTMLElement>('[data-history-cursor="true"]')?.scrollIntoView({ block: 'nearest' }))
-}
-
-function toggleHistory(): void {
-  if (historyVisible.value) {
-    closeHistory()
-    return
-  }
-  const index = messageStore.sessionListItems.findIndex((item) => item.id === props.session.id)
-  historyCursor.value = Math.max(index, 0)
-  historyVisible.value = true
-  scrollHistoryCursor()
-  // 打开就重拉一次。抽屉此前只吃 `init()` 那一次拉取的结果,启动期失败(或本窗口打开后
-  // 别处新建的会话)都会让它一直是空的 —— 这正是「Cmd+H 不展示历史消息」的成因
-  // (docs/issues/maestro-chat-blind-send-path-and-cowork-parity.md #2)。
-  // 不 await:先把抽屉开出来,列表到了再补上,免得打开动作被一次跨进程往返拖住。
-  void messageStore.refreshHistory().then(scrollHistoryCursor)
-}
+defineExpose({ focusComposer })
 
 function onPanelKeydown(event: KeyboardEvent): void {
   if (!document.hasFocus() || event.defaultPrevented || event.isComposing || event.keyCode === 229) return
   const command = (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey
-  const key = event.key.toLowerCase()
-  if (command && (key === 'h' || key === 'n')) {
+  if (command && event.key.toLowerCase() === 'n') {
     event.preventDefault()
     event.stopPropagation()
-    if (event.repeat) return
-    if (key === 'h') toggleHistory()
-    else void startNewChat()
-    return
-  }
-  if (!historyVisible.value || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
-  if (!['Escape', 'ArrowDown', 'ArrowUp', 'Enter'].includes(event.key)) return
-  event.preventDefault()
-  event.stopPropagation()
-  if (event.key === 'Escape') closeHistory()
-  else if (event.key === 'Enter') {
-    if (event.repeat) return
-    const item = messageStore.sessionListItems[historyCursor.value]
-    if (item) void selectHistory(item.id)
-  } else {
-    const count = messageStore.sessionListItems.length
-    if (!count) return
-    historyCursor.value = (historyCursor.value + (event.key === 'ArrowDown' ? 1 : -1) + count) % count
-    scrollHistoryCursor()
+    if (!event.repeat) void startNewChat()
   }
 }
 
 onMounted(() => {
-  // Capture before the textarea can turn History's Enter into a message send.
   window.addEventListener('keydown', onPanelKeydown, true)
-  void nextTick(focusComposer)
+  if (!sessionActions.historyVisible && !sessionActions.searchVisible) void nextTick(focusComposer)
 })
 onBeforeUnmount(() => window.removeEventListener('keydown', onPanelKeydown, true))
 
@@ -461,9 +409,6 @@ async function stopUsingWorkspace(): Promise<void> {
   })
 }
 
-function setHistoryContainer(el: HTMLElement | null): void {
-  historyContainer.value = el
-}
 </script>
 
 <template>
@@ -495,7 +440,7 @@ function setHistoryContainer(el: HTMLElement | null): void {
               class="chat-panel__history-button"
               name="maestro__history"
               :aria-label="i18nHelper.maestroControl.chat.history"
-              @click="toggleHistory"
+              @click="sessionActions.toggleHistory()"
             >
               <IconListDetails class="chat-panel__button-icon" :size="16" stroke="1.8" />
             </IconBtn>
@@ -524,13 +469,14 @@ function setHistoryContainer(el: HTMLElement | null): void {
           <span class="chat-panel__sessions-running-count">{{ messageStore.runningSessionCount }}</span>
         </span>
       </div>
+      <AgentBrowserTabs :session-id="session.id" :running="Boolean(session.turn)" />
       <Tooltip :content="shortcut('N')" position="bottom" mini>
         <Button
         name="maestro__new_chat"
         class="chat-panel__new-chat"
         type="text"
         size="mini"
-        :disabled="turnLocked"
+        :disabled="Boolean(session.archivedAt)"
         :aria-label="i18nHelper.maestroControl.chat.newChat"
         @click="startNewChat"
       >
@@ -541,80 +487,8 @@ function setHistoryContainer(el: HTMLElement | null): void {
       </Button>
       </Tooltip>
     </div>
-    <MessageList :messages="session.messages" @container-ready="setHistoryContainer" />
-    <Drawer
-      v-if="historyContainer"
-      v-model:visible="historyVisible"
-      placement="left"
-      :width="280"
-      :popup-container="historyContainer"
-      :header="false"
-      :footer="false"
-      :body-style="{ padding: '0', overflow: 'hidden' }"
-      unmount-on-close
-      @cancel="closeHistory"
-    >
-      <div class="chat-panel__history">
-        <div class="chat-panel__history-header">
-          <div class="chat-panel__history-title">{{ i18nHelper.maestroControl.chat.history }}</div>
-          <IconBtn
-            class="chat-panel__history-close"
-            :title="i18nHelper.maestroControl.chat.closeHistory"
-            :aria-label="i18nHelper.maestroControl.chat.closeHistory"
-            @click="closeHistory"
-          >
-            <IconX class="chat-panel__button-icon" :size="16" stroke="1.8" />
-          </IconBtn>
-        </div>
-        <div ref="historyList" name="maestro__history-list" class="chat-panel__history-list">
-          <div v-if="!messageStore.sessionListItems.length" class="chat-panel__history-empty">
-            {{ i18nHelper.maestroControl.chat.noHistory }}
-          </div>
-          <!-- 数据源是 `sessionListItems` 而不是 `historySessions`:后者只有库里的概要,
-               **刚新建、还没发过消息的会话不在里面** —— 那会让「新建后它不在列表里」。
-               排序是未读 → 进行中 → 已读(store 的 getter 负责)。
-               行内右侧只有一个指示物:转圈(在跑)或蓝点(未读),两者不会同时出现 ——
-               回合结束的那一刻才置未读。 -->
-          <Button
-            v-for="(item, index) in messageStore.sessionListItems"
-            :key="item.id"
-            class="chat-panel__history-item"
-            :class="{
-              'chat-panel__history-item--active': item.id === session.id,
-              'chat-panel__history-item--cursor': index === historyCursor
-            }"
-            name="maestro__history-item"
-            :data-history-cursor="index === historyCursor"
-            :aria-current="item.id === session.id ? 'true' : undefined"
-            type="text"
-            long
-            @click="selectHistory(item.id)"
-          >
-            <IconArrowRight v-if="item.id === session.id" class="chat-panel__history-current" :size="12" stroke="2.4" />
-            <!-- 包裹层照 cowork 的 `session-list__item` 结构(Ral 2026-09-09):行本身是横排
-                 `flex items-center gap`,**两行文字靠这一层**在里面 block 堆叠。
-                 少了它,title 与 preview 就是行的直接 flex 子元素 —— 那时 `display: block`
-                 管不了排布(flex 子元素按主轴排),于是挤在一行。 -->
-            <span class="chat-panel__history-item-body">
-              <span class="chat-panel__history-item-title">{{ item.title || 'Maestro' }}</span>
-              <span class="chat-panel__history-item-preview">{{ item.preview || formatSessionTime(item.updatedAt) }}</span>
-            </span>
-            <span
-              v-if="item.running"
-              name="maestro__history-item-running"
-              class="chat-panel__history-item-running"
-              :title="i18nHelper.maestroControl.chat.sessionRunning"
-            ></span>
-            <span
-              v-else-if="item.unread"
-              name="maestro__history-item-unread"
-              class="chat-panel__history-item-unread"
-              :title="i18nHelper.maestroControl.chat.sessionUnread"
-            ></span>
-          </Button>
-        </div>
-      </div>
-    </Drawer>
+    <MessageList :messages="session.messages" />
+
     <div class="chat-panel__composer">
       <slot name="before-composer"></slot>
       <div

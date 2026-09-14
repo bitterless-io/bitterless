@@ -6,6 +6,7 @@ import { createXpcPreloadEmitter, XpcPreloadHandler } from 'electron-xpc/preload
 import { readFileSync, unlinkSync } from 'fs'
 import { sqliteManager } from './sqlite/sqliteManager'
 import type { SqliteBootApi, SqliteBootResult, SqliteKeyApi } from '@maestro-shared/sqliteKey.api'
+import { BrowserHistoryDao } from './sqlite/browserHistory.dao'
 
 const getArgValue = (prefix: string): string => {
   const arg = process.argv.find((a) => a.startsWith(prefix))
@@ -37,6 +38,7 @@ const bootSqlite = async (): Promise<void> => {
     if (!sqliteKey) throw new Error('[maestro sqlite] main process returned an empty SQLite key')
 
     sqliteManager.init(__BITTERLESS_VERSION_CODE__, sqliteKey)
+    new BrowserHistoryDao()
 
     // Importing each DAO instantiates its XpcPreloadHandler and registers its channels.
     await import('./sqlite/config.dao')

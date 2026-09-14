@@ -153,10 +153,10 @@ test('Monaco stays on the API-only entry, degrades to plain text, and cannot ren
       view.indexOf('monaco.editor.createModel'),
     '代次比较必须在建 model 之前'
   );
-  // 拿不到 shiki 时退回纯文本 ＋ `vs`,而不是白屏。名字里没有 monarch 是刻意的:
-  // 组件走 API-only 入口,monarch 语法根本没打包(见下一条)。
-  assert.match(view, /MONACO_PLAIN_FALLBACK_THEME/);
-  assert.doesNotMatch(view, /theme: 'vs'/, "'vs' 只能作为兜底常量出现,不能再写死在 create 里");
+  // 主题与语法就绪状态由服务统一返回,组件不得恢复旧的未加载主题或原语言分词器。
+  assert.doesNotMatch(view + glue, /MONACO_PLAIN_FALLBACK_THEME|theme: 'vs'/);
+  assert.match(view, /highlighting\.language/);
+  assert.doesNotMatch(view, /highlighting\??\.language\s*\?\?/);
 
   // **不许回到 barrel 入口。** `monaco-editor` 的 barrel 会导入 css/html/json/typescript
   // 四个语言贡献,它们**按需去取语言 worker**,而那四个 worker 已经不打包了

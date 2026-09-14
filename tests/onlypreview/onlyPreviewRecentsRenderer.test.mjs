@@ -235,3 +235,43 @@ test('UI keeps the tree mounted, isolates recent selection, and places IconBtn n
   assert.doesNotMatch(toolbar, /onlyPreviewShellStore\.refresh\(/);
   assert.ok(source('shell/src/onlyPreviewShell.store.ts').split('\n').length < 800);
 });
+
+test('a presentation nudge updates the current recent without changing keyboard selection', async () => {
+  const { store, setSnapshot } = harness();
+  await store.initialize();
+  store.select('old');
+  const callback = globalThis.__onlyPreviewRecentsSubscriptions.get('onlypreview/previewPresentation');
+  setSnapshot({ ...snapshot(2), activeEntryId: 'new' });
+  callback({ params: { hostId: 'host' } });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(store.snapshot.activeEntryId, 'new');
+  assert.equal(store.selectedEntryId, 'old');
+});
+
+test('a slow earlier presentation response cannot overwrite the latest current file', async () => {
+  const { store, client } = harness();
+  await store.initialize();
+  const older = deferred();
+  const newer = deferred();
+  let count = 0;
+  client.getRecents = () => (++count === 1 ? older.promise : newer.promise);
+  const callback = globalThis.__onlyPreviewRecentsSubscriptions.get('onlypreview/previewPresentation');
+  callback({ params: { hostId: 'host' } });
+  callback({ params: { hostId: 'host' } });
+  newer.resolve(ok({ ...snapshot(3), activeEntryId: 'new' }));
+  await Promise.resolve();
+  await Promise.resolve();
+  older.resolve(ok({ ...snapshot(2), activeEntryId: 'old' }));
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(store.snapshot.activeEntryId, 'new');
+  assert.equal(store.snapshot.revision, 3);
+});
+
+test('the colored and accessible current recent use the live cursor, independently from keyboard selection', () => {
+  const panel = readFileSync(join(projectRoot, 'src/renderer/onlypreview/shell/src/components/Recents/RecentsPanel.vue'), 'utf8');
+  assert.match(panel, /'onlypreview-recents__row--selected': entry.id === onlyPreviewRecentsStore.snapshot\?\.activeEntryId/);
+  assert.match(panel, /:aria-selected="entry.id === onlyPreviewRecentsStore.snapshot\?\.activeEntryId"/);
+  assert.match(panel, /:tabindex="entry.id === onlyPreviewRecentsStore.selectedEntryId \? 0 : -1"/);
+});

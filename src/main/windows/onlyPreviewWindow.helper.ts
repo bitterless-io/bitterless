@@ -286,6 +286,8 @@ export class OnlyPreviewWindowHelper {
     // never arrived. This line separates them.
     console.info(`[onlypreview] event=shortcut-bound origin=${origin}`);
     webContents.on('before-input-event', (event, input) => {
+      // Embedded previews share the host's session search; standalone previews keep file Find.
+      if (isCurrentFileFindShortcut(input) && this.standaloneMount?.kind === 'cowork') return;
       const command = this.resolveNativeCommand(host, input);
       // The one measurement that separates "Main never saw the key" from "Main saw it and did
       // nothing". Both `Cmd+F` and `Shift+Cmd+F` reach Main only through this handler, bound on the

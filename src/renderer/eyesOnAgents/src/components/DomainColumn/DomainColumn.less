@@ -54,6 +54,29 @@
   position: relative;
 }
 
+.agent-domain__read-all.arco-btn {
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  outline: none;
+  color: var(--eyes-accent);
+  background: transparent;
+  box-shadow: none;
+  white-space: nowrap;
+}
+
+.agent-domain__read-all.arco-btn:not(:disabled):hover,
+.agent-domain__read-all.arco-btn:focus-visible {
+  color: var(--eyes-primary-deep);
+  background: var(--eyes-hover-surface);
+}
+
+.agent-domain__read-all.arco-btn:disabled {
+  color: var(--eyes-muted);
+  opacity: 0.45;
+}
+
 .agent-domain__thread-list {
   min-height: 66px;
   display: flex;

@@ -1,7 +1,8 @@
 import { WebContentsView } from 'electron';
 import type { View } from 'electron';
-import { bindZellijDevTools } from './zellijDevTools.helper';
+import { autoOpenZellijDevTools, bindZellijDevTools } from './zellijDevTools.helper';
 import { bindZellijKeyBridge } from './zellijKeyBridge';
+import { bindZellijPageKeyPatch } from './zellijPageKeyPatch';
 import { setTerminalKeyboardOwner } from '@maestro-main/common/shortcutsHelper/shortcuts.helper';
 import {
   getZellijRuntime,
@@ -109,7 +110,11 @@ export class ZellijTerminalView {
         if (this.disposed || generation !== this.generation) return this.snapshot();
         this.detach();
         this.state = { status: 'error', error: zellijErrorCode(error) };
-        console.error(`[zellij] surface preparation failed reason=${this.state.error}`);
+        // The code alone is unusable for diagnosis: `operation-failed` is `zellijErrorCode`'s
+        // fallback for ANY unrecognised error, and it is also the literal string `assertActive`
+        // throws when a preparation is merely superseded by a runtime restart. Those two are
+        // opposite situations and used to log identically (see zellij-terminal-no-error-trace.md).
+        console.error(`[zellij] surface preparation failed reason=${this.state.error}`, error);
       }
       this.publish();
       return this.snapshot();
@@ -205,7 +210,13 @@ export class ZellijTerminalView {
     // Cmd+W closes a PANE here, not the tab — see shortcuts.helper.
     setTerminalKeyboardOwner(view.webContents);
     bindZellijKeyBridge(view.webContents);
+    bindZellijPageKeyPatch(view.webContents);
     bindZellijDevTools(view.webContents);
+    // In debug the surface controls already auto-open theirs (`zellijSurface.ts`), but `window.term`
+    // — the handle every terminal-side investigation needs — lives HERE, in the view loaded from the
+    // Zellij origin. Without this, `yarn dev` opens a Console where `window.term` is undefined and
+    // the shortcut is the only way in.
+    autoOpenZellijDevTools(view.webContents);
     view.webContents.on('focus', () => {
       if (this.state.status === 'ready' && (this.host.visible?.() ?? true))
         focusZellijTerminal(this.host.surfaceId);

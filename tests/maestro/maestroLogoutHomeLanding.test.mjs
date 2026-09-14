@@ -33,7 +33,18 @@ test('auth teardown requests a pinned-Home boot and removes the Workbench overla
       destroyForAuth.indexOf('await maestroWindowHelper.prepareForAuthShutdown()')
   );
   assert.match(prepareForAuthShutdown, /this\.forcePinnedHomeIntentVersion \+= 1/);
-  assert.match(prepareForAuthShutdown, /tab\.kind === 'home' && tab\.pinned/);
+  // The pre-teardown activation finds the pinned tab by `pinned` ALONE. With a custom homepage set
+  // there is no `kind === 'home'` tab on the strip, so a kind-filtered find returns undefined and
+  // the step is skipped — the teardown frame then reveals whatever was on screen. A8 ("logout lands
+  // on the built-in Home") is enforced by the NEXT boot instead, which is what the two tests below
+  // pin: forcePinnedHomeIntentVersion → the forced-boot query → createPinnedHomeTab ignoring the
+  // custom homepage.
+  assert.match(prepareForAuthShutdown, /this\.tabs\.find\(\(tab\) => tab\.pinned\)/);
+  // 反向断言读**去掉注释**的源码 —— 上面那段解释「为什么不带 kind」的注释本身写着 `kind === 'home'`,
+  // 不剥掉的话这条守卫会被它自己的理由匹配红。
+  const codeOnly = (text) =>
+    text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+  assert.doesNotMatch(codeOnly(prepareForAuthShutdown), /kind === 'home'/);
   assert.ok(
     prepareForAuthShutdown.indexOf('await this.browserView.activateTab') <
       prepareForAuthShutdown.indexOf('this.workbenchView.closeTab()')

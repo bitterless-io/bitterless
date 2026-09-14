@@ -46,6 +46,12 @@ a missing hook, and this is the worst view in the app to leave open: it carries 
 with `sandbox: false` on a persistent partition, so a window created off it inherits a preload that
 exposes `xpcRenderer`.
 
+As of the 2026-09-14 decision, opening or switching operation tabs keeps the selected chat and its
+draft/history. Only explicit New Chat/history actions change the conversation. A later message
+still receives the current page context and site instructions, including steering during a turn;
+fixed system instructions and the model session are not rebuilt on tab changes. Link activation
+also dismisses its URL tooltip. See [tab/chat and tooltip contract](../issues/reference-link-tab-chat-tooltip.md).
+
 - Policy lives in `main/maestro/windows/main/maestroControlLinkPolicy.ts`, installed from
   `maestroControlView.service.ts` `create()` against the url the view actually loads.
 - `http(s)` **and not the panel's own origin** → `openTab`; everything else (`file:`, `data:`,
@@ -185,8 +191,12 @@ tokens, renderer values, and raw errors are forbidden.
   disabled until an explicit provider selection; no automatic provider switch or configuration
   rewrite. Shared backend/Workbench providers are unaffected (task159).
   Other provider/model/effort/compression selection retains the existing login flows.
-  GPT-5.5 remains selectable and a stored GPT-5.5 target is preserved alongside GPT-5.6 Luna, Sol,
-  and Terra; the new-install Codex default may remain GPT-5.6 Luna.
+  Effort choices in Control and Workbench are ordered strongest first: max → xhigh → high → medium → low,
+  showing only each model's supported levels; saved choices and declared defaults do not change.
+  Codex choices, top to bottom, are GPT-6 Astra, GPT-5.6 Sol, GPT-5.6 Terra, and GPT-5.6 Luna
+  (Ral 2026-09-14). The default remains Astra at medium. Saved GPT-5.4 Mini targets migrate to
+  Luna with supported effort preserved; Mini is no longer selectable. See
+  [retired Mini migration](../issues/cowork-codex-gpt54-mini-retired.md).
 - Unified attachment cards and attach/drop/paste for supported files and directories, bounded image
   thumbnails, archive operations, bundled-CLI document conversion, workspace-scoped file
   search/read/write, and artifact open/reveal state.
@@ -352,7 +362,7 @@ and ControlApp font weights without changing any global button theme.
 ### Composer and history interaction parity — 2026-09-08
 
 The later [slash-command contract](maestro-slash-commands.md) adds Cowork-style `/clear` and
-`/view_context` above the composer. It preserves BL's existing New chat guards and prompt semantics;
+`/view_context` above the composer. It preserves BL's prompt semantics;
 it does not enable Cowork's separate JSONL audit subsystem.
 
 Ral requested Cowork's bottom composer and Chat History interactions/shortcuts. Keep BL's
@@ -376,7 +386,9 @@ cursor. Opening initializes the cursor at the current session (or first row); Up
 rows, Enter selects, Esc closes. Selecting the already active chat is a no-op; pointer hover does
 not replace the keyboard cursor. History and New Chat shortcuts follow Cowork (Cmd/Ctrl+H and
 Cmd/Ctrl+N); new chat focuses its composer. Scope handling to the active Maestro chat, respecting
-IME and existing disabled/turn-lock behavior and not stealing shortcuts from other app surfaces.
+IME and not stealing shortcuts from other app surfaces. The 2026-09-14
+[New chat contract](../plan/tasks/browseruse-new-chat-003.md) removes the running-turn restriction
+for New chat and its /clear alias; other turn-locked controls keep their existing behavior.
 Do not invent unavailable unread/concurrent-turn or permanent-delete data. Delivery: task155.
 
 Native shortcut arbitration is scoped to Maestro Control's `webContents`: exact Cmd/Ctrl+H/N

@@ -3,6 +3,17 @@
 Ral 2026-09-08:「当前 cowork bitterless 中的代码高亮都不好看,能不能将各个语言的高亮器
 动态加载,外加,用 github 的高亮风格,例如 ts,js 高亮效果现在都很差」。
 
+## 当前主题与降级契约（2026-09-14）
+
+Ral 明确预览不再使用 `vs`。OnlyPreview 当前亮色契约使用 **GitHub Light**；主题首次需要时
+加载并缓存，语言语法按文件类型或 Markdown 代码块的语言分别按需加载。主题就绪与语法就绪
+分开处理，纯文本也使用 GitHub 配色；语法超时或不可用只降级成纯文本，不切换到 `vs`。
+
+已确认旧实现的运行时缺陷：`@shikijs/monaco` 会接管 Monaco 的 `create/setTheme`，将主题名
+直接转交 Shiki；旧的 `vs` 降级常量因此会触发 `Theme 'vs' not found`。真实依赖已复现，
+修复与验证见 [Preview 旧主题报错](../issues/onlypreview-shiki-vs-theme-not-found.md)。
+下文诊断和任务拆分保留为历史依据；其中的 monarch/`vs` 降级描述以本节为准。
+
 ## 诊断 —— 三个面,两个仓,坏的原因各不相同
 
 | 面 | 现状 | 后果 |

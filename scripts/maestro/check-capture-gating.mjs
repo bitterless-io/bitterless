@@ -61,8 +61,8 @@ const capturedEventBody = boundedSource(
   'CaptureService should keep a bounded onCapturedEvent implementation'
 )
 assert(
-  capturedEventBody.includes('tabId !== this.captureTargetTabId') &&
-    capturedEventBody.includes('!this.capturing') &&
+  capturedEventBody.includes('if (!this.isCaptureTab(tabId)) return') &&
+    captureServiceSource.includes('this.capturing && (this.drillTabIds ? this.drillTabIds.has(tabId) : this.captureTargetTabId === tabId)') &&
     capturedEventBody.includes('this.emitTrace(event)'),
   'captured debugger events should be gated by capture target and active capture state before emit'
 )
@@ -98,7 +98,7 @@ assert(
 )
 const startBody = boundedSource(
   captureServiceSource,
-  '  async startCapture(params?: { mode?: CaptureMode } & Partial<CaptureOptions>): Promise<CaptureState> {',
+  '  async startCapture(',
   '  async stopCapture(): Promise<CaptureState> {',
   'CaptureService should keep a bounded startCapture implementation'
 )
@@ -116,7 +116,7 @@ const stopBody = boundedSource(
 )
 assert(
   stopBody.includes('this.capturing = false') &&
-    stopBody.includes('await target?.capture?.stopRecording'),
+    stopBody.includes('...(this.drillTabIds ?? [])') && stopBody.includes('?.capture?.stopRecording()'),
   'stopCapture should turn off capture state and recording bridge'
 )
 for (const [start, end, statement, name] of [
@@ -188,7 +188,7 @@ assert(hostToolCatalog.includes("name: 'stop_recording'"), 'host tool catalog sh
 assert(controllerSource.includes("name: 'start_recording'"), 'Maestro agent should expose start_recording')
 assert(controllerSource.includes("name: 'stop_recording'"), 'Maestro agent should expose stop_recording')
 assert(
-  /private async toolStartRecording\(modeArg: string\): Promise<string> \{\s*return await this\.captureService\.toolStartRecording\(modeArg\)\s*\}/.test(
+  /private async toolStartRecording\(modeArg: string, tabId\?: string\): Promise<string> \{\s*return await this\.captureService\.toolStartRecording\(modeArg, tabId\)\s*\}/.test(
     controllerSource
   ),
   'controller start_recording seam should delegate exactly once'
@@ -200,10 +200,9 @@ assert(
   'controller stop_recording seam should delegate exactly once'
 )
 assert(
-  /new DebuggerCapture\([\s\S]*\(\) => this\._state\.capturing && this\.ownerOf\(view\)\?\.id === this\._state\.captureTargetTabId/.test(
-    buildViewSlotBody
-  ),
-  'thumbnail screenshots should also be gated to the active capture target'
+  buildViewSlotBody.includes('const id = this.ownerOf(view)?.id') && buildViewSlotBody.includes('this._state.isCaptureTab?.(id)') &&
+    buildViewSlotBody.includes('this._state.capturing && id === this._state.captureTargetTabId'),
+  'thumbnail screenshots should also be gated to the recording member set or ordinary capture target'
 )
 assert(
   debuggerCapture.includes('async startRecording(): Promise<void>') &&
@@ -216,8 +215,8 @@ assert(
   'UI recording bridge should be removed by stopRecording'
 )
 assert(
-  debuggerCapture.includes('Network.enable') &&
-    debuggerCapture.includes('The Runtime event stream + the __coachRecord recording bridge are intentionally NOT enabled'),
+  boundedSource(debuggerCapture, '  private async attachRequired(', '  async resume(', 'capture attachment should remain bounded').includes("sendCommand('Network.enable'") &&
+    !boundedSource(debuggerCapture, '  private async attachRequired(', '  async resume(', 'capture attachment should remain bounded').includes("sendCommand('Runtime.addBinding'"),
   'network debugger may attach for live browser support while UI recording bridge remains lazy'
 )
 

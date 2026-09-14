@@ -27,6 +27,9 @@ class LayoutStore {
   init(): void {
     if (this.initialized) return
     this.initialized = true
+    xpcRenderer.subscribe('maestro/session-search', () => {
+      if (!this.sidebarOpen) this.toggleSidebar()
+    })
     xpcRenderer.subscribe('coach/sidebar-close', () => {
       this.closeSidebar()
     })

@@ -64,7 +64,7 @@ import {
 import { registerOnlyPreviewCoworkTab } from '@main/windows/onlyPreviewCoworkTab';
 import { registerTrenchCoworkTab } from '@main/windows/trenchCoworkTab';
 import { registerZellijCoworkTab } from '@main/windows/zellijCoworkTab';
-import { registerOnlyPreviewMaestroOpener } from '@main/windows/onlyPreviewMaestroOpener';
+import { openOnlyPreviewOsTarget, registerOnlyPreviewMaestroOpener } from '@main/windows/onlyPreviewMaestroOpener';
 import {
   OnlyPreviewOpenQueue,
   resolveOnlyPreviewOpenTargets,
@@ -99,9 +99,7 @@ const assertE2EKeychainIsolation = (): void => {
 
 assertE2EKeychainIsolation();
 registerOnlyPreviewScheme();
-const onlyPreviewOpenQueue = new OnlyPreviewOpenQueue((target) =>
-  openOnlyPreviewAbsoluteTarget(target, { preserveTreeSelection: true })
-);
+const onlyPreviewOpenQueue = new OnlyPreviewOpenQueue(openOnlyPreviewOsTarget);
 mcpBridgeServer.configurePreviewOpener((target) =>
   openOnlyPreviewAbsoluteTarget(target, { preserveTreeSelection: true })
 );

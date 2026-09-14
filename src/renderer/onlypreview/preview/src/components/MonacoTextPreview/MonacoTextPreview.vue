@@ -37,10 +37,7 @@ import { onlyPreviewPreviewStore } from '../../onlyPreviewPreview.store';
 import { onlyPreviewFindAdapterBridge } from '../../onlyPreviewFindAdapter.service';
 import { createOnlyPreviewMonacoFindAdapter } from '../../onlyPreviewMonacoFind.service';
 import { resolveOnlyPreviewMonacoFolding } from '../../onlyPreviewMonacoFolding.service';
-import {
-  MONACO_PLAIN_FALLBACK_THEME,
-  prepareMonacoHighlighting
-} from '../../onlyPreviewMonacoHighlight.service';
+import { prepareMonacoHighlighting } from '../../onlyPreviewMonacoHighlight.service';
 
 const props = defineProps<{
   content: OnlyPreviewTextContent;
@@ -95,7 +92,7 @@ const createEditor = async (): Promise<void> => {
   const generation = ++createGeneration;
   disposeEditor();
   // 等语法**再**建 model,而不是先建后重新分词:后者会看到一次「白 → 有色」的跳变。
-  // 超时(见 `prepareMonacoHighlighting`)退回 monarch,所以慢语法不会把预览卡住。
+  // 超时(见 `prepareMonacoHighlighting`)退回纯文本,所以慢语法不会把预览卡住。
   const highlighting = await prepareMonacoHighlighting(monaco, props.language);
   // await 之后一切都要重新确认:这期间可能已经切了文件,或者组件已经卸载。
   if (generation !== createGeneration) return;
@@ -106,7 +103,7 @@ const createEditor = async (): Promise<void> => {
   );
   model = monaco.editor.createModel(
     props.content.text,
-    highlighting?.language ?? props.language ?? 'plaintext',
+    highlighting.language,
     modelUri
   );
   // 按分类器的语言 id 决定,不按 shiki 归一化后的高亮语言。
@@ -148,7 +145,7 @@ const createEditor = async (): Promise<void> => {
     selectionHighlight: true,
     stickyScroll: { enabled: false },
     padding: { top: 10, bottom: 10 },
-    theme: highlighting?.theme ?? MONACO_PLAIN_FALLBACK_THEME
+    ...(highlighting.theme ? { theme: highlighting.theme } : {})
   });
   if (foldingPlan.collapseActionId) void collapseDeepLevels(editor, foldingPlan.collapseActionId);
   selectionDisposable = editor.onDidChangeCursorSelection(() => {

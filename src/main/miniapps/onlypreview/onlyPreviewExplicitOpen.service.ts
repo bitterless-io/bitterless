@@ -181,26 +181,23 @@ const performOpenOnlyPreviewAbsoluteTarget = async (
     // 不是 `WORKSPACE_CHANGED` —— shell 再也不会问第二次,空状态就留在那里。
     // 详见 `docs/issues/onlypreview-external-file-open-drops-the-project.md`。
     onlyPreviewRecentDirectoryService.releaseProjectRestoreClaim(recentGeneration);
-    if (
-      await presentOnlyPreviewExplicitFile(host, inspected, trace, undefined, preserveTreeSelection)
-    ) {
-      await recordOnlyPreviewRecentFile(host.hostToken, resolve(inspected.rootRealPath, inspected.selectedRelativePath));
-    }
-    // 补一次「再问」的机会 —— **不 await**:项目索引可能是几万个文件,让一个 PDF 的预览等在索引
-    // 后面是另一种坏。预览先出,项目随后出现。
-    // **只有真恢复出项目时才广播**:没有可恢复的项目时广播 `workspaceChanged` 会让 shell 再走一遍
-    // 「置空 ＋ 重置索引状态」,那是在说一件没发生的事。
+    const accepted = await presentOnlyPreviewExplicitFile(
+      host, inspected, trace, undefined, preserveTreeSelection
+    );
+    // The file is already visible. Resolve the initial Project scope before recording history so
+    // a cold open cannot land in the unbound bucket just before Shell restores the Project.
     if (!onlyPreviewWorkspaceRegistry.restore(host.hostToken)) {
-      void onlyPreviewRecentDirectoryService
-        // **不要呈现那个项目记住的文件** —— 这一步只是"让项目回到树里"。呈现会把上面刚呈现的
-        // 那个外部文件换掉,而那次替换是静默的:表现就是"第一次打开没反应,第二次才行"
-        // (`docs/issues/onlypreview-first-external-open-is-replaced-by-the-restored-project.md`)。
+      const workspace = await onlyPreviewRecentDirectoryService
         .restoreWorkspace(host.hostToken, { presentRestoredSelection: false })
-        .then((workspace) => {
-          if (!workspace || !onlyPreviewHostRegistry.isLive(host.hostToken)) return;
-          xpcMain.broadcast(ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT, { hostId: host.hostId });
-        })
-        .catch(() => undefined);
+        .catch(() => null);
+      if (workspace && onlyPreviewHostRegistry.isLive(host.hostToken)) {
+        xpcMain.broadcast(ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT, { hostId: host.hostId });
+      }
+    }
+    if (accepted && onlyPreviewHostRegistry.isLive(host.hostToken)) {
+      await recordOnlyPreviewRecentFile(
+        host.hostToken, resolve(inspected.rootRealPath, inspected.selectedRelativePath)
+      );
     }
   } catch (error) {
     trace.end({ outcome: 'failure' });

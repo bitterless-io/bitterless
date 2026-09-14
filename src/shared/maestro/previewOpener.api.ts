@@ -1,3 +1,5 @@
+import type { MaestroCompositeTabSpec } from './compositeTab.api'
+
 /**
  * The host's preview application, as Maestro is allowed to know it.
  *
@@ -26,15 +28,16 @@ export type MaestroLocalPreviewTarget =
   | { readonly kind: 'missing'; readonly fileUrl: string }
 
 export interface MaestroPreviewOpener {
+  /** A per-file tab with independent preview authority and no OnlyPreview history. */
+  createFileTabSpec?(absolutePath: string): MaestroCompositeTabSpec
+  /** Address-bar targets use file tabs; directories keep the Project route. */
+  openInTab?(absolutePath: string, options?: { tabId?: string }): Promise<void>
   /** Open one absolute path — a directory or a file — in the host's preview application. */
   open(absolutePath: string): Promise<void>
   /**
-   * 这个会话不再用这个工作区了 —— 如果预览应用现在开着的**正是它**,把预览应用一起收掉。
+   * 这个会话不再用这个工作区了 —— 解除预览中匹配的 Project 绑定,保留 tab/窗口供再次选择。
    *
-   * Ral 2026-09-10:「如果关闭 workspace onlypreview 也要关闭」。
-   *
-   * **带路径而不是无参的 `close()`**,而且宿主那边要比对当前项目根:预览应用里可能是人自己另开的
-   * 别的项目或一个工作区外的文件,无条件关会毁掉和这次操作无关的东西。比对不上就什么都不做。
+   * 保留既有接口名。宿主在目标变更队列中比对当前项目根,不影响另一个 Project 或外部文件预览。
    */
   closeForPath(absolutePath: string): Promise<void>
   /** What to call it in text shown to the owner, e.g. "OnlyPreview". */

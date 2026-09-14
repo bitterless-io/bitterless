@@ -6,6 +6,9 @@ depends-on: []
 verify: Native association, startup queue, default-app guard and existing navigation unit tests
 ---
 
+2026-09-14 update: [External file tabs and current-preview identity](../../issues/onlypreview-external-file-tab-and-current-preview.md) supersedes the OS/file-tab routing below: OS regular files open a new main-window file tab, and all file tabs stay outside OnlyPreview Recents. MCP remains in OnlyPreview. Its footer and current-file Recents background follow the live preview, independently from tree/keyboard selection.
+
+
 # macOS Open With
 
 Both signed app bundles declare ordinary files as Viewer/Alternate, not Owner/Default. Keep

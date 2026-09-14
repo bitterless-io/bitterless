@@ -38,7 +38,9 @@ Implemented two footer rows (workspace/attachment, then model/voice/Stop-or-Send
 name and empty chooser text, workspace-clear confirmation, and Cowork-aligned history focus and
 keyboard cursor. Cmd/Ctrl+H toggles history; arrows wrap, Enter selects, Escape closes/restores
 focus; current-session selection is a no-op. Cmd/Ctrl+N starts a chat and focuses the composer.
-IME/repeat/turn-lock guards remain. Native menu arbitration is limited to the focused Maestro
+IME/repeat guards remain. The New chat turn-lock restriction was superseded by
+[browseruse-new-chat-003](browseruse-new-chat-003.md); other turn locks remain.
+Native menu arbitration is limited to the focused Maestro
 Control's exact H/N chords; other views and browser shortcuts are not intercepted.
 
 Verification:31/31 focused tests including real SFC handler execution and native-service mocks;

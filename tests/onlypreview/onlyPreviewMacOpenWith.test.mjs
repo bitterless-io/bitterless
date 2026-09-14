@@ -222,7 +222,7 @@ test('both authorized action routes use the guard, and macOS input is registered
     assert.match(adapter, /openOnlyPreviewOperatingSystemTarget[\s\S]*preserveTreeSelection: true/);
     assert.ok(main.indexOf('onlyPreviewOpenQueue.markReady()') > main.indexOf('windowManagerController.openMainWindow()'));
   } else {
-    assert.match(main, /new OnlyPreviewOpenQueue\(\(target\) =>\s*openOnlyPreviewAbsoluteTarget\(target, \{ preserveTreeSelection: true \}\)/);
+    assert.match(main, /new OnlyPreviewOpenQueue\(openOnlyPreviewOsTarget\)/);
   }
 });
 

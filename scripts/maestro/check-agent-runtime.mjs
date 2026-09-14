@@ -14,6 +14,10 @@ const require = createRequire(import.meta.url)
 const baseAgent = readFileSync(join(root, 'main/agent/BaseAgent.ts'), 'utf8')
 const runtimeTypes = readFileSync(join(root, 'main/agent/runtime/agentRuntime.types.ts'), 'utf8')
 const piRuntime = readFileSync(join(root, 'main/agent/runtime/piRuntimeAdapter.ts'), 'utf8')
+const piSession = readFileSync(join(root, 'main/agent/runtime/piRuntimeSession.ts'), 'utf8')
+const piProtocol = readFileSync(join(root, 'main/agent/runtime/piRuntimeProtocol.ts'), 'utf8')
+const hostToolExecution = readFileSync(join(root, 'main/agent/runtime/hostToolExecution.ts'), 'utf8')
+const runtimeSystemPrompt = readFileSync(join(root, 'main/agent/runtime/runtimeSystemPrompt.ts'), 'utf8')
 const agentService = readFileSync(join(root, 'main/agent/maestroAgent.service.ts'), 'utf8')
 // 断言「某个文件保持删除状态」用它 —— 直接 readFileSync 会在文件不存在时抛，那是我们要的相反结果。
 const readIfExists = (rel) => (existsSync(join(projectRoot, rel)) ? readFileSync(join(projectRoot, rel), 'utf8') : '')
@@ -122,7 +126,7 @@ const loadBaseAgent = () => {
 
 for (const forbidden of ['codex exec', '--ephemeral', 'execFile(', 'spawn(', 'spawnSync(']) {
   assert(!baseAgent.includes(forbidden), `BaseAgent must not use CLI per-message execution: ${forbidden}`)
-  assert(!piRuntime.includes(forbidden), `PiRuntimeAdapter must not use CLI per-message execution: ${forbidden}`)
+  assert(![piRuntime, piSession, piProtocol].some(source => source.includes(forbidden)), `pi runtime must not use CLI per-message execution: ${forbidden}`)
 }
 
 assert(runtimeTypes.includes('export interface AgentRuntimeAdapter'), 'provider-neutral AgentRuntimeAdapter should exist')
@@ -167,13 +171,18 @@ assert(
   'agentPorts() 应当直接持有 PiRuntimeAdapter(中间那层已拆)'
 )
 assert(errorSanitizer.includes('export const sanitizeRuntimeError') && errorSanitizer.includes('[REDACTED_JWT]'), 'runtime error sanitizer should redact common token patterns')
-assert(piRuntime.includes("sanitizeRuntimeError(event.message.errorMessage, 'provider')") && piRuntime.includes("sanitizeRuntimeError(err instanceof Error ? err.message : String(err), 'tool')"), 'pi runtime should sanitize provider and tool errors')
+assert(piProtocol.includes("sanitizeRuntimeError(event.message.errorMessage, 'provider')") && hostToolExecution.includes("sanitizeRuntimeError(err instanceof Error ? err.message : String(err), 'tool')"), 'pi protocol and host executor should sanitize provider and tool errors')
+assert(piProtocol.includes('executeHostTool(spec, params') && piRuntime.includes('bindPiTools(pi, Type, options)'), 'pi adapter must use the protocol binding and shared host executor')
+assert(runtimeTypes.includes('systemPrompt: string') && !runtimeTypes.includes('systemPrompt?: string'), 'runtime systemPrompt must be required')
+assert(runtimeSystemPrompt.includes('typeof text !==') && runtimeSystemPrompt.includes('!text.trim()') && runtimeSystemPrompt.includes('return text'), 'runtime prompt contract must reject blank/missing text without rewriting it')
+assert(piRuntime.indexOf('resolveRuntimeSystemPrompt(options)') < piRuntime.indexOf("await import('@earendil-works/pi-coding-agent')", piRuntime.indexOf('async createSession')), 'pi must validate host instructions before SDK/auth side effects')
+assert(piRuntime.includes('resourceLoader: createPiResourceLoader(pi, prompt.hostText)') && piRuntime.includes('cwd: prompt.cwd'), 'pi must always use the host loader and resolved working directory')
 assert(packageJson.includes('"check:maestro": "node scripts/maestro/check-maestro.mjs"'), 'package scripts should expose the embedded Maestro parity suite')
 assert(piAiTypes.includes('export interface ImageContent') && piAiTypes.includes('data: string;') && !piAiTypes.includes('url: string;'), 'pi 0.79 ImageContent is base64-data only, not URL-native')
 // 2026-08-28: re-pointed, NOT retired. The guarded fact still holds in pi-ai 0.80.10 — only the
 // file moved (dist/providers/ -> dist/api/); the base64 data-URL serialization is unchanged at
 // dist/api/openai-completions.js:747. This is why PiRuntimeSession.prompt() still sends a textual
-// @path note instead of pi native media (piRuntimeAdapter.ts:171-174).
+// @path note instead of pi native media (piRuntimeSession.ts).
 if (piOpenAiCompletions) {
   assert(piOpenAiCompletions.includes('url: `data:${item.mimeType};base64,${item.data}`'), 'pi openai-completions provider still serializes images as base64 data URLs')
 }
@@ -216,17 +225,17 @@ assert(baseAgent.includes('media: options?.media') && baseAgent.includes('images
 
 assert(piRuntime.includes("await import('@earendil-works/pi-coding-agent')"), 'pi runtime should use the SDK directly')
 assert(piRuntime.includes('pi.createAgentSession'), 'pi runtime should create SDK sessions')
-assert(!piRuntime.includes('buildPiImages'), 'pi runtime must not convert media refs into inline payloads')
-assert(!piRuntime.includes("toString('base64')") && !piRuntime.includes('toString("base64")'), 'pi runtime must not base64 encode attachments')
+assert(![piRuntime, piSession, piProtocol].some(source => source.includes('buildPiImages')), 'pi runtime must not convert media refs into inline payloads')
+assert(![piRuntime, piSession, piProtocol].some(source => /toString\(['"]base64['"]\)/.test(source)), 'pi runtime must not base64 encode attachments')
 // 判据是「媒体以 text/path 引用传递,不做 base64 内联」,不是那一行的字面写法。
 // steering 改动给 prompt() 加了第二个入参({ streamingBehavior }),写死字面量会让这条
 // 在语义完全没变的情况下变红 —— 而这套守卫恰好那段时间整套没在执行,所以没人发现。
-assert(/this\.session\.prompt\(message\.text[,)]/.test(piRuntime), 'pi runtime should keep media refs in the text/path boundary')
-assert(piRuntime.includes('base64 payloads') && piRuntime.includes('textual @path note'), 'pi runtime should document why native media is not used')
+assert(/this\.session\.prompt\(message\.text[,)]/.test(piSession), 'pi runtime should keep media refs in the text/path boundary')
+assert(piSession.includes('base64 payloads') && piSession.includes('textual @path note'), 'pi runtime should document why native media is not used')
 assert(piRuntime.includes("sessionManager: pi.SessionManager.inMemory()"), 'pi runtime should keep session state in memory')
 assert(piRuntime.includes("noTools: customTools.length > 0 ? 'builtin' : 'all'"), 'pi runtime should disable builtin coding tools while keeping Coach custom tools')
-assert(piRuntime.includes("type === 'tool_execution_start'"), 'pi runtime should normalize tool events')
-assert(piRuntime.includes("inner.type === 'text_delta'"), 'pi runtime should normalize streamed text')
+assert(piProtocol.includes("type === 'tool_execution_start'"), 'pi runtime should normalize tool events')
+assert(piProtocol.includes("inner.type === 'text_delta'"), 'pi runtime should normalize streamed text')
 
 assert(maestroAgent.includes('private readonly maestroAgents = new Map<string, MaestroAgent>()'), 'MaestroAgentService should cache agents by chat session id')
 assert(maestroAgent.includes('private readonly hydratedMaestroAgentSessions = new Set<string>()'), 'MaestroAgentService should track which chat sessions have been hydrated')
@@ -268,8 +277,8 @@ assert(
 assert(!messageStore.includes('await coach.resetAgentConversation({ sessionId: session.id })'), 'composer reset action should no longer reset the host agent session')
 assert(!messageStore.includes('async reset(sessionId: string)'), 'message store should not keep the removed reset action')
 assert(messageStore.includes('attachedPaths: attachedPaths?.length ? attachedPaths.slice() : undefined'), 'renderer should pass current-turn attached paths through context')
-assert(channelStore.includes('latestActiveSessionForOperationTab'), 'reopened tabs should reuse persisted chat sessions')
-assert(channelStore.includes('maestroSessionByTabId'), 'Control should keep one active Maestro session per operation tab')
+assert(channelStore.includes('latestActiveSession()'), 'Control should restore recent chat sessions independently of tabs')
+assert(!channelStore.includes('maestroSessionByTabId'), 'browser tabs must not own the selected chat')
 assert(llmService.includes('this._state.resetLlmTurnState()'), 'provider/model changes should reset agent turn state')
 assert(llmService.includes('this._state.resetLlmAgentSessions()'), 'logout should reset live agent sessions')
 // **Claude 已退役**(Ral 2026-09-11:「bl cowork 都不用 claude 的了」)。此前这条钉的是

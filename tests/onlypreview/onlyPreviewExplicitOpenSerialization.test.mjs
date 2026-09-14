@@ -155,7 +155,7 @@ test('all explicit target sources use the serialized boundary and packaged switc
   );
   assert.match(
     explicitOpenBody,
-    /serializedOpenOnlyPreviewAbsoluteTarget = serializeOnlyPreviewOpenTarget\([\s\S]*performOpenOnlyPreviewAbsoluteTarget,[\s\S]*onlyPreviewTargetMutations[\s\S]*openOnlyPreviewAbsoluteTarget[\s\S]*onlyPreviewOpenDiagnostics\.trace[\s\S]*serializedOpenOnlyPreviewAbsoluteTarget\(target, trace\)[\s\S]*registerOnlyPreviewExplicitTarget\(openOnlyPreviewAbsoluteTarget\)/
+    /serializedOpenOnlyPreviewAbsoluteTarget = serializeOnlyPreviewOpenTarget\([\s\S]*performOpenOnlyPreviewAbsoluteTarget,[\s\S]*onlyPreviewTargetMutations[\s\S]*openOnlyPreviewAbsoluteTarget[\s\S]*onlyPreviewOpenDiagnostics\.trace[\s\S]*serializedOpenOnlyPreviewAbsoluteTarget\(target, \{[\s\S]*trace,[\s\S]*preserveTreeSelection[\s\S]*registerOnlyPreviewExplicitTarget\(openOnlyPreviewAbsoluteTarget\)/
   );
   const chooseFolderBody = source('src/main/windows/onlyPreviewChooseFolder.service.ts');
   assert.match(handler, /chooseOnlyPreviewFolder\(params\?\.hostToken\)/);
@@ -170,6 +170,6 @@ test('all explicit target sources use the serialized boundary and packaged switc
   );
   assert.match(
     appMain,
-    /new OnlyPreviewOpenQueue\(\(target\) =>\s*openOnlyPreviewAbsoluteTarget\(target, \{ preserveTreeSelection: true \}\)[\s\S]*mcpBridgeServer\.configurePreviewOpener\(\(target\) =>\s*openOnlyPreviewAbsoluteTarget\(target, \{ preserveTreeSelection: true \}\)/
+    /new OnlyPreviewOpenQueue\(openOnlyPreviewOsTarget\)[\s\S]*mcpBridgeServer\.configurePreviewOpener\(\(target\) =>\s*openOnlyPreviewAbsoluteTarget\(target, \{ preserveTreeSelection: true \}\)/
   );
 });

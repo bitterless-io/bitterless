@@ -255,6 +255,7 @@ export class DrillRunService {
         ts: Date.now()
       })
     }
+    void session?.finishTabScope()
     // 播报在闸**外面**:被停掉的这一轮值得一条回执,而它是否恰好还挂着一个可取消的任务
     // 与"人按了停止"无关 —— 原来绑在一起,于是没有任务时人什么反馈都收不到。
     xpcMain.broadcast('coach/drill-note', {

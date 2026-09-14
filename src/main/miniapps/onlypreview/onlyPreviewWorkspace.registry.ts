@@ -341,6 +341,14 @@ export class OnlyPreviewWorkspaceRegistry {
     return workspace.rootRealPath === rootRealPath;
   }
 
+  /** A clear also fences an unbound restore, but must never clear a different, even pending, Project. */
+  canClearProjectRoot(hostToken: unknown, rootRealPath: string): boolean {
+    const host = this.hosts.require(hostToken, ['content']);
+    const workspaceId = this.projectWorkspaceByHost.get(host.hostToken);
+    const workspace = workspaceId ? this.workspaces.get(workspaceId) : null;
+    return !workspace || workspace.rootRealPath === rootRealPath;
+  }
+
   /**
    * 地址栏该显示的那一行 —— 当前预览目标的 `file://`。没有可显示的目标时空串。
    *

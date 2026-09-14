@@ -226,6 +226,19 @@ test('Guide info exposes four fields and one complete English production or DEBU
   ]);
   assert.equal(production.serverName, 'bitterless');
   assert.equal(production.kind, 'production', '渲染层的分支完全依赖这个字段');
+
+  // 契约漂移守卫:渲染层接受的精确 key 集合,必须逐项等于 main 在这里实际产出的 key。
+  // 加 `kind` 那次只改了 main,渲染层的三键判断于是拒掉每一个合法 payload,Guide 对所有人恒显
+  // restart-required —— 而当时的断言只覆盖 main 这一侧,所以什么都没拦住。
+  const guideStore = source('src/renderer/onlypreview/guide/src/onlyPreviewGuide.store.ts');
+  const declaredGuideKeys = guideStore.match(/GUIDE_INFO_KEYS = \[([\s\S]*?)\] as const/);
+  assert(declaredGuideKeys, 'Guide 渲染层必须把接受的形状声明为 GUIDE_INFO_KEYS');
+  assert.deepEqual(
+    [...declaredGuideKeys[1].matchAll(/'([^']+)'/g)].map((match) => match[1]),
+    Object.keys(production).sort(),
+    '渲染层校验的 key 集合必须等于 main 实际产出的 key 集合'
+  );
+  assert.match(guideStore, /!isOnlyPreviewMcpServerKind\(record\.kind\)/);
   assert.match(production.instruction, /MCP configuration/);
   assert.match(production.instruction, /entire `bitterless-preview` skill directory/);
   assert.match(production.instruction, /~\/\.codex\/skills\/bitterless-preview/);
@@ -312,7 +325,7 @@ test('Guide renderer and Main capability wiring remain narrow and one-card only'
   assert.doesNotMatch(source('src/main/mcp/mcpBridge.server.ts'), /onlyPreview\.handler/);
   assert.match(
     source('src/main/app.main.ts'),
-    /mcpBridgeServer\.configurePreviewOpener\(openOnlyPreviewAbsoluteTarget\)/
+    /mcpBridgeServer\.configurePreviewOpener\(\(target\) =>\s*openOnlyPreviewAbsoluteTarget\(target, \{ preserveTreeSelection: true \}\)/
   );
 
   assert.match(guideOpen, /requireStandaloneWindow\(sourceHostToken\)/);
@@ -340,8 +353,11 @@ test('Guide renderer and Main capability wiring remain narrow and one-card only'
   );
   assert.match(
     guideApp,
-    /serverName === 'bitterless-preview'[\s\S]*previewChannelMountGuide[\s\S]*testInstanceWarning/
+    /info\?\.kind === 'preview'[\s\S]*previewChannelMountGuide[\s\S]*testInstanceWarning/
   );
+  // 分类是 main 给的,渲染层不得再拿产品名字面量自己推一遍 —— 那既是重复分类,也是一处品牌泄漏:
+  // 同一份渲染层搬进 micromeet-cowork 之后,这种比较永远不成立。
+  assert.doesNotMatch(guideApp, /serverName === '/);
   const guideI18n = source('src/renderer/onlypreview/common/onlyPreviewI18n.ts');
   assert.match(
     guideI18n,

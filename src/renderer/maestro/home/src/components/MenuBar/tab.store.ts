@@ -21,8 +21,15 @@ const LAST_ACTIVE_KEY = 'coach.lastActiveTab'
 // A composite mini-app tab has an EMPTY url, so keying it by url would collapse every one of them
 // onto the same key — and onto `'home'` at that, since the empty string is not persistable. Its own
 // `instanceId` is the only thing about it that survives a restart.
+//
+// `'home'` is the FIXED-SLOT sentinel, not "the bundled Home renderer": any pinned tab keys to it,
+// so a custom homepage (a pinned mini-app tab) records the same literal. That is deliberate — the
+// slot's occupant is decided at boot by main, so "last active = the fixed slot" must not also carry
+// WHICH mini app was in it, or switching the homepage leaves a key pointing at a tab that is no
+// longer there. The `'ai-crms'` → `'home'` rewrite below is the recorded precedent for what a stale
+// sentinel costs.
 const tabKey = (t: TabInfo): string =>
-  t.kind === 'home' ? t.kind : t.instanceId ? `${t.kind}:${t.instanceId}` : t.url
+  t.pinned || t.kind === 'home' ? 'home' : t.instanceId ? `${t.kind}:${t.instanceId}` : t.url
 const consumeForcePinnedHomeBootQuery = (): boolean => {
   const url = new URL(window.location.href)
   const forcePinnedHome =
@@ -184,6 +191,9 @@ class TabStoreState {
           title: t.title,
           favicon: t.favicon,
           position: i,
+          // A field missing from THIS map silently never reaches the DB — the row is rebuilt from
+          // literals here, not spread from the reactive tab (a Vue proxy can't be structured-cloned).
+          ...(t.alias ? { alias: t.alias } : {}),
           ...(t.kind !== 'browser' ? { kind: t.kind, instanceId: t.instanceId } : {})
         }))
       void tabsDao.replaceAll({ tabs: saved }).catch(() => {
@@ -277,6 +287,14 @@ class TabStoreState {
   // dropdown would be painted behind the operation view, which is a native view above this DOM).
   async showNewTabMenu(anchor: { left: number; bottom: number }): Promise<void> {
     await coach.showNewTabMenu({ x: anchor.left, y: anchor.bottom })
+  }
+
+  // 地址栏左侧的页面类型按钮 → 原生菜单,锚在按钮下沿。同样在 main 里弹:操作区那个原生 view 画在
+  // 这份 DOM 之上。菜单只针对**当前活动的** tab —— 地址栏行显示的就是它。
+  async showPageTypeMenu(anchor: { left: number; bottom: number }): Promise<void> {
+    const active = this.activeTab
+    if (!active) return
+    await coach.showPageTypeMenu({ tabId: active.id, x: anchor.left, y: anchor.bottom })
   }
 
   async toggleActiveDebugger(): Promise<void> {

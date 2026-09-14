@@ -737,20 +737,16 @@ test('the explicit FILE branch releases the claim and re-asks for the project', 
     resolve(projectRoot, 'src/main/miniapps/onlypreview/onlyPreviewExplicitOpen.service.ts'),
     'utf8'
   );
-  const fileBranch = source.slice(source.indexOf('trace.mark({ phase: \'inspect\''));
+  const fileBranch = source.slice(source.indexOf('onlyPreviewRecentDirectoryService.releaseProjectRestoreClaim(recentGeneration)'));
   assert.match(
     fileBranch,
     /releaseProjectRestoreClaim\(recentGeneration\)/,
     '文件那支没有放开闸门 —— 新窗口里会是 No project open'
   );
-  // 不 await:项目索引可能是几万个文件,预览不该等在它后面
-  // 窗口放宽到 400:这一段中间有说明注释,而断言要钉的是「不 await」这个性质,不是行间距。
-  assert.match(fileBranch, /void onlyPreviewRecentDirectoryService[\s\S]{0,400}\.restoreWorkspace\(/);
-  // 只有真恢复出项目时才广播 —— 否则 shell 会为一件没发生的事再走一遍置空
-  assert.match(
-    fileBranch,
-    /if \(!workspace[\s\S]{0,90}\) return;[\s\S]{0,140}broadcast\(ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT/
-  );
+  // The preview is issued before restore; history waits for the resolved Project scope.
+  assert.ok(fileBranch.indexOf('const accepted = await presentOnlyPreviewExplicitFile') < fileBranch.indexOf('const workspace = await onlyPreviewRecentDirectoryService'));
+  assert.ok(fileBranch.indexOf('.restoreWorkspace(') < fileBranch.indexOf('await recordOnlyPreviewRecentFile('));
+  assert.match(fileBranch, /if \(workspace && onlyPreviewHostRegistry\.isLive\(host\.hostToken\)\) \{[\s\S]{0,120}broadcast\(ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT/);
 });
 
 /**
@@ -818,4 +814,201 @@ test('the explicit FILE branch restores the project without presenting its remem
     /restoreWorkspace\(host\.hostToken, \{ presentRestoredSelection: false \}\)/,
     '缺了这个参数,恢复会把刚呈现的外部文件换掉'
   );
+});
+
+const openProjectAfterClear = async (service, hostToken, target) => {
+  const generation = service.beginExplicitTarget(hostToken);
+  try {
+    return await service.openExplicitTarget(hostToken, target, generation);
+  } finally {
+    service.finishExplicitTarget(generation);
+  }
+};
+
+const clearRaceGate = () => {
+  let entered;
+  let release;
+  const started = new Promise((resolveStarted) => { entered = resolveStarted; });
+  const wait = new Promise((resolveWait) => { release = resolveWait; });
+  return { entered, release, started, wait };
+};
+
+test('clearing a Project preserves its host, external preview, and remembered file', async () => {
+  await withTempDirectory('onlypreview-clear-project-', async (root) => {
+    const project = realpathSync(root);
+    const file = write(join(project, 'notes.md'), 'notes');
+    const lastFile = { version: 1, directoryPath: project, relativePath: 'notes.md' };
+    const storage = new SubKeyedSettingStorage({ last_file: lastFile });
+    const { hosts, workspaces, service } = createService(storage);
+    const host = hosts.issue('standalone', 'content');
+    service.markStorageReady();
+    const workspace = await openProjectAfterClear(service, host.hostToken, project);
+    const external = workspaces.registerExternalPreview(
+      host.hostToken, await runtime.inspectOnlyPreviewProjectTarget(file)
+    );
+
+    await service.clearWorkspace(host.hostToken);
+    await service.clearWorkspace(host.hostToken);
+    assert.equal(hosts.isLive(host.hostToken), true);
+    assert.equal(workspaces.restore(host.hostToken), null);
+    assert.equal(await service.restoreWorkspace(host.hostToken), null);
+    assert.throws(() => workspaces.requireWorkspace(host.hostToken, workspace.workspaceId));
+    assert.equal(workspaces.isExternalPreviewFileRef(host.hostToken, external), true);
+    assert.equal(JSON.parse(storage.values.get('last_directory')), null);
+    assert.deepEqual(JSON.parse(storage.values.get('last_file')), lastFile);
+
+    const restarted = createService(storage);
+    restarted.service.markStorageReady();
+    const nextHost = restarted.hosts.issue('standalone', 'content');
+    assert.equal(await restarted.service.restoreWorkspace(nextHost.hostToken), null);
+  });
+});
+
+test('clearing before storage readiness survives a subsequent external-file intent', async () => {
+  await withTempDirectory('onlypreview-clear-pre-ready-', async (root) => {
+    const storage = new MemorySettingStorage({ version: 1, directoryPath: realpathSync(root) });
+    const { hosts, service } = createService(storage);
+    const host = hosts.issue('standalone', 'content');
+    const restoring = service.restoreWorkspace(host.hostToken);
+    await openProjectAfterClear(service, host.hostToken, root);
+    await service.clearWorkspace(host.hostToken);
+    assert.equal(await service.restoreWorkspace(host.hostToken), null);
+    const externalGeneration = service.beginExplicitTarget(host.hostToken);
+    service.releaseProjectRestoreClaim(externalGeneration);
+    service.finishExplicitTarget(externalGeneration);
+
+    service.markStorageReady();
+    await service.flushPendingWrites();
+    assert.equal(await restoring, null);
+    assert.equal(storage.value(), null);
+    assert.equal(await service.restoreWorkspace(host.hostToken), null);
+  });
+});
+
+test('a history read captured before clear cannot restore the cleared Project', async () => {
+  await withTempDirectory('onlypreview-clear-history-read-', async (root) => {
+    const storage = new MemorySettingStorage({ version: 1, directoryPath: realpathSync(root) });
+    const { hosts, workspaces, service } = createService(storage);
+    const host = hosts.issue('standalone', 'content');
+    const gate = clearRaceGate();
+    const getStored = storage.getStored.bind(storage);
+    let pause = true;
+    storage.getStored = async (...args) => {
+      const value = await getStored(...args);
+      if (pause) {
+        pause = false;
+        gate.entered();
+        await gate.wait;
+      }
+      return value;
+    };
+    service.markStorageReady();
+    const restoring = service.restoreWorkspace(host.hostToken);
+    await gate.started;
+    await service.clearWorkspace(host.hostToken);
+    gate.release();
+    assert.equal(await restoring, null);
+    assert.equal(workspaces.restore(host.hostToken), null);
+    assert.equal(storage.value(), null);
+  });
+});
+
+for (const source of ['restore', 'explicit']) {
+  test(`clear fences and drains an in-flight ${source} binding`, async () => {
+    await withTempDirectory(`onlypreview-clear-${source}-bind-`, async (root) => {
+      const storage = new MemorySettingStorage({ version: 1, directoryPath: realpathSync(root) });
+      const { hosts, workspaces, service, presented } = createService(storage);
+      const host = hosts.issue('standalone', 'content');
+      const gate = clearRaceGate();
+      const bindWorkspace = service.bindWorkspace;
+      let oldWorkspaceId;
+      service.bindWorkspace = async (...args) => {
+        await bindWorkspace(...args);
+        oldWorkspaceId = args[1].workspaceId;
+        gate.entered();
+        await gate.wait;
+      };
+      service.markStorageReady();
+      const opening = source === 'restore'
+        ? service.restoreWorkspace(host.hostToken)
+        : openProjectAfterClear(service, host.hostToken, root);
+      await gate.started;
+      let cleared = false;
+      const clearing = service.clearWorkspace(host.hostToken).then(() => { cleared = true; });
+      assert.equal(await service.restoreWorkspace(host.hostToken), null);
+      assert.equal(cleared, false, 'clear must drain the old binding before completing');
+      gate.release();
+      assert.equal(await opening, null);
+      await clearing;
+      assert.equal(workspaces.restore(host.hostToken), null);
+      assert.throws(() => workspaces.requireWorkspace(host.hostToken, oldWorkspaceId));
+      assert.deepEqual(presented, []);
+      assert.equal(storage.value(), null);
+    });
+  });
+}
+
+test('clear is persisted after an older directory write already in flight', async () => {
+  await withTempDirectory('onlypreview-clear-old-write-', async (root) => {
+    const storage = new MemorySettingStorage({ version: 1, directoryPath: realpathSync(root) });
+    const { hosts, service } = createService(storage);
+    const host = hosts.issue('standalone', 'content');
+    const gate = clearRaceGate();
+    const compareAndSet = storage.compareAndSet.bind(storage);
+    let pause = true;
+    storage.compareAndSet = async (params) => {
+      if (pause) {
+        pause = false;
+        gate.entered();
+        await gate.wait;
+      }
+      return await compareAndSet(params);
+    };
+    service.markStorageReady();
+    await openProjectAfterClear(service, host.hostToken, root);
+    await gate.started;
+    const clearing = service.clearWorkspace(host.hostToken);
+    gate.release();
+    await clearing;
+    assert.equal(storage.value(), null);
+    assert.equal(storage.compareAndSetCalls.at(-1).value, null);
+    assert.equal(await service.restoreWorkspace(host.hostToken), null);
+  });
+});
+
+test('failed clear persistence cannot revive history, and successful rebind remembers a fresh Project', async () => {
+  await withTempDirectory('onlypreview-clear-rebind-', async (root) => {
+    const first = realpathSync(root);
+    const second = join(first, 'second');
+    mkdirSync(second);
+    const storage = new MemorySettingStorage({ version: 1, directoryPath: first });
+    const { hosts, workspaces, service } = createService(storage);
+    const host = hosts.issue('standalone', 'content');
+    service.markStorageReady();
+    const before = await openProjectAfterClear(service, host.hostToken, first);
+    await service.flushPendingWrites();
+    storage.failReads = true;
+    await service.clearWorkspace(host.hostToken);
+    storage.failReads = false;
+    assert.deepEqual(storage.value(), { version: 1, directoryPath: first });
+    assert.equal(await service.restoreWorkspace(host.hostToken), null);
+    await assert.rejects(() => openProjectAfterClear(service, host.hostToken, join(first, 'missing')));
+    assert.equal(await service.restoreWorkspace(host.hostToken), null);
+
+    const same = await openProjectAfterClear(service, host.hostToken, first);
+    assert.notEqual(same.workspaceId, before.workspaceId);
+    assert.equal((await service.restoreWorkspace(host.hostToken)).workspaceId, same.workspaceId);
+    await service.clearWorkspace(host.hostToken);
+    const different = await openProjectAfterClear(service, host.hostToken, second);
+    assert.notEqual(different.workspaceId, same.workspaceId);
+    assert.equal(workspaces.restore(host.hostToken).workspaceId, different.workspaceId);
+    await service.flushPendingWrites();
+    assert.deepEqual(storage.value(), { version: 1, directoryPath: second });
+    const restarted = createService(storage);
+    restarted.service.markStorageReady();
+    const nextHost = restarted.hosts.issue('standalone', 'content');
+    const restored = await restarted.service.restoreWorkspace(nextHost.hostToken);
+    assert.equal(restored.displayPath, second);
+    assert.notEqual(restored.workspaceId, different.workspaceId);
+  });
 });

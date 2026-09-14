@@ -1013,7 +1013,7 @@ preview.open({ path: absoluteFileOrFolderPath }) -> { opened: true }
 ```
 
 The bridge rejects unknown keys, empty/multiline/NUL/relative paths, and overlong values. It calls
-the same `openOnlyPreviewAbsoluteTarget` route used by Main-owned OS file-open instead of creating a
+the `openOnlyPreviewAbsoluteTarget` route used by internal OnlyPreview requests instead of creating a
 parallel window or filesystem path. It never returns or reads file content, lists a directory,
 mutates a target, or echoes the absolute path in its success result. Main injects this opener into
 the bridge; a missing injection fails explicitly and remains independently testable without
@@ -1068,7 +1068,8 @@ a package when any of those four required files is missing, empty, non-regular, 
   entrypoint, or a relative switch value for a user file. Packaged Windows also retains ordinary
   file-argument parsing.
 - Queue entries are consumed only after the GUI/XPC runtime is ready.
-- Opening another file focuses the singleton. A contained file updates the current Project
+- As of 2026-09-14, OS regular-file requests open a fresh main-window file preview tab with its own host and single-file authority; they never mutate OnlyPreview or its Recents. OS directory requests keep the Project route. See [external file tabs](../issues/onlypreview-external-file-tab-and-current-preview.md).
+- Internal/MCP OnlyPreview file requests focus its singleton. A contained file updates the current Project
   selection; an external file preserves the Project and its selection. After the folder
   chooser returns, its target mutation joins OS, MCP, and internal requests on one FIFO
   serialization boundary; the dialog itself does not occupy the queue. Each caller settles only
@@ -1230,6 +1231,11 @@ Shift+Cmd/Ctrl+F:
   width synchronously. Missing, malformed, or inaccessible storage falls back to `264px`.
 
 ## Interaction Contract
+
+When no Project workspace is bound, the shared left navigation area shows the
+[workspace selection guide and button](onlypreview-workspace-onboarding.md). It remains visible
+on both Project and Recents and calls the existing Open Folder flow. Choosing a directory hides
+the guide; an external file preview by itself does not count as a bound Project.
 
 | Input                            | Scope                                       | Behavior                                                                                                                |
 | -------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |

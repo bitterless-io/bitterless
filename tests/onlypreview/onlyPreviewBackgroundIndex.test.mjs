@@ -81,6 +81,92 @@ const start = async (f, generation = 1) => {
   return { result, coordinator: f.coordinators.at(-1) };
 };
 
+test('revoking another Project leaves its pending build and progress active', async (t) => {
+  const f = fixture();
+  t.after(() => f.runtime.dispose());
+  const { result, coordinator: c } = await start(f);
+  await f.runtime.revokeWorkspace('different-workspace-0001');
+  assert.equal(c.stopped, 0);
+  c.callbacks.onSnapshot(snapshot());
+  assert.equal((await result).ok, true);
+  c.callbacks.onSnapshot(snapshot('ready'));
+  c.initializes[0].resolve(snapshot('ready'));
+  await tick();
+  assert.deepEqual(f.events.map(({ value }) => value.snapshot.state), ['building', 'ready']);
+});
+
+test('matching Project revocation settles a pending build and fences its late events', async () => {
+  const f = fixture();
+  const { result, coordinator: c } = await start(f);
+  await f.runtime.revokeWorkspace(request.workspaceId);
+  assert.equal((await result).ok, false);
+  assert.ok(c.stopped > 0);
+  c.callbacks.onSnapshot(snapshot('ready'));
+  c.callbacks.onProgress({ workspaceId: request.workspaceId, generation: 1, buildRevision: 1, phase: 'counting' });
+  c.initializes[0].reject(new Error('late revoked build failure'));
+  await tick();
+  assert.deepEqual(f.events, []);
+});
+
+test('the same runtime can reopen a fresh Project and ignores the old Project revocation', async (t) => {
+  const f = fixture();
+  t.after(() => f.runtime.dispose());
+  const first = await start(f);
+  first.coordinator.callbacks.onSnapshot(snapshot());
+  await first.result;
+  await f.runtime.revokeWorkspace(request.workspaceId);
+
+  const freshRequest = { ...request, workspaceId: 'workspace-000000000000002', generation: 2 };
+  const freshBootstrap = { ...bootstrap, workspaceId: freshRequest.workspaceId };
+  const freshSnapshot = {
+    ...snapshot('building', 2), workspaceId: freshRequest.workspaceId,
+    index: { ...snapshot().index, workspaceId: freshRequest.workspaceId }
+  };
+  const opened = f.runtime.initialize(freshRequest, freshBootstrap);
+  await tick();
+  const current = f.coordinators.at(-1);
+  assert.notEqual(current, first.coordinator);
+  await f.runtime.revokeWorkspace(request.workspaceId);
+  assert.equal(current.stopped, 0);
+  current.callbacks.onSnapshot(freshSnapshot);
+  assert.equal((await opened).value.workspaceId, freshRequest.workspaceId);
+  first.coordinator.callbacks.onSnapshot(snapshot('ready'));
+  first.coordinator.initializes[0].reject(new Error('late old Project failure'));
+  current.callbacks.onSnapshot({ ...freshSnapshot, state: 'ready' });
+  current.initializes[0].resolve({ ...freshSnapshot, state: 'ready' });
+  await tick();
+  assert.deepEqual(f.events.slice(1).map(({ value }) => value.snapshot.workspaceId), [
+    freshRequest.workspaceId, freshRequest.workspaceId
+  ]);
+});
+
+test('revoking an initialization target while old shutdown is pending prevents a later coordinator', async (t) => {
+  const f = fixture();
+  const shutdown = deferred();
+  t.after(async () => { shutdown.resolve(); await f.runtime.dispose(); });
+  const first = await start(f);
+  first.coordinator.callbacks.onSnapshot(snapshot('ready'));
+  first.coordinator.initializes[0].resolve(snapshot('ready'));
+  await first.result;
+  await tick();
+  first.coordinator.shutdown = async () => {
+    first.coordinator.stopped += 1;
+    await shutdown.promise;
+  };
+
+  const nextRequest = { ...request, workspaceId: 'workspace-000000000000003', generation: 3 };
+  const opened = f.runtime.initialize(nextRequest, { ...bootstrap, workspaceId: nextRequest.workspaceId });
+  await tick();
+  assert.equal(first.coordinator.stopped, 1);
+  assert.equal(f.coordinators.length, 1);
+  await f.runtime.revokeWorkspace(request.workspaceId);
+  await f.runtime.revokeWorkspace(nextRequest.workspaceId);
+  shutdown.resolve();
+  assert.equal((await opened).ok, false);
+  assert.equal(f.coordinators.length, 1, 'a revoked target cannot resume after the previous shutdown');
+  assert.equal(f.events.length, 1);
+});
+
 test('initialize acknowledges the first snapshot without waiting for a long build; ready still arrives', async () => {
   const f = fixture();
   const { result, coordinator: c } = await start(f);

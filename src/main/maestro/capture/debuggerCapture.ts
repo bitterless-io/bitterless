@@ -286,6 +286,8 @@ export class DebuggerCapture {
   private interceptionRules: NetworkInterceptionRule[] = []
   private fetchInterceptionEnabled = false
   private attached = false
+  private navigationPreparation: Promise<void> | null = null
+  private attachmentGeneration = 0
   private suspended = false
   private detaching = false
   private debuggerEventsWired = false
@@ -305,90 +307,77 @@ export class DebuggerCapture {
     private readonly shouldShoot: () => boolean = () => true
   ) {}
 
+  /** Required first-request setup is independent of injection into the current document. */
+  prepareNavigation(): Promise<void> {
+    if (this.suspended || this.wc.isDestroyed()) return Promise.reject(new Error('Browser capture is unavailable.'))
+    if (this.navigationPreparation) return this.navigationPreparation
+    const generation = ++this.attachmentGeneration
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const preparation = Promise.race([
+      this.attachRequired(generation),
+      new Promise<void>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('Browser navigation preparation timed out.')), 5000)
+      })
+    ]).catch((error) => {
+      if (generation === this.attachmentGeneration) {
+        this.detach()
+        if (!this.isTeardownError(error)) this.onEvent({ kind: 'error', msg: 'capture setup failed: ' + (error as Error).message, ts: Date.now() })
+      }
+      throw error
+    }).finally(() => { if (timer) clearTimeout(timer) })
+    this.navigationPreparation = preparation
+    // A spare may never be claimed. Its failure is handled by the eventual navigation caller.
+    void preparation.catch(() => {})
+    return preparation
+  }
+
   async attach(): Promise<void> {
-    if (this.suspended || this.attached || this.wc.isDestroyed()) return
+    if (this.suspended || this.wc.isDestroyed()) return
+    await this.prepareNavigation()
+    if (!this.attached || this.suspended || this.wc.isDestroyed()) return
+    try {
+      await this.wc.debugger.sendCommand('Runtime.evaluate', { expression: STEALTH })
+    } catch {
+      // The registered document-start script covers the next page; this patch is best-effort.
+    }
+  }
+
+  private async attachRequired(generation: number): Promise<void> {
     this.detaching = false
     const dbg = this.wc.debugger
-    try {
-      dbg.attach('1.3')
-    } catch (err) {
-      this.onEvent({ kind: 'error', msg: 'debugger.attach failed: ' + (err as Error).message, ts: Date.now() })
-      return
-    }
+    dbg.attach('1.3')
     this.attached = true
     if (!this.debuggerEventsWired) {
       dbg.on('detach', this.onDetach)
       dbg.on('message', this.onMessage)
       this.debuggerEventsWired = true
     }
-
-    // Every awaited CDP command below can reject with "target closed while handling command"
-    // if the tab is closed mid-attach (e.g. a window.open result tab that closes right away).
-    // That's an expected teardown race — wrap the sequence and swallow those; only surface a
-    // genuine setup failure.
-    try {
-      await dbg.sendCommand('Network.enable', {
-        maxTotalBufferSize: 50_000_000,
-        maxResourceBufferSize: 10_000_000
-      })
-      if (this.suspended) {
-        this.detach()
-        return
-      }
-      await this.syncFetchInterception()
-      // Present the operation view as plain Google Chrome: this overrides the UA string,
-      // the Sec-CH-UA* client-hint request headers, AND navigator.userAgentData together,
-      // so a site reading either sees a consistent Chrome (not Electron). Re-applied on
-      // every attach; persists across navigations for this CDP session. Derived from the
-      // real bundled Chromium version (chromeIdentity), so there's no version mismatch.
-      const id = chromeIdentity()
-      try {
-        await dbg.sendCommand('Network.setUserAgentOverride', {
-          userAgent: id.userAgent,
-          acceptLanguage: id.acceptLanguage,
-          platform: id.navigatorPlatform,
-          userAgentMetadata: id.metadata
-        })
-        if (this.suspended) {
-          this.detach()
-          return
-        }
-      } catch (err) {
-        if (!this.isTeardownError(err)) {
-          this.onEvent({ kind: 'error', msg: 'UA override failed: ' + (err as Error).message, ts: Date.now() })
-        }
-      }
-      // Light, safe disguise (window.chrome shell + window dims) at document-start. Enables the Page
-      // domain only — Page.enable is NOT a tell (only Runtime/Debugger are) — so it never trips the
-      // reCAPTCHA console-serialization probe. Best-effort; never throws out of setup.
-      try {
-        await dbg.sendCommand('Page.enable')
-        await dbg.sendCommand('Page.addScriptToEvaluateOnNewDocument', { source: STEALTH })
-        if (this.suspended) {
-          this.detach()
-          return
-        }
-        try {
-          await dbg.sendCommand('Runtime.evaluate', { expression: STEALTH })
-        } catch {
-          /* no live document yet — addScriptToEvaluateOnNewDocument covers the next load */
-        }
-      } catch (err) {
-        if (!this.isTeardownError(err)) {
-          this.onEvent({ kind: 'error', msg: 'stealth inject failed: ' + (err as Error).message, ts: Date.now() })
-        }
-      }
-      // The Runtime event stream + the __coachRecord recording bridge are intentionally NOT enabled
-      // here (Page IS — it's harmless). `Runtime.enable` is the signal anti-bot scripts (reCAPTCHA /
-      // Cloudflare) probe for — the "DevTools is open" console-serialization leak. It's turned on
-      // ONLY while recording (startRecording) and reverted after (stopRecording). Mouse control
-      // (Input.*), snapshot/replay (one-shot Runtime.evaluate) and screenshots don't need it.
-    } catch (err) {
-      this.attached = false
-      if (!this.isTeardownError(err)) {
-        this.onEvent({ kind: 'error', msg: 'capture setup failed: ' + (err as Error).message, ts: Date.now() })
+    const assertCurrent = (): void => {
+      if (generation !== this.attachmentGeneration || this.suspended || !this.attached || this.wc.isDestroyed()) {
+        throw new Error('Browser navigation preparation was cancelled.')
       }
     }
+    await dbg.sendCommand('Network.enable', {
+      maxTotalBufferSize: 50_000_000,
+      maxResourceBufferSize: 10_000_000
+    })
+    assertCurrent()
+    // Existing request interception must be installed before the first remote request as well.
+    await this.syncFetchInterception(true)
+    assertCurrent()
+    const id = chromeIdentity()
+    await dbg.sendCommand('Network.setUserAgentOverride', {
+      userAgent: id.userAgent,
+      acceptLanguage: id.acceptLanguage,
+      platform: id.navigatorPlatform,
+      userAgentMetadata: id.metadata
+    })
+    assertCurrent()
+    await dbg.sendCommand('Page.enable')
+    assertCurrent()
+    await dbg.sendCommand('Page.addScriptToEvaluateOnNewDocument', { source: STEALTH })
+    assertCurrent()
+    // Runtime.enable remains recording-only: ordinary browsing must not enable its event stream.
   }
 
   isAttached(): boolean {
@@ -750,6 +739,8 @@ export class DebuggerCapture {
   }
 
   detach(): void {
+    this.attachmentGeneration += 1
+    this.navigationPreparation = null
     if (!this.attached) return
     this.detaching = true
     try {
@@ -765,6 +756,8 @@ export class DebuggerCapture {
   }
 
   private onDetach = (_e: unknown, reason: string): void => {
+    this.attachmentGeneration += 1
+    this.navigationPreparation = null
     const expected = this.detaching
     this.detaching = false
     this.attached = false
@@ -774,7 +767,7 @@ export class DebuggerCapture {
     if (!expected) this.onEvent({ kind: 'error', msg: 'debugger detached: ' + reason, ts: Date.now() })
   }
 
-  private async syncFetchInterception(): Promise<void> {
+  private async syncFetchInterception(required = false): Promise<void> {
     if (!this.attached) return
     const dbg = this.wc.debugger
     const stages = interceptionStagesForRules(this.interceptionRules)
@@ -797,6 +790,7 @@ export class DebuggerCapture {
       this.fetchInterceptionEnabled = true
     } catch (err) {
       this.onEvent({ kind: 'error', msg: 'Fetch.enable failed: ' + (err as Error).message, ts: Date.now() })
+      if (required) throw err
     }
   }
 

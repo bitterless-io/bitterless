@@ -1,0 +1,75 @@
+/* 覆盖层本体透明:底下的操作区要透出来,这是「对话框」不是「另一个页面」。
+   一层 scrim 说明底下暂时不接受输入,面板自己不画任何边框 —— 层次靠留白、底色与圆角,
+   这是全仓的无边框纪律(CLAUDE.md《Borderless UI》)。 */
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+.maestro-tab-alias {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-size: 12px;
+}
+
+.maestro-tab-alias__scrim {
+  position: absolute;
+  inset: 0;
+  background: oklch(0.28 0.03 268 / 28%);
+}
+
+.maestro-tab-alias__panel {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 320px;
+  max-width: calc(100% - 48px);
+  padding: 16px;
+  border-radius: 8px;
+  background: oklch(1 0 0);
+  box-shadow: 0 12px 32px oklch(0.28 0.03 268 / 22%);
+  transform: translate(-50%, -50%);
+}
+
+.maestro-tab-alias__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+/* 「你正在给哪个 tab 起名」—— 纯提示文字,**不给底色**:底色读起来像可以点
+   (CLAUDE.md:plain hint text gets no background)。 */
+.maestro-tab-alias__subtitle {
+  margin: 0;
+  overflow: hidden;
+  color: oklch(0.55 0.02 268);
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.maestro-tab-alias__hint {
+  margin: 0;
+  color: oklch(0.55 0.02 268);
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.maestro-tab-alias__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}

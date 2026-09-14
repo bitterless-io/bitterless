@@ -2,6 +2,7 @@ import type { Rectangle, WebContentsView } from 'electron';
 import { notifyOnlyPreviewDisplayUrl } from '@main/miniapps/onlypreview/onlyPreviewDisplayUrl.registry';
 import { xpcMain } from 'electron-xpc/main';
 import { randomUUID } from 'node:crypto';
+import { resolve } from 'node:path';
 import { fileSearchWindowService } from '@main/fileSearch/fileSearchWindow.service';
 import {
   cloneOnlyPreviewDescriptor,
@@ -773,7 +774,14 @@ export class OnlyPreviewPreviewRegionService {
   }
 
   private snapshotInternal(includeVueAsset = false): OnlyPreviewPreviewPresentation {
+    const fileRef = this.presentation.fileRef;
+    const fileDisplayPath = !includeVueAsset && fileRef && this.runtime
+      ? resolve(onlyPreviewWorkspaceRegistry.requireWorkspace(
+          this.runtime.host.hostToken, fileRef.workspaceId
+        ).displayPath, fileRef.relativePath)
+      : undefined;
     return {
+      ...(fileDisplayPath ? { fileDisplayPath } : {}),
       ...projectOnlyPreviewPresentation(this.presentation, includeVueAsset),
       // Derived here, never read from `this.presentation`: every path that binds a Project clears
       // the presentation immediately afterwards, which would erase a stored value.

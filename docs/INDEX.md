@@ -1,10 +1,112 @@
 # Bitterless Documentation
 
+- [New chat during running work](plan/tasks/browseruse-new-chat-003.md) — implemented; code-verified; human testing pending;
+  keep the existing task running while creating/selecting a fresh conversation.
+
+- [Explicit browser-use lifecycle and favicon animation](plan/tasks/browseruse-lifecycle-002.md) — implemented; code-verified; human testing pending;
+  start/end host tools, task-scoped activity and ordinary/drill cleanup using the existing orbit animation.
+
+- [Browseruse and drill isolation repair](plan/tasks/browseruse-isolation-001.md) — implemented; code-verified; human testing pending;
+  review fixes, explicit drill membership and recording boundaries.
+
+- [Restored browser tab navigation delay](issues/restored-browser-tab-navigation-delay.md) — implemented; code-verified, human testing pending;
+  per-view navigation initiation, useful prewarming and separating required first-request setup from full debugger attachment.
+
+- [Clearing workspace retains the OnlyPreview tab](issues/onlypreview-workspace-clear-retains-tab.md) — implemented; code-verified, human testing pending;
+  unbind Project, show the guide and reuse the host and valid directory indexes on reselect.
+
+- [Browser tools keep per-chat operating tabs](issues/agent-browser-session-tabs.md) — implemented; code-verified; human testing pending;
+  session-owned targets, structured Table 3 state, tab-count UI, lifecycle errors and built-in back navigation.
+
+- [Runtime adapter responsibilities and system prompt contract](issues/runtime-adapter-responsibility.md) — implemented; code-verified, human testing pending;
+  require the host system prompt and separate session policy/execution from pi mapping, aligned with CoWork.
+
+- [SQLite Node/Electron ABI mismatch](issues/sqlite-native-abi-mismatch.md) — native module rebuilt for Electron 40; DEBUG startup guard and encrypted roundtrip verified.
+
+- [Browser history and address suggestions](features/browser-history-suggestions.md) — implemented; code-verified, human testing pending; encrypted SQLite, 1000 URLs, title matching and Google search popup.
+
 This directory is the entry point for current Bitterless design and delivery documents.
 Older implementation notes remain under `doc/` and are reference-only unless linked from a current
 design document.
 
 ## Feature contracts
+
+- [EyesOnAgents restore Read all](plan/tasks/eyes-on-agents-restore-read-all-102.md) — implemented; owner verification pending;
+  Search-right bulk acknowledgement clears non-active unread red dots without ending work.
+
+- [OnlyPreview workspace selection guide](features/onlypreview-workspace-onboarding.md) — implemented; human testing pending;
+  visible workspace picker and guide in the shared Project/Recents empty state for BL/COWORK.
+
+- [Preview Shiki requests obsolete `vs` theme](issues/onlypreview-shiki-vs-theme-not-found.md) — implemented; owner testing pending;
+  load GitHub theme independently from on-demand grammar readiness in BL/COWORK.
+
+- [Project tree background width on horizontal scroll](issues/onlypreview-tree-background-scroll-width.md) — implemented; owner testing pending;
+  BL/COWORK row backgrounds must cover the full scrollable content width.
+
+- [Reference links, chat identity and tooltip dismissal](issues/reference-link-tab-chat-tooltip.md) — implemented; owner testing pending;
+  browser tabs keep the current chat while page context updates; dismiss URL tooltips on activation.
+
+- [CoWork offers retired GPT-5.4 Mini](issues/cowork-codex-gpt54-mini-retired.md) — implemented; owner testing pending;
+  remove Mini, migrate saved Mini selections to Luna, order Codex choices Astra → Sol → Terra → Luna.
+
+- [Mini-app favicon 由配置决定](features/miniapp-favicon.md) — implemented; owner testing pending;
+  `MaestroCompositeTabSpec.favicon` 本来就通,这次给 Zellij / OnlyPreview 填上内联 SVG data URI;
+  Trench 不配,走默认图标。OnlyPreview 的标记重做成「方框 ＋ 居中的眼睛」(品牌色 `#4E5882`),
+  同一个形的单色版换掉了它菜单条上那枚通用的 tabler `IconFiles`。
+
+- [Tab ↔ 聊天会话绑定与提示词分层](features/tab-chat-binding.md) — contract, not yet implemented;
+  `tabId → sessionId` 一张小账,**只从聊天写向 tab**(建 tab / new chat / history 切换三个写入点),
+  所以「切 tab 不切聊天」不被推翻。多对一(两个 tab 可绑同一条聊天)⇒ 反查不成立。
+  所有打开的 tab(id/url/title)进**表 2**、当前激活的 tab 进**表 3**;这要求
+  `createPiResourceLoader` 那个捕获常量的 `getSystemPrompt` 闭包改成每轮求值。
+  bl 侧要先给 `SavedTab` 补一格跨重启稳定的 `id`(cowork 已有)。
+
+- [Tab 别名 Alias](features/tab-alias.md) — designed, not yet implemented;右键 `Alias…` 弹表单,
+  alias 优先于页面 title,清空即还原;alias 必须是独立字段(title 会被页面反复覆写),
+  表单需要一个新的覆盖层 `WebContentsView`。
+
+- [自定义固有 tab(Set as homepage)](features/custom-homepage-tab.md) — designed, not yet implemented;
+  核心是把 `pinned`(结构)与 `kind`(行为)拆开,`kind: 'home'` 继续专指内置入口 ——
+  登出落地与第一方 preload 都只认它。两个 PQ 要 Ral 拍板。
+  **G5 已被 [onlypreview-default-homepage.md](features/onlypreview-default-homepage.md) 改写。**
+
+- [bl 的固有 tab 默认装 OnlyPreview](features/onlypreview-default-homepage.md) — implemented;
+  owner testing pending(需重新打包);默认值住在 registry 的 `spec.defaultHome` 而不是默认设置,
+  于是「还原默认主页」清空即回默认;`isDefaultHomeTab` 改问「用户设没设过」(默认那一格改名会被
+  settings 归一静默丢掉);OnlyPreview 已有活着的承载时 `open` 改为抛,固有槽位这一发降级成内置
+  Home 而不是一格空白。
+
+- [页面类型切换器 `menubar__pagetype__button`](features/maestro-page-type-switcher.md) — implemented;
+  owner testing pending;地址栏左侧的原生菜单把**当前 tab** 在 Website 与已注册 composite
+  mini-app 之间就地切换;从 Zellij 切走走 `close(host)`,那条会话被强关(pane 里有进程也关)。
+
+- [Zellij 终端里 Cmd+C / Cmd+V 没反应](issues/zellij-terminal-cmd-copy-paste.md) — implemented;
+  owner testing pending(需重新打包);两个键各坏在不同层:Cmd+C 被 Zellij 自己的
+  `key-handler.js` 当成 Kitty 序列吞掉,Cmd+V 被 `setIgnoreMenuShortcuts(true)` 掐断了 macOS 的
+  Edit 菜单 paste role。两者都改由 Main 在 `zellijKeyBridge` 里执行。
+
+- [Zellij 终端吞掉 Esc、Shift+Enter 和 macOS 行编辑键](issues/zellij-terminal-mac-editing-keys-and-esc.md) —
+  implemented;owner testing pending(需重新打包);字节探针实测:Esc 到 pty 的字节是**零**,
+  Shift+Enter 只到 `0d`(Shift 被丢),Option+Enter 到 `1b 0d`(正常)。四个层各自独立:
+  (1) `encode_kitty_key` 用 `ev.key.charCodeAt(0)`,四个方向键首字母都是 `A`,Cmd+←/→/↑/↓
+  **编码成同一串** `\x1b[65;9u`;(2) 修饰键闸要求「≥2 个或含 Cmd」,Shift+Enter 被漏掉;
+  (3) zellij 默认把 `Alt left/right` 绑成 `MoveFocusOrTab`,吃掉了 word 移动;(4) Esc 落单时
+  丢失。修法:Esc 与两个换行键由 `zellijPageKeyPatch.ts` 注入页面、**capture 阶段**直接写字节
+  (Esc 发完整 `CSI 27;1u`,换行发 `ESC CR`),Cmd+←/→ 仍走 `zellijKeyBridge` 译成 Ctrl+A/E,
+  Option+←/→ 与 `mac_option_is_meta` 写进配置模板。**注意**:zellij server 只在启动时读一次
+  配置且跨 app 重启存活,模板写到磁盘 ≠ 生效。
+
+- [从 Zellij 终端复制出来是 Mac OS Roman 乱码](issues/zellij-terminal-copy-is-mac-os-roman-mojibake.md) —
+  implemented; owner verification pending(需重新打包);`没有` 复制出来变成 `Ê≤°Êúâ`,屏幕上却是对的。
+  `iconv -f MACINTOSH` 精确复现:UTF-8 字节被按 Mac OS Roman 解 —— 而这个编码在 macOS 上只来自
+  C/POSIX locale 下的系统编码。launchd 启动的 GUI app 根本没有 `LANG`,
+  `resolveZellijChildEnvironment` 又只规范化了 `TERM`/颜色、没管 locale,于是 web server、session
+  和每个 pane 的 shell 一起继承了 C。缺口补 `LANG=en_US.UTF-8`,launcher 和 KDL `env` 仍然优先。
+
+- [OnlyPreview Agent Guide 恒显 "Restart Bitterless"](issues/onlypreview-guide-contract-guard-rejects-kind.md) —
+  fixed; owner testing pending;契约 2026-09-10 加了第四个字段 `kind`,渲染层的精确形状校验还停在
+  三键,于是拒掉每一个合法 payload;重启永远修不好。同一处缺陷在 micromeet-cowork 的 vendored
+  拷贝里潜伏着,已一并修复。
 
 - [Zellij session-enumeration timeout](issues/zellij-session-enumeration-timeout.md) —
   [repair task 177](plan/tasks/zellij-session-lifecycle-177.md) fixed and verified. Bounded exact
@@ -712,6 +814,8 @@ earlier review rounds were remediated; Ral's runtime/visual verification remains
 - [Todoist-style Todo sync delivery analysis](plan/analysis/todoist-sync.md)
 
 ## Issues
+
+- [External file tabs and current-preview identity](issues/onlypreview-external-file-tab-and-current-preview.md) — implemented; owner testing pending: OS files open new tabs without OnlyPreview history; footer and current Recents highlight follow the live preview.
 
 - [AI-CRMS 退役前的安全契约 —— 留档](issues/maestro-crms-retirement-security-record.md) — 留档,不再是活约束:
   专用登录 tab 的隔离要求与 bundled CLI 凭据信封两段从 `features/maestro.md` 正文移出。正文只描述

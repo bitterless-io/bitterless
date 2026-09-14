@@ -159,9 +159,9 @@ export class BaseAgent {
 
   /**
    * The agent's system prompt (markdown). Subclasses OVERRIDE this with a template literal to
-   * give the agent its role + instructions; returning '' means no preamble. It is sent ONCE at
-   * the start of each conversation session (prepended to the first prompt; later turns rely on
-   * the session's own history). oneShot() bypasses it — those prompts are self-contained.
+   * give the agent its role + instructions; returning '' omits this product layer. Both reusable
+   * and one-shot sessions receive the complete host system prompt (base + product) separately
+   * from user messages. Runtime adapters preserve it across turns and compaction.
    */
   protected systemPrompt(): string {
     return ''

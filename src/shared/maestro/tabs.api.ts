@@ -19,6 +19,14 @@ export interface SavedTab {
    * own state (a Zellij tab to its own session) rather than to whatever happens to be first.
    */
   instanceId?: string
+  /**
+   * The operator's own name for this tab (docs/features/tab-alias.md #4).
+   *
+   * Persisted beside `title` rather than inside it, for the same reason it is a separate field
+   * everywhere else: `title` is rewritten by the page and by the restore path, so a name stored
+   * there does not survive one navigation, let alone a restart.
+   */
+  alias?: string
 }
 
 export interface TabsApi {

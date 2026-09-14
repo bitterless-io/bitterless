@@ -225,6 +225,7 @@ export class MessageStoreState {
   private pendingAgentTurnFinishes = markRaw(new Map<string, AgentTurnFinished>())
   private agentTurnFinishReplays = markRaw(new Map<string, Promise<void>>())
   private highlightTimer: ReturnType<typeof setTimeout> | null = null
+  private sessionSaves = markRaw(new Map<string, Promise<boolean>>())
 
   sessions: MessageSession[] = []
   historySessions: MessageSessionSummary[] = []
@@ -244,7 +245,11 @@ export class MessageStoreState {
   contextLimitLabel = DEFAULT_CONTEXT_LIMIT_LABEL
   compressionRemainingPercent = DEFAULT_COMPRESSION_REMAINING_PERCENT
   initialized = false
-  activeAgentTurnSnapshot: AgentTurnSnapshot | null = null
+  activeAgentTurnSnapshots: AgentTurnSnapshot[] = []
+
+  get activeAgentTurnSnapshot(): AgentTurnSnapshot | null {
+    return this.activeAgentTurnSnapshots[0] ?? null
+  }
   // While true, streaming/agent updates keep the message list pinned to the bottom. Flipped off when
   // the user scrolls up past STICK_TO_BOTTOM_THRESHOLD_PX (see onListScroll), back on when they
   // return near the bottom or send a new message. This is the bool that gates the auto-scroll.
@@ -287,6 +292,7 @@ export class MessageStoreState {
     })
     const recovery = await coach.getActiveAgentTurn().catch(() => null)
     if (recovery) this.applyAgentTurnRecovery(recovery)
+    await this.restoreActiveTurnSessions()
     await this.refreshDefaultWorkspace()
     await this.refreshHistory()
   }
@@ -300,51 +306,46 @@ export class MessageStoreState {
     return session
   }
 
-  async latestActiveSessionForOperationTab(operationTabId: string): Promise<MessageSession | undefined> {
+  async latestActiveSession(): Promise<MessageSession | undefined> {
     await this.init()
     const existing = this.sessions
-      .filter((session) => session.operationTabId === operationTabId && !session.archivedAt)
+      .filter((session) => !session.archivedAt)
       .sort((a, b) => b.updatedAt - a.updatedAt)[0]
     if (existing) return existing
 
     const activeSnapshot = this.activeAgentTurnSnapshot
-    if (
-      activeSnapshot &&
-      (!activeSnapshot.operationTabId || activeSnapshot.operationTabId === operationTabId)
-    ) {
+    if (activeSnapshot) {
       const active = await this.loadPersistedSession(activeSnapshot.sessionId)
-      if (active?.operationTabId === operationTabId && !active.archivedAt) return active
-      if (!active) return this.createRecoveredTurnSession(activeSnapshot, operationTabId)
+      if (active && !active.archivedAt) return active
+      if (!active) return this.createRecoveredTurnSession(activeSnapshot)
     }
 
     const missedFinish = [...this.pendingAgentTurnFinishes.values()]
-      .filter(
-        (finished) =>
-          !finished.turn.operationTabId || finished.turn.operationTabId === operationTabId
-      )
       .sort((a, b) => b.turn.startedAt - a.turn.startedAt)[0]
     if (missedFinish) {
       const persisted = await this.loadPersistedSession(missedFinish.turn.sessionId)
-      if (persisted?.operationTabId === operationTabId && !persisted.archivedAt) return persisted
+      if (persisted && !persisted.archivedAt) return persisted
       if (!persisted) {
-        const recovered = this.createRecoveredTurnSession(missedFinish.turn, operationTabId)
+        const recovered = this.createRecoveredTurnSession(missedFinish.turn)
         await this.replayFinishedAgentTurns(recovered)
         return recovered
       }
     }
 
-    const summary = this.historySessions.find((item) => item.operationTabId === operationTabId && !item.archivedAt)
-    return summary ? await this.loadPersistedSession(summary.id) : undefined
+    for (const summary of this.historySessions.filter((item) => !item.archivedAt)) {
+      const session = await this.loadPersistedSession(summary.id)
+      if (session && !session.archivedAt) return session
+    }
+    return undefined
   }
 
   private createRecoveredTurnSession(
-    snapshot: AgentTurnSnapshot,
-    operationTabId: string
+    snapshot: AgentTurnSnapshot
   ): MessageSession {
     const session = this.createEmptySession({
       title: snapshot.rootText.trim().split('\n')[0]?.slice(0, 36) || 'Maestro',
       intent: 'chat',
-      operationTabId
+      operationTabId: snapshot.operationTabId
     })
     session.id = snapshot.sessionId
     session.createdAt = snapshot.startedAt
@@ -372,6 +373,8 @@ export class MessageStoreState {
     if (existing) return existing
 
     const stored = await maestroChat.getSession({ id: sessionId }).catch(() => null)
+    const loadedWhileWaiting = this.getSession(sessionId)
+    if (loadedWhileWaiting) return loadedWhileWaiting
     if (!stored) return undefined
     const session = this.fromStoredSession(stored)
     this.sessions.push(session)
@@ -388,15 +391,18 @@ export class MessageStoreState {
   }
 
   setActiveAgentTurnSnapshot(snapshot: AgentTurnSnapshot | null, expectedTurnId?: string): void {
-    if (
-      expectedTurnId &&
-      this.activeAgentTurnSnapshot &&
-      this.activeAgentTurnSnapshot.turnId !== expectedTurnId
-    ) {
+    if (!snapshot) {
+      this.activeAgentTurnSnapshots = expectedTurnId
+        ? this.activeAgentTurnSnapshots.filter((turn) => turn.turnId !== expectedTurnId)
+        : []
       return
     }
-    this.activeAgentTurnSnapshot = snapshot
-    if (!snapshot) return
+    const current = this.activeAgentTurnSnapshots.find((turn) => turn.sessionId === snapshot.sessionId)
+    if (expectedTurnId && current && current.turnId !== expectedTurnId) return
+    this.activeAgentTurnSnapshots = [
+      ...this.activeAgentTurnSnapshots.filter((turn) => turn.sessionId !== snapshot.sessionId),
+      snapshot
+    ]
     const session = this.getSession(snapshot.sessionId)
     if (session) this.restoreActiveTurn(session)
   }
@@ -410,11 +416,8 @@ export class MessageStoreState {
       return
     }
     this.agentTurnRevision = update.revision
-    this.activeAgentTurnSnapshot = update.turn
-    if (update.turn) {
-      const session = this.getSession(update.turn.sessionId)
-      if (session) this.restoreActiveTurn(session)
-    }
+    if (update.finished) this.setActiveAgentTurnSnapshot(null, update.finished.turn.turnId)
+    if (update.turn) this.setActiveAgentTurnSnapshot(update.turn)
     this.replayLoadedAgentTurnFinishes()
   }
 
@@ -422,9 +425,20 @@ export class MessageStoreState {
     for (const finished of recovery.finished) this.queueAgentTurnFinish(finished)
     if (recovery.revision >= this.agentTurnRevision) {
       this.agentTurnRevision = recovery.revision
-      this.activeAgentTurnSnapshot = recovery.turn
+      this.activeAgentTurnSnapshots = recovery.turns ?? (recovery.turn ? [recovery.turn] : [])
+      for (const session of this.sessions) this.restoreActiveTurn(session)
     }
     this.replayLoadedAgentTurnFinishes()
+  }
+
+  private async restoreActiveTurnSessions(): Promise<void> {
+    for (const snapshot of this.activeAgentTurnSnapshots.slice()) {
+      const session = await this.loadPersistedSession(snapshot.sessionId)
+      const current = this.activeAgentTurnSnapshots.find((turn) => turn.sessionId === snapshot.sessionId)
+      if (!current) continue
+      if (session) this.restoreActiveTurn(session)
+      else this.createRecoveredTurnSession(current)
+    }
   }
 
   private queueAgentTurnFinish(finished: AgentTurnFinished): void {
@@ -490,8 +504,8 @@ export class MessageStoreState {
   }
 
   private restoreActiveTurn(session: MessageSession): void {
-    const snapshot = this.activeAgentTurnSnapshot
-    if (!snapshot || snapshot.sessionId !== session.id) return
+    const snapshot = this.activeAgentTurnSnapshots.find((turn) => turn.sessionId === session.id)
+    if (!snapshot) return
     if (session.turn?.id === snapshot.turnId) {
       session.turn.generation = snapshot.generation
       session.turn.aborting = snapshot.state === 'aborting'
@@ -621,47 +635,90 @@ export class MessageStoreState {
   }
 
   async archive(sessionId: string): Promise<boolean> {
-    const session = this.getSession(sessionId)
-    if (!session || session.turn || session.archivedAt) return false
-    if (!this.shouldPersistSession(session)) {
-      this.sessions = this.sessions.filter((item) => item.id !== session.id)
-      this.markRead(session.id)
-      await maestroChat.deleteSession({ id: session.id }).catch(() => ({ ok: false }))
-      await this.refreshHistory()
-      return true
-    }
-    session.archivedAt = Date.now()
-    session.updatedAt = session.archivedAt
-    await this.persistSession(session)
-    return true
+    return this.setArchived(sessionId, true)
   }
 
-  // Drop a never-used empty draft (including legacy welcome-only drafts).
+  async restore(sessionId: string): Promise<boolean> {
+    return this.setArchived(sessionId, false)
+  }
+
+  private async setArchived(sessionId: string, archived: boolean): Promise<boolean> {
+    const session = await this.loadPersistedSession(sessionId)
+    if (!session) return false
+    return this.queueSessionSave(session.id, async () => {
+      if (session.turn || this.activeAgentTurnSnapshots.some((turn) => turn.sessionId === sessionId) || Boolean(session.archivedAt) === archived) return false
+      const previous = { archivedAt: session.archivedAt, updatedAt: session.updatedAt }
+      session.archivedAt = archived ? Date.now() : undefined
+      session.updatedAt = Date.now()
+      const ok = await this.saveSessionNow(session)
+      if (!ok) Object.assign(session, previous)
+      return ok
+    })
+  }
+
+  async renameSession(sessionId: string, title: string): Promise<boolean> {
+    const value = title.trim()
+    if (!value) return false
+    const session = await this.loadPersistedSession(sessionId)
+    if (!session) return false
+    return this.queueSessionSave(session.id, async () => {
+      if (session.archivedAt) return false
+      const previous = { title: session.title, titleCustomized: session.detail.titleCustomized, updatedAt: session.updatedAt }
+      session.title = value
+      session.detail.titleCustomized = true
+      session.updatedAt = Date.now()
+      const ok = await this.saveSessionNow(session)
+      if (!ok) {
+        session.title = previous.title
+        session.detail.titleCustomized = previous.titleCustomized
+        session.updatedAt = previous.updatedAt
+      }
+      return ok
+    })
+  }
+
+  // Drop a never-used empty draft; persisted messages are always retained.
   // A session with real content is left untouched — NOT archived: it stays sendable
-  // and reachable via the history drawer. (Real archive is a later feature.)
+  // and reachable via the history drawer.
   async discardIfEmpty(sessionId: string): Promise<void> {
     const session = this.getSession(sessionId)
-    if (!session || session.turn || this.shouldPersistSession(session)) return
+    if (!session || this.activeSessionId === sessionId || session.turn || this.shouldPersistSession(session)) return
+    const result = await maestroChat.deleteSession({ id: session.id, onlyIfEmpty: true }).catch((error) => {
+      console.warn('[maestro] empty draft cleanup failed', error)
+      return { ok: false }
+    })
+    if (!result.ok) return
+    if (this.getSession(sessionId) !== session || this.activeSessionId === sessionId || session.turn || this.shouldPersistSession(session)) return
     this.sessions = this.sessions.filter((item) => item.id !== session.id)
     this.markRead(session.id)
-    await maestroChat.deleteSession({ id: session.id }).catch(() => ({ ok: false }))
     await this.refreshHistory()
   }
 
-  async persistSession(session: MessageSession): Promise<void> {
-    if (session.source !== 'cowork') return
+  async persistSession(session: MessageSession): Promise<boolean> {
+    if (session.source !== 'cowork') return false
+    return this.queueSessionSave(session.id, () => this.saveSessionNow(session))
+  }
+
+  private queueSessionSave(id: string, operation: () => Promise<boolean>): Promise<boolean> {
+    const previous = this.sessionSaves.get(id) || Promise.resolve(true)
+    const next = previous.catch(() => false).then(operation)
+    this.sessionSaves.set(id, next)
+    void next.finally(() => {
+      if (this.sessionSaves.get(id) === next) this.sessionSaves.delete(id)
+    }).catch(() => undefined)
+    return next
+  }
+
+  private async saveSessionNow(session: MessageSession): Promise<boolean> {
     this.updateSessionContextUsage(session)
-    if (!this.shouldPersistSession(session)) {
-      await maestroChat.deleteSession({ id: session.id }).catch(() => ({ ok: false }))
-      await this.refreshHistory()
-      return
-    }
     try {
-      await maestroChat.saveSession({ session: this.toStoredSession(session) })
+      const result = await maestroChat.saveSession({ session: this.toStoredSession(session) })
+      if (!result?.ok) return false
     } catch {
-      /* best effort */
+      return false
     }
     await this.refreshHistory()
+    return true
   }
 
   async chooseWorkspace(sessionId: string): Promise<void> {
@@ -701,8 +758,7 @@ export class MessageStoreState {
     session.detail = { ...session.detail, workspace: undefined }
     session.updatedAt = Date.now()
     await this.persistSession(session)
-    // 不再用这个工作区 → 预览里开着的正是它时一起收掉(Ral 2026-09-10)。
-    // 比对在 main 侧做:预览里可能是人自己另开的别的项目,无条件关会毁掉无关的东西。
+    // Main 只解绑匹配的 Project,保留预览 tab/窗口和独立外部文件。
     if (previousPath) await coach.closeWorkspacePreview({ path: previousPath }).catch(() => null)
   }
 
@@ -848,15 +904,15 @@ export class MessageStoreState {
     const seen = new Set<string>()
     const items: SessionListItem[] = []
     const push = (id: string, title: string, preview: string, updatedAt: number, archivedAt?: number): void => {
-      if (seen.has(id) || archivedAt) return
-      seen.add(id)
       const session = live.get(id)
+      if (seen.has(id) || (session ? session.archivedAt : archivedAt)) return
+      seen.add(id)
       items.push({
         id,
         title: session?.title || title || 'Maestro',
         preview,
         updatedAt: session?.updatedAt || updatedAt,
-        running: Boolean(session?.turn),
+        running: Boolean(session?.turn || this.activeAgentTurnSnapshots.some((turn) => turn.sessionId === id)),
         unread: this.unreadSessionIds.includes(id)
       })
     }
@@ -891,9 +947,7 @@ export class MessageStoreState {
   applyTaskSnapshot(tasks: MaestroTask[], remember = true): void {
     if (remember) this.latestTasks = markRaw(tasks.slice())
     for (const task of tasks) {
-      const confirmSession =
-        (task.sessionId ? this.getSession(task.sessionId) : undefined) ||
-        this.turnService.activeSession()
+      const confirmSession = task.sessionId ? this.getSession(task.sessionId) : undefined
       if (confirmSession) this.syncTaskConfirm(confirmSession, task)
       if (task.transient) continue
 
@@ -1139,7 +1193,7 @@ export class MessageStoreState {
   }
 
   private shouldPersistSession(session: MessageSession): boolean {
-    return session.source === 'cowork' && session.messages.some((message) => !message.id.startsWith('welcome-'))
+    return session.source === 'cowork' && Boolean(session.archivedAt || session.detail.titleCustomized || session.detail.draft?.text || session.detail.draft?.files.length || session.messages.some((message) => !message.id.startsWith('welcome-')))
   }
 
   async compactSessionIfNeeded(session: MessageSession, options?: { protectMessageIds?: Set<string> }): Promise<boolean> {
@@ -1497,6 +1551,8 @@ export class MessageStoreState {
       archivedAt: session.archivedAt,
       detail: {
         compressedContext: session.detail.compressedContext || '',
+        titleCustomized: session.detail.titleCustomized,
+        draft: session.detail.draft ? jsonSafe(session.detail.draft) : undefined,
         compressedUntilMessageId: session.detail.compressedUntilMessageId,
         compressedAt: session.detail.compressedAt,
         // 同 `buildAgentContext`:**必须 clone**。`saveSession` 也是跨进程边界,

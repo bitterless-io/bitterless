@@ -50,13 +50,15 @@ const mocks = {
     export const xpcMain = {
       broadcast(topic, payload) { messages.push({ topic, payload: structuredClone(payload) }); }
     };
-    export const createXpcMainEmitter = () => ({});
+    export const createXpcMainEmitter = () => ({ record: async () => {}, updateMetadata: async () => {} });
   `,
   '@maestro-main/capture/debuggerCapture': `
     export class DebuggerCapture {
       attached = false;
       async setInterceptionRules() {}
       async attach() { this.attached = true; }
+      async prepareNavigation() { this.attached = true; }
+      isSuspended() { return false; }
       isAttached() { return this.attached; }
       detach() { this.attached = false; }
     }

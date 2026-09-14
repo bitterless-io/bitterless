@@ -33,7 +33,7 @@ interface RecentFileValue {
 
 interface RememberedDirectory {
   generation: number;
-  directoryPath: string;
+  directoryPath: string | null;
 }
 
 type StorageState = 'pending' | 'ready' | 'failed';
@@ -73,6 +73,7 @@ export class OnlyPreviewRecentDirectoryService {
   private storageWriteChain: Promise<void> = Promise.resolve();
   private mutationGeneration = 0;
   private activeExplicitGeneration: number | null = null;
+  private projectRestoreSuppressed = false;
   private readonly hostGeneration = new Map<string, number>();
   private readonly hostMutationChain = new Map<string, Promise<void>>();
   private readonly restoreFlights = new Map<string, Promise<OnlyPreviewWorkspace | null>>();
@@ -182,6 +183,27 @@ export class OnlyPreviewRecentDirectoryService {
     }
   }
 
+  async clearWorkspace(hostToken: string): Promise<void> {
+    const host = this.hosts.require(hostToken, ['content']);
+    const generation = this.beginExplicitTarget(host.hostToken);
+    // Fence an in-flight restore before waiting for its inspect/bind operation to drain. Keeping
+    // this intent in memory also prevents failed storage writes from reopening the old Project.
+    this.projectRestoreSuppressed = true;
+    this.restoreFlights.delete(host.hostToken);
+    this.pendingDirectory = { generation, directoryPath: null };
+    if (this.storageState === 'ready') this.scheduleStorageFlush();
+    try {
+      await this.runHostMutation(host.hostToken, async () => {
+        if (this.isCurrentExplicit(host.hostToken, generation)) {
+          this.workspaces.revokeProject(host.hostToken);
+        }
+      });
+      await this.flushPendingWrites();
+    } finally {
+      this.finishExplicitTarget(generation);
+    }
+  }
+
   async openExplicitTarget(
     hostToken: string,
     absoluteTarget: string,
@@ -195,6 +217,7 @@ export class OnlyPreviewRecentDirectoryService {
         this.revokeWorkspaceIfCurrent(hostToken, workspace.workspaceId);
         return null;
       }
+      this.projectRestoreSuppressed = false;
       this.rememberDirectory(workspace.displayPath, generation);
       return workspace;
     });
@@ -214,6 +237,7 @@ export class OnlyPreviewRecentDirectoryService {
     options: { presentRestoredSelection?: boolean } = {}
   ): Promise<OnlyPreviewWorkspace | null> {
     const host = this.hosts.require(hostToken, ['content']);
+    if (this.projectRestoreSuppressed) return null;
     const current = this.workspaces.restore(host.hostToken);
     if (current) return current;
     if (this.activeExplicitGeneration !== null) return null;
@@ -282,6 +306,7 @@ export class OnlyPreviewRecentDirectoryService {
   clearTransientState(): void {
     this.mutationGeneration += 1;
     this.activeExplicitGeneration = null;
+    this.projectRestoreSuppressed = false;
     this.pendingDirectory = null;
     this.hostGeneration.clear();
     this.hostMutationChain.clear();
@@ -378,6 +403,7 @@ export class OnlyPreviewRecentDirectoryService {
 
   private canRestore(hostToken: string, generation: number, hostGeneration: number): boolean {
     return (
+      !this.projectRestoreSuppressed &&
       this.activeExplicitGeneration === null &&
       this.mutationGeneration === generation &&
       (this.hostGeneration.get(hostToken) ?? 0) === hostGeneration &&
@@ -416,11 +442,10 @@ export class OnlyPreviewRecentDirectoryService {
     const pending = this.pendingDirectory;
     const storage = this.storage;
     if (!pending || !storage || this.storageState !== 'ready') return;
-    if (pending.generation !== this.mutationGeneration) return;
-    const value: RecentDirectoryValue = {
-      version: 1,
-      directoryPath: pending.directoryPath
-    };
+    if (!this.isPendingDirectoryCurrent(pending)) return;
+    const value: RecentDirectoryValue | null = pending.directoryPath === null
+      ? null
+      : { version: 1, directoryPath: pending.directoryPath };
 
     for (let attempt = 0; attempt < 4; attempt += 1) {
       if (!this.isPendingDirectoryCurrent(pending)) return;
@@ -461,7 +486,10 @@ export class OnlyPreviewRecentDirectoryService {
   }
 
   private isPendingDirectoryCurrent(pending: RememberedDirectory): boolean {
-    return this.pendingDirectory === pending && pending.generation === this.mutationGeneration;
+    return this.pendingDirectory === pending && (
+      pending.generation === this.mutationGeneration ||
+      (pending.directoryPath === null && this.projectRestoreSuppressed)
+    );
   }
 
   private async safeGetStored(): Promise<SettingStoredValue | null> {

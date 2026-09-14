@@ -82,7 +82,7 @@ const makeHost = (over = {}) => ({
     return true;
   },
   exploreSession() {
-    return this.exploring ? { isExploring: true, isStopped: false } : null;
+    return this.exploring ? { isExploring: true, isStopped: false, async finishTabScope() {} } : null;
   },
   ...over,
 });

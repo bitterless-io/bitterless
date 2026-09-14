@@ -27,7 +27,8 @@ const emitterPlugin = {
             archiveThread: (params) => harness().archiveThread(params),
             deleteThreadFromBitterless: (params) => harness().deleteThreadFromBitterless(params),
             refreshThreadPages: async () => ({ changed: false }),
-            setThreadUnread: (params) => harness().setThreadUnread(params)
+            setThreadUnread: (params) => harness().setThreadUnread(params),
+            markAllRead: () => harness().markAllRead()
           };
           export const subscribeEyesOnAgentsChanges = () => undefined;
         `,
@@ -170,6 +171,7 @@ test('Focus board store contract', async (context) => {
     const archivedSessionKeys = [];
     const deletedSessionKeys = [];
     const readStateCalls = [];
+    const readAllCalls = [];
     const defaultOpenThread = async ({ sessionKey: openedSessionKey }) => {
       openedThreadIds.push(openedSessionKey);
       return { snapshot: openSnapshot };
@@ -192,6 +194,14 @@ test('Focus board store contract', async (context) => {
       return currentSnapshot;
     };
     let deleteThread = defaultDeleteThread;
+    const defaultMarkAllRead = async () => {
+      readAllCalls.push('read-all');
+      currentSnapshot = createSnapshot(currentSnapshot.threads.map((thread) => ({
+        ...thread, isUnread: false,
+      })));
+      return currentSnapshot;
+    };
+    let markAllRead = defaultMarkAllRead;
     const defaultGetSnapshot = async () => currentSnapshot;
     let getSnapshot = defaultGetSnapshot;
     globalThis.__eyesOnAgentsFocusBoardHarness = {
@@ -199,6 +209,7 @@ test('Focus board store contract', async (context) => {
       openThread: (params) => openThread(params),
       archiveThread: (params) => archiveThread(params),
       deleteThreadFromBitterless: (params) => deleteThread(params),
+      markAllRead: () => markAllRead(),
       setThreadUnread: async (params) => {
         readStateCalls.push(params);
         const next = createSnapshot(currentSnapshot.threads.map((thread) =>
@@ -227,11 +238,13 @@ test('Focus board store contract', async (context) => {
       openThread = defaultOpenThread;
       archiveThread = defaultArchiveThread;
       deleteThread = defaultDeleteThread;
+      markAllRead = defaultMarkAllRead;
       getSnapshot = defaultGetSnapshot;
       openedThreadIds.length = 0;
       archivedSessionKeys.length = 0;
       deletedSessionKeys.length = 0;
       readStateCalls.length = 0;
+      readAllCalls.length = 0;
     };
     const threadIds = (threads) => threads.map((thread) => thread.threadId);
     const focusIds = () => threadIds(store.focusThreads);
@@ -263,7 +276,7 @@ test('Focus board store contract', async (context) => {
       assert.deepEqual(searchIds(), [], 'an empty modal query renders no result cards');
     });
 
-    await context.test('the renderer no longer exposes bulk Read all state or actions', () => {
+    await context.test('Read all exposes non-active red dots, independent of query or provider', async () => {
       const threads = [
         createThread({
           threadId: 'terminal-unread',
@@ -283,15 +296,97 @@ test('Focus board store contract', async (context) => {
           title: 'Unknown unread',
           runtimeState: 'unknown',
           isUnread: true,
+          provider: 'claude',
         }),
         createThread({ threadId: 'terminal-read', title: 'Terminal read' }),
       ];
       resetStore(createSnapshot(threads));
 
       assert.equal(store.focusThreads.length, 4);
-      assert.equal(store.readableFocusThreads, undefined);
-      assert.equal(store.markAllRead, undefined);
+      assert.deepEqual(threadIds(store.readableFocusThreads), ['unknown-unread', 'terminal-unread']);
+      store.setTitleDraft('nothing-matches');
+      assert.deepEqual(searchIds(), []);
+      await store.markAllRead();
+      assert.deepEqual(readAllCalls, ['read-all']);
+      assert.equal(store.readableFocusThreads.length, 0);
+      assert.equal(store.focusThreads.length, 4, 'acknowledged cards stay on Focus');
+      assert.ok(store.threads.every((thread) => !thread.isUnread));
+      assert.equal(store.threads.find((thread) => thread.threadId === 'working-unread').runtimeState, 'working');
+      assert.equal(store.titleDraft, 'nothing-matches');
+      await store.markAllRead();
+      assert.equal(readAllCalls.length, 1, 'no visible unread is a no-op');
     });
+
+    await context.test('Read all ignores empty or active-only snapshots and concurrent actions', async () => {
+      for (const threads of [[], [createThread({
+        threadId: 'working-only', title: 'Working', runtimeState: 'working', isUnread: true,
+      })]]) {
+        resetStore(createSnapshot(threads));
+        assert.equal(store.readableFocusThreads.length, 0);
+        await store.markAllRead();
+        assert.equal(readAllCalls.length, 0);
+      }
+      const thread = createThread({ threadId: 'unread-busy', title: 'Unread', isUnread: true });
+      resetStore(createSnapshot([thread]));
+      store.busyAction = 'sync';
+      await store.markAllRead();
+      assert.equal(readAllCalls.length, 0);
+      store.busyAction = null;
+      let resolveWrite;
+      markAllRead = () => {
+        readAllCalls.push('read-all');
+        return new Promise((resolvePromise) => { resolveWrite = resolvePromise; });
+      };
+      const pending = store.markAllRead();
+      assert.equal(store.busyAction, 'read-all');
+      assert.equal(store.threads[0].isUnread, true, 'pending writes do not optimistically clear');
+      await store.markAllRead();
+      assert.equal(readAllCalls.length, 1);
+      resolveWrite(createSnapshot([{ ...thread, isUnread: false }]));
+      await pending;
+      assert.equal(store.busyAction, null);
+      assert.equal(store.threads[0].isUnread, false);
+    });
+
+    await context.test('Read all failure retains unread rows and exposes the action error', async () => {
+      const thread = createThread({ threadId: 'unread-failure', title: 'Unread', isUnread: true });
+      resetStore(createSnapshot([thread]));
+      markAllRead = async () => { throw new Error('Read all write failed'); };
+      await assert.rejects(store.markAllRead(), /Read all write failed/);
+      assert.equal(store.actionError, 'Read all write failed');
+      assert.equal(store.busyAction, null);
+      assert.equal(store.threads[0].isUnread, true);
+    });
+
+    for (const readPath of ['load', 'background', 'open']) {
+      await context.test(`Read all rejects an older ${readPath} snapshot but accepts a later completion`, async () => {
+        const thread = createThread({ threadId: 'read-all-race', title: 'Unread', isUnread: true });
+        const stale = createSnapshot([thread]);
+        resetStore(stale);
+        let releaseRead;
+        let readStarted;
+        const started = new Promise((resolvePromise) => { readStarted = resolvePromise; });
+        const oldSnapshot = new Promise((resolvePromise) => { releaseRead = resolvePromise; });
+        getSnapshot = () => { readStarted(); return oldSnapshot; };
+        openThread = () => { readStarted(); return oldSnapshot.then((snapshot) => ({ snapshot })); };
+        const pendingRead = readPath === 'load'
+          ? store.loadSnapshot(true)
+          : readPath === 'background'
+            ? store.performBackgroundThreadPagesRefresh()
+            : store.openThread(thread.sessionKey);
+        await started;
+        await store.markAllRead();
+        assert.equal(store.threads[0].isUnread, false);
+        releaseRead(stale);
+        await pendingRead;
+        assert.equal(store.threads[0].isUnread, false, 'an older response must not restore the red dot');
+        currentSnapshot = createSnapshot([{ ...thread, lastCompletedTurnId: 'next-turn' }]);
+        getSnapshot = defaultGetSnapshot;
+        await store.loadSnapshot(true);
+        assert.equal(store.threads[0].isUnread, true, 'a later completion can add a new dot');
+        assert.equal(store.threads[0].lastCompletedTurnId, 'next-turn');
+      });
+    }
 
     await context.test(
       'ordering keeps attention ranks and non-active activity semantics',

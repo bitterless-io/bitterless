@@ -16,7 +16,7 @@
       @dblclick="handleMenuBarDoubleClick"
     >
       <div name="onlypreview__identity" class="onlypreview-shell__identity">
-        <IconFiles class="onlypreview-shell__identity-icon" :size="15" aria-hidden="true" />
+        <OnlyPreviewMark class="onlypreview-shell__identity-icon" :size="15" />
         <span class="onlypreview-shell__product">{{ onlyPreviewI18n.productName }}</span>
         <span
           class="onlypreview-shell__path"
@@ -153,15 +153,6 @@
         </div>
 
         <div
-          v-show="onlyPreviewRecentsStore.activePanel === 'project'"
-          id="onlypreview-panel-project"
-          name="onlypreview__projectPanel"
-          class="onlypreview-project-panel"
-          role="tabpanel"
-          aria-labelledby="onlypreview-tab-project"
-        >
-        <BookmarkBar />
-        <div
           v-if="onlyPreviewShellStore.errorMessage"
           name="onlypreview__indexError"
           class="onlypreview-shell__inline-error"
@@ -210,11 +201,32 @@
             <IconFiles :size="24" />
           </span>
           <h1>{{ onlyPreviewI18n.project.emptyTitle }}</h1>
-          <p>{{ onlyPreviewI18n.project.emptyBody }}</p>
+          <p id="onlypreview-workspace-guide">{{ onlyPreviewI18n.project.emptyBody }}</p>
+          <a-button
+            name="onlypreview__chooseWorkspace"
+            class="onlypreview-shell__choose-workspace"
+            type="primary"
+            size="small"
+            aria-describedby="onlypreview-workspace-guide"
+            :disabled="onlyPreviewShellStore.targetLoading"
+            :loading="onlyPreviewShellStore.targetLoading"
+            @click="onlyPreviewShellStore.chooseFolder()"
+          >
+            {{ onlyPreviewI18n.project.chooseWorkspace }}
+          </a-button>
         </div>
 
         <div
-          v-else-if="onlyPreviewShellStore.visibleRows.length"
+          v-show="onlyPreviewRecentsStore.activePanel === 'project'"
+          id="onlypreview-panel-project"
+          name="onlypreview__projectPanel"
+          class="onlypreview-project-panel"
+          role="tabpanel"
+          aria-labelledby="onlypreview-tab-project"
+        >
+        <BookmarkBar />
+        <div
+          v-if="onlyPreviewShellStore.workspace && onlyPreviewShellStore.visibleRows.length"
           ref="treeRef"
           name="onlypreview__tree"
           class="onlypreview-shell__tree"
@@ -326,7 +338,7 @@
         </div>
 
         <div
-          v-else-if="onlyPreviewShellStore.projectionReady"
+          v-else-if="onlyPreviewShellStore.workspace && onlyPreviewShellStore.projectionReady"
           name="onlypreview__noResults"
           class="onlypreview-shell__no-results"
         >
@@ -426,7 +438,7 @@
           statusBreadcrumb.tail
         }}</span>
       </span>
-      <span v-if="onlyPreviewShellStore.selectedEntry" class="onlypreview-shell__file-state">
+      <span v-if="previewDescriptor" class="onlypreview-shell__file-state">
         <template
           v-if="
             onlyPreviewShellStore.selectedTextAvailable &&
@@ -438,7 +450,7 @@
         </template>
         {{ selectedFileType }}
         <span aria-hidden="true">·</span>
-        {{ formatOnlyPreviewBytes(onlyPreviewShellStore.selectedEntry.size) }}
+        {{ formatOnlyPreviewBytes(previewDescriptor.size) }}
       </span>
     </footer>
   </div>
@@ -477,13 +489,14 @@ import {
   type OnlyPreviewFileIconKey
 } from '../../common/onlyPreviewTreeIcon.service';
 import { formatOnlyPreviewBytes, interpolateOnlyPreview } from '../../common/onlyPreviewFormat';
-import { resolveOnlyPreviewBreadcrumb } from './onlyPreviewTree.service';
+import { resolveOnlyPreviewStatusBreadcrumb } from './onlyPreviewTree.service';
 import {
   ONLY_PREVIEW_EDITABLE_TARGET_SELECTOR,
   resolveOnlyPreviewCopyShortcut
 } from './onlyPreviewCopyShortcut.service';
 import { onlyPreviewEnv } from '../../common/contextBridge/onlyPreviewEnv.bridge';
 import { onlyPreviewI18n } from '../../common/onlyPreviewI18n';
+import OnlyPreviewMark from './components/OnlyPreviewMark.vue';
 import PreviewToolbar from './components/PreviewToolbar/PreviewToolbar.vue';
 import BookmarkBar from './components/Bookmarks/BookmarkBar.vue';
 import ProjectPanelTabs from './components/Recents/ProjectPanelTabs.vue';
@@ -583,11 +596,7 @@ const indexProgressStyle = computed(() =>
  * 整条塞进一个省略容器的话,深路径会把最重要的一段先切掉。
  */
 const statusBreadcrumb = computed(() => {
-  const crumb = resolveOnlyPreviewBreadcrumb(
-    onlyPreviewShellStore.workspace,
-    onlyPreviewShellStore.treeSelectedRelativePath,
-    onlyPreviewShellStore.selectedRelativePath
-  );
+  const crumb = resolveOnlyPreviewStatusBreadcrumb(onlyPreviewShellStore);
   if (!crumb) return null;
   return {
     lead: crumb.segments.slice(0, -1),
@@ -602,10 +611,11 @@ const selectedCharacterStatus = computed(() =>
   }).toUpperCase()
 );
 
+const previewDescriptor = computed(() => onlyPreviewShellStore.previewPresentation?.descriptor);
 const selectedFileType = computed(() => {
-  const entry = onlyPreviewShellStore.selectedEntry;
+  const entry = previewDescriptor.value;
   if (!entry) return '';
-  return /\.md$/i.test(entry.relativePath) ? 'MARKDOWN' : entry.previewHint.toUpperCase();
+  return /\.md$/i.test(entry.relativePath) ? 'MARKDOWN' : entry.kind.toUpperCase();
 });
 
 const reportPreviewBounds = (): void => {

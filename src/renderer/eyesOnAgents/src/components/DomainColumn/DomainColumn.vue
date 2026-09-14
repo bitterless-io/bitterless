@@ -18,6 +18,17 @@
           </template>
         </a-button>
       </a-tooltip>
+      <a-button
+        name="eyesOnAgents__domainColumn__readAll"
+        class="agent-domain__read-all"
+        size="mini"
+        type="text"
+        :disabled="eyesOnAgentsStore.readableFocusThreads.length === 0 || eyesOnAgentsStore.busyAction !== null"
+        :loading="eyesOnAgentsStore.busyAction === 'read-all'"
+        @click="markAllRead"
+      >
+        {{ i18nHelper.eyesOnAgents.actions.readAll }}
+      </a-button>
     </header>
 
     <div name="eyesOnAgents__domainColumn__body" class="agent-domain__body">
@@ -56,6 +67,10 @@ const searchTooltip = computed(() => uaHelper.isMac
 
 const openThreadSearch = (): void => {
   eyesOnAgentsStore.openThreadSearch();
+};
+
+const markAllRead = (): void => {
+  void eyesOnAgentsStore.markAllRead().catch(() => undefined);
 };
 </script>
 

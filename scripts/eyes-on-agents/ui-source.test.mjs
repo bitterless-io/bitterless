@@ -1333,7 +1333,7 @@ test('Focus is the whole board and lists every visible thread', () => {
     );
   }
 });
-test('Focus header exposes only Search while bulk Read all stays below renderer', () => {
+test('Focus header exposes Search followed by persistent Read all', () => {
   const domain = read('src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.vue');
   const styles = read(
     'src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.less'
@@ -1362,8 +1362,22 @@ test('Focus header exposes only Search while bulk Read all stays below renderer'
   );
   assert.match(button[0], /<IconSearch :size="14" aria-hidden="true"/);
   assert.match(domain, /const searchTooltip = computed\(\(\) => uaHelper\.isMac/);
-  assert.doesNotMatch(domain, /<a-input|readAll|markAllRead|readableFocusThreads/);
-  assert.doesNotMatch(store, /readableFocusThreads|async markAllRead/);
+  assert.doesNotMatch(domain, /<a-input/);
+  const readAllButton = domain.match(
+    /<a-button\s+name="eyesOnAgents__domainColumn__readAll"[\s\S]*?<\/a-button>/
+  );
+  assert.ok(readAllButton, 'Missing Focus Read all action');
+  assert.ok(domain.indexOf(button[0]) < domain.indexOf(readAllButton[0]));
+  assert.match(readAllButton[0], /size="mini"/);
+  assert.match(readAllButton[0], /type="text"/);
+  assert.match(readAllButton[0], /i18nHelper\.eyesOnAgents\.actions\.readAll/);
+  assert.match(readAllButton[0], /:disabled="eyesOnAgentsStore\.readableFocusThreads\.length === 0 \|\| eyesOnAgentsStore\.busyAction !== null"/);
+  assert.match(readAllButton[0], /:loading="eyesOnAgentsStore\.busyAction === 'read-all'"/);
+  assert.match(readAllButton[0], /@click="markAllRead"/);
+  assert.match(domain, /void eyesOnAgentsStore\.markAllRead\(\)\.catch\(\(\) => undefined\)/);
+  assert.match(store, /this\.focusThreads\.filter\(\(thread\) => thread\.isUnread && !isActiveRuntimeState\(thread\)\)/);
+  assert.match(store, /if \(this\.readableFocusThreads\.length === 0\) return;\s*await this\.runSnapshotAction\('read-all', \(\) => eyesOnAgentsEmitter\.markAllRead\(\)\)/);
+  assert.match(store, /if \(action\.startsWith\('thread-delete:'\) \|\| action === 'read-all'\) \{\s*this\.snapshotGeneration \+= 1;/);
 
   assert.match(
     sharedTypes,
@@ -1389,11 +1403,8 @@ test('Focus header exposes only Search while bulk Read all stays below renderer'
   assert.match(repositoryAction[0], /archive_state <> 'archived'/);
   assert.match(repositoryAction[0], /is_unread = 1/);
   assert.match(repositoryAction[0], /provider IN \(\$\{placeholders\}\)/);
-  assert.match(
-    repositoryAction[0],
-    /runtime_state IN \('idle', 'failed', 'ended'\)/,
-    'Read all must use the positive terminal allowlist'
-  );
+  assert.doesNotMatch(repositoryAction[0], /runtime_state/, 'Read all clears latent unread flags without changing runtime');
+  assert.match(repositoryAction[0], /is_deleted = 0/);
   assert.doesNotMatch(repositoryAction[0], /last_opened_turn_id|last_opened_at|updated_at/);
 
   const headerStyle = cssRule(styles, '.agent-domain__header');
@@ -1416,6 +1427,11 @@ test('Focus header exposes only Search while bulk Read all stays below renderer'
     'the icon action must show a hover surface, not just a color shift'
   );
   assert.match(searchHover, /color: var\(--eyes-primary-deep\)/);
+  const readAllStyle = cssRule(styles, '.agent-domain__read-all.arco-btn');
+  assert.match(readAllStyle, /height: 24px/);
+  assert.match(readAllStyle, /border: 0/);
+  assert.match(readAllStyle, /outline: none/);
+  assert.match(readAllStyle, /box-shadow: none/);
 });
 
 test('Cmd/Ctrl+F toggles one card-result search modal contained by EyesOnAgents', () => {
@@ -1520,7 +1536,7 @@ test('Cmd/Ctrl+F toggles one card-result search modal contained by EyesOnAgents'
   assert.match(chinese, /results: '任务搜索结果'/);
   assert.match(chinese, /startTyping: '输入任务标题开始搜索'/);
 });
-test('Search native field and shared clear IconBtn compile borderless in the actual renderer Less stack', async () => {
+test('Search native field, clear IconBtn and Read all compile borderless in the actual renderer Less stack', async () => {
   const { default: less } = await import('less');
   const main = read('src/renderer/eyesOnAgents/src/main.ts');
   const rendererImports = [...main.matchAll(/import '([^']+\.less)'/g)].map((match) => {
@@ -1535,10 +1551,15 @@ test('Search native field and shared clear IconBtn compile borderless in the act
     ...rendererImports,
     `@import "${join(root, 'src/renderer/common/components/IconBtn/IconBtn.less')}";`,
     inputStyles,
+    read('src/renderer/eyesOnAgents/src/components/DomainColumn/DomainColumn.less'),
   ].join('\n');
   const { css } = await less.render(source, { javascriptEnabled: true });
   assert.ok(css.includes('.arco-btn-text'), 'the renderer compilation includes real Arco Button defaults');
   assert.doesNotMatch(main, /tailwind/i);
+  const readAllStyle = cssRule(css, '.agent-domain__read-all.arco-btn');
+  assert.match(readAllStyle, /border: 0;/);
+  assert.match(readAllStyle, /outline: none;/);
+  assert.match(readAllStyle, /box-shadow: none;/);
 
   for (const selector of [
     '.thread-search__field',
@@ -1662,9 +1683,11 @@ test('modal search is query-gated, token-based, reconciled, and stale-draft safe
     assert.ok(namespace, 'Missing eyesOnAgents i18n namespace');
     assert.doesNotMatch(
       namespace[0],
-      /readAll:|emptyTitleSearch|projectFilterLabel|allProjects/
+      /emptyTitleSearch|projectFilterLabel|allProjects/
     );
   }
+  assert.match(english, /readAll: 'Read all'/);
+  assert.match(chinese, /readAll: '全部已读'/);
   assert.match(english, /searchTitlesMac: 'Search titles \(⌘F\)'/);
   assert.match(english, /searchTitlesWindows: 'Search titles \(Ctrl\+F\)'/);
   assert.match(chinese, /searchTitlesMac: '搜索标题（⌘F）'/);

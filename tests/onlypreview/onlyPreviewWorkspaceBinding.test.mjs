@@ -3,8 +3,8 @@ import { describe, test } from 'node:test';
 import { source } from './onlyPreviewCoreTest.helper.mjs';
 
 /**
- * 会话的工作区和 OnlyPreview 的**绑定关系**:选中就打开、替换就换目录、停用就收掉
- * (Ral 2026-09-10)。以及「已经挂着的那一个赢过上次那一种」。
+ * 会话的工作区和 OnlyPreview 的**绑定关系**:选中就打开、替换就换目录、停用就解绑并保留宿主
+ * (Ral 2026-09-14)。以及「已经挂着的那一个赢过上次那一种」。
  *
  * 这一组是**源码守卫**,理由说清楚:这条链的每一环都要 Electron(BrowserWindow / View / composite
  * tab 的激活),本仓禁止在验证里起 Electron。所以这里钉的是**接线**——那恰好是这次真实发生过的
@@ -55,17 +55,17 @@ describe('挂在 tab 上时,点芯片要激活那个 tab', () => {
   });
 });
 
-describe('停用工作区 → 收掉 OnlyPreview,但只在开着的正是它时', () => {
+describe('停用工作区 → 解绑匹配的 Project 并保留 OnlyPreview', () => {
   const opener = stripComments(source('src/main/windows/onlyPreviewMaestroOpener.ts'));
 
-  test('比对当前项目根之后才关', () => {
+  test('接入保留宿主的清理服务,不销毁窗口或 tab', () => {
     const close = opener.slice(opener.indexOf('closeForPath:'));
-    const compare = close.indexOf('isActiveProjectRoot');
-    const destroy = close.indexOf('destroyStandalone()');
-    assert.ok(compare > -1, '少了比对 = 会关掉人自己另开的别的项目');
-    assert.ok(destroy > -1);
-    assert.ok(compare < destroy, '比对必须排在关闭之前');
-    assert.match(close, /if \(!onlyPreviewWorkspaceRegistry\.isActiveProjectRoot\([\s\S]{0,80}\) return;/);
+    assert.match(close, /await clearOnlyPreviewWorkspace\(host\.hostToken, rootRealPath\)/);
+    assert.doesNotMatch(close, /destroyStandalone/);
+    const clear = stripComments(source('src/main/miniapps/onlypreview/onlyPreviewClearWorkspace.service.ts'));
+    assert.match(clear, /onlyPreviewTargetMutations\.run/);
+    assert.ok(clear.indexOf('canClearProjectRoot') < clear.indexOf('clearWorkspace(hostToken)'));
+    assert.doesNotMatch(clear, /destroyStandalone|ensureStandalone/);
   });
 
   test('两边都过 realpath —— 软链拼法要能比上', () => {

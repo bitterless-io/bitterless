@@ -3,6 +3,7 @@ import {
   MAESTRO_ZELLIJ_DISPLAY_URL,
   MAESTRO_ZELLIJ_TAB_ID
 } from '@maestro-shared/compositeTab.identity';
+import { MAESTRO_ICON_ZELLIJ } from '@maestro-shared/compositeTabIcon';
 import { zellijWindowService } from '@main/zellij/zellijWindow.service';
 
 /**
@@ -22,7 +23,7 @@ export const registerZellijCoworkTab = (): void => {
   registerMaestroCompositeTab({
     id: MAESTRO_ZELLIJ_TAB_ID,
     title: 'Zellij',
-    favicon: '',
+    favicon: MAESTRO_ICON_ZELLIJ,
     displayUrl: MAESTRO_ZELLIJ_DISPLAY_URL,
     // The tab comes back next launch, and its `instanceId` is what puts it back on its own session.
     restorable: true,

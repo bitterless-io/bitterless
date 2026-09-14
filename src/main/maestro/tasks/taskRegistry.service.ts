@@ -305,6 +305,17 @@ class TaskRegistry {
     return cancelled
   }
 
+  /** A chat Stop also settles its tasks and pending approvals, without touching another owner. */
+  cancelSessionTasks(params: { sessionId: string; reason?: string }): number {
+    if (!params.sessionId) return 0
+    let cancelled = 0
+    for (const task of this.tasks.values()) {
+      if (task.sessionId !== params.sessionId || !isTaskLive(task)) continue
+      if (this.cancel({ taskId: task.id, reason: params.reason }).ok) cancelled += 1
+    }
+    return cancelled
+  }
+
   resolveConfirm(params: { taskId: string; confirmId: string; confirm: boolean }): { ok: boolean } {
     const resolve = this.confirmResolvers.get(params.confirmId)
     const task = this.tasks.get(params.taskId)

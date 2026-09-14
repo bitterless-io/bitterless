@@ -112,6 +112,7 @@ const stubsPlugin = {
                 submodules: { actions: { clearSearch: 'Clear search' } },
                 eyesOnAgents: {
                   actions: {
+                    readAll: '全部已读',
                     searchTitles: 'Search threads',
                     searchTitlesMac: 'Search threads (Command+F)',
                     searchTitlesWindows: 'Search threads (Ctrl+F)'
@@ -153,6 +154,7 @@ const stubsPlugin = {
             contents: `
               export const eyesOnAgentsEmitter = {
                 getSnapshot: async () => globalThis.__eyesOnAgentsThreadSearchHarness.snapshot,
+                markAllRead: () => globalThis.__eyesOnAgentsThreadSearchHarness.markAllRead(),
                 openThread: async () => ({ snapshot: globalThis.__eyesOnAgentsThreadSearchHarness.store.snapshot })
               };
               export const subscribeEyesOnAgentsChanges = () => undefined;
@@ -184,6 +186,8 @@ class ReceiverSensitiveStore {
   threadSearchVisible = false;
   threadSearchSelectedSessionKey = null;
   threadSearchRevision = 0;
+  readableFocusThreads = [];
+  busyAction = null;
   calls = [];
   threads = [
     { sessionKey: 'claude:match', title: 'Claude search match' },
@@ -288,6 +292,16 @@ const settleTitleQuery = async () => {
   await nextTick();
 };
 
+const deferred = () => {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+};
+
 const startComposition = (input, value) => {
   input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
   input.value = value;
@@ -345,6 +359,8 @@ try {
   const actualStore = () => {
     const store = actualStoreModule.eyesOnAgentsStore;
     store.closeThreadSearch();
+    store.busyAction = null;
+    store.actionError = null;
     store.snapshot = {
       threads: [
         { sessionKey: 'claude:match', title: 'Claude search match', runtimeState: 'idle' },
@@ -880,6 +896,138 @@ try {
       assert.equal(store.threadSearchVisible, true);
       assert.deepEqual(store.calls, [['openThreadSearch']]);
     } finally {
+      mounted.app.unmount();
+    }
+  });
+
+  await test('Focus header places localized Read all immediately after Search and keeps empty state disabled', async () => {
+    const store = actualStore();
+    const mounted = await mountComponent(DomainColumn, store);
+    let writes = 0;
+    globalThis.__eyesOnAgentsThreadSearchHarness.markAllRead = async () => {
+      writes += 1;
+      return store.snapshot;
+    };
+    try {
+      const buttons = [...mounted.host.querySelectorAll('.agent-domain__header button')];
+      assert.deepEqual(buttons.map((button) => button.name), [
+        'eyesOnAgents__domainColumn__search',
+        'eyesOnAgents__domainColumn__readAll',
+      ]);
+      const readAllButton = buttons[1];
+      assert.equal(readAllButton.textContent.trim(), '全部已读', 'the label comes from the locale');
+      assert.ok(readAllButton.classList.contains('arco-btn-text'), 'Read all uses the real text button');
+      assert.ok(readAllButton.classList.contains('arco-btn-size-mini'), 'the header action stays compact');
+      assert.equal(readAllButton.disabled, true);
+      readAllButton.click();
+      await store.markAllRead();
+      assert.equal(writes, 0, 'disabled UI and the store both prevent an empty bulk action');
+
+      store.snapshot = {
+        threads: [{ sessionKey: 'claude:working', title: 'Still replying', runtimeState: 'working', isUnread: true }],
+      };
+      await nextTick();
+      assert.equal(readAllButton.disabled, true, 'a latent unread flag on a working card is not a visible red dot');
+      readAllButton.click();
+      await store.markAllRead();
+      assert.equal(writes, 0);
+      assert.equal(mounted.host.querySelectorAll('.agent-domain__header button').length, 2, 'Read all stays visible');
+      assert.deepEqual(mounted.errors, []);
+    } finally {
+      mounted.app.unmount();
+    }
+  });
+
+  await test('Read all shows loading, rejects duplicates and applies the returned snapshot without blocking Search', async () => {
+    const store = actualStore();
+    store.snapshot = {
+      threads: [
+        { sessionKey: 'claude:unread', title: 'Ready to read', runtimeState: 'idle', isUnread: true },
+        { sessionKey: 'codex:working', title: 'Still replying', runtimeState: 'working', isUnread: true },
+      ],
+    };
+    const mounted = await mountComponent(DomainColumn, store);
+    const pending = deferred();
+    let writes = 0;
+    globalThis.__eyesOnAgentsThreadSearchHarness.markAllRead = () => {
+      writes += 1;
+      return pending.promise;
+    };
+    try {
+      const readAllButton = mounted.host.querySelector('button[name="eyesOnAgents__domainColumn__readAll"]');
+      const searchButton = mounted.host.querySelector('button[name="eyesOnAgents__domainColumn__search"]');
+      assert.equal(readAllButton.disabled, false);
+      readAllButton.click();
+      readAllButton.click();
+      await store.markAllRead();
+      await nextTick();
+      assert.equal(writes, 1, 'rapid clicks and direct duplicate calls share the store action gate');
+      assert.equal(store.busyAction, 'read-all');
+      assert.equal(readAllButton.disabled, true);
+      assert.ok(readAllButton.classList.contains('arco-btn-loading'));
+      assert.equal(store.threads[0].isUnread, true, 'there is no optimistic unread clear');
+
+      assert.equal(searchButton.disabled, false);
+      searchButton.click();
+      await nextTick();
+      assert.equal(store.threadSearchVisible, true, 'Search still opens while Read all is pending');
+
+      pending.resolve({ threads: store.threads.map((thread) => ({ ...thread, isUnread: false })) });
+      await pending.promise;
+      await nextTick();
+      assert.equal(store.busyAction, null);
+      assert.equal(readAllButton.classList.contains('arco-btn-loading'), false);
+      assert.equal(readAllButton.disabled, true);
+      assert.deepEqual(store.threads.map((thread) => thread.isUnread), [false, false]);
+      assert.equal(store.focusThreads.length, 2, 'acknowledged cards stay on Focus');
+      assert.equal(store.threads[1].runtimeState, 'working', 'the action does not stop the working card');
+      assert.equal(store.actionError, null);
+      assert.deepEqual(mounted.errors, []);
+    } finally {
+      store.closeThreadSearch();
+      mounted.app.unmount();
+    }
+  });
+
+  await test('Read all stays disabled for another action and catches a failed write without clearing unread', async () => {
+    const store = actualStore();
+    store.snapshot = {
+      threads: [{ sessionKey: 'claude:unread', title: 'Ready to read', runtimeState: 'unknown', isUnread: true }],
+    };
+    store.busyAction = 'sync';
+    const mounted = await mountComponent(DomainColumn, store);
+    const pending = deferred();
+    let writes = 0;
+    globalThis.__eyesOnAgentsThreadSearchHarness.markAllRead = () => {
+      writes += 1;
+      return pending.promise;
+    };
+    try {
+      const readAllButton = mounted.host.querySelector('button[name="eyesOnAgents__domainColumn__readAll"]');
+      assert.equal(readAllButton.disabled, true);
+      assert.equal(readAllButton.classList.contains('arco-btn-loading'), false, 'only Read all owns its spinner');
+      readAllButton.click();
+      await store.markAllRead();
+      assert.equal(writes, 0);
+
+      store.busyAction = null;
+      await nextTick();
+      assert.equal(readAllButton.disabled, false, 'unknown-state visible unread is eligible');
+      readAllButton.click();
+      await nextTick();
+      pending.reject(new Error('Read all write failed'));
+      await pending.promise.catch(() => undefined);
+      await nextTick();
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(writes, 1);
+      assert.equal(store.busyAction, null);
+      assert.equal(store.actionError, 'Read all write failed');
+      assert.equal(store.threads[0].isUnread, true);
+      assert.equal(readAllButton.disabled, false, 'failure leaves the action available to retry');
+      assert.equal(readAllButton.classList.contains('arco-btn-loading'), false);
+      assert.deepEqual(mounted.errors, [], 'the click wrapper consumes the already-presented action failure');
+    } finally {
+      store.busyAction = null;
       mounted.app.unmount();
     }
   });

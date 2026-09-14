@@ -34,8 +34,10 @@ without freezing text editing. Expose selected option and expanded state to assi
 ## Commands
 
 `/clear` calls the same BL New chat action as its button/shortcut. It does not delete conversation
-history or reset the current model runtime in-place. Preserve BL's existing workspace inheritance,
-archived/turn-lock restrictions and storage behavior; a refused action must show a reason.
+history or reset the current model runtime in-place. Preserve BL's workspace inheritance,
+archive and storage behavior. A running turn must not block New chat or /clear; the old task keeps
+running in its own session. Rejected stale/unsupported requests show a reason and retain the draft.
+See [running New chat contract](../plan/tasks/browseruse-new-chat-003.md).
 
 `/view_context` uses a typed Coach XPC request and Main clipboard write. Export current model-side
 history (including tool calls/results), system/preamble context and pending draft/workspace/attachment

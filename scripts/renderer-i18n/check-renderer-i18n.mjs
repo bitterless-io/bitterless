@@ -21,13 +21,14 @@ const rendererEntries = [
   ['maestroHome', 'src/renderer/maestro/home/src/main.ts'],
   ['maestroControl', 'src/renderer/maestro/control/src/control.ts'],
   ['maestroWorkbench', 'src/renderer/maestro/workbench/src/workbench.ts'],
+  ['maestroTabAlias', 'src/renderer/maestro/tabAlias/src/tabAlias.ts'],
   ['onlyPreviewShell', 'src/renderer/onlypreview/shell/src/main.ts'],
   ['onlyPreviewPreview', 'src/renderer/onlypreview/preview/src/main.ts'],
   ['onlyPreviewSettings', 'src/renderer/onlypreview/settings/src/main.ts'],
   ['onlyPreviewGuide', 'src/renderer/onlypreview/guide/src/main.ts']
 ]
 
-assert.equal(rendererEntries.length, 16, 'renderer i18n inventory must own exactly sixteen entries')
+assert.equal(rendererEntries.length, 17, 'renderer i18n inventory must own exactly seventeen entries')
 assert.equal(new Set(rendererEntries.map(([name]) => name)).size, rendererEntries.length)
 
 for (const [name, path] of rendererEntries) {

@@ -9,7 +9,7 @@
  * 「激活 tab 的 view 镜像」,代价是每个动作前都要把激活 tab 钉回钻探那只(`pinActiveTabToDrillTab`)——
  * 人在钻探期间因此看不了别的 tab,2026-09-09 的 `conn-009` 才解耦。所以这里从第一版起:
  *  · `webContentsForTab` 按 tab id 取,不经过激活;
- *  · `activateTab` 只在**人本来就在看钻探那只**时才跟随(条件跟随),否则不动他;
+ *  · `activateTab` 这个历史依赖名只准备操作目标,不改变人的前台;
  *  · `retargetCapture` 让录制目标跟着钻探锚点走 —— 少了它,边钻边摄会录成人正在看的那个 tab
  *    的流量,摄出来的接口文档是错的而且一声不响(那一处是 cowork 的守卫抓出来的)。
  */
@@ -19,10 +19,14 @@ import { ExploreSessionService } from '@maestro-main/sitemap/exploreSession.serv
 import type { ExploreSessionDeps } from '@maestro-main/sitemap/exploreSession.types'
 import { SitemapService } from '@maestro-main/sitemap/sitemap.service'
 import type { SiteSitemap } from '@maestro-shared/sitemap.types'
-import type { CodexDebugEvent } from '@maestro-shared/coach.api'
+import type { AgentBrowserTabState, CodexDebugEvent } from '@maestro-shared/coach.api'
 
 /** 适配器要从宿主拿的东西 —— 全部是 bl 侧**已经存在**的真源，本文件不新建状态。 */
 export interface DrillHostState {
+  describeTab?(id: string): AgentBrowserTabState | undefined
+  onTabScopeChanged?(ids: string[] | null): Promise<void>
+  onMainTabUnavailable?(error: string): void
+  onBrowserUsePaused?(): void
   currentUrl(): string
   getOperationTabs(): { id: string; url: string }[]
   getActiveOperationTabId(): string | null
@@ -31,7 +35,7 @@ export interface DrillHostState {
   /** 录制目标移到某个 tab —— `capture.service.retargetCaptureToTab`。 */
   retargetCaptureToTab(tabId: string): Promise<void>
   /** 绕开录制闸的 a11y 快照 —— `capture.service.pageSnapshotForAgent`（探站跑在 API 模式）。 */
-  pageSnapshotForAgent(): Promise<{ yaml: string; nodeCount: number; walkControls?: string[] } | null>
+  pageSnapshotForAgent(tabId?: string): Promise<{ yaml: string; nodeCount: number; walkControls?: string[] } | null>
   captureSessionDir(): string | null
   recordingStartedAt(): Promise<number | undefined>
   activateTab(tabId: string): Promise<void>
@@ -102,6 +106,10 @@ export class DrillHostService {
   private deps(): ExploreSessionDeps {
     const host = this.host
     return {
+      describeTab: host.describeTab,
+      onTabScopeChanged: host.onTabScopeChanged,
+      onMainTabUnavailable: host.onMainTabUnavailable,
+      onBrowserUsePaused: host.onBrowserUsePaused,
       // 钻探认领自己的 tab **之前**那几步才用激活 view;之后一律走 webContentsForTab。
       webContents: () => {
         const active = host.getActiveOperationTabId()
@@ -113,17 +121,12 @@ export class DrillHostService {
       captureSessionDir: () => host.captureSessionDir(),
       // 主输入是 a11y 快照(Ral 2026-08-10「先读 A11Y」)。**必须**走绕闸的那一个 ——
       // `captureSnapshot()` 在 API 模式下返回 'Action capture is off',而探站就跑在 API 模式。
-      pageSnapshot: () => host.pageSnapshotForAgent(),
+      pageSnapshot: (tabId) => host.pageSnapshotForAgent(tabId),
       previousSitemap: (siteId: string): Promise<SiteSitemap | null> => this.sitemap.readSitemap(siteId),
       activeTabId: () => host.getActiveOperationTabId(),
       listTabs: async () => host.getOperationTabs().map((tab) => ({ id: tab.id, url: tab.url })),
-      // **条件跟随**:人本来在看钻探那只 → 跟过去(想看着它跑的人不受影响);
-      // 人已经自己挪开 → 不动他。两个极端都不对 —— 一直跟随就是 cowork 那个"每隔几秒被切走",
-      // 一律不跟随则"看着钻探跑"这个观察手段没了。
+      // Historical port name: prepare/warm the exact target; foreground display stays separate.
       activateTab: async (id: string) => {
-        const active = host.getActiveOperationTabId() || ''
-        const anchor = this.session?.anchorTabId || ''
-        if (!anchor || active !== anchor) return
         await host.activateTab(id)
       },
       closeTab: (id: string) => host.closeTab(id),

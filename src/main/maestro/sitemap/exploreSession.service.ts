@@ -1,3 +1,4 @@
+import type { DrillTabState } from './exploreSession.types'
 // Agent-driven exploration session (v2). Contract: docs/features/agent-driven-exploration.md.
 //
 // Main owns STATE, the agent owns CONTROL FLOW (decision 1). The v1 walker's `while (queue.length)`
@@ -188,7 +189,7 @@ export class ExploreSessionService {
    * 走同一条路,不会出现"从这里停得掉、从那里停不掉"。
    */
   private get aborted(): boolean {
-    return Boolean(this.task?.aborted)
+    return Boolean(this.task?.aborted || this.tabPauseError)
   }
   private startedAt = 0
   // 开钻那一刻的回合累计用量 —— token 花费按【差值】算。钻探工具是在回合中途被调用的,
@@ -553,7 +554,7 @@ export class ExploreSessionService {
    */
   private async snapshotModuleForArchive(moduleUrl: string, moduleName: string): Promise<void> {
     try {
-      const snap = await this.deps.pageSnapshot()
+      const snap = await this.deps.pageSnapshot(this.anchorTabId)
       if (!snap?.yaml) {
         this.log('module-snapshot-missing', `没能为模块「${moduleName}」存档快照(debugger 没附着?)`, { url: moduleUrl }, 'warn')
         return
@@ -974,6 +975,63 @@ export class ExploreSessionService {
    * exploreSession 仍是【一个会话】:状态按 URL 存、跨 tab 累积,输出全在这个会话里。
    */
   private homeTabId = ''
+  private readonly tabMembers = new Map<string, DrillTabState & { wc: WebContents | null }>()
+  private tabScopeActive = false
+  private tabPauseError = ''
+
+  activeTabIds(): string[] {
+    return this.tabScopeActive && !this.tabPauseError
+      ? [...this.tabMembers.values()].filter((tab) => tab.status === 'active').map((tab) => tab.id)
+      : []
+  }
+
+  ownsActiveTab(id: string): boolean { return this.activeTabIds().includes(id) }
+
+  tabState(): { mainTabId: string; currentTabId: string; activeTabIds: string[]; paused: string | null; tabs: DrillTabState[] } {
+    return { mainTabId: this.homeTabId, currentTabId: this.currentDrillTabId,
+      activeTabIds: this.activeTabIds(), paused: this.tabPauseError || null,
+      tabs: [...this.tabMembers.values()].map(({ wc: _wc, ...tab }) => ({ ...tab })) }
+  }
+
+  async admitBranch(tabId: string, parentTabId: string, url: string): Promise<void> {
+    if (!this.open || !this.ownsActiveTab(parentTabId) || this.tabMembers.has(tabId)) return
+    this.tabMembers.set(tabId, { id: tabId, url, parentTabId, role: 'branch', status: 'active', wc: this.deps.webContentsForTab(tabId) })
+    await this.deps.onTabScopeChanged?.(this.activeTabIds())
+  }
+
+  refreshTabScope(): void {
+    if (!this.tabScopeActive) return
+    let changed = false
+    for (const tab of this.tabMembers.values()) {
+      if (tab.status !== 'active') continue
+      const info = this.deps.describeTab?.(tab.id)
+      const wc = this.deps.webContentsForTab(tab.id)
+      if (wc && !wc.isDestroyed() && !wc.isCrashed() && wc === tab.wc && (!info || ['ready', 'loading'].includes(info.status))) continue
+      tab.status = this.deps.describeTab && !info ? 'closed' : 'unavailable'
+      tab.error = info?.error || 'The drill page was closed, destroyed, or replaced.'
+      changed = true
+      if (tab.role === 'main') {
+        this.tabPauseError = 'Drill paused: main tab ' + tab.id + ' is ' + tab.status + '. ' + tab.error + ' Reopen the intended page and begin a new drill explicitly.'
+        this.tabScopeActive = false
+        this.log('main-tab-unavailable', this.tabPauseError, { tabId: tab.id }, 'error', true)
+        this.deps.onMainTabUnavailable?.(this.tabPauseError)
+      } else {
+        this.branchStack = this.branchStack.filter((branch) => branch.tabId !== tab.id)
+        if (this.currentDrillTabId === tab.id) {
+          this.currentDrillTabId = tab.parentTabId || this.homeTabId
+          void this.onAnchorTabChanged(this.currentDrillTabId)
+        }
+      }
+    }
+    if (changed) void this.deps.onTabScopeChanged?.(this.activeTabIds())
+  }
+
+  async finishTabScope(): Promise<void> {
+    this.open = false
+    this.tabScopeActive = false
+    this.restoreDrillThrottling()
+    await this.deps.onTabScopeChanged?.(null)
+  }
   // 钻探【当前应该在】的 tab —— 默认 home;visitTab 去探 B 时改成 B(那是钻探自己有意切的)。所有
   // tab 触碰工具(explore_visit / ui_act / page_snapshot)导航/读/点前都钉回它,这样人手动切激活 tab
   // 不会让钻探读错/点错 tab(bug 2026-08-11)。区别于人切:人切是无意的,钻探切走 currentDrillTabId 才动。
@@ -1046,6 +1104,7 @@ export class ExploreSessionService {
    * 钻探 tab 一旦不再激活就会被 LRU 冷却成 `view = null`,这条解耦会让钻探直接失明。
    */
   private drillWc(): WebContents | null {
+    if (this.tabPauseError) return null
     const want = this.currentDrillTabId || this.homeTabId
     if (!want) return this.deps.webContents()
     return this.deps.webContentsForTab(want)
@@ -1547,6 +1606,7 @@ export class ExploreSessionService {
     if (!this.task) return
     const url = this.drillWc()?.getURL() || this.startUrl
     this.log('login-needed', `pausing for login — ${reason}`, { url }, 'warn', true)
+    this.deps.onBrowserUsePaused?.()
     await this.task.requestConfirm({
       title: 'Sign in to continue the drill',
       detail: `This page looks like it needs a sign-in (${reason}). Sign in on the page, then hit "I'm signed in, continue" — I also resume on my own once I detect the sign-in succeeded.`,
@@ -1606,7 +1666,7 @@ export class ExploreSessionService {
     if (!this.open) return null
     const tabs = await this.deps.listTabs().catch(() => [])
     for (const t of tabs) {
-      if (this.tabsDrilled.has(t.id)) continue
+      if (!this.ownsActiveTab(t.id) || this.tabsDrilled.has(t.id)) continue
       if (!t.url || this.hostOf(t.url) !== this.host) continue // 只钻同站
       return { id: t.id, url: t.url }
     }
@@ -1760,6 +1820,7 @@ export class ExploreSessionService {
     const onHomeTab = !this.homeTabId || activeTab === this.homeTabId
     const lines = [
       `session: ${this.open ? 'open' : 'not started'}`,
+      `drill_tabs: ${JSON.stringify(this.tabState())}`,
       `target host: ${this.host || '(none)'}`,
       `current host: ${currentHost || '(unknown)'}${offSite ? '  ← OFF TARGET SITE' : ''}`,
       `current url: ${current || '(none)'}`,
@@ -1780,7 +1841,7 @@ export class ExploreSessionService {
     // 用 explore_visit {"tab":"…"} 探同站的、切回 home、别碰外站的。状态跨 tab 累积(按 URL 存)。
     if (tabs && tabs.length > 1) {
       lines.push('open tabs (explore_visit {"tab":"<id>"} to switch — your exploration state spans all same-site tabs):')
-      for (const t of tabs) {
+      for (const t of tabs.filter((tab) => this.ownsActiveTab(tab.id))) {
         const h = this.hostOf(t.url)
         const same = !!h && h === this.host
         const marks = [
@@ -1818,10 +1879,10 @@ export class ExploreSessionService {
     return Boolean(this.open && this.host && url && this.hostOf(url) === this.host)
   }
 
-  async begin(params: { startUrl?: string; task?: TaskHandle | null; focus?: string[] }): Promise<string> {
-    const wc = this.drillWc()
+  async begin(params: { startUrl?: string; tabId?: string; task?: TaskHandle | null; focus?: string[] }): Promise<string> {
+    const wc = params.tabId ? this.deps.webContentsForTab(params.tabId) : this.drillWc()
     if (!wc || wc.isDestroyed()) return 'ERROR: no page is open — open the site first.'
-    const startUrl = (params.startUrl || this.deps.currentUrl() || '').trim()
+    const startUrl = (params.startUrl || wc.getURL() || '').trim()
     if (!startUrl) return 'ERROR: no start url.'
     /**
      * **同一个站已经在钻 → 不重开,把现状还给它。**
@@ -1835,7 +1896,7 @@ export class ExploreSessionService {
      * 之后每一次 begin 都被拒,而 `end` 又被覆盖闸挡着,这个站就再也钻不了了。返回现状则怎么都不会卡:
      * 真是重复调用 → 它看到自己已经在钻;真想换站 → host 不同,照常重开。
      */
-    if (this.reentersRun(startUrl)) {
+    if (!this.tabPauseError && this.reentersRun(startUrl)) {
       this.log('begin-reentered', `begin called again for ${this.host} while a run is already open (${this.elapsedText()} in, ${this.visited.size} place(s) opened) — returning current state instead of restarting`, { host: this.host, visited: this.visited.size, worklist: this.worklist.length }, 'warn', true)
       return [
         `ALREADY DRILLING ${this.host} — this run started ${this.elapsedText()} ago and is still open. NOTHING WAS RESET.`,
@@ -1848,8 +1909,15 @@ export class ExploreSessionService {
     this.startUrl = startUrl
     this.host = this.hostOf(startUrl)
     this.siteId = this.host
-    this.homeTabId = this.deps.activeTabId() || ''
+    this.homeTabId = params.tabId || this.deps.activeTabId() || ''
+    this.tabMembers.clear()
+    this.tabPauseError = ''
+    this.tabScopeActive = true
+    this.tabMembers.set(this.homeTabId, { id: this.homeTabId, role: 'main', url: startUrl, status: 'active', wc })
+    this.branchStack = []
+    this.branchSeenTabs.clear()
     this.currentDrillTabId = this.homeTabId
+    await this.deps.onTabScopeChanged?.(this.activeTabIds())
     await this.onAnchorTabChanged(this.currentDrillTabId)
     this.tabsDrilled = new Set(this.homeTabId ? [this.homeTabId] : []) // home tab 从现在起就在钻
     this.task = params.task || null
@@ -2105,10 +2173,11 @@ export class ExploreSessionService {
    *
    * 只有在 DrillService 判定这一轮已经无效时才调它(`docs/issues/drill-run-epoch-and-stop-gates.md`)。
    */
-  abandonRun(reason: string): void {
+  async abandonRun(reason: string): Promise<void> {
     if (!this.open) return
     this.log('run-abandoned', `run on ${this.host} abandoned: ${reason} — the next begin will start a fresh run instead of re-entering this one`, { host: this.host, visited: this.visited.size, reason }, 'warn', true)
     this.open = false
+    await this.finishTabScope()
     this.task = null
   }
 
@@ -2173,6 +2242,9 @@ export class ExploreSessionService {
   async pinActiveTabToDrillTab(): Promise<void> {
     const want = this.currentDrillTabId || this.homeTabId
     if (!want) return
+    this.refreshTabScope()
+    if (this.tabPauseError) throw new Error(this.tabPauseError)
+    await this.deps.activateTab(want)
     const active = this.deps.activeTabId() || ''
     if (active === want) {
       this.lastObservedActiveTabId = active
@@ -2196,20 +2268,22 @@ export class ExploreSessionService {
    *
    * 只认【同站】新 tab:外站 tab(第三方文档/支付跳转)不是钻探对象,记 offsite 就够了。
    */
-  async openBranchIfNewTab(): Promise<string> {
-    if (!this.open) return ''
+  async openBranchIfNewTab(explicitTabId?: string): Promise<string> {
+    this.refreshTabScope()
+    if (!this.open || this.tabPauseError) return ''
     const tabs = await this.deps.listTabs().catch(() => [])
     for (const t of tabs) {
-      if (this.branchSeenTabs.has(t.id) || this.tabsDrilled.has(t.id) || t.id === this.homeTabId) continue
+      if (explicitTabId && t.id !== explicitTabId) continue
+      if (!this.ownsActiveTab(t.id) || this.branchSeenTabs.has(t.id) || this.tabsDrilled.has(t.id) || t.id === this.homeTabId) continue
       this.branchSeenTabs.add(t.id)
-      if (!t.url || this.hostOf(t.url) !== this.host) continue
-      const parentTabId = this.currentDrillTabId || this.homeTabId
+      if (!t.url || (!explicitTabId && this.hostOf(t.url) !== this.host)) continue
+      const parentTabId = this.tabMembers.get(t.id)?.parentTabId || this.currentDrillTabId || this.homeTabId
       this.branchStack.push({ tabId: t.id, url: t.url, parentTabId, openedAt: Date.now() })
       this.log('branch-open', `支线钻探:新 tab ${t.id} → ${t.url}(钻完自动关闭并回主线)`, { tab: t.id, url: t.url, parentTabId }, 'info')
       this.deps.onNote?.(`🌿 支线钻探:点击打开了新标签页 ${t.url} —— 先把它钻完,完成后自动关闭并回到主线。`)
       const switched = await this.visitTab(t.id, `branch:${t.id}`)
       return [
-        `A NEW TAB opened as a result of your click — this is now a BRANCH drill (branch depth ${this.branchStack.length}).`,
+        `A controlled page opened a new tab or you explicitly opened it — this is now a BRANCH drill (branch depth ${this.branchStack.length}).`,
         'Drill this tab NOW: record it as a module, do the observe→click/fill→observe loop over it, then mark it done.',
         'When you mark it done main CLOSES the tab and returns you to the main line automatically — do not close or switch away yourself.',
         '',
@@ -2221,7 +2295,10 @@ export class ExploreSessionService {
 
   /** 支线那个模块标完成时调:关掉支线 tab、弹栈、切回父 tab。返回给 agent 的提示串。 */
   private async closeBranchFor(moduleUrl: string): Promise<string> {
-    const idx = this.branchStack.findIndex((b) => this.normalize(b.url, this.startUrl) === moduleUrl || b.url === moduleUrl)
+    const matches = (b: { url: string }): boolean => this.normalize(b.url, this.startUrl) === moduleUrl || b.url === moduleUrl
+    // Multiple tabs can have the same URL; finish the actual operation target first.
+    const current = this.branchStack.findIndex((b) => b.tabId === this.currentDrillTabId && matches(b))
+    const idx = current >= 0 ? current : this.branchStack.findIndex(matches)
     if (idx < 0) return ''
     const [branch] = this.branchStack.splice(idx, 1)
     const back = branch.parentTabId
@@ -2233,7 +2310,7 @@ export class ExploreSessionService {
     // 回主线:锚点切回父 tab,后续 ui_act/快照都落在主线上。
     const tabs = await this.deps.listTabs().catch(() => [])
     if (back && tabs.some((t) => t.id === back)) {
-      await this.followIfWatching(back)
+      await this.prepareDrillTab(back)
       this.currentDrillTabId = back
       await this.onAnchorTabChanged(back)
       const wc = this.drillWc()
@@ -2244,34 +2321,33 @@ export class ExploreSessionService {
     return `BRANCH DONE — main closed tab ${branch.tabId} and returned you to the main line. Continue drilling the main line.`
   }
 
-  /**
-   * 钻探**主动**换 tab 时,让人的视图跟不跟过去 —— **只在人本来就在看钻探那只 tab 时跟随**
-   * (conn-009)。
-   *
-   * 两个极端都不对:一直跟随 = 继续把人从 connector 上拽走(那正是 PQ-5 要治的,而且支线开关在
-   * 两小时里发生很多次,不是罕见事件);一律不跟随 = 想看着钻探跑的人从此看不到它换页,
-   * 而"看着它跑"是这个功能本来就有的观察手段。
-   *
-   * 判据是**人有没有自己挪开过**:激活 tab 还是钻探上一只 ⇒ 他在看钻探,跟过去;
-   * 已经是别的 tab ⇒ 那是他自己挑的,不动它。
-   */
-  private async followIfWatching(nextTabId: string): Promise<void> {
-    const previous = this.currentDrillTabId || this.homeTabId
-    const active = this.deps.activeTabId() || ''
-    if (!previous || active !== previous) return
-    await this.deps
-      .activateTab(nextTabId)
-      .catch((err) => this.log('follow-failed', `activate ${nextTabId}: ${(err as Error).message}`, undefined, 'warn'))
+  /** Warm the chosen operation target without changing the human foreground. */
+  private async prepareDrillTab(nextTabId: string): Promise<void> {
+    await this.deps.activateTab(nextTabId)
   }
 
   private async visitTab(tabTarget: string, from?: string): Promise<string> {
+    this.refreshTabScope()
+    if (this.tabPauseError) return `ERROR: ${this.tabPauseError}`
     const targetId = tabTarget.toLowerCase() === 'home' ? this.homeTabId : tabTarget
     if (!targetId) return `ERROR: no home tab recorded for this session.`
     const tabs = await this.deps.listTabs().catch(() => [])
     if (!tabs.some((t) => t.id === targetId)) {
       return `ERROR: tab "${targetId}" is not open.\n${this.navState(tabs)}`
     }
-    await this.followIfWatching(targetId)
+    // An explicit explore_visit/activate_tab is takeover intent; simply opening a tab is not.
+    if (!this.ownsActiveTab(targetId)) {
+      await this.deps.activateTab(targetId)
+      const tab = tabs.find((item) => item.id === targetId)!
+      const wc = this.deps.webContentsForTab(targetId)
+      if (!wc || wc.isDestroyed() || wc.isCrashed()) return 'ERROR: the requested drill tab is unavailable.'
+      const parentTabId = this.currentDrillTabId || this.homeTabId
+      await this.admitBranch(targetId, parentTabId, tab.url)
+      if (!this.ownsActiveTab(targetId)) return 'ERROR: the drill stopped before this tab could be adopted.'
+      this.branchStack.push({ tabId: targetId, url: tab.url, parentTabId, openedAt: Date.now() })
+      this.branchSeenTabs.add(targetId)
+    }
+    await this.prepareDrillTab(targetId)
     this.currentDrillTabId = targetId
     await this.onAnchorTabChanged(targetId) // 钻探有意切到这个 tab → 之后的 url 导航/ui_act/快照都以它为锚
     this.tabsDrilled.add(targetId) // 记这个 tab 已在钻(issue 3:系统化逐 tab)—— firstUndrilledSameSiteTab 不再返回它
@@ -2372,7 +2448,7 @@ export class ExploreSessionService {
     }
     // 计算态快照是主输入(Ral:「先读 A11Y」)。它拿不到就退化成只有锚点表 —— 那种情况必须
     // 说出来,因为模型少了句柄,只能走 href,点不了 hover 才出现的子菜单。
-    const snap = await this.deps.pageSnapshot().catch(() => null)
+    const snap = await this.deps.pageSnapshot(this.anchorTabId).catch(() => null)
     if (!snap) this.log('snapshot-missing', 'accessibility snapshot unavailable — falling back to the anchor list only', undefined, 'warn')
     const url = wc.getURL()
     return {

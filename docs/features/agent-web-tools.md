@@ -59,18 +59,22 @@ web_search(找 URL,付费)→ web_fetch(免费读正文)→ deep_fetch(真浏览
 
 ## 受控状态与动画
 
-`OperationTab.controlled` 上线到渲染层,tab chip 的 **favicon 槽**在被驱动时换成脉冲图标。
+`OperationTab.controlled` 上线到渲染层,tab chip 的 **favicon 槽**在被驱动时换成核心＋绕行卫星动效。
 
 三个刻意的决定:
 
 - **接在 favicon 槽,不新增元素** —— 那个槽恒定 16px、已经有 loading 换图的先例,chip 不会重排。
 - **优先级高于 loading** —— agent 驱动时页面本来就常在加载,两个都显示会变成"转圈套转圈",
-  而人要看的是**谁**在动它。形状也刻意不同:转圈=页面在加载,脉冲=有人在动它。
+  而人要看的是**谁**在动它。形状也刻意不同:转圈=页面在加载,核心＋卫星=有人在动它。
 - **计数而不是布尔** —— 同一个 tab 上可能同时有两件事在驱动它,先结束的那件不该把动画关掉。
 - **只是展示,不是闸** —— 被标记的 tab 照样能被人点击、切换、关闭。做成闸会让"agent 忙着"
   变成"用户被锁住",那是两件事。
 
 无边框、`prefers-reduced-motion` 下退成静态(全仓 Borderless UI 规则)。
+
+2026-09-14 扩展：[统一 browser-use 生命周期](../plan/tasks/browseruse-lifecycle-002.md) 将普通网页操作和钻探接入同一动效。
+`start_browser_use({tab_id})` / `end_browser_use({tab_id})` 只切换当前任务的活动标记；自动执行和异常收尾共用此状态。
+历史关联、LRU 保留和钻探录制清单不是正在操作状态；这两个工具不切换操作目标、不关闭网页、不移动前台、不直接改变录制清单。
 
 ## `web_search`:走 bitterless-private,凭 bl 自己的登录
 

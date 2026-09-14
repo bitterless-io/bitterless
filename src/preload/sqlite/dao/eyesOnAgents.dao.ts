@@ -1954,7 +1954,6 @@ export class EyesOnAgentsRepositoryDao extends BaseDao implements EyesOnAgentsRe
       `UPDATE eyes_on_agents_thread SET is_unread = 0
        WHERE archive_state <> 'archived' AND is_deleted = 0
          AND is_unread = 1
-         AND runtime_state IN ('idle', 'failed', 'ended')
          AND provider IN (${placeholders})`,
       providers
     );

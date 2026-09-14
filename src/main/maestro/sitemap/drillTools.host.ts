@@ -30,7 +30,7 @@ import type { AgentConversationContext, AgentReply, CodexDebugEvent } from '@mae
 export interface DrillToolsHostState {
   currentUrl(): string
   /** 激活的 operation tab —— `begin` 要拒 mini-app 面（它们不是可探索的站点）。 */
-  activeTabKind(): { kind: string; miniappId?: string } | null
+  activeTabKind(tabId?: string): { kind: string; miniappId?: string } | null
   setAutoDismissFileDialogs(on: boolean): Promise<void>
   /** 对一次录制电平：红点只吃 started/stopped 两个沿，钻探开始正是"灯必须是对的"那一刻。 */
   announceCaptureState(): void
@@ -64,6 +64,7 @@ export class DrillToolsHost {
   async toolExploreSession(params: {
     action: string
     startUrl?: string
+    tabId?: string
     focus?: string[]
     sessionKey?: string
   }): Promise<string> {
@@ -78,7 +79,7 @@ export class DrillToolsHost {
        *
        * 返回的是给 agent 读的文本，所以要说清**为什么**+**怎么办**，否则它原样重试。
        */
-      const active = this.host.activeTabKind()
+      const active = this.host.activeTabKind(params.tabId)
       if (active?.kind === 'miniapp') {
         return (
           `REFUSED: the active tab is a mini-app ('${active.miniappId ?? '?'}'). ` +
@@ -96,7 +97,7 @@ export class DrillToolsHost {
 
       // ② 上一轮已作废但还没收摊 → 就地放弃它，让 `begin` 走**完整重置**而不是幂等短路。
       if (!this.run.isRunLive(this.run.currentRunId) && svc.isExploring) {
-        svc.abandonRun('上一轮已被停止/作废,这里开的是新一轮')
+        await svc.abandonRun('上一轮已被停止/作废,这里开的是新一轮')
         this.run.setExploreTask(null)
       }
 
@@ -116,7 +117,7 @@ export class DrillToolsHost {
       // ④ 重入的 begin（同一个站已经在钻）**不建第二张任务卡**。判据借 svc 的，
       //    与 begin 内部同一份 —— 两处各自推导迟早不一致。
       if (svc.reentersRun(params.startUrl)) {
-        return await svc.begin({ startUrl: params.startUrl, focus: params.focus })
+        return await svc.begin({ startUrl: params.startUrl, tabId: params.tabId, focus: params.focus })
       }
 
       const task = taskRegistry.start({
@@ -132,7 +133,7 @@ export class DrillToolsHost {
         input: { startUrl: params.startUrl || this.host.currentUrl(), focus: params.focus || [] }
       })
       this.run.setExploreTask(task)
-      const text = await svc.begin({ startUrl: params.startUrl, task, focus: params.focus })
+      const text = await svc.begin({ startUrl: params.startUrl, tabId: params.tabId, task, focus: params.focus })
       if (text.startsWith('ERROR')) task.fail(text)
       return text
     }
@@ -254,6 +255,8 @@ export class DrillToolsHost {
     // 那个活回合的队列;更糟的是循环出口的 `finalizeExploreSession()` 是**无条件**的,会给一个
     // 还在跑的钻探写 sitemap、播 drill-complete、清 exploreTask。
     if (reply.mergedIntoTurn) return reply
+    // Ordinary chats may finish while another chat owns the singleton drill.
+    if (this.run.ownerSessionId !== params.sessionId) return reply
     // **进循环之前抓一份代次。** 之后每一次迭代拿它来问"我还是当前这一轮吗" —— 这就是
     // Ral 2026-09-04 要的那个判据:停止、以及"停完立刻重开"造成的新旧两轮重叠,是同一个答案。
     const runId = this.run.currentRunId
@@ -439,6 +442,7 @@ export class DrillToolsHost {
     // 开关的语义是"这一段是 agent 在开"，不是"录制期间一律拦"。
     void this.host.setAutoDismissFileDialogs(false)
     const out = await svc.end()
+    await svc.finishTabScope()
     const task = this.run.exploreTaskHandle
     this.run.setExploreTask(null)
     task?.artifact({ label: 'run', path: out.runPath })

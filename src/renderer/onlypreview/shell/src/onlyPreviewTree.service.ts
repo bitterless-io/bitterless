@@ -50,6 +50,33 @@ export const resolveOnlyPreviewBreadcrumb = (
   };
 };
 
+/** Footer identity follows the presented target; tree selection is only an empty-preview fallback. */
+export const resolveOnlyPreviewStatusBreadcrumb = (state: {
+  workspace: { workspaceId: string; rootName: string; displayPath: string } | null;
+  treeSelectedRelativePath: string | null;
+  selectedRelativePath: string;
+  previewPresentation: {
+    fileRef: { workspaceId: string; relativePath: string } | null;
+    fileDisplayPath?: string;
+    directory?: { workspaceId: string; relativePath: string } | null;
+  } | null;
+}): OnlyPreviewBreadcrumb | null => {
+  const presentation = state.previewPresentation;
+  const target = presentation?.fileRef ?? presentation?.directory;
+  if (target && target.workspaceId === state.workspace?.workspaceId) {
+    return resolveOnlyPreviewBreadcrumb(state.workspace, target.relativePath, '');
+  }
+  if (presentation?.fileDisplayPath) {
+    return {
+      segments: presentation.fileDisplayPath.split(/[\\/]/).filter(Boolean),
+      title: presentation.fileDisplayPath
+    };
+  }
+  return resolveOnlyPreviewBreadcrumb(
+    state.workspace, state.treeSelectedRelativePath, state.selectedRelativePath
+  );
+};
+
 export const resolveOnlyPreviewCurrentDirectory = (
   index: OnlyPreviewIndex | null,
   treeSelectedRelativePath: string | null,

@@ -1,8 +1,11 @@
+import { prepareBrowserDocument } from './browserDocumentPreparation'
+import { bindBrowserHistoryRecorder } from './browserHistoryRecorder';
+import type { BrowserHistoryApi } from '@maestro-shared/browserHistory.api';
 import { Menu, WebContentsView, clipboard } from 'electron'
 import type { BrowserWindow, ContextMenuParams, MenuItemConstructorOptions, View, WebContents } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { createXpcMainEmitter, xpcMain } from 'electron-xpc/main'
-import { randomBytes, randomUUID } from 'crypto'
+import { createHash, randomBytes, randomUUID } from 'crypto'
 import { injectable } from 'inversify'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
@@ -14,7 +17,6 @@ import { normalizeUrl } from '@maestro-main/settings/coachSettings.service'
 import { getMaestroPreviewOpener } from './previewOpener.registry'
 import { focusAddressBarForBlankTab } from './newTabFocus'
 import { MAESTRO_PARTITION } from '@maestro-main/data/maestroDataRoot'
-import type { NetworkInterceptionRule } from '@maestro-main/capture/networkInterception'
 import type {
   AgentActivityStep,
   CaptureState,
@@ -22,6 +24,7 @@ import type {
   InjectedButtonDomain,
   InjectedButtonRemoveResult,
   ActiveTabContent,
+  AgentBrowserTabState,
   TabKind,
   TabInfo,
   WorkbenchTabState,
@@ -37,7 +40,11 @@ import type { InjectBtnApi, InjectBtnEntry, InjectBtnInput } from '@maestro-shar
 import type { SavedTab } from '@maestro-shared/tabs.api'
 import type { TraceEvent } from '@maestro-shared/trace.types'
 import { createBoundsApplier, maestroFirstFrameOperationRect } from './viewBounds'
-import { getMaestroCompositeTab, listMaestroCompositeTabs } from './compositeTab.registry'
+import {
+  defaultHomeMaestroCompositeTabId,
+  getMaestroCompositeTab,
+  listMaestroCompositeTabs
+} from './compositeTab.registry'
 
 /**
  * A composite tab's persistent identity.
@@ -63,12 +70,12 @@ export const shouldOpenPinnedHomeDevTools = (): boolean => {
 
 const LOCAL_HOME_TITLE = 'Home'
 const LOCAL_HOME_FAVICON = ''
-const ATTACH_BEFORE_NAVIGATE_TIMEOUT_MS = 3000
 // Chromium may keep a page "loading" for a stalled subresource or never emit a stop event when
 // its renderer dies. The tab spinner is only a status hint, so always settle it after this cap.
 const LOAD_WATCHDOG_MS = 30_000
 const INJECTED_BUTTON_ROOT_ID = '__bitterless_maestro_button_root__'
 const injectBtnStore = createXpcMainEmitter<InjectBtnApi>('InjectBtnDao')
+const browserHistory = createXpcMainEmitter<BrowserHistoryApi>('BrowserHistoryDao');
 
 const isWorkbenchInternalUrl = (url: string): boolean => /^(?:bitterless|micromeet):\/\/workbench(?:[/?#].*)?$/i.test(url.trim())
 
@@ -115,28 +122,12 @@ const firstNonEmptyString = (...values: unknown[]): string => {
   return ''
 }
 
-const awaitAttach = async (ready: Promise<void> | undefined): Promise<void> => {
-  if (!ready) return
-  let timer: NodeJS.Timeout | undefined
-  try {
-    await Promise.race([
-      ready,
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, ATTACH_BEFORE_NAVIGATE_TIMEOUT_MS)
-      })
-    ])
-  } catch {
-    // The attach path already reports its own error; navigation remains the fallback.
-  } finally {
-    if (timer) clearTimeout(timer)
-  }
-}
-
 export interface ViewSlot {
   view: WebContentsView
   capture: DebuggerCapture
   replay: ReplayEngine
   attachReady?: Promise<void>
+  documentReady?: Promise<void>
 }
 
 export interface OperationTab {
@@ -169,17 +160,41 @@ export interface OperationTab {
    * browser's (Ral 2026-09-10) instead of a fixed `bitterless://only-preview`.
    */
   compositeDisplayUrl?: string
+  /**
+   * 这个 tab 上一次作为**网页 tab** 时停在哪个 URL —— 只在页面类型切换时读写。
+   *
+   * 换类型是就地改造同一个 tab(见 `setTabKind`),`tab.url` 会被新类型覆盖;没有这一格,
+   * 「切去 Zellij 看一眼再切回来」就等于把那个网页丢了。
+   */
+  websiteUrl?: string
   capture: DebuggerCapture | null
   replay: ReplayEngine | null
   attachReady?: Promise<void>
+  documentReady?: Promise<void>
+  /** Runtime state for this view only; blank prewarming is not an intended navigation. */
+  navigationStarted?: boolean
+  navigationRequest?: number
+  navigationPending?: Promise<void>
+  navigationTarget?: string
+  navigationPreparationFailed?: boolean
+  externalNavigation?: boolean
   coolingReady?: Promise<void>
   cooling?: boolean
   closeReady?: Promise<void>
   url: string
   title: string
+  /**
+   * 操作者给这个 tab 起的名字。**独立字段,永远不写进 `title`**。
+   *
+   * `title` 有六个写入方(`page-title-updated`、composite 的 `setTitle`、两个 tab 工厂、
+   * `setTabKind`、restore),任何一条一响就把用户起的名字静默冲掉 —— 这正是 alias 必须自己一格
+   * 的全部理由(docs/features/tab-alias.md #1)。空/未定义 = 没有别名,显示页面标题。
+   */
+  alias?: string
   favicon: string
   /** agent 正在驱动这个 tab(deep_fetch 渲染中 / ui_act 点击中)。渲染层据此给 favicon 槽上动画。 */
   controlled?: boolean
+  browserError?: { status: 'crashed' | 'destroyed' | 'load-failed'; error: string }
   debuggerEnabled: boolean
   pinned: boolean
   lastActive: number
@@ -198,13 +213,40 @@ export interface MaestroBrowserViewServiceState {
   opBounds: ViewRect | null
   readonly capturing: boolean
   readonly captureTargetTabId: string | null
+  protectedBrowserTabIds?(): string[]
+  isCaptureTab?(id: string): boolean
+  isDrillBranchTab?(id: string): boolean
   tabsOpenedThisTurn: TabInfo[]
-  readonly browserInterceptionRules: NetworkInterceptionRule[]
+  browserTabsChanged?(): void
+  browserPopupOwner?(sourceTabId: string): string | undefined
+  browserPopupOpened?(sessionId: string, tabId: string, sourceTabId?: string): Promise<void>
+  browserPopupActivity?(sessionId: string, tabId: string, on: boolean, generation?: number): void
+  browserUseGeneration?(sessionId: string): number
+  browserPopupStillOwned?(sessionId: string, sourceTabId: string | undefined, generation: number | undefined): boolean
 
+  dismissBrowserHistory?(): void;
   emitTrace(event: TraceEvent): void
   layout(): void
   readMaestroSettings(): CoachSettings
   hasCustomStartUrl(): boolean
+  /**
+   * 设置落盘口(自定义主页要写 `homeCompositeId`)。设置服务归 controller 所有,它也管 `startUrl`。
+   *
+   * 与下面两条一样**声明成可选**:测试夹具喂的是一个手写的 state 字面量,而这些都是宿主能力
+   * ——取不到时的降级行为都是「就当没设过」,那正是默认行为,fail closed。
+   */
+  saveMaestroSettings?(patch: Partial<CoachSettings>): CoachSettings
+  /**
+   * 这次启动是不是「登出 / 鉴权拆卸后的强制回固有 Home」那一发。
+   *
+   * 是的话固有槽位**无视自定义主页**,装回内置本地 Home —— 拆卸必须落在第一方登录门上
+   * (docs/features/custom-homepage-tab.md #3.5 与 `maestroLogoutHomeLanding` 的验收 A8)。
+   * 作为 state 的一条读能力而不是 `createPinnedHomeTab()` 的入参,是因为那个调用点被
+   * `check-ioc-composition.mjs` 按字面量钉着。
+   */
+  forcePinnedHomeBoot?(): boolean
+  /** 弹别名表单,`null` = 取消(不改动 alias)。覆盖层归 controller,见 `maestroTabAliasView.service.ts`。 */
+  requestTabAlias?(params: { tabLabel: string; alias: string }): Promise<string | null>
   openWorkbenchTab(): Promise<WorkbenchTabState>
   /**
    * Send the Workbench to the background.
@@ -232,6 +274,9 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
   private startupTabOpened = false
   private spareSlot: ViewSlot | null = null
   private prewarming = false
+  private spareWarmTask: ReturnType<typeof setImmediate> | null = null
+  private activationGeneration = 0
+  private readonly initializingViews = new WeakMap<WebContentsView, object>()
   private creatingTab = false
   private injectedButtonNonces = new Map<string, string>()
   private readonly compositeTabs = new Map<string, MaestroCompositeTabSpec>()
@@ -246,10 +291,107 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
   private lifecycleEpoch = 0
   private contentCovered = false
 
-  createPinnedHomeTab(): WebContentsView {
+  /**
+   * 用户**自己设过**的主页 id —— 空串 = 没设过。
+   *
+   * 与 `resolveHomeCompositeId()` 刻意分开:后者会替没设过的机器答出 registry 的默认值,而
+   * 「用户设没设过」本身是三个判据的依据(`Alias…` 能不能点、`Restore default homepage` 能不能点、
+   * 还原之后槽位该装谁),拿「解析结果非空」去问会恒真。
+   * 见 `docs/features/onlypreview-default-homepage.md` #2。
+   */
+  private homeCompositeSetting(): string {
+    return String(this._state.readMaestroSettings?.().homeCompositeId || '').trim()
+  }
+
+  /**
+   * 固有槽位装哪个 composite mini-app —— 返回 `null` 意思是「内置本地 Home」。
+   *
+   * 两级:用户设过的值优先,没设过就用 registry 里声明 `defaultHome` 的那个(bl 是 OnlyPreview,
+   * cowork 不声明 ⇒ 仍然是内置本地 Home)。
+   *
+   * **fail closed**,与 `getMaestroCompositeTab` 的「未知 id 返回 null,不兜底到某个默认
+   * mini-app」同一条纪律:降级、改名、脏数据都只该让主页回到默认,不该让固有槽位空着。
+   */
+  private resolveHomeCompositeId(): string | null {
+    const id = this.homeCompositeSetting() || defaultHomeMaestroCompositeTabId() || ''
+    if (!id) return null
+    return getMaestroCompositeTab(id) ? id : null
+  }
+
+  /**
+   * 自定义主页那个 composite tab 的 `instanceId` —— 按 spec id 推导,**不是**随机铸的。
+   *
+   * 随机铸的话每次启动都是一条新身份,mini app 每次都从零开始(Zellij 每启动一次多一条孤儿会话)。
+   * 固有槽位每台机器只有一个,按 spec id 推导就足以稳定且互不相撞;取 12 位十六进制是因为它会
+   * 进 Zellij 的会话名,那里有 48 字符上限(见 `mintTabInstanceId`),而随机铸的 48 位空间与这条
+   * 派生值也不会相撞。
+   */
+  private homeCompositeInstanceId(id: string): string {
+    return createHash('sha256').update(`maestro-home-composite:${id}`).digest('hex').slice(0, 12)
+  }
+
+  /**
+   * 固有槽位上次记下的身份与别名 —— 重建那一格时按这两个值还原。
+   *
+   * 为什么不能靠 tab 持久化拿回来:固有 tab 是 `pinned` 的,而 pinned tab 按设计不进 SavedTab
+   * (`tab.store.ts` 的 `isRestorableComposite` 要求 `!t.pinned`,**那条过滤不许放松**)。所以
+   * 这一格身上的一切都只能从设置里重建。
+   *
+   * `homeInstanceId` 空 = 这份设置写于加这一格之前,退回按 spec id 推导的那个值
+   * (`homeCompositeInstanceId`)—— **只是存量兜底**:推导值保证每次启动稳定(不会每启动一次漏
+   * 一条 Zellij 会话),但它跟设为主页那一刻真正在槽位里的那条会话对不上,那条会话会变成孤儿。
+   * 新写入一律记真实 `instanceId`,见 `setAsHomepage`。
+   */
+  private readHomeCompositeSlot(id: string): { instanceId: string; alias?: string } {
+    const settings = this._state.readMaestroSettings?.()
+    const instanceId = String(settings?.homeInstanceId || '').trim()
+    const alias = String(settings?.homeAlias || '').trim()
+    return {
+      instanceId: instanceId || this.homeCompositeInstanceId(id),
+      ...(alias ? { alias } : {})
+    }
+  }
+
+  /**
+   * 固有槽位那一格 composite tab 的**对象**(还没挂内容 —— 挂载在 `loadPinnedHomeTab()`)。
+   *
+   * 抽出来是因为有两个入口要建出**同一形状**的一格:启动链的 `createPinnedHomeTab()`,和
+   * 「还原默认主页」时把默认 mini app 装回槽位那一步。身份与别名都从设置还原(见
+   * `readHomeCompositeSlot`),两处必须同源,否则还原出来的那一格会拿到一个新铸的身份。
+   */
+  private buildPinnedCompositeTab(compositeId: string): OperationTab {
+    const slot = this.readHomeCompositeSlot(compositeId)
+    return {
+      id: `tab-${++this.tabSeq}`,
+      kind: compositeId as TabKind,
+      instanceId: slot.instanceId,
+      view: null,
+      surface: null,
+      capture: null,
+      replay: null,
+      url: '',
+      title: getMaestroCompositeTab(compositeId)?.title ?? '',
+      // 别名跨重启只能走设置这一条路(见 `readHomeCompositeSlot`)。
+      ...(slot.alias ? { alias: slot.alias } : {}),
+      favicon: getMaestroCompositeTab(compositeId)?.favicon ?? '',
+      debuggerEnabled: false,
+      pinned: true,
+      lastActive: Date.now(),
+      loading: false,
+      loadWatchdog: null
+    }
+  }
+
+  /**
+   * 固有槽位那一格内置本地 Home 的**对象与 view**。
+   *
+   * 同上一条同一个理由:启动链与「还原默认主页」的兜底支都要建它,而它带着一个真的
+   * `WebContentsView`(第一方 preload、导航禁闭都挂在上面)——两处各拼一份迟早只改一处。
+   */
+  private buildPinnedLocalHomeTab(): OperationTab {
     const view = this.buildPinnedHomeView()
     const entry = localHomeEntry()
-    const first: OperationTab = {
+    return {
       id: `tab-${++this.tabSeq}`,
       kind: 'home',
       view,
@@ -264,6 +406,31 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       loading: false,
       loadWatchdog: null
     }
+  }
+
+  /**
+   * 建固有 tab 的**对象与 view 槽位**。真正的导航发生在 `loadPinnedHomeTab()`。
+   *
+   * 两处分离是仓里既有的形状,也是这个功能最典型的「假完成」——只改其中一个,新装的机器看起来
+   * 对,启动后那一格是空的(docs/features/custom-homepage-tab.md #3.1)。
+   *
+   * 固有槽位装 mini app 时返回 `null`:那一格没有 `WebContentsView`。**新装的机器也走这一支**
+   * —— bl 的默认主页就是一个 mini app(docs/features/onlypreview-default-homepage.md)。
+   */
+  createPinnedHomeTab(): WebContentsView | null {
+    // 登出那一发无视自定义主页 —— 拆卸必须落在第一方本地 Home 上。
+    const compositeId = this._state.forcePinnedHomeBoot?.() ? null : this.resolveHomeCompositeId()
+    if (compositeId) {
+      const pinned = this.buildPinnedCompositeTab(compositeId)
+      this.tabs.push(pinned)
+      this.activeTabId = pinned.id
+      this.setOperationView(null)
+      this._state.capture = null
+      this._state.replayEngine = null
+      return null
+    }
+    const first = this.buildPinnedLocalHomeTab()
+    const view = first.view
     this.tabs.push(first)
     this.activeTabId = first.id
     this.setOperationView(view)
@@ -272,16 +439,83 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     return view
   }
 
+  /**
+   * 把固有槽位真正装起来。跟着 `createPinnedHomeTab()` 建出来的那个 tab 的 kind 走,所以两者
+   * 不可能对「今天装谁」有两种看法。
+   *
+   * 自定义主页走 `mountComposite` —— 与 `openCompositeTab` / `setTabKind` **同一条挂载路径**,
+   * 而不是在启动链上多开一个 tab:`restoreTabs` 见到任何非 pinned tab 就整条罢工,启动期多开一个
+   * tab 会把会话恢复永久且静默地关掉(它与 `openStartupTabIfNeeded` 都是一次性的)。
+   */
   async loadPinnedHomeTab(): Promise<void> {
-    const tab = this.tabs.find((item) => item.kind === 'home' && item.pinned)
-    const wc = tab?.view?.webContents
-    if (!tab || !wc || wc.isDestroyed()) throw new Error('Bundled Home view is unavailable.')
+    const tab = this.tabs.find((item) => item.pinned)
+    if (!tab) throw new Error('Bundled Home view is unavailable.')
+    if (tab.kind !== 'home') {
+      try {
+        const spec = getMaestroCompositeTab(tab.kind)
+        if (!spec) throw new Error(`No composite mini app '${tab.kind}' for the pinned slot.`)
+        await this.mountComposite(tab, spec)
+        this.setCompositeActive(tab.id, tab.id === this.activeTabId)
+        this.sendTabNav(tab, true)
+        this.broadcastTabs()
+        return
+      } catch (err) {
+        // mini app **合法地**拒绝开(Zellij 在 Terminal 开关关着时就会拒 —— `restoreTabs` 的注释
+        // 点名了这一条)。抛出去的代价不是「主页没装起来」而已:启动链上 `openStartupTabIfNeeded`
+        // 挂在同一个 promise 的 `.then()` 上,一起被跳过,而条上那唯一的固有 tab 没有任何内容 ——
+        // 用户看到一条空条,没有可回落的 Home(验收 A6:不崩、不空条)。
+        //
+        // 所以**这一发启动**退回内置本地 Home,设置一个字不动:拒绝的原因通常是可恢复的(把
+        // Terminal 开关打开),下次启动照样再试它。trace 里点名是哪个 mini app、为什么拒 ——
+        // 否则「主页怎么变回去了」无从查起。
+        this._state.emitTrace({
+          kind: 'error',
+          msg: `homepage mini app ${tab.kind} refused to open, falling back to the built-in Home for this boot: ` +
+            (err as Error).message,
+          ts: Date.now()
+        })
+        this.demotePinnedTabToLocalHome(tab)
+      }
+    }
+    const wc = tab.view?.webContents
+    if (!wc || wc.isDestroyed()) throw new Error('Bundled Home view is unavailable.')
     const entry = localHomeEntry()
     tab.url = entry.url
+    tab.navigationStarted = true
     if (entry.file) await wc.loadFile(entry.file)
     else await wc.loadURL(entry.url)
     this.sendTabNav(tab, true)
     this.broadcastTabs()
+  }
+
+  /**
+   * 把装不起来的自定义主页**就地**换成内置本地 Home,只影响这一发启动。
+   *
+   * 就地改造而不是「关掉再建一个」:`MenuBar.vue` 在没有任何 tab 报 `pinned` 时会回落到 index 0
+   * (注释写着「不该发生」),所以零 pinned 的中间态一次都不许出现
+   * (custom-homepage-tab.md #3.2)。`pinned` / tab id 都原样留着,换掉的只是内容。
+   *
+   * 可见性要**自己补**:启动链只会把 `createPinnedHomeTab()` 返回的那个 view 显出来,而自定义
+   * 主页那一支返回的是 `null`(composite tab 没有 `WebContentsView`)—— 这里新建的 view 没人管,
+   * 不自己 `setVisible(true)` 就是一块看不见的白板,症状与「空条」难以区分。
+   */
+  private demotePinnedTabToLocalHome(tab: OperationTab): void {
+    tab.kind = 'home'
+    tab.instanceId = undefined
+    tab.compositeDisplayUrl = undefined
+    // 别名跟着自定义主页走:这一格现在装的是内置 Home,而内置 Home 的名字来自 registry
+    // (`isDefaultHomeTab` 据此禁掉 `Alias…`)。设置里那份一个字没动,下次启动照旧还原。
+    tab.alias = undefined
+    tab.favicon = LOCAL_HOME_FAVICON
+    tab.title = LOCAL_HOME_TITLE
+    tab.debuggerEnabled = false
+    tab.view = this.buildPinnedHomeView()
+    this.setOperationView(tab.view)
+    if (this.activeTabId === tab.id) {
+      tab.view.setVisible(true)
+      if (this._state.opBounds) this.applyBounds(tab.view, this._state.opBounds)
+      else this._state.layout()
+    }
   }
 
   async openStartupTabIfNeeded(params?: { skipForThisBoot?: boolean }): Promise<void> {
@@ -298,6 +532,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
   }
 
   async navigate(params: { url: string }): Promise<void> {
+    this._state.dismissBrowserHistory?.();
     if (isWorkbenchInternalUrl(params.url || '')) {
       await this._state.openWorkbenchTab()
       return
@@ -315,14 +550,15 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     const previewOpener = getMaestroPreviewOpener()
     const localTarget = previewOpener?.resolveLocalTarget(raw) ?? null
     if (localTarget?.kind === 'preview') {
-      await previewOpener!.open(localTarget.path)
+      if (!previewOpener?.openInTab) throw new Error('File preview tabs are unavailable.')
+      await previewOpener.openInTab(localTarget.path, { tabId: active.id })
       return
     }
     // 路径那一支**不能**过 `normalizeUrl` —— 它会把 `/Users/…` 补成 `https:///Users/…`,
     // 落地是一张无解的错误页,而不是「这个文件不存在」。
     const target = localTarget ? localTarget.fileUrl : normalizeUrl(params.url)
     if (!target) return
-    await this._state.operationView.webContents.loadURL(target).catch((err) => {
+    await this.startTabNavigation(active, { url: target, explicit: true }).catch((err) => {
       this._state.emitTrace({ kind: 'error', msg: 'navigate: ' + (err as Error).message, ts: Date.now() })
     })
   }
@@ -335,6 +571,13 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       await this.warmAndLoad(active)
       return
     }
+    if (active.kind === 'browser' && (active.navigationPending || active.navigationPreparationFailed || !active.navigationStarted)) {
+      await this.startTabNavigation(active, { url: active.navigationTarget || active.url, explicit: true }).catch((error) => {
+        this._state.emitTrace({ kind: 'error', msg: 'reload: ' + (error as Error).message, ts: Date.now() })
+      })
+      return
+    }
+    active.navigationRequest = (active.navigationRequest ?? 0) + 1
     wc.reload()
   }
 
@@ -343,6 +586,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     if (!active || active.kind !== 'browser') return
     const wc = this._state.operationView?.webContents
     if (!wc || wc.isDestroyed() || !wc.navigationHistory.canGoBack()) return
+    active.navigationRequest = (active.navigationRequest ?? 0) + 1
     wc.navigationHistory.goBack()
   }
 
@@ -351,6 +595,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     if (!active || active.kind !== 'browser') return
     const wc = this._state.operationView?.webContents
     if (!wc || wc.isDestroyed() || !wc.navigationHistory.canGoForward()) return
+    active.navigationRequest = (active.navigationRequest ?? 0) + 1
     wc.navigationHistory.goForward()
   }
 
@@ -360,7 +605,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     if (tab.kind !== 'browser') return await this.getTabs()
     const enabled = Boolean(params.enabled)
     if (tab.debuggerEnabled !== enabled) {
-      if (!enabled && this._state.capturing && this._state.captureTargetTabId === tab.id) {
+      if (!enabled && this._state.capturing && this._state.captureTargetTabId === tab.id && !this._state.isDrillBranchTab?.(tab.id)) {
         await this._state.stopCapture()
       }
       tab.debuggerEnabled = enabled
@@ -433,15 +678,17 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     this.applyBounds(this._state.operationView, rect)
   }
 
-  private addTab(meta: { url?: string; title?: string; favicon?: string }): OperationTab {
+  private addTab(meta: { url?: string; title?: string; favicon?: string; alias?: string }): OperationTab {
     const tab: OperationTab = {
       id: `tab-${++this.tabSeq}`,
       kind: 'browser',
+      navigationStarted: false,
       view: null,
       capture: null,
       replay: null,
       url: meta.url || '',
       title: meta.title || '',
+      ...(meta.alias ? { alias: meta.alias } : {}),
       favicon: meta.favicon || '',
       debuggerEnabled: true,
       pinned: false,
@@ -465,12 +712,85 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
         const owner = this.ownerOf(view)
         if (owner) this._state.onCapturedEvent(event, owner.id)
       },
-      () => this._state.capturing && this.ownerOf(view)?.id === this._state.captureTargetTabId
+      () => { const id = this.ownerOf(view)?.id; return Boolean(id && (this._state.isCaptureTab?.(id) ?? (this._state.capturing && id === this._state.captureTargetTabId))) }
     )
-    void capture.setInterceptionRules(this._state.browserInterceptionRules)
     const replay = new ReplayEngine(view.webContents)
     this.attachViewListeners(view)
-    return { view, capture, replay }
+    return this.initializeViewSlot({ view, capture, replay })
+  }
+
+  private initializeViewSlot(slot: ViewSlot): ViewSlot {
+    const { view, capture } = slot
+    const token = {}
+    this.initializingViews.set(view, token)
+    slot.documentReady = prepareBrowserDocument(view.webContents).finally(() => {
+      if (this.initializingViews.get(view) === token) this.initializingViews.delete(view)
+    })
+    slot.attachReady = slot.documentReady.then(() => capture.attach()).catch((error) => {
+      if (!view.webContents.isDestroyed() && !capture.isSuspended()) {
+        this._state.emitTrace({ kind: 'error', msg: 'browser preparation: ' + (error as Error).message, ts: Date.now() })
+      }
+    })
+    return slot
+  }
+
+  private schedulePrewarmSpare(): void {
+    if (this.spareWarmTask || this.spareSlot) return
+    const epoch = this.lifecycleEpoch
+    this.spareWarmTask = setImmediate(() => {
+      this.spareWarmTask = null
+      if (epoch === this.lifecycleEpoch) void this.prewarmSpare()
+    })
+  }
+
+  private startTabNavigation(tab: OperationTab, options: { url?: string; explicit?: boolean } = {}): Promise<void> {
+    const view = tab.view
+    if (!view || !this.isLiveTabView(tab, view) || tab.closeReady) return Promise.resolve()
+    if (!options.explicit && (tab.externalNavigation || tab.navigationStarted)) return tab.navigationPending ?? Promise.resolve()
+    const target = options.url ?? tab.url
+    if (!target) return Promise.resolve()
+    const request = (tab.navigationRequest ?? 0) + 1
+    const epoch = this.lifecycleEpoch
+    tab.navigationRequest = request
+    tab.navigationStarted = true
+    tab.navigationTarget = target
+    tab.browserError = undefined
+    this.setTabLoading(tab, true)
+    const current = (): boolean => this.isLiveTabView(tab, view, epoch) && !tab.closeReady && tab.navigationRequest === request
+    const pending = (async (): Promise<void> => {
+      try {
+        if (tab.kind === 'browser') {
+          if (tab.navigationPreparationFailed && options.explicit && tab.capture) {
+            tab.capture.detach()
+            view.webContents.stop()
+            const slot = this.initializeViewSlot({ view, capture: tab.capture, replay: tab.replay! })
+            tab.documentReady = slot.documentReady
+            tab.attachReady = slot.attachReady
+          }
+          try {
+            await tab.documentReady
+            if (!current()) return
+            if (tab.debuggerEnabled) await tab.capture?.prepareNavigation()
+          } catch (error) {
+            if (current()) tab.navigationPreparationFailed = true
+            throw error
+          }
+        }
+        if (!current()) return
+        tab.navigationPreparationFailed = false
+        await view.webContents.loadURL(target)
+      } catch (error) {
+        if (!current()) return
+        this.setTabLoading(tab, false)
+        tab.browserError = { status: 'load-failed', error: String(error) }
+        this.broadcastTabs()
+        throw error
+      } finally {
+        if (current()) tab.navigationPending = undefined
+      }
+    })()
+    tab.navigationPending = pending
+    return pending
   }
 
   /**
@@ -520,12 +840,13 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
    * (Ral 2026-09-11). Passing `instanceId` explicitly is the restore path: same id, same session.
    */
   async openCompositeTab(params: {
+    spec?: MaestroCompositeTabSpec
     id: string
     instanceId?: string
     /** Restore opens tabs COLD — the pinned Home tab keeps focus until `restoreLastActive` runs. */
     activate?: boolean
   }): Promise<OperationTab | null> {
-    const spec = getMaestroCompositeTab(params.id)
+    const spec = params.spec ?? getMaestroCompositeTab(params.id)
     if (!spec) return null
     // Reopening a known instance is always a reuse, singleton or not — that is how a restored tab
     // that is asked for twice does not become two tabs sharing one session.
@@ -556,6 +877,38 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       loadWatchdog: null
     }
     this.tabs.push(tab)
+    try {
+      await this.mountComposite(tab, spec)
+    } catch (err) {
+      this._state.emitTrace({ kind: 'error', msg: `composite tab ${spec.id}: ` + (err as Error).message, ts: Date.now() })
+      const index = this.tabs.indexOf(tab)
+      if (index >= 0) this.tabs.splice(index, 1)
+      this.broadcastTabs()
+      throw err
+    }
+    // The mount may finish after Workbench covered the operation area, including cold restores.
+    this.setCompositeActive(tab.id, tab.id === this.activeTabId)
+    if (params.activate === false) {
+      this.broadcastTabs()
+      return tab
+    }
+    await this.activateTab({ id: tab.id })
+    return tab
+  }
+
+  /**
+   * Build a registered composite mini app onto an EXISTING tab.
+   *
+   * Extracted so the two ways a tab can come to hold a mini app — `openCompositeTab` (a brand-new
+   * tab) and `setTabKind` (converting one in place) — mount through ONE code path. The host object
+   * below is the mini app's entire view of Maestro; a second copy of it would drift the first time
+   * a capability is added to one and not the other.
+   *
+   * A failed mount leaves nothing registered. What happens to the tab afterwards is deliberately
+   * the caller's call, because the two callers differ: a brand-new tab is removed, while a tab
+   * being converted has to land back on something.
+   */
+  private async mountComposite(tab: OperationTab, spec: MaestroCompositeTabSpec): Promise<void> {
     this.compositeTabs.set(tab.id, spec)
     // Hoisted into a variable rather than passed inline, because every later lifecycle call
     // (`close` / `setActive` / `refresh`) must name THIS tab's host — see `compositeHosts`.
@@ -592,28 +945,20 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
         if (this.activeTabId === tab.id) this.sendTabNav(tab)
         this.broadcastTabs()
       },
-      isOpen: () => this.tabs.includes(tab)
+      // 「这个 host 还拥有这个 tab 的内容吗」。两个条件缺一不可:tab 还在条上,**而且**这个 tab
+      // 的 host 还是它自己 —— 换页面类型是就地改造,tab 不会离开条,但它的 mini-app 已经被注销了,
+      // 而 `close(host)` 里好几个 mount 是按「宿主没了」来走拆卸的。注销先于 `close` 调用,
+      // 所以拆卸期间这里必然是 false,和关 tab 那条路径看到的一致。
+      isOpen: () => this.compositeHosts.get(tab.id) === host && this.tabs.includes(tab)
     }
     this.compositeHosts.set(tab.id, host)
     try {
       await spec.open(host)
     } catch (err) {
-      this._state.emitTrace({ kind: 'error', msg: `composite tab ${spec.id}: ` + (err as Error).message, ts: Date.now() })
       this.compositeTabs.delete(tab.id)
       this.compositeHosts.delete(tab.id)
-      const index = this.tabs.indexOf(tab)
-      if (index >= 0) this.tabs.splice(index, 1)
-      this.broadcastTabs()
       throw err
     }
-    // The mount may finish after Workbench covered the operation area, including cold restores.
-    this.setCompositeActive(tab.id, tab.id === this.activeTabId)
-    if (params.activate === false) {
-      this.broadcastTabs()
-      return tab
-    }
-    await this.activateTab({ id: tab.id })
-    return tab
   }
 
   /**
@@ -696,6 +1041,25 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     return this.activeTabId ? this.tabs.find((tab) => tab.id === this.activeTabId) : undefined
   }
 
+  /**
+   * 「这是**默认**固有 tab 吗」 —— 也就是「这一格不是用户自己选进来的」。
+   *
+   * 与 `isPinnedHomeTab` **不再同义**:那一个护的是内置 Home 的几条安全不变量(导航禁闭、
+   * 第一方 preload、登出落地),这一个回答的是**产品问题**「这个 tab 能不能改名」。bl 的默认主页
+   * 现在是一个 mini app,所以判据是**设置里写没写过**,不是 `kind === 'home'`
+   * (docs/features/onlypreview-default-homepage.md #2)。
+   *
+   * 内置本地 Home 单独留一条:登出那一发、以及默认 mini app 装不起来的降级,都会在设置里**有值**
+   * 的情况下把它装进槽位 —— 它的名字来自 registry,那两种情况下同样不该能改。
+   *
+   * 为什么这一条必须跟上默认值的改动:`coachSettings.service` 的归一在 `homeCompositeId` 为空时
+   * **会把 `homeAlias` 一起丢掉**。允许默认那一格改名 = 允许一个改完就丢的名字,而且不报错。
+   */
+  private isDefaultHomeTab(tab?: OperationTab): boolean {
+    if (!tab?.pinned) return false
+    return tab.kind === 'home' || !this.homeCompositeSetting()
+  }
+
   private isPinnedHomeTab(tab?: OperationTab): boolean {
     return Boolean(tab?.pinned && tab.kind === 'home')
   }
@@ -738,11 +1102,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     if (this.spareSlot || this.prewarming) return
     this.prewarming = true
     try {
-      const slot = this.buildViewSlot()
-      slot.attachReady = slot.capture.attach().catch((err) => {
-        this._state.emitTrace({ kind: 'error', msg: 'spare view attach: ' + (err as Error).message, ts: Date.now() })
-      })
-      this.spareSlot = slot
+      this.spareSlot = this.buildViewSlot()
     } finally {
       this.prewarming = false
     }
@@ -758,42 +1118,35 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       tab.capture = null
       tab.replay = null
       tab.attachReady = undefined
+      tab.navigationStarted = false
       tab.debuggerEnabled = false
       tab.lastActive = Date.now()
       return
     }
     let slot = this.spareSlot
-    if (slot) {
+    if (slot && !slot.view.webContents.isDestroyed()) {
       this.spareSlot = null
     } else {
+      this.spareSlot = null
       slot = this.buildViewSlot()
-      slot.attachReady = slot.capture.attach().catch((err) => {
-        this._state.emitTrace({ kind: 'error', msg: 'warm view attach: ' + (err as Error).message, ts: Date.now() })
-      })
     }
     tab.view = slot.view
     tab.capture = slot.capture
     tab.replay = slot.replay
     tab.attachReady = slot.attachReady
+    tab.documentReady = slot.documentReady
+    tab.navigationStarted = false
+    tab.navigationPending = undefined
+    tab.navigationPreparationFailed = false
     if (!tab.debuggerEnabled) tab.capture.suspend()
     tab.lastActive = Date.now()
-    void this.prewarmSpare()
+    this.schedulePrewarmSpare()
     await this.enforceWarmCap()
   }
 
   async warmAndLoad(tab: OperationTab): Promise<void> {
-    const wasCold = !tab.view || tab.view.webContents.isDestroyed()
     await this.ensureWarm(tab)
-    const wc = tab.view?.webContents
-    if (!wc || wc.isDestroyed()) return
-    if (wasCold && tab.url && wc.getURL() !== tab.url) {
-      await awaitAttach(tab.attachReady)
-      await wc.loadURL(tab.url).catch((err) => {
-        if (!wc.isDestroyed()) {
-          this._state.emitTrace({ kind: 'error', msg: 'warm load: ' + (err as Error).message, ts: Date.now() })
-        }
-      })
-    }
+    await this.startTabNavigation(tab)
   }
 
   private coolTab(tab: OperationTab): Promise<void> {
@@ -824,6 +1177,10 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     tab.capture = null
     tab.replay = null
     tab.attachReady = undefined
+    tab.documentReady = undefined
+    tab.navigationStarted = false
+    tab.navigationPending = undefined
+    tab.navigationRequest = (tab.navigationRequest ?? 0) + 1
 
     try {
       capture?.detach()
@@ -851,11 +1208,12 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     const protectedIds = new Set<string>([
       ...(this.activeTabId ? [this.activeTabId] : []),
       ...(this._state.captureTargetTabId ? [this._state.captureTargetTabId] : []),
-      ...this._state.tabsOpenedThisTurn.map((tab) => tab.id),
+      ...[...this.newTabsBySession.values()].flatMap((tabs) => tabs.map((tab) => tab.id)),
+      ...(this._state.protectedBrowserTabIds?.() ?? []),
       ...extraProtectedIds
     ])
     const evictable = warm
-      .filter((tab) => !tab.pinned && !protectedIds.has(tab.id))
+      .filter((tab) => !tab.pinned && !tab.controlled && !protectedIds.has(tab.id))
       .sort((a, b) => a.lastActive - b.lastActive)
     let over = warm.length - this.MAX_WARM
     for (const tab of evictable) {
@@ -878,7 +1236,11 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     for (const tab of params.tabs) {
       if (tab.kind && getMaestroCompositeTab(tab.kind)) {
         try {
-          await this.openCompositeTab({ id: tab.kind, instanceId: tab.instanceId, activate: false })
+          const restored = await this.openCompositeTab({ id: tab.kind, instanceId: tab.instanceId, activate: false })
+          // alias 必须在 `openCompositeTab` **之后**补写:那条路径按 spec 盖 `title`/`favicon`,
+          // 存下来的那一行除了 id 之外一个字段都不看。少这一步,composite tab 的别名跨不过重启
+          // ——而三个 Zellij tab 全叫 "Zellij" 正是最需要起名的场景(tab-alias.md PQ-3)。
+          if (restored && tab.alias) restored.alias = tab.alias
         } catch (err) {
           this._state.emitTrace({
             kind: 'error',
@@ -888,13 +1250,20 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
         }
         continue
       }
-      if (tab.url) this.addTab({ url: tab.url, title: tab.title, favicon: tab.favicon })
+      if (tab.url) this.addTab({ url: tab.url, title: tab.title, favicon: tab.favicon, alias: tab.alias })
     }
     this.broadcastTabs()
   }
 
   private attachViewListeners(view: WebContentsView): void {
     const wc = view.webContents
+    const preparing = (): boolean => this.initializingViews.has(view)
+    const blankDocument = (): boolean => preparing() || wc.getURL() === 'about:blank'
+    bindBrowserHistoryRecorder(wc, {
+      history: browserHistory,
+      isBrowser: () => this.ownerOf(view)?.kind === 'browser',
+      dismiss: () => { if (this.ownerOf(view)?.id === this.activeTabId) this._state.dismissBrowserHistory?.(); },
+    });
     wc.on('will-navigate', (event) => {
       if (this.preventPinnedHomeEscape(this.ownerOf(view), event.url)) event.preventDefault()
     })
@@ -911,14 +1280,14 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     })
     wc.on('did-navigate-in-page', (event, url) => {
       const tab = this.ownerOf(view)
-      if (!tab || !event.isMainFrame) return
+      if (!tab || !event.isMainFrame || url === 'about:blank' || preparing()) return
       if (tab.kind !== 'home') tab.url = url
       if (this.activeTabId === tab.id || this._state.captureTargetTabId === tab.id) this.sendTabNav(tab, false)
       this.broadcastTabs()
     })
     wc.on('page-title-updated', (_event, title) => {
       const tab = this.ownerOf(view)
-      if (!tab) return
+      if (!tab || blankDocument()) return
       if (tab.kind === 'browser') {
         tab.title = title
         if (this.activeTabId === tab.id) this.sendTitle(title)
@@ -927,30 +1296,49 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     })
     wc.on('page-favicon-updated', (_event, favicons) => {
       const tab = this.ownerOf(view)
-      if (!tab || tab.kind !== 'browser') return
+      if (!tab || tab.kind !== 'browser' || blankDocument()) return
       if (Array.isArray(favicons) && favicons[0]) {
         tab.favicon = favicons[0]
         this.broadcastTabs()
       }
     })
     wc.on('did-start-loading', () => {
+      if (blankDocument()) return
       const tab = this.ownerOf(view)
       if (tab) this.setTabLoading(tab, true)
     })
     wc.on('did-stop-loading', () => {
+      if (blankDocument()) return
       const tab = this.ownerOf(view)
       if (tab) this.setTabLoading(tab, false)
     })
-    wc.on('did-fail-load', (_event, _errorCode, _errorDescription, _validatedUrl, isMainFrame) => {
-      if (!isMainFrame) return
+    wc.on('did-start-navigation', (event) => {
+      if (!event.isMainFrame || event.isSameDocument || event.url === 'about:blank' || preparing()) return
       const tab = this.ownerOf(view)
-      if (tab) this.setTabLoading(tab, false)
+      if (tab) { tab.navigationStarted = true; tab.browserError = undefined; this.broadcastTabs() }
     })
-    wc.on('render-process-gone', () => {
+    wc.on('did-fail-load', (_event, errorCode, errorDescription, _validatedUrl, isMainFrame) => {
+      if (!isMainFrame || _validatedUrl === 'about:blank' || preparing()) return
       const tab = this.ownerOf(view)
+      if (tab && errorCode !== -3) tab.browserError = { status: 'load-failed', error: `${errorDescription} (${errorCode})` }
       if (tab) this.setTabLoading(tab, false)
+      this.broadcastTabs()
+    })
+    wc.on('render-process-gone', (_event, details) => {
+      const tab = this.ownerOf(view)
+      if (tab) this.clearTabControl(tab)
+      if (tab) tab.browserError = { status: 'crashed', error: `Renderer ${details.reason} (exit ${details.exitCode}).` }
+      if (tab) this.setTabLoading(tab, false)
+      this.broadcastTabs()
+    })
+    wc.once('destroyed', () => {
+      const tab = this.ownerOf(view)
+      if (tab) this.clearTabControl(tab)
+      if (tab) tab.browserError = { status: 'destroyed', error: 'The tab WebContents was destroyed.' }
+      this.broadcastTabs()
     })
     wc.on('did-finish-load', () => {
+      if (blankDocument()) return
       const tab = this.ownerOf(view)
       if (this.isPinnedHomeTab(tab)) this.openPinnedHomeDevTools(tab, view)
       if (tab?.kind === 'browser') void this.injectStoredButtonForTab(tab)
@@ -959,7 +1347,11 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       if (this.handleInjectedButtonOpen(details.url)) return { action: 'deny' }
       if (/^https?:\/\//i.test(details.url)) {
         const url = details.url
-        queueMicrotask(() => void this.openTabWithUrl(url))
+        const source = this.ownerOf(view)
+        const owner = source && this._state.browserPopupOwner?.(source.id)
+        queueMicrotask(() => void this.openTabWithUrl(url, owner, source?.id).catch((error) => {
+          this._state.emitTrace({ kind: 'error', msg: `popup: ${String(error)}`, ts: Date.now() })
+        }))
       }
       return { action: 'deny' }
     })
@@ -1092,6 +1484,145 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     }
   }
 
+  /**
+   * 地址栏左侧 `menubar__pagetype__button` 的原生菜单:把**当前这个 tab** 换成另一种内容。
+   *
+   * 和它旁边的 `+` hover 菜单、tab 右键菜单同一个理由弹在 main 里:操作区是一个原生 view,绘制在
+   * Home 渲染进程的 DOM **之上**,超过一行的下拉必被它盖住。坐标(DIP)由 renderer 测按钮 rect
+   * 传进来 —— 只有 renderer 知道那个 rect。
+   *
+   * mini-app 行来自 registry 而不是一张写死的表:「一个 tab 能装哪些 mini-app」是一条事实,
+   * 抄第二份就会过期。见 docs/features/maestro-page-type-switcher.md。
+   */
+  async showPageTypeMenu(params: { tabId: string; x: number; y: number }): Promise<void> {
+    const win = this._state.browserWindow
+    if (!win) return
+    const tab = this.tabs.find((item) => item.id === params.tabId)
+    if (!tab) return
+    // 固定 Home tab 不可切 —— 整个菜单置灰而不是隐藏,这样「为什么不能点」是看得见的。
+    const enabled = !tab.pinned
+    const menu = Menu.buildFromTemplate([
+      {
+        label: 'Website',
+        type: 'radio',
+        checked: tab.kind === 'browser',
+        enabled,
+        // click 不回调 renderer:改完 main 侧状态后 `broadcastTabs()` 让每个渲染进程从快照重渲染。
+        // 这是仓内既有约定(`showTabMenu` 同形)。
+        click: () => void this.setTabKind({ id: tab.id, kind: 'browser' })
+      },
+      ...listMaestroCompositeTabs().map((spec) => ({
+        label: spec.title,
+        type: 'radio' as const,
+        checked: tab.kind === spec.id,
+        enabled,
+        click: () => void this.setTabKind({ id: tab.id, kind: spec.id as TabKind })
+      }))
+    ])
+    menu.popup({ window: win, x: Math.round(params.x), y: Math.round(params.y) })
+  }
+
+  /**
+   * 就地把一个 tab 换成另一种内容。**同一个 tab**:不新开、不关旧的,tab 条长度不变。
+   *
+   * 四道前置拒绝:tab 不存在(菜单是异步弹的,快照可能已过期)、`pinned`、未注册的 composite id
+   * (fail-closed,不静默回落)、类型没变(否则重复点同一项会白拆一次内容)。
+   *
+   * **从 composite 切走必须走它自己的 `close(host)`**,而不是只 detach 容器:那个回调才是 mini app
+   * 的拆卸入口,Zellij 的会话关闭就挂在上面(`zellijWindow.service.ts` → `closeZellijTerminal`,
+   * 无条件强关,pane 里有进程在跑也照关)。只 detach 会留下一条没有任何 tab 连着的孤儿会话。
+   *
+   * 反过来,**通用拆卸不许挂关闭意图**:退出 app / 窗口重置那条路径不走 `close(host)`,`restorable`
+   * 的会话要留到下次启动恢复。所以关闭只写在这条显式切换上。
+   *
+   * 换到 composite 时 `instanceId` **重铸**:它是「这条会话是谁的」的键,切走已经把会话关了,沿用
+   * 旧 id 等于让新内容去认领一条刚被杀掉的会话(zellij-multi-tab.md 的「新开即新会话」)。
+   */
+  async setTabKind(params: { id: string; kind: TabKind; spec?: MaestroCompositeTabSpec }): Promise<void> {
+    const tab = this.tabs.find((item) => item.id === params.id)
+    if (!tab) return
+    if (tab.pinned) {
+      this._state.emitTrace({ kind: 'info', msg: 'setTabKind refused: the pinned tab is fixed', ts: Date.now() })
+      return
+    }
+    const nextKind = params.kind
+    const spec = nextKind === 'browser' ? null : params.spec ?? getMaestroCompositeTab(nextKind)
+    if (nextKind !== 'browser' && !spec) {
+      this._state.emitTrace({ kind: 'error', msg: `setTabKind refused: no composite mini app '${nextKind}'`, ts: Date.now() })
+      return
+    }
+    if (tab.kind === nextKind) return
+    // 单例 mini-app:已经有一个了就聚焦它,不把第二个 tab 也切过去。
+    if (spec?.singleton) {
+      const existing = this.tabs.find((item) => item.id !== tab.id && item.kind === spec.id)
+      if (existing) {
+        this._state.emitTrace({ kind: 'info', msg: `setTabKind: ${spec.id} 是单例,聚焦已有的那个`, ts: Date.now() })
+        await this.activateTab({ id: existing.id })
+        return
+      }
+    }
+
+    const wasActive = this.activeTabId === tab.id
+    this.clearTabControl(tab)
+    const composite = this.compositeTabs.get(tab.id)
+    if (composite) {
+      this.compositeTabs.delete(tab.id)
+      const host = this.compositeHosts.get(tab.id)
+      this.compositeHosts.delete(tab.id)
+      if (host) composite.close(host)
+      tab.instanceId = undefined
+      tab.compositeDisplayUrl = undefined
+    } else {
+      this.setTabLoading(tab, false)
+      // 录制目标跟着这个 tab 的 view 走,view 马上要没了 —— 和 `performCloseTab` 同一条理由。
+      if (this._state.capturing && this._state.captureTargetTabId === tab.id && !this._state.isDrillBranchTab?.(tab.id)) {
+        await this._state.stopCapture()
+      }
+      // 切回 Website 时要回到这个网页,所以在覆盖 `tab.url` 之前把它收好。
+      tab.websiteUrl = tab.url
+      await this.coolTab(tab)
+    }
+    if (wasActive) {
+      // 内容已经拆掉了,`activateTab` 要走完整的切换路径(它按 `activeTabId` 找「上一个」)。
+      this.activeTabId = null
+      this.setOperationView(null)
+      this._state.capture = null
+      this._state.replayEngine = null
+    }
+
+    // 落回网页 tab —— 既是「切到 Website」这一支,也是 mount 失败时的兜底:内容已经拆了,
+    // 这个 tab 必须落在某种东西上。
+    // **`tab.alias` 在这里一动不动。** 名字是**这个 tab 的**,不是它当前内容的,所以换页面类型
+    // 要保留(tab-alias.md PQ-4)。这一支把 `title` 清空,alias 若寄生在 `title` 上就会跟着没。
+    const becomeWebTab = (): void => {
+      tab.kind = 'browser'
+      tab.url = tab.websiteUrl || ''
+      tab.title = ''
+      tab.favicon = ''
+      tab.debuggerEnabled = true
+    }
+    if (spec) {
+      tab.kind = spec.id as TabKind
+      tab.instanceId = mintTabInstanceId()
+      tab.url = ''
+      tab.title = spec.title
+      tab.favicon = spec.favicon
+      tab.debuggerEnabled = false
+      try {
+        await this.mountComposite(tab, spec)
+        this.setCompositeActive(tab.id, tab.id === this.activeTabId)
+      } catch (err) {
+        this._state.emitTrace({ kind: 'error', msg: `setTabKind ${spec.id}: ` + (err as Error).message, ts: Date.now() })
+        becomeWebTab()
+      }
+    } else {
+      becomeWebTab()
+    }
+
+    if (wasActive) await this.activateTab({ id: tab.id })
+    else this.broadcastTabs()
+  }
+
   async showTabMenu(params: { id: string }): Promise<void> {
     const win = this._state.browserWindow
     if (!win) return
@@ -1102,6 +1633,18 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     const canDuplicate = tab.kind === 'browser' && !tab.pinned && Boolean(tab.url)
     const otherClosable = this.tabs.some((item) => item.id !== tab.id && !item.pinned)
     const rightClosable = this.tabs.slice(index + 1).some((item) => !item.pinned)
+    // 判据是「不是**默认**固有 tab」,不是 `!tab.pinned` —— 自定义主页是用户自己选进来的,
+    // 理应能起名(Ral 2026-09-14)。默认固有 tab 的名字来自 registry,页面从来没给过它标题,
+    // 所以「改页面的名字」在它身上没有意义 ⇒ **置灰而不是隐藏**,「为什么不能点」要看得见。
+    const canAlias = !this.isDefaultHomeTab(tab)
+    // 只有 mini-app 能当主页:每一条按 `kind` 写的保护(地址栏锁死、不当录制继承者、第一方
+    // preload、登出落地)在一个远端网页上都会变成 bug,其中两条是安全级的
+    // (docs/features/custom-homepage-tab.md #1)。
+    const canSetHome = !tab.pinned && Boolean(getMaestroCompositeTab(tab.kind))
+    // 判据是「设置里确实写着一个自定义值」,**不是** `resolveHomeCompositeId()` 非空 —— 后者现在
+    // 会替没设过的机器答出 registry 的默认值,于是这一项永远亮着,点下去什么都不变
+    // (docs/features/onlypreview-default-homepage.md #2)。
+    const canRestoreHome = tab.pinned && Boolean(this.homeCompositeSetting())
     const menu = Menu.buildFromTemplate([
       { label: 'New tab', click: () => void this._state.newTab() },
       { type: 'separator' },
@@ -1117,11 +1660,148 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       },
       { label: 'Duplicate', enabled: canDuplicate, click: () => void this.openTabWithUrl(tab.url) },
       { type: 'separator' },
+      { label: 'Alias…', enabled: canAlias, click: () => void this.promptTabAlias(tab.id) },
+      { label: 'Set as homepage', enabled: canSetHome, click: () => void this.setAsHomepage(tab.id) },
+      {
+        label: 'Restore default homepage',
+        enabled: canRestoreHome,
+        click: () => void this.restoreDefaultHomepage()
+      },
+      { type: 'separator' },
       { label: 'Close', enabled: canClose, click: () => void this.closeTab({ id: tab.id }) },
       { label: 'Close other tabs', enabled: otherClosable, click: () => void this.closeTabsExcept(tab.id) },
       { label: 'Close tabs to the right', enabled: rightClosable, click: () => void this.closeTabsToRight(tab.id) }
     ])
     menu.popup({ window: win })
+  }
+
+  /**
+   * 弹别名表单,把结果写回 tab。
+   *
+   * 表单是异步的,回来时这个 tab 可能已经被关掉 / 被换了类型 —— 所以按 id **重新找一次**,
+   * 而不是闭包捕获那个对象。
+   *
+   * `null` = 取消,一个字都不改;空串 = **删除**别名,回到页面标题(G4)。
+   */
+  private async promptTabAlias(tabId: string): Promise<void> {
+    const tab = this.tabs.find((item) => item.id === tabId)
+    if (!tab || this.isDefaultHomeTab(tab)) return
+    const request = this._state.requestTabAlias
+    if (!request) return
+    const answer = await request({ tabLabel: tab.alias || tab.title || this.displayUrl(tab), alias: tab.alias || '' }).catch(
+      (err) => {
+        this._state.emitTrace({ kind: 'error', msg: 'tab alias: ' + (err as Error).message, ts: Date.now() })
+        return null
+      }
+    )
+    if (answer === null) return
+    const current = this.tabs.find((item) => item.id === tabId)
+    if (!current) return
+    const next = answer.trim()
+    // 全空白与空串同义:「清空并保存」是删除,不是「别名是几个空格」。
+    current.alias = next || undefined
+    // 固有槽位那个 tab 是 pinned 的,不进 SavedTab —— 它的名字只有设置这一个落脚点。晋升那一刻
+    // 落过一次还不够:设为主页**之后**再改名走的是这里,不补写就重启即失(tab-alias.md G5)。
+    // 默认固有 Home 走不到这儿(`isDefaultHomeTab` 已经在方法开头挡掉了)。
+    if (current.pinned) this._state.saveMaestroSettings?.({ homeAlias: current.alias || '' })
+    this.broadcastTabs()
+  }
+
+  /**
+   * 把一个 composite mini-app tab 就地换进固有槽位。
+   *
+   * 换槽位这一段是**一个同步块**:`MenuBar.vue` 在没有任何 tab 报 `pinned` 时回落到 index 0,
+   * 注释写着「不该发生」—— 所以中间态一次都不许被广播出去(custom-homepage-tab.md #3.2)。
+   * 先给新的置 `pinned`,再摘旧的,最后才 `broadcastTabs()`。
+   *
+   * 旧的默认 Home tab 直接**关掉**:它是内置的、无状态的、随时能重建的本地页;而反向操作
+   * (`restoreDefaultHomepage`)不关那个 mini-app —— 它身上有用户的状态(一条 Zellij 会话),
+   * 不该因为换主页被杀。带状态的留着,不带状态的回收。
+   */
+  private async setAsHomepage(tabId: string): Promise<void> {
+    const tab = this.tabs.find((item) => item.id === tabId)
+    if (!tab || tab.pinned) return
+    const spec = getMaestroCompositeTab(tab.kind)
+    if (!spec) {
+      this._state.emitTrace({ kind: 'info', msg: 'set as homepage refused: only a mini app can be the homepage', ts: Date.now() })
+      return
+    }
+    const previous = this.tabs.find((item) => item.pinned)
+    tab.pinned = true
+    const index = this.tabs.indexOf(tab)
+    if (index > 0) {
+      this.tabs.splice(index, 1)
+      this.tabs.unshift(tab)
+    }
+    if (previous && previous !== tab) previous.pinned = false
+    // 三格一起落。`homeInstanceId` 记的是**这个 tab 此刻真实的** `instanceId`,不是按 spec id
+    // 推导的那个:下次启动固有槽位要接回的正是现在装在里面的那条会话 —— 换成推导值,这条会话
+    // 既不会被接管也不会被关掉,一次晋升留一条孤儿。`homeAlias` 同理:tab 一旦 pinned 就不再进
+    // SavedTab,设置是它的名字唯一的落脚点(tab-alias.md G5)。
+    this._state.saveMaestroSettings?.({
+      homeCompositeId: spec.id,
+      homeInstanceId: tab.instanceId || '',
+      homeAlias: tab.alias || ''
+    })
+    await this.activateTab({ id: tab.id })
+    if (previous && previous !== tab && previous.kind === 'home') await this.closeTab({ id: previous.id })
+    else this.broadcastTabs()
+  }
+
+  /**
+   * 固有槽位换回**默认主页** —— bl 是 registry 里声明 `defaultHome` 的那个 mini app(OnlyPreview),
+   * 没有任何 spec 声明时才是内置本地 Home。
+   *
+   * 「还原」不能写死成内置 Home:默认值换掉之后那等于「这一发回 Home、下次启动又变回 OnlyPreview」
+   * ——同一个动作两种说法(docs/features/onlypreview-default-homepage.md #3)。
+   *
+   * 每一支都先建/先置 `pinned`、再摘旧的:`MenuBar.vue` 在没有任何 tab 报 `pinned` 时会回落到
+   * index 0(注释写着「不该发生」),零 pinned 的中间态一次都不许被广播出去。
+   */
+  private async restoreDefaultHomepage(): Promise<void> {
+    const custom = this.tabs.find((item) => item.pinned)
+    if (!custom) return
+    // 三格一起清:留着 `homeInstanceId` / `homeAlias`,下一次设主页会捡到上一任的会话和名字。
+    // 清在最前面,后面那句 `resolveHomeCompositeId()` 才答得出「默认是谁」而不是刚被还原掉的那个。
+    this._state.saveMaestroSettings?.({ homeCompositeId: '', homeInstanceId: '', homeAlias: '' })
+    const defaultId = this.resolveHomeCompositeId()
+    // 槽位已经是内置 Home 而设置还留着自定义值 —— 登出那一发就是这个状态(它无视设置装回 Home)。
+    // 这时「还原」要清掉设置,否则这一项亮着却什么都不做,而下次启动又变回自定义主页。这一发留在
+    // Home,下次启动装默认值。
+    if (custom.kind === 'home' || custom.kind === defaultId) {
+      this.broadcastTabs()
+      return
+    }
+    if (defaultId) {
+      // 默认那个 mini app 已经作为普通 tab 开着 —— **晋升它**,不再开第二个。OnlyPreview 是
+      // `singleton`,第二份拿不到内容(mini app 那一侧只认一个活着的承载),条上会多一格空白。
+      const existing = this.tabs.find((item) => item.id !== custom.id && item.kind === defaultId)
+      if (existing) {
+        existing.pinned = true
+        const index = this.tabs.indexOf(existing)
+        if (index > 0) {
+          this.tabs.splice(index, 1)
+          this.tabs.unshift(existing)
+        }
+        custom.pinned = false
+        await this.activateTab({ id: existing.id })
+        return
+      }
+      const restored = this.buildPinnedCompositeTab(defaultId)
+      this.tabs.unshift(restored)
+      custom.pinned = false
+      // 复用启动那条路:它按固有 tab 的 kind 分流,装不起来还会就地降级成内置本地 Home。
+      await this.loadPinnedHomeTab()
+      await this.activateTab({ id: restored.id })
+      return
+    }
+    // registry 没有声明默认 mini app(cowork 那一份、或者降级/改名)—— 落回内置本地 Home。
+    const home = this.buildPinnedLocalHomeTab()
+    this.tabs.unshift(home)
+    custom.pinned = false
+    // 复用启动那条路:它按固有 tab 的 kind 分流,这里已经是内置 Home 了。
+    await this.loadPinnedHomeTab()
+    await this.activateTab({ id: home.id })
   }
 
   private async closeTabsExcept(keepId: string): Promise<void> {
@@ -1188,14 +1868,11 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     Menu.buildFromTemplate(template).popup({ window: win })
   }
 
-  private async claimSpareTab(meta: { url?: string; title?: string; favicon?: string }): Promise<OperationTab> {
+  private async claimSpareTab(meta: { url?: string; title?: string; favicon?: string; externalNavigation?: boolean }): Promise<OperationTab> {
     let slot = this.spareSlot
     this.spareSlot = null
     if (!slot || slot.view.webContents.isDestroyed()) {
       slot = this.buildViewSlot()
-      slot.attachReady = slot.capture.attach().catch((err) => {
-        this._state.emitTrace({ kind: 'error', msg: 'tab attach: ' + (err as Error).message, ts: Date.now() })
-      })
     }
     const tab: OperationTab = {
       id: `tab-${++this.tabSeq}`,
@@ -1204,6 +1881,9 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       capture: slot.capture,
       replay: slot.replay,
       attachReady: slot.attachReady,
+      documentReady: slot.documentReady,
+      navigationStarted: false,
+      externalNavigation: meta.externalNavigation,
       url: meta.url || '',
       title: meta.title || '',
       favicon: meta.favicon || '',
@@ -1214,14 +1894,19 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       loadWatchdog: null
     }
     this.tabs.push(tab)
-    void this.prewarmSpare()
+    this.schedulePrewarmSpare()
     await this.enforceWarmCap([tab.id])
     return tab
   }
 
-  private async openTabWithUrl(url: string): Promise<OperationTab> {
+  private readonly newTabsBySession = new Map<string, TabInfo[]>()
+
+  private async openTabWithUrl(url: string, agentSessionId?: string, sourceTabId?: string): Promise<OperationTab> {
+    const generation = agentSessionId ? this._state.browserUseGeneration?.(agentSessionId) : undefined
     const tab = await this.claimSpareTab({ url })
-    this._state.tabsOpenedThisTurn.push({
+    const owner = agentSessionId && (this._state.browserPopupStillOwned?.(agentSessionId, sourceTabId, generation) ?? true) ? agentSessionId : undefined
+    if (owner && !this.newTabsBySession.has(owner)) this.newTabsBySession.set(owner, [])
+    if (owner) this.newTabsBySession.get(owner)!.push({
       id: tab.id,
       kind: tab.kind,
       url,
@@ -1234,16 +1919,23 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       controlled: Boolean(tab.controlled),
       loading: tab.loading
     })
-    this._state.broadcastActivity('tab', `opened tab · ${hostnameOf(url) || url}`)
-    await this.activateTab({ id: tab.id })
-    const wc = tab.view?.webContents
-    if (wc && !wc.isDestroyed()) {
-      await awaitAttach(tab.attachReady)
-      await wc.loadURL(url).catch((err) => {
-        if (!wc.isDestroyed()) {
-          this._state.emitTrace({ kind: 'error', msg: 'tab load: ' + (err as Error).message, ts: Date.now() })
-        }
-      })
+    if (owner) this._state.browserPopupActivity?.(owner, tab.id, true, generation)
+    try {
+      if (owner) await this._state.browserPopupOpened?.(owner, tab.id, sourceTabId)
+      this._state.broadcastActivity('tab', `opened tab · ${hostnameOf(url) || url}`)
+      if (agentSessionId) {
+        if (tab.view) this.applyBounds(tab.view, this._state.opBounds || { x: 0, y: 0, width: 1280, height: 800 })
+      } else await this.activateTab({ id: tab.id, deferNavigation: true })
+      const wc = tab.view?.webContents
+      if (wc && !wc.isDestroyed()) {
+        await this.startTabNavigation(tab, { url }).catch((err) => {
+          if (!wc.isDestroyed()) {
+            this._state.emitTrace({ kind: 'error', msg: 'tab load: ' + (err as Error).message, ts: Date.now() })
+          }
+        })
+      }
+    } finally {
+      if (owner) this._state.browserPopupActivity?.(owner, tab.id, false)
     }
     return tab
   }
@@ -1256,7 +1948,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       await this.activateTab({ id: tab.id })
       // 必须排在 activateTab 之后:抢焦点的不是某个 view 主动 focus,而是 activateTab 里
       // `previous.view.setVisible(false)` 把焦点丢掉 —— 先聚焦就会被那一行抹掉。空白 tab 的
-      // `needsLoad` 恒为 false,所以 activateTab 返回之后不再有导航把焦点带走(契约 #3.3)。
+      // 没有目标 URL,所以 activateTab 返回之后不再有导航把焦点带走(契约 #3.3)。
       focusAddressBarForBlankTab(this._state.browserWindow)
     } catch (err) {
       this._state.emitTrace({ kind: 'error', msg: 'new tab: ' + (err as Error).message, ts: Date.now() })
@@ -1267,6 +1959,23 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
 
   async closeActiveTab(): Promise<void> {
     if (this.activeTabId) await this.closeTab({ id: this.activeTabId })
+  }
+
+  async openFilePreviewTab(params: { path: string; tabId?: string }): Promise<void> {
+    const opener = getMaestroPreviewOpener()
+    if (!opener?.createFileTabSpec) throw new Error('File preview tabs are unavailable.')
+    await this._state.backgroundWorkbenchTab()
+    const spec = opener.createFileTabSpec(params.path)
+    if (params.tabId) {
+      const tab = this.tabs.find((candidate) => candidate.id === params.tabId)
+      if (!tab || tab.pinned || tab.kind !== 'browser') {
+        throw new Error('The initiating browser tab is no longer available.')
+      }
+      await this.setTabKind({ id: tab.id, kind: spec.id as TabKind, spec })
+      if (this.compositeTabs.get(tab.id) !== spec) throw new Error('The file preview could not open.')
+      return
+    }
+    await this.openCompositeTab({ id: spec.id, spec })
   }
 
   async openTab(params: { url: string }): Promise<void> {
@@ -1280,10 +1989,10 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       return
     }
     const tab = await this.claimSpareTab({ url })
-    await this.activateTab({ id: tab.id })
+    await this.activateTab({ id: tab.id, deferNavigation: true })
     const wc = tab.view?.webContents
     if (wc && !wc.isDestroyed()) {
-      await wc.loadURL(url).catch((err) => {
+      await this.startTabNavigation(tab, { url }).catch((err) => {
         if (!wc.isDestroyed()) {
           this._state.emitTrace({ kind: 'error', msg: 'open tab: ' + (err as Error).message, ts: Date.now() })
         }
@@ -1291,9 +2000,10 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     }
   }
 
-  drainNewTabsNote(): string {
-    if (this._state.tabsOpenedThisTurn.length === 0) return ''
-    const opened = this._state.tabsOpenedThisTurn.splice(0)
+  drainNewTabsNote(sessionId?: string): string {
+    if (!sessionId) return ''
+    const opened = this.newTabsBySession.get(sessionId)?.splice(0) ?? []
+    if (!opened.length) return ''
     const lines = opened.map((tab) => `  - tab_id=${tab.id} url=${tab.url}`)
     return (
       `\n\nNOTE: ${opened.length} new browser tab(s) opened during this action — likely a ` +
@@ -1302,6 +2012,8 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       `or activate_tab to switch to it.`
     )
   }
+
+  clearNewTabsNote(sessionId: string): void { this.newTabsBySession.delete(sessionId) }
 
   /**
    * 标记 / 取消标记「agent 正在驱动这个 tab」。
@@ -1318,7 +2030,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     const next = Math.max(0, (this.controlDepth.get(id) ?? 0) + (on ? 1 : -1))
     if (next === 0) this.controlDepth.delete(id)
     else this.controlDepth.set(id, next)
-    const controlled = next > 0
+    const controlled = next > 0 || this.activeBrowserUseTabs.has(id)
     if (Boolean(tab.controlled) === controlled) return
     tab.controlled = controlled
     this.broadcastTabs()
@@ -1326,6 +2038,23 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
 
   /** 每个 tab 上还有几件事在驱动它。见 setTabControlled 的计数说明。 */
   private readonly controlDepth = new Map<string, number>()
+  private activeBrowserUseTabs = new Set<string>()
+
+  setActiveBrowserUseTabs(ids: string[]): void {
+    this.activeBrowserUseTabs = new Set(ids)
+    let changed = false
+    for (const tab of this.tabs) {
+      const controlled = this.activeBrowserUseTabs.has(tab.id) || (this.controlDepth.get(tab.id) ?? 0) > 0
+      if (Boolean(tab.controlled) !== controlled) { tab.controlled = controlled; changed = true }
+    }
+    if (changed) this.broadcastTabs()
+  }
+
+  private clearTabControl(tab: OperationTab): void {
+    this.controlDepth.delete(tab.id)
+    this.activeBrowserUseTabs.delete(tab.id)
+    tab.controlled = false
+  }
 
   /**
    * `deep_fetch` 的载体:开一个**空白**受控 tab,把它的 webContents 交出去。
@@ -1339,14 +2068,21 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
    *
    * `done()` 可能被调用两次(正常收尾一次、超时那条路再一次),所以它是幂等的。
    */
-  async openControlledBlankTab(url: string): Promise<{ wc: WebContents; done: () => Promise<void> }> {
-    // `url` 只是给 chip 一个占位 —— `claimSpareTab` 交回来的 spare 是活的 view,而
-    // `activateTab` 的 needsLoad 只在**冷** tab 分支里赋值,所以这里不会有任何导航发生。
-    // 导航仍然只由 deep_fetch 在装完三道闸之后自己发。
-    const tab = await this.claimSpareTab({ url })
+  async openControlledBlankTab(url: string): Promise<{ tabId: string; wc: WebContents; done: () => Promise<void> }> {
+    // The visible URL is only a label. This caller installs guards before navigating itself.
+    const tab = await this.claimSpareTab({ url, externalNavigation: true })
+    this.setTabControlled(tab.id, true)
     const wc = tab.view?.webContents
     if (!wc || wc.isDestroyed()) throw new Error('could not open a browser tab to render the page')
-    await awaitAttach(tab.attachReady)
+    try {
+      await tab.documentReady
+      await tab.capture?.prepareNavigation()
+      if (!tab.view || !this.isLiveTabView(tab, tab.view) || tab.closeReady) throw new Error('The controlled browser tab was closed.')
+    } catch (error) {
+      this.setTabControlled(tab.id, false)
+      await this.closeTab({ id: tab.id }).catch(() => {})
+      throw error
+    }
     /**
      * **不 activate**。它在 tab 条上看得见(chip 带受控动画),但不抢走当前 tab:
      * 一次取页几秒钟,把人从正在看的页面上拽走再拽回来比看不见更糟,而受控动画存在的意义
@@ -1356,7 +2092,6 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
      * 响应式页面按 0×0 布局(列表干脆不渲染)。摆位不等于显示。
      */
     if (tab.view) this.applyBounds(tab.view, this._state.opBounds || { x: 0, y: 0, width: 1280, height: 800 })
-    this.setTabControlled(tab.id, true)
 
     let settled = false
     const done = async (): Promise<void> => {
@@ -1366,10 +2101,12 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       // 取完页就关掉:一次取页不该在 tab 条上留下一个用户没开过的页面。
       await this.closeTab({ id: tab.id }).catch(() => undefined)
     }
-    return { wc, done }
+    return { tabId: tab.id, wc, done }
   }
 
-  async activateTab(params: { id: string }): Promise<void> {
+  async activateTab(params: { id: string; deferNavigation?: boolean }): Promise<void> {
+    const activation = ++this.activationGeneration
+    this._state.dismissBrowserHistory?.();
     const tab = this.tabs.find((item) => item.id === params.id)
     if (!tab) return
     // A composite mini-app tab has no web view to warm, load, capture or replay. Hiding the outgoing
@@ -1398,10 +2135,12 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     if (this.activeTabId === tab.id && tab.view && !tab.view.webContents.isDestroyed()) {
       if (this.isPinnedHomeTab(tab)) this.openPinnedHomeDevTools(tab, tab.view)
       tab.lastActive = Date.now()
+      if (!params.deferNavigation) void this.startTabNavigation(tab).catch((error) => {
+        this._state.emitTrace({ kind: 'error', msg: 'tab load: ' + (error as Error).message, ts: Date.now() })
+      })
       this.broadcastTabs()
       return
     }
-    let needsLoad = false
     if (!tab.view || tab.view.webContents.isDestroyed()) {
       try {
         await this.ensureWarm(tab)
@@ -1412,8 +2151,8 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
         this.broadcastTabs()
         return
       }
-      needsLoad = Boolean(tab.url) && tab.view.webContents.getURL() !== tab.url
     }
+    if (activation !== this.activationGeneration || !this.tabs.includes(tab) || tab.closeReady) return
     const previous = this.tabs.find((item) => item.id === this.activeTabId)
     if (previous && previous.id !== tab.id && previous.view && !previous.view.webContents.isDestroyed()) {
       previous.view.setVisible(false)
@@ -1421,7 +2160,6 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     this.activeTabId = tab.id
     tab.lastActive = Date.now()
     this.setOperationView(tab.view)
-    await this._state.switchCaptureTarget(tab)
     this._state.capture = tab.kind === 'browser' ? tab.capture : null
     this._state.replayEngine = tab.kind === 'browser' ? tab.replay : null
     this._state.currentUrl = this.displayUrl(tab) || this._state.currentUrl
@@ -1430,17 +2168,13 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       if (this.isPinnedHomeTab(tab)) this.openPinnedHomeDevTools(tab, tab.view)
       if (this._state.opBounds) this.applyBounds(tab.view, this._state.opBounds)
       else this._state.layout()
-      if (needsLoad) {
-        const wc = tab.view.webContents
-        void awaitAttach(tab.attachReady)
-          .then(() => (wc.isDestroyed() ? undefined : wc.loadURL(tab.url)))
-          .catch((err) => {
-            if (!wc.isDestroyed()) {
-              this._state.emitTrace({ kind: 'error', msg: 'tab load: ' + (err as Error).message, ts: Date.now() })
-            }
-          })
-      }
+      if (!params.deferNavigation) void this.startTabNavigation(tab).catch((error) => {
+        this._state.emitTrace({ kind: 'error', msg: 'tab load: ' + (error as Error).message, ts: Date.now() })
+      })
     }
+    void this._state.switchCaptureTarget(tab).catch((error) => {
+      if (this.activeTabId === tab.id) this._state.emitTrace({ kind: 'error', msg: 'capture target: ' + (error as Error).message, ts: Date.now() })
+    })
     xpcMain.broadcast('coach/nav', this.displayUrl(tab))
     xpcMain.broadcast('coach/title', tab.title || '')
     this.broadcastNavState()
@@ -1464,6 +2198,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
   }
 
   async closeTab(params: { id: string }): Promise<void> {
+    this._state.dismissBrowserHistory?.();
     if (this.tabs.length <= 1) return
     const tab = this.tabs.find((item) => item.id === params.id)
     if (!tab) return
@@ -1479,6 +2214,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
   }
 
   private async performCloseTab(tab: OperationTab): Promise<void> {
+    this.clearTabControl(tab)
     // A composite tab owns a whole sub-application, so closing it must reach that sub-application's
     // own teardown — cooling a web view it does not have would silently orphan four renderers, a
     // hidden search runtime and a bound workspace.
@@ -1502,7 +2238,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     }
     // Closing can wait on capture teardown; never leave a watchdog armed during that interval.
     this.setTabLoading(tab, false)
-    if (this._state.capturing && this._state.captureTargetTabId === tab.id) {
+    if (this._state.capturing && this._state.captureTargetTabId === tab.id && !this._state.isDrillBranchTab?.(tab.id)) {
       await this._state.stopCapture()
     }
     await this.coolTab(tab)
@@ -1523,8 +2259,66 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     return this.tabs.map((tab) => this.tabInfo(tab))
   }
 
+  describeAgentTab(id: string): AgentBrowserTabState | undefined {
+    const tab = this.tabs.find((item) => item.id === id)
+    if (!tab) return undefined
+    const info = { id, title: tab.title, url: this.displayUrl(tab) }
+    if (tab.kind !== 'browser') return { ...info, status: 'unavailable', error: 'This tab is not a browser page.' }
+    if (tab.browserError) return { ...info, ...tab.browserError }
+    const wc = tab.view?.webContents
+    if (wc?.isDestroyed()) return { ...info, status: 'destroyed', error: 'The tab WebContents was destroyed.' }
+    if (wc?.isCrashed()) return { ...info, status: 'crashed', error: 'The tab renderer crashed.' }
+    if (!wc) return { ...info, status: 'cold' }
+    if (!tab.debuggerEnabled) return { ...info, status: 'unavailable', error: 'Browser debugging is disabled for this tab.' }
+    return { ...info, status: tab.loading ? 'loading' : 'ready' }
+  }
+
+  async requireAgentTab(id: string): Promise<OperationTab> {
+    const assertAvailable = (): OperationTab => {
+      const info = this.describeAgentTab(id)
+      if (!info || !['ready', 'cold', 'loading'].includes(info.status)) {
+        throw new Error(`Tab ${id}: ${info?.status || 'closed'} — ${info?.error || 'The tab is no longer open.'} Reopen the intended URL explicitly with open_tab, then inspect it before continuing.`)
+      }
+      return this.tabs.find((item) => item.id === id)!
+    }
+    const tab = assertAvailable()
+    await this.warmAndLoad(tab)
+    await tab.capture?.prepareNavigation()
+    assertAvailable()
+    if (!tab.capture || !tab.replay || !tab.view) throw new Error(`Tab ${id}: browser capture/replay is not ready.`)
+    if (tab.view) this.applyBounds(tab.view, this._state.opBounds || { x: 0, y: 0, width: 1280, height: 800 })
+    return tab
+  }
+
+  async openAgentTab(url: string, opened: (id: string) => void | Promise<void>, sessionId?: string, show = false): Promise<OperationTab> {
+    const parsed = new URL(url)
+    if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('open_tab requires an absolute http(s) URL.')
+    const generation = sessionId ? this._state.browserUseGeneration?.(sessionId) : undefined
+    const tab = await this.claimSpareTab({ url })
+    this.setTabControlled(tab.id, true)
+    if (sessionId) this._state.browserPopupActivity?.(sessionId, tab.id, true, generation)
+    try {
+      await opened(tab.id)
+      if (tab.view) this.applyBounds(tab.view, this._state.opBounds || { x: 0, y: 0, width: 1280, height: 800 })
+      const wc = tab.view?.webContents
+      if (!wc || wc.isDestroyed()) throw new Error(`Tab ${tab.id}: WebContents is unavailable.`)
+      await this.startTabNavigation(tab, { url })
+      const ready = await this.requireAgentTab(tab.id)
+      if (show) await this.activateTab({ id: tab.id })
+      return ready
+    } catch (error) {
+      if (!tab.browserError) tab.browserError = { status: 'load-failed', error: String(error) }
+      this.broadcastTabs()
+      throw new Error(`Tab ${tab.id}: ${String(error)}`)
+    } finally {
+      if (sessionId) this._state.browserPopupActivity?.(sessionId, tab.id, false)
+      this.setTabControlled(tab.id, false)
+    }
+  }
+
   private broadcastTabs(): void {
     xpcMain.broadcast('coach/tabs', this.tabs.map((tab) => this.tabInfo(tab)))
+    this._state.browserTabsChanged?.()
   }
 
   private tabInfo(tab: OperationTab): TabInfo {
@@ -1533,6 +2327,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       id: tab.id,
       kind: tab.kind,
       title: tab.title,
+      ...(tab.alias ? { alias: tab.alias } : {}),
       url,
       ...(tab.kind !== 'browser' ? { displayUrl: url } : {}),
       // Persistence is renderer-driven, and a composite tab carries no URL to persist by — so its
@@ -1572,8 +2367,8 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     this.broadcastTabs()
   }
 
-  async toolInjectButton(skillsJson: string, domainArg: string): Promise<string> {
-    const active = this.getActiveTab()
+  async toolInjectButton(skillsJson: string, domainArg: string, tabId?: string): Promise<string> {
+    const active = tabId ? this.tabs.find((tab) => tab.id === tabId) : this.getActiveTab()
     if (active?.kind !== 'browser') return 'ERROR: open a normal browser tab before injecting a button.'
     const wc = active?.view?.webContents
     const pageDomain = hostFromUrl(wc && !wc.isDestroyed() ? wc.getURL() : active?.url || this._state.currentUrl)
@@ -1602,8 +2397,8 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     )
   }
 
-  async toolRemoveInjectedButton(domainArg: string): Promise<string> {
-    const active = this.getActiveTab()
+  async toolRemoveInjectedButton(domainArg: string, tabId?: string): Promise<string> {
+    const active = tabId ? this.tabs.find((tab) => tab.id === tabId) : this.getActiveTab()
     if (active?.kind !== 'browser' && !normalizeInjectedButtonDomain(domainArg)) {
       return 'ERROR: open a normal browser tab or pass a domain.'
     }
@@ -1685,6 +2480,9 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
   }
 
   reset(): void {
+    this.controlDepth.clear()
+    this.activeBrowserUseTabs.clear()
+    this.newTabsBySession.clear()
     this.contentCovered = false
     this.lifecycleEpoch += 1
     for (const tab of this.tabs) {
@@ -1722,6 +2520,9 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       }
       this.spareSlot = null
     }
+    if (this.spareWarmTask) clearImmediate(this.spareWarmTask)
+    this.spareWarmTask = null
+    this.activationGeneration += 1
     this.prewarming = false
     this.creatingTab = false
     this.startupTabOpened = false

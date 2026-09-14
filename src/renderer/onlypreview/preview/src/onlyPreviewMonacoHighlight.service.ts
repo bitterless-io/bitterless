@@ -4,32 +4,15 @@
 // (`onlyPreviewMonacoFind.service.ts`)、选区字符计数、以及大文件的虚拟滚动。所以这里只换
 // **上色那一层**,不换编辑器。诊断与实测见 `docs/features/code-highlighting-shiki.md`。
 import type * as monacoNs from 'monaco-editor';
-import { shikiToMonaco } from '@shikijs/monaco';
+import { shikiToMonaco, textmateThemeToMonacoTheme } from '@shikijs/monaco';
 import {
   ONLY_PREVIEW_HIGHLIGHT_THEME,
   normalizeHighlightLanguage,
-  prepareHighlighter
+  prepareHighlighter,
+  prepareHighlightTheme
 } from '../../common/onlyPreviewHighlighter.service';
 
-/**
- * shiki 没备好时退回的主题。
- *
- * **名字里没有 monarch 是刻意的**:组件用的是 API-only 入口,所以 monarch 语法根本没打包 ——
- * 这条退路给出的是**纯文本 ＋ `vs` 配色**,不是「粗一点的高亮」。以前叫
- * `MONACO_MONARCH_FALLBACK_THEME` 是准确的,砍掉语言贡献之后就不准了。
- *
- * 仍然值得有这条退路:纯文本读得出内容,白屏读不出。而且它只在**首次**打开某语言且语法加载
- * 超时时出现 —— 语法有缓存,同一语言的下一次是即时的。
- */
-export const MONACO_PLAIN_FALLBACK_THEME = 'vs';
-
-/**
- * 语法加载的等待上限。
- *
- * 超时就退回 monarch ＋ `vs`,**而不是继续等**:一次语法加载卡住不该把整个预览卡住,而
- * monarch 虽然粗,但它不是空白。加载会在后台继续并被缓存,所以同一语言的下一次打开是即时的
- * —— 也就是说超时最多影响首次,不会变成常态降级。
- */
+// 主题与语法共享等待上限。超时显示纯文本;后台加载仍会缓存供下次打开使用。
 const GRAMMAR_TIMEOUT_MS = 1200;
 
 /**
@@ -39,6 +22,21 @@ const GRAMMAR_TIMEOUT_MS = 1200;
  * 这个集合只是用来跳过重复调用 —— 重调不会出错,但会重复注册主题数据。
  */
 const installed = new Set<string>();
+const registeredThemes = new Set<string>();
+
+const waitForHighlighting = async <T>(pending: Promise<T>, timeoutMs: number): Promise<T | null> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      pending,
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), timeoutMs);
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
 
 const registerLanguageId = (monaco: typeof monacoNs, id: string): void => {
   // `tsx` / `jsx` / `vue` / `toml` **不是** Monaco 的内置语言 id,不先注册的话 Monaco 会拒绝
@@ -49,31 +47,43 @@ const registerLanguageId = (monaco: typeof monacoNs, id: string): void => {
 
 /**
  * 备好一个语言在 Monaco 里的 shiki 高亮。返回要传给 `monaco.editor.create` 的
- * `{ language, theme }`,拿不到就 `null`(调用方用 monarch ＋ `vs`)。
- *
- * `null` 是正常结果:纯文本、没打包语法的语言、以及超时都走这条。高亮是配色,不是内容 ——
- * 拿不到配色要照旧把文件显示出来。
+ * `{ language, theme }`。语法未就绪时必须用真正的 plaintext,避免调用已注册的分词器。
+ * GitHub 主题独立于语法加载;主题本身失败/超时时省略 theme,保留当前可读配色。
+ * `@shikijs/monaco` 会把 editor.create/setTheme 的主题名转交给 Shiki,不能传未加载的主题。
  */
 export const prepareMonacoHighlighting = async (
   monaco: typeof monacoNs,
   language: string | null | undefined,
   timeoutMs: number = GRAMMAR_TIMEOUT_MS
-): Promise<{ language: string; theme: string } | null> => {
-  const normalized = normalizeHighlightLanguage(language);
-  if (!normalized) return null;
-  registerLanguageId(monaco, normalized);
+): Promise<{ language: string; theme?: string }> => {
+  const plain: { language: string; theme?: string } = { language: 'plaintext' };
+  const deadline = Date.now() + timeoutMs;
+  try {
+    const themeReady = await waitForHighlighting(prepareHighlightTheme(), timeoutMs);
+    if (!themeReady) return plain;
+    if (!registeredThemes.has(themeReady.theme)) {
+      // 适配器返回 monaco-editor-core 的主题类型;这里用的是兼容的 monaco-editor API。
+      monaco.editor.defineTheme(
+        themeReady.theme,
+        textmateThemeToMonacoTheme(
+          themeReady.core.getTheme(themeReady.theme)
+        ) as unknown as monacoNs.editor.IStandaloneThemeData
+      );
+      registeredThemes.add(themeReady.theme);
+    }
+    plain.theme = themeReady.theme;
 
-  const ready = await Promise.race([
-    prepareHighlighter(normalized, ONLY_PREVIEW_HIGHLIGHT_THEME),
-    new Promise<null>((resolve) => {
-      setTimeout(() => resolve(null), timeoutMs);
-    })
-  ]);
-  if (!ready) return null;
+    const normalized = normalizeHighlightLanguage(language);
+    if (!normalized) return plain;
+    const ready = await waitForHighlighting(
+      prepareHighlighter(normalized, ONLY_PREVIEW_HIGHLIGHT_THEME),
+      Math.max(0, deadline - Date.now())
+    );
+    if (!ready) return plain;
 
-  const signature = `${ready.language}::${ready.theme}`;
-  if (!installed.has(signature)) {
-    try {
+    registerLanguageId(monaco, normalized);
+    const signature = `${ready.language}::${ready.theme}`;
+    if (!installed.has(signature)) {
       // `shikiToMonaco` 的类型标的是 `monaco-editor-core`,而这里传的是 `monaco-editor` ——
       // 后者是前者的超集,运行时完全兼容;这个 cast 是为了那个类型标注,不是为了绕过检查。
       shikiToMonaco(ready.core, monaco as unknown as Parameters<typeof shikiToMonaco>[1], {
@@ -83,9 +93,9 @@ export const prepareMonacoHighlighting = async (
         tokenizeTimeLimit: 500
       });
       installed.add(signature);
-    } catch {
-      return null;
     }
+    return { language: ready.language, theme: ready.theme };
+  } catch {
+    return plain;
   }
-  return { language: ready.language, theme: ready.theme };
 };

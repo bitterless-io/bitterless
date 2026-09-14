@@ -31,7 +31,7 @@ fallback, so restoring or finishing the removal stays a local decision.
 │  EyesOnAgents        ● Connected  [↻ Refresh] [Bridge] [Pin]                 │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ ┌──────────────────────────────────────────────────────────────────────────┐ │
-│ │                                                                    [⌕] │ │
+│ │                                                         [⌕] [Read all] │ │
 │ │ ┌──────────────────────────────────────────────────────────────────────┐ │ │
 │ │ │ ◉ API pagination refactor                                    ◌       │ │ │
 │ │ │ now                                                    [⌂][…]        │ │ │
@@ -105,16 +105,23 @@ activity order as a fetch-budget policy and still do not define presentation ord
 
 ## Focus header controls
 
-The header has no `Focus` heading or persistent input. One right-aligned, icon-only Search button
-opens the modal; its accessible label names Search and its tooltip discloses `⌘F` on macOS or
-`Ctrl+F` on Windows.
+The header has no `Focus` heading or persistent input. Right-aligned controls appear in order:
+an icon-only Search button, then a compact borderless **Read all** text button. Search opens the
+modal; its accessible label names Search and its tooltip discloses `⌘F` on macOS or `Ctrl+F` on Windows.
 
 | control | behavior |
 |---|---|
 | Search | opens a clean modal and focuses its input |
+| Read all | persistently clears unread flags across enabled providers; disabled without visible unread red dots or while an action is busy |
 
-The visible **Read all** action is retired. Its Main/preload mutation remains retained and
-unexposed; per-thread **Mark as read** / **Mark as unread** stays in each card menu.
+**Read all** is restored by [task 102](../plan/tasks/eyes-on-agents-restore-read-all-102.md). It uses
+the retained Main/preload mutation, now independent of stored runtime state (including latent
+active unread flags, because stored-active rows can project as unknown and display red dots).
+It ignores search/Domain/scroll filtering, preserves working/waiting runtime states,
+and changes only `is_unread`, not Open receipts or activity timestamps. Read rows stay on Focus;
+new completions can become unread again. The button loads until the returned snapshot is applied,
+rejects duplicate writes, and reports errors without optimistic clearing. An older snapshot cannot
+undo its acknowledgement. Per-thread **Mark as read** / **Mark as unread** remains in each menu.
 
 ## Search modal
 
@@ -260,7 +267,9 @@ labels are all untouched.
 |---|---|
 | no visible threads | existing full-page empty state replaces the board |
 | threads exist | every visible thread in comparator order, regardless of modal search |
-| search closed | one Search button in the otherwise empty Focus header |
+| search closed | Search followed by Read all in the Focus header |
+| no non-active unread rows | Read all remains visible and disabled |
+| Read all pending | button loading; duplicate actions disabled; existing cards remain |
 | search open, empty query | focused input plus start-typing prompt; no result cards |
 | search query has matches | complete normal cards; first/current result has selected treatment |
 | search query has no matches | modal-specific no-results text; board unchanged behind it |
@@ -270,9 +279,8 @@ labels are all untouched.
 ## Non-goals
 
 - No SQLite migration, no Domain table drop, no `domain_id` removal.
-- Apart from placing the visible unread-dot tier before `working`, no change to timestamp ordering,
-  unread/read semantics, retained bulk-read mutation, polling, notifications, provider observation,
-  or connection surfaces.
+- Apart from unread-dot ordering and the restored bulk acknowledgement described above, no change
+  to timestamp ordering, polling, notifications, provider observation or connection surfaces.
 - No renaming of the retained renderer column component, its BEM block, or its LESS file; naming
   cleanup belongs to a later Domain-persistence removal if the owner asks for one.
 
@@ -283,8 +291,9 @@ labels are all untouched.
 - Ordering matches the comparator above: approval/input, visible unread dot, working, ordinary. A
   latent unread bit does not lift a working row, and a 10-second metadata refresh that only advances
   `last_activity_at` cannot move an active card.
-- The Focus header contains only one Search button; no persistent input or visible **Read all**
-  action remains, while the retained bulk mutation is untouched below the renderer.
+- The Focus header contains Search followed immediately by Read all, without a persistent input.
+  Read all clears every visible non-active red dot, including unknown rows, without ending work,
+  removing cards or fabricating an Open receipt. New completions can still become unread.
 - `Cmd+F` / `Ctrl+F` and Search open the modal; the same shortcut closes it; Escape, Close, and mask
   close and clear it.
 - Token matching behaves as specified without narrowing Focus, and every result reuses the normal

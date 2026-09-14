@@ -32,6 +32,7 @@
 }
 
 .chat-panel__toolbar {
+  position: relative;
   display: flex;
   flex: 0 0 auto;
   align-items: center;
@@ -55,130 +56,6 @@
 .chat-panel__button-icon {
   display: block;
   flex: 0 0 auto;
-}
-
-.chat-panel__history {
-  display: flex;
-  height: 100%;
-  min-height: 0;
-  flex-direction: column;
-  background: #ffffff;
-}
-
-.chat-panel__history-header {
-  display: flex;
-  height: 40px;
-  flex: 0 0 40px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 0 10px 0 12px;
-  border-bottom: 1px solid var(--color-border-1);
-}
-
-.chat-panel__history-title {
-  color: var(--color-text-1);
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.chat-panel__history-close.icon-btn.arco-btn {
-  width: 28px;
-  min-width: 28px;
-  height: 28px;
-  flex-basis: 28px;
-}
-
-.chat-panel__history-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-height: 0;
-  flex: 1 1 auto;
-  padding: 8px;
-  overflow: auto;
-}
-
-.chat-panel__history-empty {
-  padding: 24px 12px;
-  color: var(--color-text-4);
-  font-size: 12px;
-  font-weight: 650;
-  text-align: center;
-}
-
-.chat-panel__history-item.arco-btn {
-  position: relative;
-  display: flex;
-  width: 100%;
-  height: auto;
-  min-width: 0;
-  justify-content: flex-start;
-  flex: 0 0 auto;
-  /* 布局照 cowork 的 `session-list__item`(Ral 2026-09-09):
-     `relative flex items-center gap-2 rounded-lg py-2 pl-5 pr-3 text-left transition-colors`。
-     行是**横排**,两行文字由 `__body` 那层负责堆叠 —— title/preview 此前挤在一行,
-     成因是它们曾是行的直接 flex 子元素:Arco 2.57 的 Button 只渲染 `.arco-btn` ＋ 可选
-     `.arco-btn-icon`,**没有内容包装层**(所以原先那条 `.arco-btn-content` 规则是死的),
-     而 flex 子元素被 blockify 后仍按主轴排,`display: block` 管不了排布。
-     左侧 20px 是箭头位,所有行统一留 —— 否则加箭头那一行文字会横向抖。 */
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px 8px 20px !important;
-  transition: background-color 0.16s ease;
-  color: var(--color-text-2);
-  border-radius: 8px;
-  text-align: left;
-}
-
-.chat-panel__history-item.arco-btn:not(.chat-panel__history-item--active):not(.chat-panel__history-item--cursor):hover {
-  color: var(--color-text-1);
-  background: var(--color-fill-1);
-}
-
-.chat-panel__history-item--active.arco-btn,
-.chat-panel__history-item--active.arco-btn:hover {
-  color: #4e5882;
-  background: transparent;
-}
-
-.chat-panel__history-item--cursor.arco-btn,
-.chat-panel__history-item--cursor.arco-btn:hover {
-  background: #e2e7f5;
-}
-
-.chat-panel__history-current {
-  position: absolute;
-  top: 50%;
-  left: 4px;
-  color: #4e5882;
-  transform: translateY(-50%);
-}
-
-// 两行文字的容器 —— 照 cowork 的 `min-w-0 flex-1`。
-// `min-width: 0` 不是冗余:少了它,里面那两条的 `text-overflow: ellipsis` 会把行撑宽而不是省略。
-.chat-panel__history-item-body {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.chat-panel__history-item-title,
-.chat-panel__history-item-preview {
-  display: block;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.chat-panel__history-item-title {
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.chat-panel__history-item-preview {
-  margin-top: 2px;
-  color: var(--color-text-4);
-  font-size: 11px;
 }
 
 .chat-panel__composer {

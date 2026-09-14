@@ -23,3 +23,13 @@ export const getMaestroCompositeTab = (id: string): MaestroCompositeTabSpec | nu
  * hold" is one fact, and a hand-written copy of it goes stale the first time a mini app is added.
  */
 export const listMaestroCompositeTabs = (): MaestroCompositeTabSpec[] => [...specs.values()]
+
+/**
+ * 没设过主页时固有槽位装哪个 mini app —— 没有任何 spec 声明就返回 `null` = 内置本地 Home。
+ *
+ * 问 registry 而不是问一份默认设置,是为了让「默认值」跟着**这个构建注册了什么**走:maestro 这棵树
+ * 不认识任何一个具体 mini app,宿主在注册处自己声明(`docs/features/onlypreview-default-homepage.md` #1)。
+ * 声明了两个的话取先注册的那个 —— 语义上至多一个,由 `check-tab-alias.mjs` 在源码层钉住。
+ */
+export const defaultHomeMaestroCompositeTabId = (): string | null =>
+  [...specs.values()].find((spec) => spec.defaultHome)?.id ?? null
