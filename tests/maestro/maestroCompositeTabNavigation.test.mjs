@@ -286,7 +286,14 @@ for (const origin of ['Home', 'web']) {
       canGoBack: false,
       canGoForward: false
     });
-    assert.deepEqual(f.lifecycle, ['open', 'activate', 'deactivate', 'activate', 'activate']);
+    assert.deepEqual(f.lifecycle, [
+      'open',
+      'deactivate',
+      'activate',
+      'deactivate',
+      'activate',
+      'activate'
+    ]);
     assert.equal(f.children.length, nativeChildren + 1, 'reactivation reuses the attached surface');
   });
 }

@@ -1,15 +1,57 @@
 .terminal-setting {
-  padding: 24px;
+  max-width: 680px;
+  padding: 20px 24px;
+  color: var(--color-royalblue-800);
 }
-
-.terminal-setting__control {
+.terminal-setting__description,
+.terminal-setting__hint {
+  margin: 0 0 20px;
+  color: var(--color-royalblue-500);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.terminal-setting__shortcuts {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.terminal-setting__field {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 16px;
+  font-size: 13px;
 }
-
-.terminal-setting__label {
-  color: var(--color-royalblue-800);
-  font-size: 14px;
+.terminal-setting__field > span {
+  flex: 0 0 120px;
+}
+.terminal-setting__field .arco-input-wrapper {
+  min-width: 0;
+  border: 0;
+  border-radius: 6px;
+  background: var(--color-fill-2);
+}
+.terminal-setting__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.terminal-setting__error {
+  margin: 16px 0;
+  color: oklch(48% 0.17 25);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.terminal-setting__directory {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 28px;
+  font-size: 13px;
+}
+.terminal-setting__directory bdi {
+  overflow-wrap: anywhere;
+  color: var(--color-royalblue-500);
+  line-height: 1.6;
 }

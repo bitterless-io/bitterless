@@ -141,7 +141,6 @@ import type { SavedTab } from '@maestro-shared/tabs.api'
 import type { CaptureMode, TraceEvent } from '@maestro-shared/trace.types'
 import type { SkillRecipe } from '@maestro-main/skills/skillRecipe.types'
 import { maestroDataRoot } from '@maestro-main/data/maestroDataRoot'
-import { notifyZellijSettingsChanged } from '@main/zellij/zellijRuntime.service'
 import type {
   MaestroOpenBootTrace,
   MaestroOpenStage
@@ -505,7 +504,6 @@ class MaestroWindowController
 
   async saveSettings(params: Partial<CoachSettings>): Promise<CoachSettings> {
     const next = this.ensureServices().settings.save(params)
-    if (params.terminalEnabled !== undefined) await notifyZellijSettingsChanged(next.terminalEnabled)
     return next
   }
 
@@ -515,6 +513,10 @@ class MaestroWindowController
 
   async getWorkbenchTab(): ReturnType<CoachXpcContract['getWorkbenchTab']> {
     return this.workbenchView.getState()
+  }
+
+  setOperationContentCovered(covered: boolean): void {
+    this.browserView.setContentCovered(covered)
   }
 
   async openWorkbenchTab(): ReturnType<CoachXpcContract['openWorkbenchTab']> {

@@ -1,5 +1,19 @@
 # Bitterless Delivery Plan
 
+- [Zellij session lifecycle 177](tasks/zellij-session-lifecycle-177.md) — done;
+  isolate unhealthy sessions, close exact targets, and preserve healthy tasks across app restart.
+  170/170 tests, independent review, build and manual open/close/restart acceptance passed.
+
+- [Zellij automatic opening and cwd 176](tasks/zellij-auto-open-directory-176.md) — done;
+  automatic loading, remembered cwd, exact session cleanup, versioned color defaults,
+  shared Workbench Terminal settings with a 48px toolbar, and bundled zsh input highlighting.
+  115 Zellij tests and the final application build pass; actual input/output colors and lifecycle
+  verified. [Review 176-1](reviews/zellij-auto-open-directory-176-1.md).
+
+- [Zellij macOS session startup 175](tasks/zellij-socket-startup-diagnostics-175.md) — fixed and actual dev startup verified;
+  short user/profile socket directory fixes the reproduced 108-byte native path failure, with
+  sanitized process diagnostics and the surface-query logging repair.
+
 Tasks are executed serially in the existing working directory because this Electron project shares a
 large native dependency installation and the current branch contains an unrelated in-progress
 Electron/SQLite pin. Coin runtime verification is currently handed to the owner by request.
@@ -13,6 +27,14 @@ renderer. Their durable product intent—complete browsing independent of Projec
 no-copy progress rail—remains part of the current feature contract.
 
 ## Active delivery
+
+- [External tools init/dev readiness 174](tasks/external-tools-init-dev-ready-174.md) — done;
+  one initialization prepares package caches and host staging, reusing verified dependencies;
+  repeated real init, offline entry tests, host/native/build checks and independent review passed.
+
+- [Maestro Agent Build SQLite 173](tasks/maestro-sqlite-agent-build-173.md) — implemented; restart verification pending;
+  DEBUG timestamp refresh, shared embedded SQLite build identity and Maestro diagnostics;
+  original DEBUG_PROD build and migration audit pass.
 
 - [INDEX CA list and Generate 031](tasks/trench-index-generate-031.md) - implemented; owner testing pending.
 

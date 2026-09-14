@@ -223,9 +223,13 @@ tokens, renderer values, and raw errors are forbidden.
 Maestro's standalone executables and native document converter are application resources, not
 JavaScript dependencies. `yarn tools:init` prepares the pinned Bun, ripgrep, fd, Ouch, Zellij, and
 AnyDoc inventories for `mac_arm`, `mac_intel`, and `win` under the gitignored `external_tools/`
-store. Packaging never downloads them: each external-tool preparation step creates the staging
-directories it needs, then the selected platform is validated and copied to `build/maestro-tools`,
-which Electron Builder installs as `Resources/maestro-tools`.
+store, then stages/verifies the current host for development. Initialization verifies existing
+payloads first and downloads only missing or invalid tool/archive units; valid stores and staged
+dependencies remain untouched on repeated runs. The
+[initialization/readiness contract](terminal-zellij-distribution.md) defines incremental repair.
+Development and packaging never download tools: DEBUG dev/build/start ensures the host stage
+offline, while packaging ensures its selected target at `build/maestro-tools`, which Electron
+Builder installs as `Resources/maestro-tools`.
 
 Only the target platform enters an application bundle. `external_tools/**` and the legacy
 `prebuilt/**` cache are excluded from `app.asar`; macOS executable/native entries remain in the

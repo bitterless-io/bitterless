@@ -272,7 +272,7 @@ test('renders the secure read-only Trench vault with exact live local evidence',
   const credentialDiagnostics = bitterless.mainOutput
     .join('')
     .split(/\r?\n/)
-    .filter((line) => /sqlitePassword|coach sqlite|todoist sync|safeStorage tripwire/i.test(line));
+    .filter((line) => /sqlitePassword|maestro sqlite|todoist sync|safeStorage tripwire/i.test(line));
   console.log('[trench-e2e credential diagnostics]', credentialRuntime, credentialDiagnostics);
   expect(credentialDiagnostics).toContainEqual(
     expect.stringContaining('[todoist sync] using injected isolated runtime password')

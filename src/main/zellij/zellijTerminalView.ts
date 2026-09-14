@@ -5,12 +5,16 @@ import { bindZellijKeyBridge } from './zellijKeyBridge';
 import { setTerminalKeyboardOwner } from '@maestro-main/common/shortcutsHelper/shortcuts.helper';
 import {
   getZellijRuntime,
+  prepareZellijTerminal,
+  focusZellijTerminal,
+  blurZellijTerminal,
   subscribeZellijState,
+  subscribeZellijTerminalFailure,
   zellijOrigin,
-  zellijTerminalSession,
-  zellijTerminalUrl
+  zellijTerminalSession
 } from './zellijRuntime.service';
 import type { ZellijSnapshot } from '@shared/zellij/zellij.type';
+import { zellijErrorCode } from './zellijProcess.service';
 
 export interface ZellijTerminalHost {
   /** Identifies THIS surface. Its Zellij session name is derived from it, so it must be stable for
@@ -23,6 +27,8 @@ export interface ZellijTerminalHost {
   /** False while the host is hidden (background tab, collapsed cell) so the view is not drawn. */
   visible?(): boolean;
   destroyed(): boolean;
+  opened(): boolean;
+  changed(snapshot: ZellijSnapshot): void;
 }
 
 export interface ZellijTerminalRect {
@@ -39,7 +45,7 @@ export interface ZellijTerminalRect {
  * This is the unit that has to multiply. Everything it needs from the outside arrives through
  * `ZellijTerminalHost`, so the same class serves a standalone window, a tab, or an Omni cell; the
  * host decides where it lives and how big it is. The shared pieces (the server process, the token,
- * the config file, the `terminalEnabled` gate) deliberately stay singletons in
+ * the config file) deliberately stay singletons in
  * `zellijRuntime.service.ts` — N surfaces are N HTTP clients of ONE server.
  *
  * Extracted from ZellijWindowService, which held `window` / `terminal` / `contentBounds` as scalars
@@ -49,16 +55,69 @@ export interface ZellijTerminalRect {
 export class ZellijTerminalView {
   private view: WebContentsView | null = null;
   private unsubscribe: (() => void) | null = null;
+  private unsubscribeFailure: (() => void) | null = null;
   private disposed = false;
+  private pending: Promise<ZellijSnapshot> | null = null;
+  private generation = 0;
+  private state: Pick<ZellijSnapshot, 'status' | 'error'> = { status: 'idle', error: null };
 
   constructor(private readonly host: ZellijTerminalHost) {
     this.unsubscribe = subscribeZellijState((snapshot) => this.applyState(snapshot));
+    this.unsubscribeFailure = subscribeZellijTerminalFailure((surfaceId) => {
+      if (surfaceId !== this.host.surfaceId || this.disposed) return;
+      this.generation += 1;
+      this.pending = null;
+      this.detach();
+      this.state = { status: 'error', error: 'operation-failed' };
+      this.publish();
+    });
   }
 
   /** Attach against the current runtime state; safe to call repeatedly (host show/activate). */
   sync(): void {
     if (this.disposed) return;
-    this.applyState(getZellijRuntime().snapshot());
+    void this.initialize();
+  }
+
+  snapshot(): ZellijSnapshot {
+    return { ...getZellijRuntime().snapshot(), ...this.state };
+  }
+
+  initialize(): Promise<ZellijSnapshot> {
+    if (
+      this.disposed ||
+      !this.host.opened() ||
+      this.host.destroyed() ||
+      this.state.status === 'ready'
+    )
+      return Promise.resolve(this.snapshot());
+    if (this.pending) return this.pending;
+    const generation = this.generation;
+    this.state = { status: 'starting', error: null };
+    this.publish();
+    const pending = (async () => {
+      try {
+        const target = await prepareZellijTerminal(this.host.surfaceId);
+        if (this.disposed || this.host.destroyed() || generation !== this.generation)
+          return this.snapshot();
+        await this.attach(target);
+        if (this.disposed || this.host.destroyed() || generation !== this.generation)
+          return this.snapshot();
+        this.state = { status: 'ready', error: null };
+        this.layout();
+      } catch (error) {
+        if (this.disposed || generation !== this.generation) return this.snapshot();
+        this.detach();
+        this.state = { status: 'error', error: zellijErrorCode(error) };
+        console.error(`[zellij] surface preparation failed reason=${this.state.error}`);
+      }
+      this.publish();
+      return this.snapshot();
+    })().finally(() => {
+      if (this.pending === pending) this.pending = null;
+    });
+    this.pending = pending;
+    return pending;
   }
 
   layout(): void {
@@ -73,11 +132,18 @@ export class ZellijTerminalView {
     // Only hosts that can be hidden (a background tab, a collapsed cell) declare visibility. A
     // window host never did, and calling setVisible unconditionally would be a behaviour change
     // smuggled into a refactor.
-    if (this.host.visible) this.view.setVisible(this.host.visible());
+    this.view.setVisible(this.state.status === 'ready' && (this.host.visible?.() ?? true));
   }
 
   focus(): void {
-    if (this.view && !this.view.webContents.isDestroyed()) this.view.webContents.focus();
+    if (
+      this.state.status === 'ready' &&
+      (this.host.visible?.() ?? true) &&
+      this.view &&
+      !this.view.webContents.isDestroyed()
+    ) {
+      this.view.webContents.focus();
+    }
   }
 
   /** True once a terminal view exists — the host uses it to decide what to focus. */
@@ -88,24 +154,32 @@ export class ZellijTerminalView {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.generation += 1;
+    this.pending = null;
+    blurZellijTerminal(this.host.surfaceId);
     this.unsubscribe?.();
     this.unsubscribe = null;
+    this.unsubscribeFailure?.();
+    this.unsubscribeFailure = null;
     this.detach();
   }
 
   private applyState(snapshot: ZellijSnapshot): void {
     if (this.disposed) return;
-    if (!snapshot.enabled || snapshot.status !== 'ready') {
+    if (snapshot.status !== 'ready') {
       this.detach();
+      this.state = { status: snapshot.status, error: snapshot.error };
+      this.publish();
       return;
     }
-    if (this.view || this.host.destroyed()) return;
-    this.attach();
+    if (!this.view && !this.host.destroyed() && !this.pending) void this.initialize();
   }
 
-  private attach(): void {
+  private async attach(target: string): Promise<void> {
     const terminalSession = zellijTerminalSession();
-    terminalSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+    terminalSession.setPermissionRequestHandler((_contents, _permission, callback) =>
+      callback(false)
+    );
     terminalSession.setPermissionCheckHandler(() => false);
     const view = new WebContentsView({
       webPreferences: {
@@ -132,18 +206,18 @@ export class ZellijTerminalView {
     setTerminalKeyboardOwner(view.webContents);
     bindZellijKeyBridge(view.webContents);
     bindZellijDevTools(view.webContents);
+    view.webContents.on('focus', () => {
+      if (this.state.status === 'ready' && (this.host.visible?.() ?? true))
+        focusZellijTerminal(this.host.surfaceId);
+    });
+    view.webContents.on('blur', () => blurZellijTerminal(this.host.surfaceId));
     this.host.container.addChildView(view);
     this.layout();
-    // Path-addressed: the session name is what stops the web client asking for one on every open.
-    const target = zellijTerminalUrl(this.host.surfaceId);
-    void view.webContents.loadURL(target).catch((error) => {
-      console.error('[zellij] terminal load failed', target, error);
-      if (this.view !== view) return;
-      this.detach();
-      // Per-surface failure. Today this flips the shared status for everyone; splitting that is the
-      // remaining half of multi-instance work (docs/issues/zellij-multi-instance.md).
-      getZellijRuntime().reportViewFailure();
-    });
+    await view.webContents.loadURL(target);
+  }
+
+  private publish(): void {
+    if (!this.disposed && !this.host.destroyed()) this.host.changed(this.snapshot());
   }
 
   private detach(): void {

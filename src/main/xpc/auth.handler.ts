@@ -221,7 +221,6 @@ class AuthHandler extends XpcMainHandler implements AuthSessionApi {
     await eyesOnAgentsWindowHandler._destroyForAuth().catch((err) => {
       console.warn('[AuthHandler] Failed to destroy EyesOnAgents window:', err);
     });
-    await zellijWindowService.destroy().catch(() => undefined);
     await submodulesWindowHandler._destroyForAuth().catch((err) => {
       console.warn('[AuthHandler] Failed to destroy Submodules window:', err);
     });
@@ -237,6 +236,7 @@ class AuthHandler extends XpcMainHandler implements AuthSessionApi {
     } catch (err) {
       console.warn('[AuthHandler] Failed to destroy omni window:', err);
     }
+    await zellijWindowService.destroy().catch(() => undefined);
 
     try {
       destroyOnlyPreviewForAuth();

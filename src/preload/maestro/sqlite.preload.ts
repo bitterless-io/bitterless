@@ -3,30 +3,9 @@
 // renderer with createXpcRendererEmitter<ConfigApi>('ConfigDao'). Mirrors bitterless's
 // "sqlite lives in a preload" pattern, trimmed to one config table.
 import { createXpcPreloadEmitter, XpcPreloadHandler } from 'electron-xpc/preload'
-import { join } from 'path'
 import { readFileSync, unlinkSync } from 'fs'
 import { sqliteManager } from './sqlite/sqliteManager'
 import type { SqliteBootApi, SqliteBootResult, SqliteKeyApi } from '@maestro-shared/sqliteKey.api'
-
-const getCurrentVersionCode = (): string => {
-  const candidates = [
-    join(__dirname, '../app-meta.json'),
-    join(__dirname, '../../package.json'),
-  ]
-  for (const candidate of candidates) {
-    try {
-      const meta = JSON.parse(readFileSync(candidate, 'utf-8')) as {
-        version_code?: string
-        versionCode?: string | number
-      }
-      const versionCode = meta.version_code ?? meta.versionCode
-      if (versionCode != null) return String(versionCode)
-    } catch {
-      // Try the next packaged metadata location.
-    }
-  }
-  throw new Error('[coach sqlite] package metadata has no version_code')
-}
 
 const getArgValue = (prefix: string): string => {
   const arg = process.argv.find((a) => a.startsWith(prefix))
@@ -35,7 +14,7 @@ const getArgValue = (prefix: string): string => {
 
 const readBootstrapToken = (): string => {
   const tokenPath = getArgValue('--coach-sqlite-bootstrap-file=')
-  if (!tokenPath) throw new Error('[coach sqlite] missing sqlite bootstrap token file')
+  if (!tokenPath) throw new Error('[maestro sqlite] missing sqlite bootstrap token file')
   const token = readFileSync(tokenPath, 'utf-8').trim()
   try {
     unlinkSync(tokenPath)
@@ -52,12 +31,12 @@ let bootResult: SqliteBootResult = { ok: false, error: 'SQLite preload has not f
 const bootSqlite = async (): Promise<void> => {
   try {
     const bootstrapToken = readBootstrapToken()
-    if (!bootstrapToken) throw new Error('[coach sqlite] missing sqlite bootstrap token')
+    if (!bootstrapToken) throw new Error('[maestro sqlite] missing sqlite bootstrap token')
 
     const sqliteKey = await sqliteKeyService.getSqliteKey({ bootstrapToken })
-    if (!sqliteKey) throw new Error('[coach sqlite] main process returned an empty SQLite key')
+    if (!sqliteKey) throw new Error('[maestro sqlite] main process returned an empty SQLite key')
 
-    sqliteManager.init(getCurrentVersionCode(), sqliteKey)
+    sqliteManager.init(__BITTERLESS_VERSION_CODE__, sqliteKey)
 
     // Importing each DAO instantiates its XpcPreloadHandler and registers its channels.
     await import('./sqlite/config.dao')
@@ -77,7 +56,7 @@ const bootSqlite = async (): Promise<void> => {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     bootResult = { ok: false, error: message }
-    console.error('[coach sqlite] init failed:', err)
+    console.error('[maestro sqlite] init failed:', err)
   }
 }
 

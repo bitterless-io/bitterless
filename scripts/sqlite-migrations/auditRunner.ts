@@ -82,7 +82,7 @@ interface CoreBaseline {
 interface MaestroBaseline {
   name: string
   dbExistedBeforeOpen: boolean
-  stage?: 0 | 1 | 2 | 3 | 4 | 5
+  stage?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7
 }
 
 class AuditDatabase {
@@ -835,6 +835,8 @@ const maestroCheckpointByStage: Readonly<Record<number, string | null>> = {
   3: '260627000002',
   4: '260629210704',
   5: '260705083000',
+  6: '260831200000',
+  7: '260911140000',
 }
 
 const createMaestroFixture = (db: Database.Database, stage: number): void => {
@@ -893,6 +895,10 @@ const createMaestroFixture = (db: Database.Database, stage: number): void => {
       "replay_json TEXT NOT NULL DEFAULT ''",
     ] : []),
     "activity_json TEXT NOT NULL DEFAULT '[]'",
+    ...(stage >= 6 ? [
+      "tasks_json TEXT NOT NULL DEFAULT '[]'",
+      "confirm_json TEXT NOT NULL DEFAULT ''",
+    ] : []),
     'streaming INTEGER NOT NULL DEFAULT 0',
     'error INTEGER NOT NULL DEFAULT 0',
     'compressed INTEGER NOT NULL DEFAULT 0',
@@ -913,8 +919,11 @@ const createMaestroFixture = (db: Database.Database, stage: number): void => {
       title TEXT NOT NULL DEFAULT '',
       favicon TEXT NOT NULL DEFAULT '',
       position INTEGER NOT NULL DEFAULT 0,
+      ${stage >= 7 ? "kind TEXT NOT NULL DEFAULT '', instance_id TEXT NOT NULL DEFAULT ''," : ''}
       updated_at INTEGER NOT NULL
     );
+    INSERT INTO tabs (id, url, title, favicon, position, updated_at)
+    VALUES (42, 'https://example.com/audit', 'Audit tab', 'audit-icon', 3, 17);
     CREATE TABLE cowork_chat_session (
       id TEXT PRIMARY KEY,
       operation_tab_id TEXT NOT NULL,
@@ -929,6 +938,9 @@ const createMaestroFixture = (db: Database.Database, stage: number): void => {
       id, operation_tab_id, title, created_at, updated_at
     ) VALUES ('audit-session', 'audit-tab', 'audit-session', 1, 1);
   `)
+  if (stage >= 7) {
+    db.exec("UPDATE tabs SET kind = 'zellij', instance_id = 'audit-instance' WHERE id = 42;")
+  }
   const messageInsertColumns = [
     'id',
     'session_id',
@@ -975,6 +987,9 @@ const verifyMaestroSchema = (
 ): void => {
   assertColumns(db, 'capture_filter', ['id', 'type', 'rule', 'value', 'updated_at'])
   assert(!getColumns(db, 'capture_filter').includes('domain'))
+  assertColumns(db, 'tabs', [
+    'id', 'url', 'title', 'favicon', 'position', 'kind', 'instance_id', 'updated_at',
+  ])
   assertColumns(db, 'cowork_chat_message', [
     'prompt_excluded',
     'compact_summary',
@@ -987,6 +1002,19 @@ const verifyMaestroSchema = (
   ])
   assertColumns(db, 'inject_btns', ['domain', 'skill_title', 'skill_description', 'updated_at'])
   if (baseline.dbExistedBeforeOpen) {
+    const tab = db.prepare(
+      'SELECT id, url, title, favicon, position, kind, instance_id, updated_at FROM tabs WHERE id = 42',
+    ).get() as Record<string, unknown>
+    assert.deepEqual({ ...tab }, {
+      id: 42,
+      url: 'https://example.com/audit',
+      title: 'Audit tab',
+      favicon: 'audit-icon',
+      position: 3,
+      kind: baseline.stage === 7 ? 'zellij' : '',
+      instance_id: baseline.stage === 7 ? 'audit-instance' : '',
+      updated_at: 17,
+    })
     const filter = db.prepare(
       "SELECT rule, value FROM capture_filter WHERE rule = '.audit'",
     ).get() as { rule: string; value: string }
@@ -1012,6 +1040,8 @@ const maestroBaselines: readonly MaestroBaseline[] = [
   { name: 'compaction', dbExistedBeforeOpen: true, stage: 3 },
   { name: 'skills', dbExistedBeforeOpen: true, stage: 4 },
   { name: 'inject-buttons', dbExistedBeforeOpen: true, stage: 5 },
+  { name: 'chat-core-before-composite-tabs', dbExistedBeforeOpen: true, stage: 6 },
+  { name: 'composite-tabs-current', dbExistedBeforeOpen: true, stage: 7 },
 ]
 
 const auditMaestroBaselines = (): void => {
@@ -1043,6 +1073,17 @@ const auditMaestroBaselines = (): void => {
         assert.deepEqual(result.appliedVersionCodes, [])
         assert.deepEqual(getLedger(db), [currentVersionCode])
       }
+      const ledgerBeforeReopen = getLedger(db)
+      const reopened = runSqliteMigrations({
+        db,
+        migrations: maestroSqliteMigrations,
+        currentVersionCode,
+        dbExistedBeforeOpen: true,
+        logPrefix: `[audit maestro:${baseline.name}:reopen]`,
+      })
+      assert.deepEqual(reopened.appliedVersionCodes, [])
+      assert.deepEqual(getLedger(db), ledgerBeforeReopen)
+      verifyMaestroSchema(db, baseline)
       console.log(`✓ Maestro ${baseline.name}`)
     } finally {
       db.close()

@@ -24,6 +24,7 @@ export interface MaestroWorkbenchViewServiceState {
   opBounds: ViewRect | null
   emitTrace(event: TraceEvent): void
   layout(): void
+  setOperationContentCovered(covered: boolean): void
 }
 
 @injectable()
@@ -114,8 +115,14 @@ export class MaestroWorkbenchViewService extends CommonService<MaestroWorkbenchV
   }
 
   private applyVisibility(): void {
+    this._state.setOperationContentCovered(this.visible)
     if (this.view && !this.view.webContents.isDestroyed()) {
       this.view.setVisible(this.visible)
+      const window = this._state.browserWindow
+      if (this.visible && window && !window.isDestroyed()) {
+        window.contentView.removeChildView(this.view)
+        window.contentView.addChildView(this.view)
+      }
     }
   }
 

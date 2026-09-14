@@ -15,6 +15,19 @@ through the existing `yarn tools:init` command in Bitterless and Cowork.
 - Include Zellij in each platform's exact payload manifest, cache validation,
   offline stage/verify commands, platform audit, and macOS signing list. The
   existing initialization/atomic replacement process owns installation.
+- `yarn tools:init` validates/prepares all three platform stores, then prepares and verifies
+  the current host's `build/maestro-tools` directory. It is sufficient preparation for both
+  development and the supported packaging targets.
+- Default initialization checks before downloading: complete valid stores remain untouched;
+  partial/invalid stores reuse pinned, verified payloads and download only missing/invalid
+  binary archives or AnyDoc package/native units. Invalid/missing generated
+  `external-tools.manifest.json` alone is repaired locally. Explicit `--force` remains an
+  intentional full refresh.
+- Valid staged tools remain untouched. Missing, invalid, obsolete or wrong-platform managed
+  staging is replaced from a validated cache with rollback on failure. DEBUG dev/build/start
+  preparation ensures the host stage offline; packaging retains its target-specific offline
+  stage/verify. These preparation paths never install/rebuild Node dependencies or select a
+  system Zellij installation.
 - `external_tools` remains an ignored local cache. Packaged binaries remain in
   `Resources/maestro-tools`, outside `app.asar`. No system installation or new
   package dependency is introduced.
@@ -32,6 +45,13 @@ through the existing `yarn tools:init` command in Bitterless and Cowork.
   are recorded in `scripts/maestro/externalTools.cjs`.
 
 ## Verification
+
+2026-09-12 initialization/readiness follow-up:
+[task 174](../plan/tasks/external-tools-init-dev-ready-174.md) adds incremental payload reuse,
+host preparation at init, and offline DEBUG preparation. Actual repeated initialization attempted
+zero downloads, preserved 37 cache files and then all 11 valid staged files, repaired the obsolete
+stage, and passed host/native/build checks. The task records test counts and remaining validation
+limits.
 
 Verified on 2026-09-10:
 

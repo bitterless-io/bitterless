@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/explicit-function-return-type -- Native Node test fixtures. */
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -10,30 +11,54 @@ const root = mkdtempSync(join(tmpdir(), 'zellij-window-test-'));
 const output = join(root, 'window.cjs');
 const modules = {
   electron: `const {EventEmitter}=require('node:events');
-    const windows=[]; const views=[];
-    class Contents extends EventEmitter { constructor(){super();this.closed=false;} setWindowOpenHandler(handler){this.openHandler=handler;} setIgnoreMenuShortcuts(value){this.ignore=value;} focus(){this.focused=true;} async loadURL(url){this.url=url;} async loadFile(file,options){this.file=file;this.query=options&&options.query;} isDevToolsOpened(){return false;} openDevTools(){} isDestroyed(){return this.closed;} close(){this.closed=true;} }
-    class BrowserWindow extends EventEmitter { constructor(options){super();this.options=options;this.dead=false;this.visible=false;this.contentView={children:[],addChildView:(v)=>this.contentView.children.push(v),removeChildView:(v)=>{this.contentView.children=this.contentView.children.filter(x=>x!==v);}};windows.push(this);} getContentSize(){return [1000,700];} isDestroyed(){return this.dead;} isMinimized(){return false;} show(){this.visible=true;} focus(){} async loadFile(file){this.file=file;} async loadURL(url){this.url=url;} close(){this.dead=true;this.emit('closed');} destroy(){this.close();} }
-    class View { constructor(){this.children=[];this.visible=true;} addChildView(v){this.children.push(v);} removeChildView(v){this.children=this.children.filter(x=>x!==v);} setBounds(b){this.bounds=b;} setVisible(v){this.visible=v;} }
-    class WebContentsView extends View { constructor(options){super();this.options=options;this.webContents=new Contents();views.push(this);} }
-    module.exports={BrowserWindow,WebContentsView,View,app:{getAppPath:()=>'/fixture'},windows,views};`,
+    const windows=[],views=[],chromeGates=new Map();
+    class Contents extends EventEmitter {
+      constructor(){super();this.closed=false;this.loads=0;}
+      setWindowOpenHandler(handler){this.openHandler=handler;}
+      setIgnoreMenuShortcuts(value){this.ignore=value;}
+      focus(){this.focused=true;this.emit('focus');}
+      async loadURL(url){this.url=url;this.loads++;}
+      async loadFile(file,options){this.file=file;this.query=options&&options.query;await chromeGates.get(this.query?.surface)?.promise;}
+      isDevToolsOpened(){return false;} openDevTools(){} isDestroyed(){return this.closed;} close(){this.closed=true;}
+    }
+    class View {
+      constructor(){this.children=[];this.visible=true;}
+      addChildView(v){this.children=this.children.filter(x=>x!==v);this.children.push(v);}
+      removeChildView(v){this.children=this.children.filter(x=>x!==v);}
+      setBounds(b){this.bounds=b;} setVisible(v){this.visible=v;}
+    }
+    class BrowserWindow extends EventEmitter {
+      constructor(options){super();this.options=options;this.dead=false;this.visible=false;this.contentView=new View();windows.push(this);}
+      getContentSize(){return [1000,700];} isDestroyed(){return this.dead;} isMinimized(){return false;}
+      show(){this.visible=true;} focus(){} close(){this.dead=true;this.emit('closed');} destroy(){this.close();}
+    }
+    class WebContentsView extends View {constructor(options){super();this.options=options;this.webContents=new Contents();views.push(this);}}
+    module.exports={BrowserWindow,WebContentsView,View,app:{getAppPath:()=>'/fixture'},windows,views,chromeGates};`,
+  'electron-xpc/main': `const broadcasts=[];exports.broadcasts=broadcasts;exports.xpcMain={broadcast:(event,params)=>broadcasts.push({event,params})};`,
   '@electron-toolkit/utils': `exports.is={dev:false};`,
-  '@shared/zellij/zellij.type': `exports.ZELLIJ_SURFACE_QUERY='surface';`,
   './zellijDevTools.helper': `exports.bindZellijDevTools=()=>{};exports.autoOpenZellijDevTools=()=>{};`,
   './zellijKeyBridge': `exports.bindZellijKeyBridge=()=>{};`,
-  '@maestro-main/common/shortcutsHelper/shortcuts.helper': `exports.setTerminalKeyboardOwner=()=>{};exports.guardWindowCloseShortcut=()=>{};`,
+  '@maestro-main/common/shortcutsHelper/shortcuts.helper': `exports.setTerminalKeyboardOwner=()=>{};`,
   '@main/windows/windowState.service': `exports.windowStateService={resolve:()=>null,register:()=>({show(){},flushAndDispose(){}})};`,
-  './zellijRuntime.service': `const listeners=new Set();let stopCount=0;let state={enabled:false,status:'idle'};const session={setPermissionRequestHandler(fn){this.request=fn;},setPermissionCheckHandler(fn){this.check=fn;}};
-    const emit=(s)=>{for(const l of [...listeners]) l(s);};
-    exports.zellijOrigin=()=>'http://127.0.0.1:12902';exports.zellijTerminalUrl=(id)=>'http://127.0.0.1:12902/bitterless-'+id;exports.zellijTerminalSession=()=>session;
-    // Faithful to the real contract: a Set plus a disposer. A single-slot stub would hide exactly
-    // the bug this shape exists to prevent.
-    exports.subscribeZellijState=fn=>{listeners.add(fn);return()=>listeners.delete(fn);};
-    exports.listenerCount=()=>listeners.size;
-    exports.getZellijRuntime=()=>({snapshot:()=>state,stop:async()=>{stopCount++;},reportViewFailure:()=>{state={...state,status:'error'};emit(state);}});exports.change=next=>{state=next;emit(next);};exports.stops=()=>stopCount;`
+  './zellijRuntime.service': `const listeners=new Set(),failures=new Set(),gates=new Map();
+    const calls={prepare:[],close:[],focus:[],blur:[],stop:0};
+    const initial=()=>({status:'idle',error:null,shortcuts:{splitDown:'Super d',splitRight:'Super Shift d',closePane:'Super w'},configExists:true,configFile:'/fixture/config.kdl',configDirectory:'/fixture',configRevision:'fixture'});
+    let state=initial();const session={setPermissionRequestHandler(fn){this.request=fn;},setPermissionCheckHandler(fn){this.check=fn;}};
+    exports.zellijOrigin=()=>'http://127.0.0.1:12902';exports.zellijTerminalSession=()=>session;
+    exports.prepareZellijTerminal=async id=>{calls.prepare.push(id);await gates.get(id)?.promise;state={...state,status:'ready',error:null};return 'http://127.0.0.1:12902/bitterless-'+id;};
+    exports.closeZellijTerminal=async id=>{calls.close.push(id);};
+    exports.focusZellijTerminal=id=>calls.focus.push(id);exports.blurZellijTerminal=id=>calls.blur.push(id);
+    exports.stopZellijRuntime=async()=>{calls.stop++;};
+    exports.subscribeZellijState=fn=>{listeners.add(fn);return()=>listeners.delete(fn);};exports.listenerCount=()=>listeners.size;
+    exports.subscribeZellijTerminalFailure=fn=>{failures.add(fn);return()=>failures.delete(fn);};exports.fail=id=>{for(const fn of failures)fn(id);};
+    exports.getZellijRuntime=()=>({snapshot:()=>state});
+    exports.change=next=>{state={...state,...next};for(const listener of [...listeners])listener(state);};
+    exports.reset=()=>{state=initial();gates.clear();for(const key of ['prepare','close','focus','blur'])calls[key].length=0;calls.stop=0;};
+    exports.calls=calls;exports.gates=gates;`
 };
 await build({
   stdin: {
-    contents: `export {zellijWindowService,isZellijNavigationAllowed} from '${process.cwd()}/src/main/zellij/zellijWindow.service.ts'; export {windows,views} from 'electron'; export {change,stops,listenerCount} from './zellijRuntime.service';`,
+    contents: `export {zellijWindowService,isZellijNavigationAllowed} from '${process.cwd()}/src/main/zellij/zellijWindow.service.ts';export {BrowserWindow,windows,views,chromeGates} from 'electron';export {broadcasts} from 'electron-xpc/main';export {change,calls,gates,reset,listenerCount,fail} from './zellijRuntime.service';`,
     resolveDir: process.cwd(),
     loader: 'ts'
   },
@@ -41,6 +66,7 @@ await build({
   platform: 'node',
   format: 'cjs',
   outfile: output,
+  alias: { '@shared': join(process.cwd(), 'src/shared') },
   plugins: [
     {
       name: 'fixtures',
@@ -59,41 +85,102 @@ await build({
 const {
   zellijWindowService: service,
   isZellijNavigationAllowed,
+  BrowserWindow,
   windows,
   views,
+  chromeGates,
+  broadcasts,
   change,
-  stops,
+  calls,
+  gates,
+  reset,
+  fail,
   listenerCount
 } = createRequire(import.meta.url)(output);
-test.after(() => rmSync(root, { recursive: true, force: true }));
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+const deferred = () => {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  return { promise, resolve, reject };
+};
+const terminalOf = (id) =>
+  views.find(
+    (view) => !view.webContents.closed && view.webContents.url?.endsWith(`/bitterless-${id}`)
+  );
+const tabHost = (instanceId) => {
+  const state = { open: true, attached: false };
+  const window = new BrowserWindow({});
+  const host = {
+    instanceId,
+    window: () => window,
+    contentRect: () => ({ x: 0, y: 0, width: 900, height: 600 }),
+    attach: (view) => {
+      state.attached = true;
+      state.view = view;
+    },
+    detach: () => {
+      state.attached = false;
+    },
+    activate: () => {},
+    close: () => {
+      state.open = false;
+    },
+    setTitle: () => {},
+    setDisplayUrl: () => {},
+    isOpen: () => state.open
+  };
+  return { host, state };
+};
+test.beforeEach(async () => {
+  await service.destroy();
+  reset();
+  windows.length = 0;
+  views.length = 0;
+  broadcasts.length = 0;
+  chromeGates.clear();
+});
+test.after(async () => {
+  await service.destroy();
+  rmSync(root, { recursive: true, force: true });
+});
 
-test('singleton local window embeds an isolated no-preload view only after readiness and bounds stay inside content', async () => {
+test('standalone opening automatically prepares once and attaches only after its session is ready', async () => {
+  const gate = deferred();
+  gates.set('window', gate);
   await Promise.all([service.open(), service.open()]);
   assert.equal(windows.length, 1);
-  // The chrome is now a VIEW inside a container, not the window's own page — that is what makes the
-  // same surface carryable into a Maestro tab. So one view exists before readiness: the chrome.
-  assert.equal(views.length, 1, 'the chrome view exists immediately');
+  assert.deepEqual(calls.prepare, ['window']);
+  assert.equal(views.length, 1, 'only trusted chrome exists while native preparation waits');
+  assert.equal(service.snapshot('window').status, 'starting');
   const controls = views[0];
-  assert.match(String(controls.options.webPreferences.preload), /zellij\.js$/);
-  change({ enabled: true, status: 'ready' });
-  assert.equal(views.length, 2, 'the terminal is added only after readiness');
-  const view = views[1];
-  assert.equal(view.options.webPreferences.preload, undefined);
-  assert.equal(view.options.webPreferences.sandbox, true);
-  assert.equal(view.options.webPreferences.nodeIntegration, false);
-  assert.equal(view.options.webPreferences.webSecurity, true);
-  assert.equal(view.webContents.ignore, true);
-  assert.deepEqual(view.webContents.openHandler(), { action: 'deny' });
-  // The standalone window's surface answers to a fixed id; an unknown one must move nothing —
-  // mis-laying-out a stranger's terminal is worse than ignoring the message.
-  const untouched = { ...view.bounds };
-  service.setContentBounds('not-a-surface', { x: 0, y: 10, width: 10, height: 10 });
-  assert.deepEqual(view.bounds, untouched, 'an unknown surface id lays out nothing at all');
+  assert.match(controls.options.webPreferences.preload, /zellij\.js$/);
+  assert.equal(controls.webContents.query.surface, 'window');
+  gate.resolve();
+  await flush();
+  const terminal = terminalOf('window');
+  assert.ok(terminal);
+  assert.equal(
+    terminal.bounds.y,
+    48,
+    'native fallback matches the 48px header before renderer measurement'
+  );
+  assert.equal(service.snapshot('window').status, 'ready');
+  assert.equal(terminal.options.webPreferences.preload, undefined);
+  assert.equal(terminal.options.webPreferences.sandbox, true);
+  assert.equal(terminal.options.webPreferences.nodeIntegration, false);
+  assert.equal(terminal.options.webPreferences.webSecurity, true);
+  assert.equal(terminal.webContents.ignore, true);
+  assert.deepEqual(terminal.webContents.openHandler(), { action: 'deny' });
+  const unchanged = { ...terminal.bounds };
+  service.setContentBounds('unknown', { x: 0, y: 5, width: 5, height: 5 });
+  assert.deepEqual(terminal.bounds, unchanged);
   service.setContentBounds('window', { x: 0, y: 170, width: 4000, height: 2000 });
-  assert.deepEqual(view.bounds, { x: 0, y: 170, width: 1000, height: 530 });
-  assert.equal(controls.webContents.query.surface, 'window', 'the chrome is told which surface it is');
+  assert.deepEqual(terminal.bounds, { x: 0, y: 170, width: 1000, height: 530 });
   let prevented = false;
-  view.webContents.emit(
+  terminal.webContents.emit(
     'will-navigate',
     {
       preventDefault: () => {
@@ -106,100 +193,181 @@ test('singleton local window embeds an isolated no-preload view only after readi
   assert.equal(isZellijNavigationAllowed('http://127.0.0.1:12902/session/work'), true);
   assert.equal(isZellijNavigationAllowed('http://localhost:12902'), false);
   assert.equal(isZellijNavigationAllowed('file:///etc/passwd'), false);
-  change({ enabled: false, status: 'idle' });
-  assert.equal(view.webContents.closed, true);
-  // The window still carries the container; only the terminal child went away.
-  assert.equal(windows[0].contentView.children.length, 1, 'the container survives');
-  assert.equal(controls.webContents.closed, false, 'the chrome survives a runtime going idle');
+  assert.ok(
+    broadcasts.some(
+      ({ event, params }) =>
+        event === 'zellij/surface-state' &&
+        params.surfaceId === 'window' &&
+        params.snapshot.status === 'ready'
+    )
+  );
 });
 
-test('closing a miniapp closes its web contents while keeping the runtime; auth/quit explicitly stop it', async () => {
-  change({ enabled: true, status: 'ready' });
-  const view = views.at(-1);
-  service.close();
-  assert.equal(view.webContents.closed, true);
-  assert.equal(stops(), 0);
-  await service.open();
-  assert.equal(windows.length, 2);
-  assert.equal(windows[1].contentView.children.length, 1, 'one container per window');
-  await service.destroy();
-  assert.equal(stops(), 1);
-  assert.equal(views.at(-1).webContents.closed, true);
-});
-
-/** A stand-in Maestro composite-tab host, one per tab, with its own `instanceId`. */
-const makeTabHost = (instanceId, rect = { x: 0, y: 0, width: 900, height: 600 }) => {
-  const container = { attached: false };
-  const host = {
-    instanceId,
-    window: () => windows.at(-1) ?? null,
-    contentRect: () => rect,
-    attach: (view) => {
-      container.attached = true;
-      container.view = view;
-    },
-    detach: () => {
-      container.attached = false;
-    },
-    activate: () => {
-      container.activated = true;
-    },
-    close: () => {
-      container.closed = true;
-    },
-    setTitle: () => {},
-    setDisplayUrl: () => {},
-    isOpen: () => true
-  };
-  return { host, container };
-};
-
-test('two tabs are two surfaces on two sessions — not two views onto one', async () => {
-  // The defect Ral hit: one surface for the whole app meant the second tab MOVED the live terminal
-  // out of the first, and "Initialize and open" reattached to the previous session.
-  await service.open(); // a window must exist for host.window() to resolve
-  change({ enabled: true, status: 'ready' });
+test('two Maestro tabs auto-open independent sessions and ready-state refreshes keep their views', async () => {
+  const a = tabHost('tab-a'),
+    b = tabHost('tab-b');
+  await Promise.all([service.openOnTab(a.host), service.openOnTab(b.host)]);
+  await flush();
+  assert.deepEqual(calls.prepare.sort(), ['tab-a', 'tab-b']);
+  const first = terminalOf('tab-a'),
+    second = terminalOf('tab-b');
+  assert.ok(first && second);
+  assert.notEqual(a.state.view, b.state.view);
   const before = views.length;
-  const a = makeTabHost('aaaaaaaaaaaa');
-  const b = makeTabHost('bbbbbbbbbbbb');
-  await service.openOnTab(a.host);
-  await service.openOnTab(b.host);
-
-  assert.equal(a.container.attached, true, 'the first tab keeps its own surface');
-  assert.equal(b.container.attached, true);
-  assert.notEqual(a.container.view, b.container.view, 'each tab carries its OWN container');
-  // Chrome + terminal per surface, and the standalone one is NOT recycled into the first tab: a tab
-  // carries the surface named by its own `instanceId`, so two tabs mean two new pairs.
-  assert.equal(views.length, before + 4, 'each tab builds its own chrome + terminal');
-
-  const terminalOf = (id) => views.find((v) => v.webContents.url?.endsWith('/bitterless-' + id));
-  assert.ok(terminalOf('bbbbbbbbbbbb'), 'tab B loads its OWN session URL');
-
-  // Geometry is addressed per surface: measuring B must not move A.
-  service.setContentBounds('bbbbbbbbbbbb', { x: 0, y: 50, width: 800, height: 400 });
-  const movedA = terminalOf('aaaaaaaaaaaa')?.bounds;
-  assert.notDeepEqual(terminalOf('bbbbbbbbbbbb').bounds, movedA ?? null);
-
-  // Closing one tab takes only its own surface down.
+  await Promise.all([service.initializeSurface('tab-a'), service.initializeSurface('tab-b')]);
+  change({ status: 'ready', error: null });
+  await flush();
+  assert.equal(views.length, before);
+  assert.equal(terminalOf('tab-a'), first);
+  assert.equal(terminalOf('tab-b'), second);
+  assert.equal(first.webContents.loads, 1);
+  assert.equal(second.webContents.loads, 1);
+  service.setTabActive(a.host, false);
+  assert.ok(calls.blur.includes('tab-a'));
+  assert.equal(first.visible, false);
+  service.setTabActive(a.host, true);
+  assert.equal(first.visible, true);
   service.closeTab(b.host);
-  assert.equal(b.container.attached, false);
-  assert.equal(a.container.attached, true, 'closing tab B leaves tab A running');
-  service.closeTab(a.host);
-  await service.destroy();
+  await flush();
+  assert.deepEqual(calls.close, ['tab-b']);
+  assert.equal(second.webContents.closed, true);
+  assert.equal(first.webContents.closed, false);
+  assert.equal(a.state.attached, true);
+  assert.equal(calls.stop, 0);
 });
 
-test('a surface unsubscribes on teardown, so listeners do not accumulate across window lifetimes', async () => {
-  // The registry is a Set now, so a missed disposal ACCUMULATES a dead listener that still drives a
-  // destroyed view — where the old single-slot design hid the same mistake by overwriting. That is
-  // why the disposer has to be pinned, not just the subscribe.
-  const baseline = listenerCount();
-  await service.open();
-  assert.equal(listenerCount(), baseline + 1, 'opening registers exactly one listener');
-  await service.open();
-  assert.equal(listenerCount(), baseline + 1, 'reopening an already-open window does not double-subscribe');
-  service.close();
-  assert.equal(listenerCount(), baseline, 'closing removes it again');
-  await service.open();
+test('a failed native bridge affects only its surface and Retry replaces its terminal view', async () => {
+  await Promise.all([
+    service.openOnTab(tabHost('healthy').host),
+    service.openOnTab(tabHost('failed').host)
+  ]);
+  await flush();
+  const healthy = terminalOf('healthy');
+  const failed = terminalOf('failed');
+  fail('failed');
+  assert.equal(failed.webContents.closed, true);
+  assert.equal(healthy.webContents.closed, false);
+  assert.equal(service.snapshot('failed').status, 'error');
+  assert.equal(service.snapshot('healthy').status, 'ready');
+  await service.initializeSurface('failed');
+  assert.equal(service.snapshot('failed').status, 'ready');
+  assert.notEqual(terminalOf('failed'), failed);
+  assert.equal(terminalOf('healthy'), healthy);
+});
+
+test('surface preparation failures remain local and Retry leaves connected siblings untouched', async () => {
+  const a = tabHost('stable'),
+    b = tabHost('retry');
+  await service.openOnTab(a.host);
+  await flush();
+  const stable = terminalOf('stable');
+  const gate = deferred();
+  gates.set('retry', gate);
+  await service.openOnTab(b.host);
+  gate.reject(Error('config-invalid'));
+  await flush();
+  assert.equal(service.snapshot('retry').error, 'config-invalid');
+  assert.equal(service.snapshot('stable').status, 'ready');
+  assert.equal(stable.webContents.closed, false);
+  assert.equal(terminalOf('retry'), undefined);
+  gates.delete('retry');
+  await service.initializeSurface('retry');
+  assert.equal(service.snapshot('retry').status, 'ready');
+  assert.equal(terminalOf('stable'), stable);
+  assert.equal(stable.webContents.loads, 1);
+});
+
+test('closing a tab during session preparation closes only that identity and prevents late attachment', async () => {
+  const tab = tabHost('pending-session');
+  const gate = deferred();
+  gates.set('pending-session', gate);
+  await service.openOnTab(tab.host);
+  service.closeTab(tab.host);
+  assert.deepEqual(calls.close, ['pending-session']);
+  assert.equal(tab.state.attached, false);
+  gate.resolve();
+  await flush();
+  assert.equal(terminalOf('pending-session'), undefined);
+  assert.equal(views.length, 1, 'late native readiness cannot create a terminal view');
+  assert.equal(listenerCount(), 0);
+});
+
+test('closing before chrome readiness preserves close intent and never docks the stale surface', async () => {
+  const tab = tabHost('pending-chrome');
+  const gate = deferred();
+  chromeGates.set('pending-chrome', gate);
+  const opening = service.openOnTab(tab.host);
+  service.closeTab(tab.host);
+  const rejected = assert.rejects(opening, /no longer available/);
+  gate.resolve();
+  await rejected;
+  await flush();
+  assert.deepEqual(calls.close, ['pending-chrome']);
+  assert.equal(tab.state.attached, false);
+  assert.equal(terminalOf('pending-chrome'), undefined);
+  assert.deepEqual(calls.prepare, [], 'closed chrome must never start a late native session');
+  assert.equal(listenerCount(), 0);
+});
+
+test('Workbench cover keeps a pending terminal hidden and restores its focus without recreating the view', async () => {
+  const tab = tabHost('covered');
+  const gate = deferred();
+  gates.set('covered', gate);
+  await service.openOnTab(tab.host);
+  service.setTabActive(tab.host, false);
+  gate.resolve();
+  await flush();
+  const terminal = terminalOf('covered');
+  assert.ok(terminal);
+  assert.equal(terminal.visible, false);
+  service.setContentBounds('covered', { x: 0, y: 48, width: 900, height: 552 });
+  assert.equal(terminal.visible, false);
+  terminal.webContents.emit('focus');
+  assert.deepEqual(calls.focus, [], 'hidden terminals cannot become the remembered active cwd');
+  service.setTabActive(tab.host, true);
+  assert.equal(terminal.visible, true);
+  assert.equal(terminalOf('covered'), terminal);
+  assert.equal(terminal.webContents.loads, 1);
+  assert.deepEqual(terminal.bounds, { x: 0, y: 48, width: 900, height: 552 });
+  assert.deepEqual(
+    calls.focus,
+    ['covered'],
+    'returning from Workbench restores native keyboard and cwd focus'
+  );
+});
+
+test('application teardown stops the shared runtime without closing named sessions or attaching late views', async () => {
+  const tab = tabHost('shutdown-pending');
+  const gate = deferred();
+  gates.set('shutdown-pending', gate);
+  await service.openOnTab(tab.host);
   await service.destroy();
-  assert.equal(listenerCount(), baseline, 'destroy leaves nothing behind');
+  assert.equal(calls.stop, 1);
+  assert.deepEqual(calls.close, []);
+  assert.equal(listenerCount(), 0);
+  gate.resolve();
+  await flush();
+  assert.equal(views.length, 1);
+  assert.equal(views[0].webContents.closed, true);
+});
+
+test('explicit standalone close closes its session while generic destroy retains reopened sessions', async () => {
+  await service.open();
+  await flush();
+  assert.equal(listenerCount(), 1);
+  service.close();
+  await flush();
+  assert.deepEqual(calls.close, ['window']);
+  assert.equal(calls.stop, 0);
+  assert.equal(listenerCount(), 0);
+  await service.open();
+  await flush();
+  await service.destroy();
+  assert.deepEqual(
+    calls.close,
+    ['window'],
+    'destroy does not reinterpret carrier destruction as user close'
+  );
+  assert.equal(calls.stop, 1);
+  assert.equal(listenerCount(), 0);
 });

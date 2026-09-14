@@ -3,6 +3,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -11,6 +12,8 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  statSync,
+  utimesSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -27,6 +30,7 @@ const {
   MANIFEST_FILENAME,
   STORE_PLATFORMS,
   createManifest,
+  initializeAll,
   initializePlatform,
   normalizePackageTarget,
   payloadSpecsForPlatform,
@@ -270,10 +274,12 @@ const writeStore = (root, platform, inventory) => {
   mkdirSync(directory, { recursive: true })
   write(join(directory, '.gitkeep'), '')
   for (const tool of BINARY_TOOL_NAMES) {
+    const output = join(directory, inventory[tool].targets[platform].output)
     write(
-      join(directory, inventory[tool].targets[platform].output),
+      output,
       Buffer.from(`${platform}:${tool}:fixture`)
     )
+    if (platform !== 'win') chmodSync(output, 0o755)
   }
   for (const [name, contents] of Object.entries(bundleContents)) {
     write(join(directory, 'anydoc', name), contents)
@@ -298,6 +304,52 @@ const makeFixture = (platform = 'mac_arm') => {
   writePackageJson(root, inventory)
   const directory = writeStore(root, platform, inventory)
   return { directory, inventory, root }
+}
+
+const fixtureInitializers = (inventory) => {
+  const calls = []
+  return {
+    calls,
+    initializeBinary: (tool, platform, directory) => {
+      calls.push(`${platform}:${tool}`)
+      const file = join(directory, inventory[tool].targets[platform].output)
+      write(file, Buffer.from(`${platform}:${tool}:fixture`))
+      if (platform !== 'win') chmodSync(file, 0o755)
+    },
+    initializeDocumentBundle: (platform, directory) => {
+      calls.push(`${platform}:anydoc-bundle`)
+      const { bundleContents } = setFixtureHashes(inventory, platform)
+      for (const [name, contents] of Object.entries(bundleContents)) {
+        write(join(directory, 'anydoc', name), contents)
+      }
+    },
+    initializeDocumentNative: (platform, directory) => {
+      calls.push(`${platform}:anydoc-native`)
+      write(join(directory, inventory.anydoc.targets[platform].output), `${platform}:anydoc-native:fixture`)
+    }
+  }
+}
+
+const snapshotFiles = (directory) =>
+  Object.fromEntries(
+    readdirSync(directory, { recursive: true }).sort().filter((file) => statSync(join(directory, file)).isFile()).map((file) => {
+      const absolute = join(directory, file)
+      const stats = statSync(absolute, { bigint: true })
+      return [file, { hash: sha256(readFileSync(absolute)), mtime: stats.mtimeNs, inode: stats.ino }]
+    })
+  )
+
+const payloadTimes = (directory, platform, inventory) =>
+  Object.fromEntries(payloadSpecsForPlatform(platform, inventory).map((spec) => [
+    spec.path,
+    statSync(join(directory, spec.path)).mtimeMs
+  ]))
+
+const pinPayloadTimes = (directory, platform, inventory) => {
+  for (const spec of payloadSpecsForPlatform(platform, inventory)) {
+    utimesSync(join(directory, spec.path), 1_700_000_000, 1_700_000_000)
+  }
+  return payloadTimes(directory, platform, inventory)
 }
 
 test('package target mapping uses the three requested external_tools directories', () => {
@@ -417,7 +469,8 @@ test('initializePlatform is idempotent for a valid non-force store without enter
       fixture.inventory,
       {
         initializeBinary: failIfCalled,
-        initializeDocumentTool: failIfCalled,
+        initializeDocumentBundle: failIfCalled,
+        initializeDocumentNative: failIfCalled,
         replaceDirectory: failIfCalled
       }
     )
@@ -427,6 +480,204 @@ test('initializePlatform is idempotent for a valid non-force store without enter
     rmSync(fixture.root, { recursive: true, force: true })
   }
 })
+
+test('all-platform init leaves the host runtime binary ready and repeats without downloads or rewrites', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'maestro-external-tools-init-all-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const inventory = cloneInventory()
+  for (const platform of STORE_PLATFORMS) setFixtureHashes(inventory, platform)
+  writePackageJson(root, inventory)
+  const initializers = fixtureInitializers(inventory)
+  initializeAll(root, false, inventory, { ...initializers, packageTarget: 'mac_arm' })
+  assert.equal(initializers.calls.length, STORE_PLATFORMS.length * (BINARY_TOOL_NAMES.length + 2))
+  const runtimeBinary = join(root, 'build', 'maestro-tools', 'zellij')
+  assert.equal(readFileSync(runtimeBinary, 'utf8'), 'mac_arm:zellij:fixture')
+  assert.equal(statSync(runtimeBinary).mode & 0o111, 0o111)
+  for (const platform of STORE_PLATFORMS) validateExternalStore(root, platform, inventory)
+  const before = snapshotFiles(root)
+  initializers.calls.length = 0
+  initializeAll(root, false, inventory, { ...initializers, packageTarget: 'mac_arm' })
+  assert.deepEqual(initializers.calls, [])
+  assert.deepEqual(snapshotFiles(root), before)
+})
+
+for (const damage of ['missing', 'corrupt']) {
+  test(`${damage} binary refreshes only its archive and preserves other payload mtimes`, (t) => {
+    const fixture = makeFixture()
+    t.after(() => rmSync(fixture.root, { recursive: true, force: true }))
+    const before = pinPayloadTimes(fixture.directory, 'mac_arm', fixture.inventory)
+    const binary = join(fixture.directory, 'zellij')
+    if (damage === 'missing') rmSync(binary)
+    else write(binary, 'damaged')
+    const initializers = fixtureInitializers(fixture.inventory)
+    initializePlatform(fixture.root, 'mac_arm', false, fixture.inventory, initializers)
+    assert.deepEqual(initializers.calls, ['mac_arm:zellij'])
+    validateExternalStore(fixture.root, 'mac_arm', fixture.inventory)
+    const after = payloadTimes(fixture.directory, 'mac_arm', fixture.inventory)
+    delete before.zellij
+    delete after.zellij
+    assert.deepEqual(after, before)
+  })
+}
+
+for (const damage of ['missing-manifest', 'corrupt-manifest', 'extra-file', 'forged-manifest']) {
+  test(`${damage} is repaired from pinned payloads without downloads`, (t) => {
+    const fixture = makeFixture()
+    t.after(() => rmSync(fixture.root, { recursive: true, force: true }))
+    const before = pinPayloadTimes(fixture.directory, 'mac_arm', fixture.inventory)
+    const manifest = join(fixture.directory, MANIFEST_FILENAME)
+    if (damage === 'missing-manifest') rmSync(manifest)
+    if (damage === 'corrupt-manifest') write(manifest, '{invalid')
+    if (damage === 'extra-file') write(join(fixture.directory, 'retired', 'extra'), 'legacy')
+    if (damage === 'forged-manifest') {
+      const contents = JSON.parse(readFileSync(manifest, 'utf8'))
+      contents.files.find((file) => file.path === 'bun').sha256 = sha256('untrusted')
+      write(manifest, JSON.stringify(contents))
+    }
+    const initializers = fixtureInitializers(fixture.inventory)
+    initializePlatform(fixture.root, 'mac_arm', false, fixture.inventory, initializers)
+    assert.deepEqual(initializers.calls, [])
+    validateExternalStore(fixture.root, 'mac_arm', fixture.inventory)
+    assert.deepEqual(payloadTimes(fixture.directory, 'mac_arm', fixture.inventory), before)
+  })
+}
+
+test('a manifest matching corrupt bytes cannot authorize reuse against the current pin', (t) => {
+  const fixture = makeFixture()
+  t.after(() => rmSync(fixture.root, { recursive: true, force: true }))
+  write(join(fixture.directory, 'bun'), 'malicious')
+  write(join(fixture.directory, MANIFEST_FILENAME), JSON.stringify(createManifest(fixture.directory, 'mac_arm', fixture.inventory)))
+  const initializers = fixtureInitializers(fixture.inventory)
+  initializePlatform(fixture.root, 'mac_arm', false, fixture.inventory, initializers)
+  assert.deepEqual(initializers.calls, ['mac_arm:bun'])
+  validateExternalStore(fixture.root, 'mac_arm', fixture.inventory)
+})
+
+for (const [file, unit] of [['anydoc/cli.js', 'anydoc-bundle'], ['anydoc/anydoc.node', 'anydoc-native']]) {
+  test(`AnyDoc ${unit} repair independently reuses the other download unit`, (t) => {
+    const fixture = makeFixture()
+    t.after(() => rmSync(fixture.root, { recursive: true, force: true }))
+    pinPayloadTimes(fixture.directory, 'mac_arm', fixture.inventory)
+    rmSync(join(fixture.directory, file))
+    const initializers = fixtureInitializers(fixture.inventory)
+    initializePlatform(fixture.root, 'mac_arm', false, fixture.inventory, initializers)
+    assert.deepEqual(initializers.calls, [`mac_arm:${unit}`])
+    validateExternalStore(fixture.root, 'mac_arm', fixture.inventory)
+    const reused = unit === 'anydoc-bundle' ? 'anydoc/anydoc.node' : 'anydoc/cli.js'
+    assert.equal(statSync(join(fixture.directory, reused)).mtimeMs, 1_700_000_000_000)
+  })
+}
+
+test('missing executable permission is repaired locally without downloads', { skip: process.platform === 'win32' }, (t) => {
+  const fixture = makeFixture()
+  t.after(() => rmSync(fixture.root, { recursive: true, force: true }))
+  chmodSync(join(fixture.directory, 'zellij'), 0o644)
+  assert.throws(() => validateExternalStore(fixture.root, 'mac_arm', fixture.inventory), /must be executable/)
+  const initializers = fixtureInitializers(fixture.inventory)
+  initializePlatform(fixture.root, 'mac_arm', false, fixture.inventory, initializers)
+  assert.deepEqual(initializers.calls, [])
+  validateExternalStore(fixture.root, 'mac_arm', fixture.inventory)
+})
+
+test('symlink payload parents cannot provide verified reuse', (t) => {
+  const fixture = makeFixture()
+  t.after(() => rmSync(fixture.root, { recursive: true, force: true }))
+  const outside = join(fixture.root, 'outside-anydoc')
+  renameSync(join(fixture.directory, 'anydoc'), outside)
+  symlinkSync(outside, join(fixture.directory, 'anydoc'), 'dir')
+  const initializers = fixtureInitializers(fixture.inventory)
+  initializePlatform(fixture.root, 'mac_arm', false, fixture.inventory, initializers)
+  assert.deepEqual(initializers.calls, ['mac_arm:anydoc-bundle', 'mac_arm:anydoc-native'])
+  validateExternalStore(fixture.root, 'mac_arm', fixture.inventory)
+  assert.equal(existsSync(join(outside, 'anydoc.node')), true)
+})
+
+test('force explicitly refreshes every binary archive and both AnyDoc units', (t) => {
+  const fixture = makeFixture()
+  t.after(() => rmSync(fixture.root, { recursive: true, force: true }))
+  const initializers = fixtureInitializers(fixture.inventory)
+  initializePlatform(fixture.root, 'mac_arm', true, fixture.inventory, initializers)
+  assert.deepEqual(initializers.calls, [...BINARY_TOOL_NAMES, 'anydoc-bundle', 'anydoc-native'].map((tool) => `mac_arm:${tool}`))
+  validateExternalStore(fixture.root, 'mac_arm', fixture.inventory)
+})
+
+test('failed initialization preserves the previous store and ready stage', (t) => {
+  const fixture = makeFixture()
+  t.after(() => rmSync(fixture.root, { recursive: true, force: true }))
+  stageExternalTools(fixture.root, 'mac_arm', fixture.inventory)
+  const before = snapshotFiles(fixture.root)
+  assert.throws(() => initializePlatform(fixture.root, 'mac_arm', true, fixture.inventory, {
+    initializeBinary: () => { throw new Error('fixture download failed') }
+  }), /fixture download failed/)
+  assert.deepEqual(snapshotFiles(fixture.root), before)
+  assert.deepEqual(readdirSync(join(fixture.root, 'external_tools')), ['mac_arm'])
+})
+
+test('valid stage stays untouched even when the unused cache is missing', (t) => {
+  const fixture = makeFixture()
+  t.after(() => rmSync(fixture.root, { recursive: true, force: true }))
+  const stage = stageExternalTools(fixture.root, 'mac_arm', fixture.inventory)
+  const before = snapshotFiles(stage)
+  rmSync(fixture.directory, { recursive: true })
+  stageExternalTools(fixture.root, 'mac_arm', fixture.inventory, {
+    copy: () => { throw new Error('valid stage must not copy') }
+  })
+  assert.deepEqual(snapshotFiles(stage), before)
+})
+
+test('stage atomically removes legacy generated residue and changes package targets offline', (t) => {
+  const fixture = makeFixture()
+  t.after(() => rmSync(fixture.root, { recursive: true, force: true }))
+  writeStore(fixture.root, 'win', fixture.inventory)
+  const stage = stageExternalTools(fixture.root, 'win64', fixture.inventory)
+  write(join(stage, 'manifest.json'), '{}')
+  write(join(stage, 'micromeet', 'retired'), 'legacy')
+  stageExternalTools(fixture.root, 'mac_arm', fixture.inventory)
+  assert.equal(existsSync(join(stage, 'manifest.json')), false)
+  assert.equal(existsSync(join(stage, 'micromeet')), false)
+  assert.equal(existsSync(join(stage, 'zellij.exe')), false)
+  verifyStagedExternalTools(fixture.root, 'mac_arm', fixture.inventory)
+  stageExternalTools(fixture.root, 'win64', fixture.inventory)
+  verifyStagedExternalTools(fixture.root, 'win64', fixture.inventory)
+  assert.equal(existsSync(join(stage, 'zellij')), false)
+})
+
+for (const failure of ['source', 'copy', 'validation', 'replacement']) {
+  test(`stage ${failure} failure preserves the previous output and cleans temporary files`, (t) => {
+    const fixture = makeFixture()
+    t.after(() => rmSync(fixture.root, { recursive: true, force: true }))
+    const { stage } = writeEmptyStage(fixture.root)
+    write(join(stage, 'manifest.json'), '{}')
+    write(join(stage, 'micromeet'), 'previous-output')
+    const before = snapshotFiles(stage)
+    const options = {}
+    let message
+    if (failure === 'source') {
+      rmSync(join(fixture.directory, 'zellij'))
+      message = /Run `yarn tools:init`/
+    } else if (failure === 'copy') {
+      options.copy = () => { throw new Error('fixture copy failure') }
+      message = /fixture copy failure/
+    } else if (failure === 'validation') {
+      options.copy = (_source, destination) => write(join(destination, 'bad'), 'incomplete')
+      message = /unexpected files/
+    } else {
+      options.replaceDirectory = (replacement, destination) => {
+        let calls = 0
+        replacePlatformDirectory(replacement, destination, {
+          rename: (source, target) => {
+            if (++calls === 2) throw new Error('fixture replacement failure')
+            renameSync(source, target)
+          }
+        })
+      }
+      message = /fixture replacement failure/
+    }
+    assert.throws(() => stageExternalTools(fixture.root, 'mac_arm', fixture.inventory, options), message)
+    assert.deepEqual(snapshotFiles(stage), before)
+    assert.deepEqual(readdirSync(join(fixture.root, 'build')), ['maestro-tools'])
+  })
+}
 
 test('strict store validation rejects missing, tampered, and symlinked payloads', () => {
   const fixture = makeFixture()

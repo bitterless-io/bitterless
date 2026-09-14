@@ -1,7 +1,8 @@
 import { BrowserWindow } from 'electron';
 import { windowStateService, type WindowStateController } from '@main/windows/windowState.service';
 import { ZellijSurface } from './zellijSurface';
-import { getZellijRuntime } from './zellijRuntime.service';
+import { closeZellijTerminal, getZellijRuntime, stopZellijRuntime } from './zellijRuntime.service';
+import type { ZellijSnapshot } from '@shared/zellij/zellij.type';
 import type { ZellijTerminalRect } from './zellijTerminalView';
 import type { MaestroCompositeTabHostApi } from '@maestro-shared/compositeTab.api';
 
@@ -39,6 +40,8 @@ class ZellijWindowService {
   private readonly creating = new Map<string, Promise<ZellijSurface>>();
   private window: BrowserWindow | null = null;
   private stateController: WindowStateController | null = null;
+  private generation = 0;
+  private readonly closedTabs = new WeakSet<MaestroCompositeTabHostApi>();
 
   /** Where the standalone surface currently lives — the renderer shows a different dock affordance. */
   get hostKind(): 'none' | 'standalone' | 'tab' {
@@ -52,10 +55,12 @@ class ZellijWindowService {
     if (existing) return existing.surface;
     const pending = this.creating.get(surfaceId);
     if (pending) return pending;
+    const generation = this.generation;
     const created = (async () => {
       const surface = new ZellijSurface(surfaceId);
       try {
         await surface.load();
+        if (generation !== this.generation) throw new Error('operation-failed');
       } catch (error) {
         surface.dispose();
         throw error;
@@ -97,7 +102,11 @@ class ZellijWindowService {
     const surfaceId = host.instanceId || STANDALONE_SURFACE_ID;
     const surface = await this.ensureSurface(surfaceId);
     const window = host.window();
-    if (!host.isOpen() || !window || window.isDestroyed()) {
+    if (this.closedTabs.has(host) || !host.isOpen() || !window || window.isDestroyed()) {
+      if (!this.surfaces.get(surfaceId)?.tabHost) {
+        this.surfaces.delete(surfaceId);
+        surface.dispose();
+      }
       throw new Error('[zellij] Maestro tab is no longer available');
     }
     const entry = this.surfaces.get(surfaceId);
@@ -127,7 +136,10 @@ class ZellijWindowService {
     const entry = this.entryForHost(host);
     if (!entry) return;
     entry.surface.setVisible(active);
-    if (active) this.refreshTab(host);
+    if (active) {
+      this.refreshTab(host);
+      entry.surface.focus();
+    }
   }
 
   refreshTab(host: MaestroCompositeTabHostApi): void {
@@ -140,6 +152,10 @@ class ZellijWindowService {
 
   /** The tab went away. The surface goes with it — this is a close, not a move. */
   closeTab(host: MaestroCompositeTabHostApi): void {
+    this.closedTabs.add(host);
+    void closeZellijTerminal(host.instanceId || STANDALONE_SURFACE_ID).catch(() => {
+      console.error('[zellij] failed to close the tab session');
+    });
     for (const [surfaceId, entry] of this.surfaces) {
       if (entry.tabHost !== host) continue;
       this.surfaces.delete(surfaceId);
@@ -179,8 +195,23 @@ class ZellijWindowService {
     this.surfaces.get(surfaceId)?.surface.setContentBounds(input);
   }
 
+  snapshot(surfaceId: string): ZellijSnapshot {
+    return this.surfaces.get(surfaceId)?.surface.snapshot() ?? getZellijRuntime().snapshot();
+  }
+
+  async initializeSurface(surfaceId: string): Promise<ZellijSnapshot> {
+    const creating = this.creating.get(surfaceId);
+    if (creating) await creating;
+    const entry = this.surfaces.get(surfaceId);
+    if (!entry) throw new Error('operation-failed');
+    return entry.surface.initialize();
+  }
+
   async destroy(): Promise<void> {
+    this.generation += 1;
     await Promise.all([...this.creating.values()].map((pending) => pending.catch(() => undefined)));
+    // Capture the focused pane before disposing its view or stopping the owned server.
+    await stopZellijRuntime();
     for (const [surfaceId, entry] of this.surfaces) {
       this.surfaces.delete(surfaceId);
       entry.tabHost?.detach(entry.surface.container);
@@ -191,7 +222,6 @@ class ZellijWindowService {
     this.window = null;
     this.stateController = null;
     // Only app quit and logout reach here. Closing a SURFACE must never stop the shared server.
-    await getZellijRuntime().stop();
   }
 
   private entryForHost(host: MaestroCompositeTabHostApi): ZellijSurfaceEntry | null {
@@ -241,6 +271,9 @@ class ZellijWindowService {
       if (!entry || entry.tabHost) return;
       this.surfaces.delete(STANDALONE_SURFACE_ID);
       entry.surface.dispose();
+      void closeZellijTerminal(STANDALONE_SURFACE_ID).catch(() => {
+        console.error('[zellij] failed to close the window session');
+      });
     });
   }
 }

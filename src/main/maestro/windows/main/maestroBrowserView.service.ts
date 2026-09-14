@@ -244,6 +244,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
    */
   private readonly compositeHosts = new Map<string, MaestroCompositeTabHostApi>()
   private lifecycleEpoch = 0
+  private contentCovered = false
 
   createPinnedHomeTab(): WebContentsView {
     const view = this.buildPinnedHomeView()
@@ -605,6 +606,8 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       this.broadcastTabs()
       throw err
     }
+    // The mount may finish after Workbench covered the operation area, including cold restores.
+    this.setCompositeActive(tab.id, tab.id === this.activeTabId)
     if (params.activate === false) {
       this.broadcastTabs()
       return tab
@@ -671,7 +674,14 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
   private setCompositeActive(tabId: string, active: boolean): void {
     const spec = this.compositeTabs.get(tabId)
     const host = this.compositeHosts.get(tabId)
-    if (spec && host) spec.setActive(host, active)
+    if (spec && host) spec.setActive(host, active && !this.contentCovered)
+  }
+
+  setContentCovered(covered: boolean): void {
+    this.contentCovered = covered
+    for (const tabId of this.compositeTabs.keys()) {
+      this.setCompositeActive(tabId, tabId === this.activeTabId)
+    }
   }
 
   private ownerOf(view: WebContentsView): OperationTab | undefined {
@@ -1675,6 +1685,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
   }
 
   reset(): void {
+    this.contentCovered = false
     this.lifecycleEpoch += 1
     for (const tab of this.tabs) {
       if (tab.loadWatchdog) {

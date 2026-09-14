@@ -44,7 +44,8 @@ import {
   OmniOpenTimeoutError,
 } from './omniOpenCoordinator.service';
 import { OMNI_MINI_APP_RUNTIME, type OmniOriginSource } from './omniMiniAppRuntime.service';
-import { ZELLIJ_PARTITION, zellijOrigin } from '@main/zellij/zellijRuntime.service';
+import { ZELLIJ_PARTITION, zellijOrigin, prepareZellijTerminal, focusZellijTerminal, blurZellijTerminal, closeZellijTerminal, subscribeZellijTerminalFailure } from '@main/zellij/zellijRuntime.service';
+import { zellijErrorCode } from '@main/zellij/zellijProcess.service';
 import {
   guardWindowCloseShortcut,
   setTerminalKeyboardOwner
@@ -289,6 +290,8 @@ export class OmniWindowHelper {
   private activeCellId: string | null = null;
   private cells: CellViewPair[] = [];
   private miniAppLoadFailures = new Map<string, OmniMiniAppId>();
+  private zellijLoadGeneration = new Map<string, number>();
+  private zellijLoadStates = new Map<string, OmniMiniAppLoadState>();
   private recoveredFromInvalidLayout = false;
   private currentLayout: OmniCellLayout[] = [];
   private currentLayoutTree: OmniPaneNode | null = null;
@@ -564,7 +567,7 @@ export class OmniWindowHelper {
     // Detach controlView from baseWindow before destroying (preserve singleton)
     if (this.controlView && this.baseWindow && !this.baseWindow.isDestroyed()) {
       try {
-        if (this.controlVisible) {
+        if (this.controlVisible || this.zellijLoadStates.size) {
           this.baseWindow.contentView.removeChildView(this.controlView);
         }
       } catch {
@@ -577,6 +580,7 @@ export class OmniWindowHelper {
     const cells = this.cells;
     this.cells = [];
     this.miniAppLoadFailures.clear();
+    this.zellijLoadStates.clear();
     for (const cell of cells) {
       this.disposeWebContentsView(cell.menubar);
       this.disposeWebContentsView(cell.content);
@@ -988,6 +992,7 @@ export class OmniWindowHelper {
     createdWindow.on('closed' as any, () => {
       console.log('[OmniWindowHelper] baseWindow closed, cleaning up');
       if (this.baseWindow === createdWindow) {
+        for (const cell of this.cells) this.closeZellijCellSession(cell);
         this.finishOpenDiagnostic(creationGeneration, 'failure', 'closed');
         this.openCoordinator.invalidate();
         this.cleanupAllViews();
@@ -1098,21 +1103,39 @@ export class OmniWindowHelper {
     if (!this.baseWindow || this.baseWindow.isDestroyed() || !this.controlView) return;
 
     if (this.controlVisible === visible) {
+      this.syncZellijControlOverlay();
       xpcMain.broadcast(OMNI_CONTROL_VISIBILITY_EVENT, { visible });
       return;
     }
 
     this.controlVisible = visible;
-    if (this.controlVisible) {
-      this.baseWindow.contentView.addChildView(this.controlView);
-      this.controlView.setVisible(true);
-      this.updateControlBounds();
-      this.replayControlState();
-    } else {
-      this.controlView.setVisible(false);
-      this.baseWindow.contentView.removeChildView(this.controlView);
-    }
+    this.syncZellijControlOverlay();
+    this.replayControlState();
     xpcMain.broadcast(OMNI_CONTROL_VISIBILITY_EVENT, { visible: this.controlVisible });
+  }
+
+  /** In normal mode the existing trusted Control renderer fills only waiting terminal holes.
+   * Ready native cells sit above it and keep their keyboard/mouse interaction. */
+  private syncZellijControlOverlay(): void {
+    if (!this.baseWindow || this.baseWindow.isDestroyed() || !this.controlView) return;
+    const show = this.controlVisible || this.zellijLoadStates.size > 0;
+    this.baseWindow.contentView.removeChildView(this.controlView);
+    this.controlView.setVisible(show);
+    if (show) {
+      this.baseWindow.contentView.addChildView(this.controlView);
+      this.updateControlBounds();
+    }
+    for (const cell of this.cells) {
+      const waiting = cell.miniAppId === 'zellij' && this.zellijLoadStates.has(cell.id);
+      if (cell.miniAppId === 'zellij') cell.content.setVisible(!waiting);
+      if (show && !this.controlVisible && !waiting) {
+        for (const view of [cell.menubar, cell.content]) {
+          if (!view) continue;
+          this.baseWindow.contentView.removeChildView(view);
+          this.baseWindow.contentView.addChildView(view);
+        }
+      }
+    }
   }
 
   toggleControl(): void {
@@ -1165,7 +1188,10 @@ export class OmniWindowHelper {
       }, OMNI_OPEN_READY_TIMEOUT_MS);
     }
     controlView.setBackgroundColor('#00000000');
-    controlView.webContents.on('did-finish-load', () => this.replayControlState());
+    controlView.webContents.on('did-finish-load', () => {
+      this.replayControlState();
+      this.syncZellijControlOverlay();
+    });
     controlView.webContents.on('before-input-event', (event, input) => {
       if (input.type !== 'keyDown' || input.key !== 'Escape') return;
       event.preventDefault();
@@ -1281,6 +1307,7 @@ export class OmniWindowHelper {
     });
     this.cells = this.cells.filter((cell) => !toRemove.includes(cell));
     for (const cell of toRemove) {
+      this.closeZellijCellSession(cell);
       this.removeCellViews(cell);
     }
     if (this.activeCellId && !nextCellsById.has(this.activeCellId)) {
@@ -1341,6 +1368,12 @@ export class OmniWindowHelper {
   cellRefresh(cellId: string): void {
     const cell = this.cells.find((c) => c.id === cellId);
     if (cell && this.isWebContentsAlive(cell.content.webContents)) {
+      if (cell.contentMode === 'miniapp' && cell.miniAppId === 'zellij') {
+        this.loadMiniAppCellContent(cell.content, {
+          cellId, miniAppId: 'zellij', target: { filePath: null, url: zellijOrigin() }
+        });
+        return;
+      }
       cell.content.webContents.reload();
     }
   }
@@ -1348,6 +1381,7 @@ export class OmniWindowHelper {
   closeCell(cellId: string): void {
     const cell = this.cells.find((c) => c.id === cellId);
     if (cell) {
+      this.closeZellijCellSession(cell);
       this.cells = this.cells.filter((c) => c.id !== cellId);
       this.miniAppLoadFailures.delete(cellId);
       this.removeCellViews(cell);
@@ -1414,6 +1448,17 @@ export class OmniWindowHelper {
       // An origin-backed cell is Zellij: Cmd+W closes a PANE inside it. Registered ahead of the
       // window-close guard below, and the shortcut helper checks terminals first.
       setTerminalKeyboardOwner(view.webContents);
+      const unsubscribe = subscribeZellijTerminalFailure((surfaceId) => {
+        if (surfaceId !== `omni-${cellId}` || !this.isWebContentsAlive(view.webContents)) return;
+        if (!this.cells.some((cell) => cell.id === cellId && cell.content === view)) return;
+        this.zellijLoadGeneration.set(cellId, (this.zellijLoadGeneration.get(cellId) ?? 0) + 1);
+        this.clearActiveCellIfMatching(cellId);
+        // Main-process navigation to an empty document ends the old websocket; Retry reuses the
+        // same sandboxed view and its existing origin fence.
+        void view.webContents.loadURL('about:blank').catch(() => {});
+        this.broadcastMiniAppLoadState({ cellId, miniAppId: 'zellij', status: 'failed', error: 'operation-failed' });
+      });
+      view.webContents.once('destroyed', unsubscribe);
     }
     guardWindowCloseShortcut(view.webContents);
     return view;
@@ -1478,6 +1523,8 @@ export class OmniWindowHelper {
   }
 
   private broadcastMiniAppLoadState(params: OmniMiniAppLoadState): void {
+    if (params.miniAppId === 'zellij' && params.status !== 'ready') this.zellijLoadStates.set(params.cellId, params);
+    else this.zellijLoadStates.delete(params.cellId);
     if (params.status === 'failed') {
       this.miniAppLoadFailures.set(params.cellId, params.miniAppId);
     } else {
@@ -1488,6 +1535,7 @@ export class OmniWindowHelper {
     } catch (error) {
       console.warn('[OmniWindowHelper] Failed to broadcast mini-app load state:', error);
     }
+    this.syncZellijControlOverlay();
   }
 
   private replayMiniAppLoadFailures(): void {
@@ -1512,6 +1560,8 @@ export class OmniWindowHelper {
     const config = this.getLayoutConfig();
     if (config) xpcMain.broadcast(OMNI_LAYOUT_SNAPSHOT_EVENT, config);
     this.broadcastActiveCell(this.activeCellId);
+    for (const state of this.zellijLoadStates.values()) xpcMain.broadcast(OMNI_MINI_APP_LOAD_STATE_EVENT, state);
+    xpcMain.broadcast(OMNI_CONTROL_VISIBILITY_EVENT, { visible: this.controlVisible });
   }
 
   private setLayoutRecoveryState(recoveredFromInvalidLayout: boolean): void {
@@ -1535,6 +1585,7 @@ export class OmniWindowHelper {
       cellId: params.cellId,
       miniAppId: params.miniAppId,
       status: 'failed',
+      ...(params.miniAppId === 'zellij' ? { error: zellijErrorCode(params.error) } : {}),
     });
   }
 
@@ -1548,9 +1599,19 @@ export class OmniWindowHelper {
     onTerminal?: (outcome: 'success' | 'failure') => void,
   ): void {
     const { cellId, miniAppId, target } = params;
+    const generation = (this.zellijLoadGeneration.get(cellId) ?? 0) + 1;
+    if (miniAppId === 'zellij') this.zellijLoadGeneration.set(cellId, generation);
+    const isCurrent = (): boolean => this.isWebContentsAlive(content.webContents) &&
+      this.cells.some((candidate) => candidate.id === cellId && candidate.content === content) &&
+      (miniAppId !== 'zellij' || this.zellijLoadGeneration.get(cellId) === generation);
     let loadPromise: Promise<void>;
     try {
-      loadPromise = target.filePath
+      if (miniAppId === 'zellij') this.broadcastMiniAppLoadState({ cellId, miniAppId, status: 'starting' });
+      loadPromise = miniAppId === 'zellij' ? (async () => {
+        const url = await prepareZellijTerminal(`omni-${cellId}`);
+        if (!isCurrent()) return;
+        await content.webContents.loadURL(url);
+      })() : target.filePath
         ? content.webContents.loadFile(target.filePath)
         : content.webContents.loadURL(target.url);
     } catch (error) {
@@ -1558,7 +1619,7 @@ export class OmniWindowHelper {
       const cell = this.cells.find(
         (candidate) => candidate.id === cellId && candidate.content === content,
       );
-      if (cell) {
+      if (cell && miniAppId !== 'zellij') {
         this.cells = this.cells.filter((candidate) => candidate !== cell);
         this.removeCellViews(cell);
       }
@@ -1576,16 +1637,18 @@ export class OmniWindowHelper {
       const cell = this.cells.find(
         (candidate) => candidate.id === cellId && candidate.content === content,
       );
-      if (!cell) return;
+      if (!cell || !isCurrent()) return;
       this.broadcastMiniAppLoadState({ cellId, miniAppId, status: 'ready' });
     }).catch((error) => {
       onTerminal?.('failure');
       const cell = this.cells.find(
         (candidate) => candidate.id === cellId && candidate.content === content,
       );
-      if (!cell) return;
-      this.cells = this.cells.filter((candidate) => candidate !== cell);
-      this.removeCellViews(cell);
+      if (!cell || (miniAppId === 'zellij' && !isCurrent())) return;
+      if (miniAppId !== 'zellij') {
+        this.cells = this.cells.filter((candidate) => candidate !== cell);
+        this.removeCellViews(cell);
+      }
       this.reportMiniAppLoadFailure({
         cellId,
         miniAppId,
@@ -1930,6 +1993,9 @@ export class OmniWindowHelper {
       if (!this.isWebContentsAlive(content.webContents)) return;
       this.broadcastActiveCell(cell.id);
     });
+    content.webContents.on('blur' as any, () => {
+      if (cell.miniAppId === 'zellij') blurZellijTerminal(`omni-${cell.id}`);
+    });
 
     content.webContents.on('render-process-gone', (_e, details) => {
       if (!this.cells.includes(cell) || cell.content !== content) return;
@@ -1997,8 +2063,18 @@ export class OmniWindowHelper {
   }
 
   private removeCellViews(cell: CellViewPair): void {
+    if (cell.miniAppId === 'zellij') blurZellijTerminal(`omni-${cell.id}`);
+    this.zellijLoadStates.delete(cell.id);
     this.disposeWebContentsView(cell.menubar);
     this.disposeWebContentsView(cell.content);
+    this.syncZellijControlOverlay();
+  }
+
+  private closeZellijCellSession(cell: CellViewPair): void {
+    if (cell.contentMode !== 'miniapp' || cell.miniAppId !== 'zellij') return;
+    void closeZellijTerminal(`omni-${cell.id}`).catch(() => {
+      console.error('[zellij] failed to close the Omni cell session');
+    });
   }
 
   private notifyCellUrl(cellId: string, url: string): void {
@@ -2018,7 +2094,10 @@ export class OmniWindowHelper {
   }
 
   private broadcastActiveCell(activeCellId: string | null): void {
+    if (this.activeCellId && this.activeCellId !== activeCellId) blurZellijTerminal(`omni-${this.activeCellId}`);
     this.activeCellId = activeCellId;
+    const active = this.cells.find((cell) => cell.id === activeCellId);
+    if (active?.miniAppId === 'zellij' && !this.zellijLoadStates.has(active.id)) focusZellijTerminal(`omni-${active.id}`);
     this.applyActiveCellFrameState();
     xpcMain.broadcast('omniCell/activeChanged', { activeCellId });
   }
@@ -2200,7 +2279,7 @@ export class OmniWindowHelper {
   }
 
   private updateControlBounds(): void {
-    if (!this.baseWindow || !this.controlView || !this.controlVisible) return;
+    if (!this.baseWindow || !this.controlView || (!this.controlVisible && !this.zellijLoadStates.size)) return;
     const [contentWidth, contentHeight] = this.baseWindow.getContentSize();
     this.controlView.setBounds({
       x: 0,

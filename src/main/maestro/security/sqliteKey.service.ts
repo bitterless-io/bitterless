@@ -14,7 +14,7 @@ const E2E_SQLITE_KEY = process.env.BITTERLESS_E2E === '1' ? randomBytes(32).toSt
 
 const assertSafeStorageAvailable = (): void => {
   if (!mainSafeStorage.isEncryptionAvailable('maestro-sqlite')) {
-    throw new Error('[coach sqlite] Electron safeStorage is not available; refusing to open customer data with an unprotected DB key')
+    throw new Error('[maestro sqlite] Electron safeStorage is not available; refusing to open customer data with an unprotected DB key')
   }
 }
 
@@ -27,7 +27,7 @@ const ensurePrivateDirectory = (directory: string): void => {
 
 const assertSqliteKeyFormat = (key: string, source: string): string => {
   if (!/^[0-9a-f]{64}$/.test(key)) {
-    throw new Error(`[coach sqlite] ${source} is invalid; expected exactly 64 hexadecimal characters`)
+    throw new Error(`[maestro sqlite] ${source} is invalid; expected exactly 64 hexadecimal characters`)
   }
   return key
 }
@@ -61,13 +61,13 @@ const getOrCreateProductionSqliteKey = (configDirectory: string, dbPath: string)
   if (existsSync(keyPath)) return readEncryptedKey(keyPath)
   if (existsSync(dbPath)) {
     throw new Error(
-      '[coach sqlite] config.db exists but its encrypted key file is missing; refusing to guess a legacy key'
+      '[maestro sqlite] config.db exists but its encrypted key file is missing; refusing to guess a legacy key'
     )
   }
 
   const key = makeSqliteKey()
   if (!writeEncryptedKey(keyPath, key)) return readEncryptedKey(keyPath)
-  console.log('[coach sqlite] created random SQLCipher key in Electron safeStorage')
+  console.log('[maestro sqlite] created random SQLCipher key in Electron safeStorage')
   return key
 }
 
@@ -84,7 +84,7 @@ const getOrCreateDevelopmentSqliteKey = (configDirectory: string, dbPath: string
   }
   if (existsSync(dbPath)) {
     throw new Error(
-      '[coach sqlite] config.db exists but its development key file is missing; refusing to create or reuse another environment key'
+      '[maestro sqlite] config.db exists but its development key file is missing; refusing to create or reuse another environment key'
     )
   }
 
@@ -97,14 +97,14 @@ const getOrCreateDevelopmentSqliteKey = (configDirectory: string, dbPath: string
     throw err
   }
   if (process.platform !== 'win32') chmodSync(keyPath, 0o600)
-  console.log('[coach sqlite] created random development SQLCipher key')
+  console.log('[maestro sqlite] created random development SQLCipher key')
   return key
 }
 
 const getOrCreateSqliteKey = (): string => {
   if (process.env.BITTERLESS_E2E === '1') {
-    if (app.isPackaged) throw new Error('[coach sqlite] E2E key mode is unavailable in packaged builds')
-    console.log('[coach sqlite] using an ephemeral random E2E SQLCipher key')
+    if (app.isPackaged) throw new Error('[maestro sqlite] E2E key mode is unavailable in packaged builds')
+    console.log('[maestro sqlite] using an ephemeral random E2E SQLCipher key')
     return E2E_SQLITE_KEY
   }
 
@@ -113,13 +113,13 @@ const getOrCreateSqliteKey = (): string => {
   const viteMode: string = import.meta.env.VITE_MODE
   if (viteMode === 'release') return getOrCreateProductionSqliteKey(configDirectory, dbPath)
   if (viteMode === 'debug') return getOrCreateDevelopmentSqliteKey(configDirectory, dbPath)
-  throw new Error(`[coach sqlite] unsupported VITE_MODE "${viteMode}"; refusing to select a SQLCipher key store`)
+  throw new Error(`[maestro sqlite] unsupported VITE_MODE "${viteMode}"; refusing to select a SQLCipher key store`)
 }
 
 export class SqliteKeyService extends XpcMainHandler implements SqliteKeyApi {
   async getSqliteKey(params: SqliteKeyRequest): Promise<string> {
     if (!isSqliteBootstrapTokenValid(params.bootstrapToken)) {
-      throw new Error('[coach sqlite] rejected SQLite key request with invalid bootstrap token')
+      throw new Error('[maestro sqlite] rejected SQLite key request with invalid bootstrap token')
     }
     return getOrCreateSqliteKey()
   }

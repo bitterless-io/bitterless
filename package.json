@@ -84,7 +84,7 @@
     "test:mcp:todo-skill-export": "node scripts/mcp/todo-skill-export.test.mjs",
     "test:mcp:trench-skill-export": "node scripts/mcp/trench-skill-export.test.mjs",
     "test:mcp:todo-smoke": "node scripts/mcp/todo-smoke.test.mjs",
-    "test:runtime-profile": "node --test scripts/environment/runtimeProfile.test.mjs",
+    "test:runtime-profile": "node --test scripts/environment/runtimeProfile.test.mjs scripts/environment/buildPreparation.test.mjs scripts/environment/externalToolsPreparation.test.mjs",
     "_test:e2e:maestro": "node scripts/environment/assertRuntimeProfile.cjs debug && playwright test -c tests/maestro/playwright.config.ts",
     "test:e2e:maestro": "node scripts/environment/runWithRuntimeProfile.cjs debug_dev -- yarn _test:e2e:maestro",
     "test:e2e:maestro:baseline": "yarn build && yarn test:e2e:maestro",
@@ -92,12 +92,12 @@
     "test:e2e:onlypreview": "node scripts/environment/runWithRuntimeProfile.cjs debug_dev -- yarn _test:e2e:onlypreview",
     "_test:e2e:coin": "node scripts/environment/assertRuntimeProfile.cjs debug && playwright test -c tests/coin/playwright.config.ts",
     "test:e2e:coin": "node scripts/environment/runWithRuntimeProfile.cjs debug_dev -- yarn _test:e2e:coin",
-    "_start:debug": "node scripts/environment/assertRuntimeProfile.cjs debug && electron-vite preview",
+    "_start:debug": "node scripts/environment/assertRuntimeProfile.cjs debug && node scripts/maestro/externalTools.cjs stage && electron-vite preview",
     "start": "node scripts/environment/runWithRuntimeProfile.cjs debug_dev -- yarn _start:debug",
-    "_dev:debug": "node scripts/environment/assertRuntimeProfile.cjs debug && node scripts/before.js && electron-vite dev",
+    "_dev:debug": "node scripts/environment/assertRuntimeProfile.cjs debug && node scripts/maestro/externalTools.cjs stage && node scripts/before.js && electron-vite dev",
     "dev": "node scripts/environment/runWithRuntimeProfile.cjs debug_dev -- yarn _dev:debug",
     "dev:prod": "node scripts/environment/runWithRuntimeProfile.cjs debug_prod -- yarn _dev:debug",
-    "_build:debug": "node scripts/environment/assertRuntimeProfile.cjs debug && node scripts/before.js && electron-vite build",
+    "_build:debug": "node scripts/environment/assertRuntimeProfile.cjs debug && node scripts/maestro/externalTools.cjs stage && node scripts/before.js && electron-vite build",
     "_build:release": "node scripts/environment/assertRuntimeProfile.cjs release && node scripts/before.js && electron-vite build",
     "build": "node scripts/environment/runWithRuntimeProfile.cjs debug_dev -- yarn _build:debug",
     "postinstall": "electron-builder install-app-deps && rig postinstall",
@@ -299,7 +299,7 @@
     "rigs/*",
     "rig_dev/*"
   ],
-  "name": "Bitterless_DEBUG_DEV",
+  "name": "Bitterless_DEBUG_PROD",
   "version": "0.0.100",
-  "version_code": "260910164530"
+  "version_code": "260913170851"
 }

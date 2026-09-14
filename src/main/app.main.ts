@@ -417,6 +417,7 @@ const cleanupResources = (): Promise<void> => {
     try { await maestroWindowHandler.destroyForHostQuit(); } catch {}
     try { await eyesOnAgentsWindowHandler.destroyForHostQuit(); } catch {}
     try { await submodulesWindowHandler.destroyForHostQuit(); } catch {}
+    try { omniWindowHelper.destroy(); } catch {}
     try { await zellijWindowService.destroy(); } catch {}
     try { await todoWindowHandler.destroyForHostQuit(); } catch {}
     try { await pluginTestHandler.destroyForHostQuit(); } catch {}
@@ -424,7 +425,6 @@ const cleanupResources = (): Promise<void> => {
     try { sqliteWindowHelper.destroy(); } catch {}
     try { llamaWindowHelper.destroy(); } catch {}
     try { connectorWindowHelper.destroy(); } catch {}
-    try { omniWindowHelper.destroy(); } catch {}
     try { trenchIoWindowService.stop(); } catch {}
     try { destroyOnlyPreviewForHostQuit(); } catch {
       // Continue shutdown if Electron has already torn down OnlyPreview windows.

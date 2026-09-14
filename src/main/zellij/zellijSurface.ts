@@ -3,7 +3,13 @@ import { is } from '@electron-toolkit/utils';
 import { join } from 'node:path';
 import { autoOpenZellijDevTools, bindZellijDevTools } from './zellijDevTools.helper';
 import { ZellijTerminalView, type ZellijTerminalRect } from './zellijTerminalView';
-import { ZELLIJ_SURFACE_QUERY } from '@shared/zellij/zellij.type';
+import {
+  ZELLIJ_SURFACE_QUERY,
+  ZELLIJ_SURFACE_STATE_EVENT,
+  type ZellijSnapshot
+} from '@shared/zellij/zellij.type';
+import { xpcMain } from 'electron-xpc/main';
+import { blurZellijTerminal } from './zellijRuntime.service';
 
 /**
  * The Zellij mini app as a self-contained, host-agnostic composite: one container `View` holding the
@@ -25,9 +31,10 @@ export class ZellijSurface {
   private readonly terminal: ZellijTerminalView;
   private hostRect: ZellijTerminalRect = { x: 0, y: 0, width: 0, height: 0 };
   /** Renderer-measured hole, container-relative. Height 0 means "not measured yet". */
-  private contentBounds: ZellijTerminalRect = { x: 0, y: 100, width: 0, height: 0 };
+  private contentBounds: ZellijTerminalRect = { x: 0, y: 48, width: 0, height: 0 };
   private visible = true;
   private destroyed = false;
+  private opened = false;
 
   constructor(private readonly surfaceId: string) {
     this.controls = new WebContentsView({
@@ -46,7 +53,10 @@ export class ZellijSurface {
       container: this.container,
       bounds: () => this.terminalRect(),
       visible: () => this.visible,
-      destroyed: () => this.destroyed
+      destroyed: () => this.destroyed,
+      opened: () => this.opened,
+      changed: (snapshot) =>
+        xpcMain.broadcast(ZELLIJ_SURFACE_STATE_EVENT, { surfaceId: this.surfaceId, snapshot })
     });
   }
 
@@ -79,6 +89,7 @@ export class ZellijSurface {
 
   setVisible(visible: boolean): void {
     this.visible = visible;
+    if (!visible) blurZellijTerminal(this.surfaceId);
     this.container.setVisible(visible);
     this.layout();
   }
@@ -99,7 +110,16 @@ export class ZellijSurface {
   }
 
   sync(): void {
+    this.opened = true;
     this.terminal.sync();
+  }
+
+  snapshot(): ZellijSnapshot {
+    return this.terminal.snapshot();
+  }
+
+  initialize(): Promise<ZellijSnapshot> {
+    return this.terminal.initialize();
   }
 
   focus(): void {

@@ -1,3 +1,5 @@
+import type { ZellijErrorCode } from '@shared/zellij/zellij.type';
+
 export const OMNI_CONTENT_MODES = ['browser', 'miniapp'] as const;
 export type OmniContentMode = (typeof OMNI_CONTENT_MODES)[number];
 
@@ -37,7 +39,8 @@ export const OMNI_CONTROL_VISIBILITY_EVENT = 'omniWindow/controlVisibility' as c
 export interface OmniMiniAppLoadState {
   cellId: string;
   miniAppId: OmniMiniAppId;
-  status: 'ready' | 'failed';
+  status: 'starting' | 'ready' | 'failed';
+  error?: ZellijErrorCode;
 }
 
 export interface OmniLayoutRecoveryState {

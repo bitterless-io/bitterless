@@ -13,12 +13,14 @@ import {
   OMNI_LAYOUT_SNAPSHOT_EVENT,
   OMNI_MINI_APP_DISPLAY_URLS,
   OMNI_MINI_APP_LOAD_STATE_EVENT,
+  OMNI_CONTROL_VISIBILITY_EVENT,
   createDefaultOmniLayoutTree,
   isOmniMiniAppId,
   parseOmniLayoutConfig,
   parseOmniPaneTree,
 } from '@shared/omni/omni.types';
-import type { OmniLayoutRecoveryState } from '@shared/omni/omni.types';
+import type { OmniLayoutRecoveryState, OmniMiniAppLoadState } from '@shared/omni/omni.types';
+import type { ZellijErrorCode } from '@shared/zellij/zellij.type';
 import {
   removeOmniPaneTree,
   splitOmniPaneTree,
@@ -48,12 +50,15 @@ class LayoutStore {
   structureChanging = false;
   structureRevision = 0;
   layoutRecoveryError = false;
+  controlVisible = false;
   miniAppLoadFailures: Record<string, OmniMiniAppId> = {};
+  miniAppLoadStates: Record<string, OmniMiniAppLoadState> = {};
 
   reset(): void {
     this.tree = createDefaultOmniLayoutTree();
     this.structureRevision += 1;
     this.miniAppLoadFailures = {};
+    this.miniAppLoadStates = {};
   }
 
   splitPane(nodeId: string, direction: 'h' | 'v', position: 'before' | 'after' = 'after'): void {
@@ -140,19 +145,43 @@ class LayoutStore {
     return this.miniAppLoadFailures[nodeId] ?? null;
   }
 
-  setMiniAppLoadState(params: {
-    cellId: string;
-    miniAppId: OmniMiniAppId;
-    status: 'ready' | 'failed';
-  }): void {
-    if (params.status === 'ready') {
-      this.clearMiniAppLoadFailure(params.cellId);
-      return;
+  getZellijLoadState(nodeId: string): OmniMiniAppLoadState | null {
+    const node = this.findNode(this.tree, nodeId);
+    const state = this.miniAppLoadStates[nodeId];
+    return node?.contentMode === 'miniapp' &&
+      node.miniAppId === 'zellij' &&
+      state?.miniAppId === 'zellij'
+      ? state
+      : null;
+  }
+
+  setMiniAppLoadState(params: OmniMiniAppLoadState): void {
+    this.clearMiniAppLoadFailure(params.cellId);
+    if (params.status === 'ready') return;
+    this.miniAppLoadStates = { ...this.miniAppLoadStates, [params.cellId]: params };
+    if (params.status === 'failed') {
+      this.miniAppLoadFailures = {
+        ...this.miniAppLoadFailures,
+        [params.cellId]: params.miniAppId,
+      };
     }
-    this.miniAppLoadFailures = {
-      ...this.miniAppLoadFailures,
-      [params.cellId]: params.miniAppId,
-    };
+  }
+
+  async retryZellij(cellId: string): Promise<void> {
+    const state = this.getZellijLoadState(cellId);
+    if (!state || state.status !== 'failed') return;
+    this.setMiniAppLoadState({ cellId, miniAppId: 'zellij', status: 'starting' });
+    try {
+      await xpcRenderer.send('OmniWindowHandler/cellRefresh', { cellId });
+    } catch (error) {
+      console.error('[Omni control] Failed to reopen terminal:', error);
+      this.setMiniAppLoadState({
+        cellId,
+        miniAppId: 'zellij',
+        status: 'failed',
+        error: 'operation-failed'
+      });
+    }
   }
 
   setLayoutRecoveryState(params: OmniLayoutRecoveryState): void {
@@ -167,6 +196,11 @@ class LayoutStore {
   }
 
   private clearMiniAppLoadFailure(nodeId: string): void {
+    if (nodeId in this.miniAppLoadStates) {
+      const nextStates = { ...this.miniAppLoadStates };
+      delete nextStates[nodeId];
+      this.miniAppLoadStates = nextStates;
+    }
     if (!(nodeId in this.miniAppLoadFailures)) return;
     const nextFailures = { ...this.miniAppLoadFailures };
     delete nextFailures[nodeId];
@@ -198,17 +232,24 @@ xpcRenderer.subscribe(OMNI_MINI_APP_LOAD_STATE_EVENT, (payload) => {
     cellId?: unknown;
     miniAppId?: unknown;
     status?: unknown;
+    error?: unknown;
   };
   if (
     typeof params.cellId !== 'string' ||
     !isOmniMiniAppId(params.miniAppId) ||
-    (params.status !== 'ready' && params.status !== 'failed')
+    (params.status !== 'starting' && params.status !== 'ready' && params.status !== 'failed')
   ) return;
   layoutStore.setMiniAppLoadState({
     cellId: params.cellId,
     miniAppId: params.miniAppId,
     status: params.status,
+    ...(typeof params.error === 'string' ? { error: params.error as ZellijErrorCode } : {}),
   });
+});
+
+xpcRenderer.subscribe(OMNI_CONTROL_VISIBILITY_EVENT, (payload) => {
+  const params = payload.params as { visible?: unknown } | null;
+  if (typeof params?.visible === 'boolean') layoutStore.controlVisible = params.visible;
 });
 
 xpcRenderer.subscribe(OMNI_LAYOUT_RECOVERY_STATE_EVENT, (payload) => {

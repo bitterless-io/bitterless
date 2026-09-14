@@ -1,4 +1,6 @@
 export const ZELLIJ_STATE_EVENT = 'zellij/state' as const;
+export const ZELLIJ_SURFACE_STATE_EVENT = 'zellij/surface-state' as const;
+export const ZELLIJ_SETTINGS_OPEN_EVENT = 'zellij/settings-open' as const;
 export const ZELLIJ_HANDLER_NAME = 'ZellijHandler' as const;
 export const ZELLIJ_WINDOW_HANDLER_NAME = 'ZellijWindowHandler' as const;
 
@@ -12,11 +14,11 @@ export const ZELLIJ_WINDOW_HANDLER_NAME = 'ZellijWindowHandler' as const;
 export const ZELLIJ_SURFACE_QUERY = 'surface' as const;
 
 export type ZellijErrorCode =
-  | 'disabled'
   | 'binary-missing'
   | 'unsupported-platform'
   | 'port-occupied'
   | 'version-mismatch'
+  | 'web-sharing-disabled'
   | 'start-failed'
   | 'startup-timeout'
   | 'authentication-failed'
@@ -33,7 +35,6 @@ export type ZellijErrorCode =
   | 'operation-failed';
 
 export interface ZellijSnapshot {
-  enabled: boolean;
   status: 'idle' | 'starting' | 'ready' | 'error';
   error: ZellijErrorCode | null;
   configDirectory: string;
@@ -44,15 +45,16 @@ export interface ZellijSnapshot {
 }
 
 export interface ZellijApi {
-  snapshot(): Promise<ZellijSnapshot>;
-  initialize(): Promise<ZellijSnapshot>;
-  setEnabled(params: { enabled: boolean }): Promise<ZellijSnapshot>;
+  snapshot(params: { surfaceId: string }): Promise<ZellijSnapshot>;
+  initialize(params: { surfaceId: string }): Promise<ZellijSnapshot>;
   saveShortcuts(params: {
     revision: string;
     shortcuts: ZellijSnapshot['shortcuts'];
   }): Promise<ZellijSnapshot>;
   copyConfigDirectory(): Promise<{ ok: boolean; error: ZellijErrorCode | null }>;
   openConfigDirectory(): Promise<{ ok: boolean; error: ZellijErrorCode | null }>;
+  openSettings(): Promise<void>;
+  consumeSettingsRequest(): Promise<boolean>;
   /** `surfaceId` says WHICH terminal measured; an unknown id is dropped, never guessed at. */
   setContentBounds(params: {
     surfaceId: string;

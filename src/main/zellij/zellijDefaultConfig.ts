@@ -6,7 +6,7 @@ import {
 import type { ZellijShortcutAction } from './zellijConfig.type';
 
 /**
- * Composes the config seeded into `<userData>/zellij/config.kdl` on first run.
+ * Composes the defaults ensured in `<userData>/zellij/config.kdl` on open.
  *
  * The KDL itself lives in `zellijDefaultConfig.constant.ts`; this file only injects the keybinds,
  * which cannot be literal text there — they have to come from the SAME defaults the settings panel

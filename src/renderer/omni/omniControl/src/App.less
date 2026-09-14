@@ -9,12 +9,18 @@ body,
 }
 
 .omni-control {
+  position: relative;
   width: 100%;
   height: 100%;
   background: transparent;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  pointer-events: none;
+}
+
+.omni-control--editing {
+  pointer-events: auto;
 }
 
 .omni-control__recovery {
@@ -23,10 +29,47 @@ body,
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  border-bottom: 1px solid oklch(0.84 0.047 27);
   color: oklch(0.45 0.12 29);
   background: oklch(0.97 0.025 27);
   box-sizing: border-box;
   font-size: 12px;
   line-height: 1.4;
+}
+
+.omni-control__terminal-state {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  background: oklch(98% 0.004 265);
+  color: var(--color-royalblue-500);
+  pointer-events: auto;
+}
+
+.omni-control__terminal-state p {
+  max-width: 460px;
+  margin: 0;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.omni-control__terminal-spinner {
+  animation: omni-terminal-loading 1s linear infinite;
+}
+
+@keyframes omni-terminal-loading {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .omni-control__terminal-spinner {
+    animation: none;
+  }
 }

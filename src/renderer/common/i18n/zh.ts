@@ -202,9 +202,7 @@ export const zh: typeof en = {
     },
     terminal: {
       tabTitle: '终端',
-      enable: '启用终端',
-      loadFailed: '无法加载终端设置，请重新打开终端设置后重试。',
-      saveFailed: '无法保存终端设置，请重试。'
+      sharedDescription: '这些设置适用于所有 Zellij 标签页。'
     },
     account: {
       tabTitle: '账号',
@@ -948,7 +946,8 @@ export const zh: typeof en = {
   },
   zellij: {
     title: 'Zellij',
-    initialize: '初始化并打开',
+    opening: '正在打开终端…',
+    retry: '重试',
     settings: '终端设置',
     splitDown: '向下分屏',
     splitRight: '向右分屏',
@@ -962,25 +961,22 @@ export const zh: typeof en = {
     refresh: '刷新设置',
     shortcutsHint:
       '使用 Zellij 按键语法，例如 Super d 或 Ctrl Alt d。快捷键在 Normal 模式下使用；Locked 模式按 Ctrl+G，其他模式按 Esc 返回 Normal。',
-    emptyEnabled: '点击“初始化并打开”准备本地终端，然后创建或选择会话。',
-    emptyDisabled: '先启用终端，再点击“初始化并打开”。现有配置会保留。',
     status: {
-      off: '已关闭',
-      idle: '待初始化',
+      idle: '正在打开…',
       starting: '正在打开…',
       ready: '已连接',
       error: '需要处理'
     },
     errors: {
-      disabled: '请先启用终端再初始化。',
-      'binary-missing': '缺少内置 Zellij。请运行 yarn tools:init 并暂存工具，或重新安装应用。',
+      'binary-missing': '缺少内置 Zellij。请运行 yarn tools:init，或重新安装应用。',
       'unsupported-platform': 'Zellij 支持 macOS 和 Windows。',
       'port-occupied':
         '本版本使用的终端端口被其他服务占用，请释放该端口后重试，或设置 BITTERLESS_ZELLIJ_PORT。',
       'version-mismatch': '本地服务不是 Zellij 0.45.1，请停止冲突服务后重试。',
-      'start-failed': 'Zellij 未能启动或已停止，请点击“初始化并打开”重试。',
+      'web-sharing-disabled': '请在 config.kdl 中开启 Web 共享，以打开此终端。',
+      'start-failed': 'Zellij 未能启动或已停止，请重试。',
       'startup-timeout': 'Zellij 启动超时，请重试。',
-      'authentication-failed': '无法登录本地终端，请点击“初始化并打开”重试。',
+      'authentication-failed': '无法登录本地终端，请重试。',
       'token-failed': 'Zellij 无法创建认证令牌，请重试。',
       'secure-storage-unavailable': '安全凭证存储不可用，请恢复系统钥匙串访问权限后重试。',
       'config-invalid': '无法安全编辑配置，请打开配置目录检查 config.kdl。',
@@ -989,7 +985,7 @@ export const zh: typeof en = {
       'config-write-failed': '无法保存配置，请检查目录权限。',
       'shortcut-invalid': '请输入有效的 Zellij 快捷键，例如 Ctrl、Alt、Super 或 Shift 加按键。',
       'shortcut-conflict': '快捷键重复或已用于其他操作，请选择其他按键。',
-      'directory-missing': '配置目录尚不存在，请先初始化终端。',
+      'directory-missing': '配置目录尚不存在，请重试打开终端。',
       'directory-open-failed': '无法打开配置目录。',
       'operation-failed': '终端操作失败，请刷新设置或重试。'
     }
