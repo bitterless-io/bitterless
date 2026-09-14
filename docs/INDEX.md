@@ -196,6 +196,11 @@ design document.
   fixed 2026-09-12; restart verification pending: [task 173](plan/tasks/maestro-sqlite-agent-build-173.md)
   refreshes DEBUG timestamps, aligns both SQLite preloads to the compiled version and uses
   Maestro diagnostics; migration audit and the original DEBUG_PROD build pass.
+- [两处 `await import()` 从来没有真的延迟过](issues/dynamic-imports-that-never-split.md) —
+  fixed(2026-09-14):`llmPaths` 与 `eyesOnAgents.handler` 同时被动态与静态引用,Rollup 不能切出独立
+  chunk,于是两处 `import()` 只是「对同一文件里已求值模块的一次 Promise 包装」——产物里 handler 的
+  `new LastUserPromptPreferenceService(app.getPath("userData"))` 是顶层语句,进程一启动就执行了。改成
+  静态 import(顺序约束本来就在**调用点**上,不在 import 写法上),两条构建告警消失。
 - [`afterPack` 那条用例从 9/10 红到现在](issues/afterpack-context-typeerror-and-unexercised-associations-gate.md) —
   fixed(2026-09-14):合成 context 没有 `packager`,关联闸 `context.packager.appInfo.productFilename`
   直接 TypeError,用例在跑到任何断言前就死了 —— 而它守的正是 electron-builder 的 afterPack。两边都改:

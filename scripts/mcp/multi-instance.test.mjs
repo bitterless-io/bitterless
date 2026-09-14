@@ -810,7 +810,10 @@ try {
   const ensureShimIndex = appMainSource.indexOf('await mcpHandler.ensureShim()');
   const trayIndex = appMainSource.indexOf('trayHelper.init(mainWindowHelper)');
   const bridgeStartIndex = appMainSource.indexOf('await mcpBridgeServer.start()');
-  const eyesImportIndex = appMainSource.indexOf("await import('./xpc/eyesOnAgents.handler')");
+  // Pin the START, not the import form: app.main.ts imports the handler statically now (the dynamic
+  // import never split a chunk — see docs/issues/dynamic-imports-that-never-split.md), and what has to
+  // come after optionalIntegrationsLifecycle.start() is the runtime starting, not the module loading.
+  const eyesStartIndex = appMainSource.indexOf('await startEyesOnAgentsRuntime()');
   assert.ok(sqliteCreateIndex >= 0 && sqliteCreateIndex < sqliteGuardIndex);
   assert.ok(mainWindowIndex >= 0);
   assert.ok(languageIndex >= 0);
@@ -819,7 +822,7 @@ try {
   assert.ok(ensureShimIndex < optionalStartIndex);
   assert.ok(trayIndex < optionalStartIndex);
   assert.ok(optionalStartIndex < bridgeStartIndex);
-  assert.ok(optionalStartIndex < eyesImportIndex);
+  assert.ok(eyesStartIndex >= 0 && optionalStartIndex < eyesStartIndex);
   assert.equal(appMainSource.match(/mcpHandler\.ensureShim\(\)/g)?.length, 1);
   assert.equal(
     appMainSource.match(/if \(!canStartNextStage\(\)\) return;/g)?.length,

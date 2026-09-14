@@ -27,6 +27,11 @@ import { mcpHandler } from './xpc/mcp.handler';
 import { coinWindowHandler } from './xpc/coinWindow.handler';
 import { maestroWindowHandler } from './xpc/maestroWindow.handler';
 import { eyesOnAgentsWindowHandler } from './xpc/eyesOnAgentsWindow.handler';
+import {
+  startEyesOnAgentsRuntime,
+  stopEyesOnAgentsRuntime as stopEyesOnAgentsRuntimeImpl,
+} from './xpc/eyesOnAgents.handler';
+import { configureMaestroPiAgentDir } from '@maestro-main/llm/llmPaths';
 import { submodulesWindowHandler } from './xpc/submodulesWindow.handler';
 import { zellijWindowService } from '@main/zellij/zellijWindow.service';
 import { todoWindowHandler } from './xpc/todoWindow.handler';
@@ -510,10 +515,11 @@ const startGui = async (): Promise<void> => {
       packageMainHelper.init();
       pathMainHelper.init();
       initDirectory();
-      // Must precede the first dynamic import of pi: it freezes TOOLS_DIR at import time, and
-      // without PI_CODING_AGENT_DIR every pi agent-dir read falls back to the user's own
-      // ~/.pi/agent (see docs/issues/pi-agent-dir-uses-global-home.md).
-      const { configureMaestroPiAgentDir } = await import('@maestro-main/llm/llmPaths');
+      // This CALL must precede the first `await import('@earendil-works/pi-coding-agent')`: pi
+      // freezes TOOLS_DIR at import time, and without PI_CODING_AGENT_DIR every pi agent-dir read
+      // falls back to the user's own ~/.pi/agent (see docs/issues/pi-agent-dir-uses-global-home.md).
+      // It is the statement position that carries the constraint — llmPaths is imported statically
+      // (it holds no module-level side effects, and pi is only ever imported inside functions).
       console.log(`[maestro] pi agentDir=${configureMaestroPiAgentDir()}`);
       app.on('browser-window-created', (_, window) => {
         optimizer.watchWindowShortcuts(window);
@@ -602,10 +608,11 @@ const startOptionalIntegrations = async (
   if (!canStartNextStage()) return;
 
   await runDiagnosedStartupStage('eyes-on-agents', async () => {
-    const eyesOnAgentsRuntime = await import('./xpc/eyesOnAgents.handler');
     if (!canStartNextStage()) return;
-    stopEyesOnAgentsRuntime = eyesOnAgentsRuntime.stopEyesOnAgentsRuntime;
-    await eyesOnAgentsRuntime.startEyesOnAgentsRuntime();
+    // Assigned only once the runtime actually starts — the shutdown path reads it as
+    // `await stopEyesOnAgentsRuntime?.()` to tell "started" from "never started".
+    stopEyesOnAgentsRuntime = stopEyesOnAgentsRuntimeImpl;
+    await startEyesOnAgentsRuntime();
   });
 };
 
