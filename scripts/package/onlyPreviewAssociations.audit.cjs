@@ -43,8 +43,19 @@ const assertOnlyPreviewAssociations = (plist) => {
 
 const auditOnlyPreviewAssociations = (context) => {
   if (!['darwin', 'mas'].includes(context.electronPlatformName)) return;
-  const plistPath = path.join(context.appOutDir, context.packager.appInfo.productFilename + '.app',
-    'Contents', 'Info.plist');
+  // Say what is missing instead of dereferencing into a TypeError: this runs from electron-builder's
+  // afterPack, where a half-built context surfaces as a stack trace inside a packaging log nobody
+  // reads twice. Same shape as afterPack's own appOutDir check.
+  const productFilename = context.packager?.appInfo?.productFilename;
+  if (typeof context.appOutDir !== 'string' || !context.appOutDir) {
+    throw new Error('[onlypreview-associations] Electron Builder context is missing appOutDir');
+  }
+  if (typeof productFilename !== 'string' || !productFilename) {
+    throw new Error(
+      '[onlypreview-associations] Electron Builder context is missing packager.appInfo.productFilename',
+    );
+  }
+  const plistPath = path.join(context.appOutDir, productFilename + '.app', 'Contents', 'Info.plist');
   const plist = JSON.parse(execFileSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', plistPath], {
     encoding: 'utf8', timeout: 10000, maxBuffer: 1024 * 1024,
   }));

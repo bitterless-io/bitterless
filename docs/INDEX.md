@@ -196,6 +196,12 @@ design document.
   fixed 2026-09-12; restart verification pending: [task 173](plan/tasks/maestro-sqlite-agent-build-173.md)
   refreshes DEBUG timestamps, aligns both SQLite preloads to the compiled version and uses
   Maestro diagnostics; migration audit and the original DEBUG_PROD build pass.
+- [`afterPack` 那条用例从 9/10 红到现在](issues/afterpack-context-typeerror-and-unexercised-associations-gate.md) —
+  fixed(2026-09-14):合成 context 没有 `packager`,关联闸 `context.packager.appInfo.productFilename`
+  直接 TypeError,用例在跑到任何断言前就死了 —— 而它守的正是 electron-builder 的 afterPack。两边都改:
+  关联闸改为**显式校验 context 并说清缺什么**(与 afterPack 对 appOutDir 的做法一致);合成产物补上由
+  builder 模板生成的 `Contents/Info.plist`,`afterPack` 拆成 darwin-only 的完整链路用例(带反向锁:把
+  plist 里的 `public.data` 改坏必须红)与跨平台的残缺-context 用例。
 - [打包被产物审计拦下:`canvas` 缺失 + asar 268 MiB 超限](issues/preview-package-audit-canvas-and-vendored-cli.md) —
   fixed(2026-09-14):两条同日(09-12)进来的独立原因。① 主进程新引入 linkedom,而它的
   `try { require("canvas") } catch { shim }` 被 Vite 原样内联,审计把这个**自带回退的可选 require**

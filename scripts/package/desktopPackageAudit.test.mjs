@@ -59,6 +59,26 @@ const TRENCH_AGENT_SKILL_FILES = [
   'references/tools.md',
 ];
 
+// The Info.plist a mac fixture ships is the one the associations gate actually reads. Generating it
+// from the builder template (rather than a hand-written literal) keeps the fixture honest: if the
+// template stops declaring a required document family, the gate fails here too.
+const plistXml = (value) => {
+  if (Array.isArray(value)) return `<array>${value.map(plistXml).join('')}</array>`;
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value)
+      .map(([key, item]) => `<key>${key}</key>${plistXml(item)}`)
+      .join('');
+    return `<dict>${entries}</dict>`;
+  }
+  return `<string>${value}</string>`;
+};
+
+const syntheticInfoPlist = () => {
+  const template = parseYaml(readFileSync(path.join(projectRoot, 'electron-builder.tmp.yml'), 'utf-8'));
+  const body = plistXml({ CFBundleDocumentTypes: template.mac.extendInfo.CFBundleDocumentTypes });
+  return `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0">${body}</plist>`;
+};
+
 const readProjectFile = (filePath) => {
   return readFileSync(path.join(projectRoot, filePath), 'utf-8');
 };
@@ -100,6 +120,7 @@ const createSyntheticApplication = async ({
   appFiles = {},
   includeBetterSqlite3Binary = true,
   betterSqlite3Arch,
+  includeInfoPlist = true,
   includeMaestroTools = true,
   maestroToolsStorePlatform,
   maestroManifestPlatform,
@@ -205,6 +226,9 @@ const createSyntheticApplication = async ({
           'Contents/Resources/icon.icns': readFileSync(path.join(projectRoot, 'build/icon.icns')),
         }
       : {}),
+    ...(platform === 'mac' && includeInfoPlist
+      ? { 'Contents/Info.plist': syntheticInfoPlist() }
+      : {}),
     ...maestroToolsFiles,
     ...previewSkillFiles,
     ...trenchSkillFiles,
@@ -249,7 +273,37 @@ test('synthetic app.asar passes the desktop package audit', async () => {
   assert(result.applicationIconPaths.bundleIcnsPath.endsWith('icon.icns'));
   assert.equal(result.onlyPreviewAgentSkill.files.length, 4);
   assert.equal(result.trenchAgentSkill.files.length, 5);
-  await afterPack({ appOutDir: fixture.outputPath, electronPlatformName: 'darwin', arch: 3 });
+});
+
+test('afterPack runs the OnlyPreview associations gate on the packaged plist', {
+  skip: process.platform !== 'darwin' ? 'plutil is macOS-only' : false,
+}, async () => {
+  const fixture = await createSyntheticApplication();
+  const context = {
+    appOutDir: fixture.outputPath,
+    electronPlatformName: 'darwin',
+    arch: 3,
+    packager: { appInfo: { productFilename: 'Synthetic' } },
+  };
+
+  await afterPack(context);
+
+  // Reverse lock: not throwing proves nothing (a gate removed from afterPack also does not throw).
+  // Break the very plist the gate reads, and afterPack must go red.
+  const plistPath = path.join(fixture.applicationPath, 'Contents', 'Info.plist');
+  const broken = readFileSync(plistPath, 'utf-8').replace('public.data', 'missing.data');
+  writeFileSync(plistPath, broken);
+
+  await assert.rejects(() => afterPack(context), /public\.data/);
+});
+
+test('afterPack names the missing context field instead of dereferencing into a TypeError', async () => {
+  const fixture = await createSyntheticApplication();
+
+  await assert.rejects(
+    () => afterPack({ appOutDir: fixture.outputPath, electronPlatformName: 'darwin', arch: 3 }),
+    /Electron Builder context is missing packager\.appInfo\.productFilename/,
+  );
 });
 
 test('synthetic Preview package requires the dedicated Preview ICNS', async () => {
