@@ -15,7 +15,7 @@ class SqliteManager {
   private _db: Database.Database | null = null
 
   get db(): Database.Database {
-    if (!this._db) throw new Error('[coach sqlite] database not initialized')
+    if (!this._db) throw new Error('[maestro sqlite] database not initialized')
     return this._db
   }
 
@@ -60,15 +60,15 @@ class SqliteManager {
       migrations: maestroSqliteMigrations,
       currentVersionCode,
       dbExistedBeforeOpen,
-      logPrefix: '[coach sqlite]',
+      logPrefix: '[maestro sqlite]',
     })
     // Startup optimize is a non-critical hint — never let it fail the DB.
     try {
       db.pragma('optimize(0x10002)')
     } catch (err) {
-      console.warn('[coach sqlite] optimize skipped:', err)
+      console.warn('[maestro sqlite] optimize skipped:', err)
     }
-    console.log('[coach sqlite] config db ready at', dbPath)
+    console.log('[maestro sqlite] config db ready at', dbPath)
   }
 }
 

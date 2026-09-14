@@ -204,9 +204,7 @@ export const en = {
     },
     terminal: {
       tabTitle: 'Terminal',
-      enable: 'Enable terminal',
-      loadFailed: 'Could not load the terminal setting. Reopen Terminal settings to try again.',
-      saveFailed: 'Could not save the terminal setting. Try again.'
+      sharedDescription: 'These settings apply to all Zellij tabs.'
     },
     account: {
       tabTitle: 'Account',
@@ -965,7 +963,8 @@ export const en = {
   },
   zellij: {
     title: 'Zellij',
-    initialize: 'Initialize and open',
+    opening: 'Opening terminal…',
+    retry: 'Retry',
     settings: 'Terminal settings',
     splitDown: 'Split down',
     splitRight: 'Split right',
@@ -979,30 +978,24 @@ export const en = {
     refresh: 'Refresh settings',
     shortcutsHint:
       'Use Zellij key syntax, such as Super d or Ctrl Alt d. These shortcuts work in Normal mode. Press Ctrl+G to leave Locked mode, or Esc from another mode.',
-    emptyEnabled:
-      'Choose Initialize and open to prepare your local terminal, then create or select a session.',
-    emptyDisabled:
-      'Enable terminal, then choose Initialize and open. Your existing configuration will be preserved.',
     status: {
-      off: 'Off',
-      idle: 'Ready to initialize',
+      idle: 'Opening…',
       starting: 'Opening…',
       ready: 'Connected',
       error: 'Needs attention'
     },
     errors: {
-      disabled: 'Enable terminal before initializing.',
       'binary-missing':
-        'The bundled Zellij binary is missing. Run yarn tools:init and stage the tools, or reinstall the application.',
+        'The bundled Zellij binary is missing. Run yarn tools:init, or reinstall the application.',
       'unsupported-platform': 'Zellij is available on macOS and Windows.',
       'port-occupied':
         'The terminal port for this build is occupied by another service. Free it and try again, or set BITTERLESS_ZELLIJ_PORT.',
       'version-mismatch':
         'The local server is not Zellij 0.45.1. Stop the conflicting server and try again.',
-      'start-failed': 'Zellij stopped or could not start. Choose Initialize and open to retry.',
+      'web-sharing-disabled': 'Enable web sharing in config.kdl to open this terminal.',
+      'start-failed': 'Zellij stopped or could not start. Try again.',
       'startup-timeout': 'Zellij did not become ready in time. Try again.',
-      'authentication-failed':
-        'Could not sign in to the local terminal. Choose Initialize and open to retry.',
+      'authentication-failed': 'Could not sign in to the local terminal. Try again.',
       'token-failed': 'Zellij could not create an authentication token. Try again.',
       'secure-storage-unavailable':
         'Secure credential storage is unavailable. Restore access to the system keychain and try again.',
@@ -1018,7 +1011,7 @@ export const en = {
       'shortcut-conflict':
         'A shortcut is duplicated or belongs to another action. Choose a different key.',
       'directory-missing':
-        'The configuration directory does not exist yet. Initialize the terminal first.',
+        'The configuration directory does not exist yet. Retry opening the terminal.',
       'directory-open-failed': 'Could not open the configuration directory.',
       'operation-failed': 'The terminal operation failed. Refresh settings or try again.'
     }

@@ -11,6 +11,7 @@ import {
 } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
+import { compareVersions } from 'compare-versions';
 import type { ZellijSnapshot } from '@shared/zellij/zellij.type';
 import {
   defaultZellijShortcuts,
@@ -18,6 +19,8 @@ import {
   readZellijShortcuts
 } from './zellijConfigEdit.service';
 import { buildZellijDefaultConfig } from './zellijDefaultConfig';
+import { ensureZellijConfigDefaults } from './zellijConfigDefaults.service';
+import { ZELLIJ_CONFIG_VERSION_CODE } from './zellijDefaultConfig.constant';
 import type { ZellijShortcuts } from './zellijConfig.type';
 
 export const ZELLIJ_CONFIG_ARG = '--zellij-config';
@@ -107,6 +110,8 @@ export const resolveZellijConfigFile = (
 };
 
 export class ZellijConfigService {
+  private initializing: Promise<void> | undefined;
+
   constructor(
     readonly file: string,
     private readonly options: { platform: string; validate: (file: string) => Promise<void> }
@@ -123,36 +128,69 @@ export class ZellijConfigService {
       configRevision: this.revision(source),
       configExists: source !== null,
       shortcuts:
-        source === null
+        source === null || this.needsTemplateUpgrade(this.markerSource())
           ? defaultZellijShortcuts(this.options.platform)
           : readZellijShortcuts(source, this.options.platform)
     };
   }
 
   /**
-   * Seed the starting config, once, when nothing is there.
-   *
-   * This used to write ONLY keybinds (via `save()` with the default shortcuts), which is why every
-   * cell rendered in the default foreground: the seeded file carried no theme, and a browser tab
-   * has no palette for Zellij to fall back on. It now writes the full starting config — keybinds,
-   * theme, pinned appearance and layout — and still validates it with the real binary before it
-   * lands, so a bad default can never be the thing that breaks startup.
+   * Upgrade older templates with a validated full replacement and a backup. Within one template
+   * version, complete only missing defaults and preserve explicit user choices.
    */
-  async initialize(): Promise<void> {
-    if (this.source() !== null) return;
-    const candidate = buildZellijDefaultConfig({ platform: this.options.platform });
+  initialize(): Promise<void> {
+    if (this.initializing) return this.initializing;
+    const pending = this.ensureDefaults().finally(() => {
+      if (this.initializing === pending) this.initializing = undefined;
+    });
+    this.initializing = pending;
+    return pending;
+  }
+
+  private async ensureDefaults(): Promise<void> {
+    const source = this.source();
+    const revision = this.revision(source);
+    const markerSource = this.markerSource();
+    const upgrade = source === null || this.needsTemplateUpgrade(markerSource);
+    const candidate = upgrade
+      ? buildZellijDefaultConfig({ platform: this.options.platform })
+      : ensureZellijConfigDefaults(source!, this.options.platform);
+    if (!upgrade && candidate === source) return;
     const directory = dirname(this.file);
     mkdirSync(directory, { recursive: true });
     const temporary = join(directory, `.bitterless-zellij-${randomUUID()}.kdl`);
+    const temporaryMarker = `${temporary}.version.json`;
     try {
-      // `wx` on both writes: losing a race against another profile booting against the same path
-      // must be a no-op, never an overwrite of a file the owner has since edited.
-      writeFileSync(temporary, candidate, { flag: 'wx', mode: 0o600 });
+      const mode = source === null ? 0o600 : lstatSync(this.file).mode & 0o777;
+      writeFileSync(temporary, candidate, { flag: 'wx', mode });
       await this.options.validate(temporary);
-      if (this.source() !== null) return;
+      if (this.revision(this.source()) !== revision || this.markerSource() !== markerSource) {
+        throw new Error('config-drift');
+      }
+      if (upgrade) {
+        writeFileSync(
+          temporaryMarker,
+          JSON.stringify({
+            schemaVersion: 1,
+            versionCode: ZELLIJ_CONFIG_VERSION_CODE,
+            configFile: resolve(this.file)
+          }) + '\n',
+          { flag: 'wx', mode: 0o600 }
+        );
+      }
+      if (source !== null) {
+        writeFileSync(`${this.file}.bitterless-backup-${Date.now()}-${randomUUID()}`, source, {
+          flag: 'wx',
+          mode: 0o600
+        });
+      }
+      // No await between the final revision check and replacement.
       renameSync(temporary, this.file);
+      // A marker never claims an upgrade before its validated configuration has landed.
+      if (upgrade) renameSync(temporaryMarker, this.markerFile());
     } finally {
       if (existsSync(temporary)) unlinkSync(temporary);
+      if (existsSync(temporaryMarker)) unlinkSync(temporaryMarker);
     }
   }
 
@@ -187,6 +225,40 @@ export class ZellijConfigService {
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 2 * 1024 * 1024)
       throw new Error('config-invalid');
     return readFileSync(this.file, 'utf8');
+  }
+
+  private markerFile(): string {
+    return `${this.file}.bitterless-version.json`;
+  }
+
+  private markerSource(): string | null {
+    const file = this.markerFile();
+    if (!existsSync(file)) return null;
+    const stat = lstatSync(file);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 8 * 1024) {
+      throw new Error('config-invalid');
+    }
+    return readFileSync(file, 'utf8');
+  }
+
+  private needsTemplateUpgrade(markerSource: string | null): boolean {
+    try {
+      const marker = JSON.parse(markerSource ?? 'null') as {
+        schemaVersion?: unknown;
+        versionCode?: unknown;
+        configFile?: unknown;
+      } | null;
+      return (
+        !marker ||
+        marker.schemaVersion !== 1 ||
+        marker.configFile !== resolve(this.file) ||
+        typeof marker.versionCode !== 'string' ||
+        !/^\d{12}$/.test(marker.versionCode) ||
+        compareVersions(marker.versionCode, ZELLIJ_CONFIG_VERSION_CODE) < 0
+      );
+    } catch {
+      return true;
+    }
   }
 
   private revision(source: string | null): string {

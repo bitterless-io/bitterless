@@ -13,8 +13,7 @@ const DEFAULT_SETTINGS: CoachSettings = {
   // 两边都不报错。`check-startup-settings.mjs` 钉住这个一致性。
   llmModel: 'gpt-6-astra',
   // 与 astra 预设声明的默认档一致(Ral 2026-09-11:「gpt-6-astra medium effort」)。
-  llmEffort: 'medium',
-  terminalEnabled: false
+  llmEffort: 'medium'
 }
 
 /**
@@ -71,8 +70,7 @@ function normalizeSettings(value: Partial<CoachSettings>): CoachSettings {
     startUrl: normalizeStartUrl(value.startUrl),
     llmProvider: provider,
     llmModel,
-    llmEffort: normalizeLlmEffort(value.llmEffort, llmModel),
-    terminalEnabled: value.terminalEnabled === true
+    llmEffort: normalizeLlmEffort(value.llmEffort, llmModel)
   }
 }
 

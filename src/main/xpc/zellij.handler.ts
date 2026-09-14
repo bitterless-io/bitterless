@@ -1,19 +1,34 @@
 import { clipboard, shell } from 'electron';
 import { existsSync } from 'node:fs';
-import { XpcMainHandler } from 'electron-xpc/main';
+import { XpcMainHandler, xpcMain } from 'electron-xpc/main';
 import type { ZellijApi, ZellijErrorCode, ZellijSnapshot } from '@shared/zellij/zellij.type';
 import { getZellijRuntime } from '@main/zellij/zellijRuntime.service';
 import { zellijWindowService } from '@main/zellij/zellijWindow.service';
+import { ZELLIJ_SETTINGS_OPEN_EVENT } from '@shared/zellij/zellij.type';
+import { maestroWindowHandler } from './maestroWindow.handler';
+import { maestroWindowHelper } from '@maestro-main/windows/main/maestroWindow.controller';
 
 class ZellijHandler extends XpcMainHandler implements ZellijApi {
-  async snapshot(): Promise<ZellijSnapshot> {
-    return getZellijRuntime().snapshot();
+  private settingsRequested = false;
+
+  async openSettings(): Promise<void> {
+    this.settingsRequested = true;
+    await maestroWindowHandler.openMaestroWindow();
+    await maestroWindowHelper.openWorkbenchTab();
+    xpcMain.broadcast(ZELLIJ_SETTINGS_OPEN_EVENT, {});
   }
-  async initialize(): Promise<ZellijSnapshot> {
-    return getZellijRuntime().initialize();
+
+  async consumeSettingsRequest(): Promise<boolean> {
+    const pending = this.settingsRequested;
+    this.settingsRequested = false;
+    return pending;
   }
-  async setEnabled(params: { enabled: boolean }): Promise<ZellijSnapshot> {
-    return getZellijRuntime().setEnabled(params?.enabled === true);
+  async snapshot(params: { surfaceId: string }): Promise<ZellijSnapshot> {
+    if (!params.surfaceId) return getZellijRuntime().settingsSnapshot();
+    return zellijWindowService.snapshot(params.surfaceId);
+  }
+  async initialize(params: { surfaceId: string }): Promise<ZellijSnapshot> {
+    return zellijWindowService.initializeSurface(params.surfaceId);
   }
   async saveShortcuts(params: {
     revision: string;

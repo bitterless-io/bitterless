@@ -1,0 +1,75 @@
+{
+  "name": "zsh-syntax-highlighting",
+  "version": "0.8.0",
+  "license": "BSD-3-Clause",
+  "repository": "https://github.com/zsh-users/zsh-syntax-highlighting",
+  "commit": "db085e4661f6aafd24e5acb5b2e17e4dd5dddf3e",
+  "tagObject": "b1379f1ee96b1fe25701c9418c75f81eaabdab56",
+  "files": [
+    {
+      "path": ".revision-hash",
+      "sha256": "2070743a71dbdccd323f1848e8f9f1fd893081c4e779f9f5a3cebcee6b2e467d",
+      "gitBlobSha1": "6828f88dcb0e88b8cd738ad6044ce74d7a9a13c8"
+    },
+    {
+      "path": ".version",
+      "sha256": "a66780da23103beaf12432b418508966b31a2a3a787f9468a5b6cdaa8667c1ef",
+      "gitBlobSha1": "a3df0a6959e154733da89a5d6063742ce6d5b851"
+    },
+    {
+      "path": "COPYING.md",
+      "sha256": "d810908db3cb75d30e46f5e55b18c8f483e1bc625b8f7dc5a581f5ad353af82e",
+      "gitBlobSha1": "cacbcbee0cb5a43dff25bd734a27c663df6b3740"
+    },
+    {
+      "path": "highlighters/brackets/brackets-highlighter.zsh",
+      "sha256": "b3ac4a66edf133b8f029332e787b7d36e2e1d7cabec0d271f7e5fe6724490dd3",
+      "gitBlobSha1": "bc388fdbf8e41ee011c51fea42cece4aaca5a6dc"
+    },
+    {
+      "path": "highlighters/cursor/cursor-highlighter.zsh",
+      "sha256": "bd6ef3aae900fee57ff132360b3dd9d68df5aab150a33e32259fd5adbe8efd49",
+      "gitBlobSha1": "81633a3c3bd890f3bcef4c5f6d0ca08718a8cbcb"
+    },
+    {
+      "path": "highlighters/line/line-highlighter.zsh",
+      "sha256": "1a12c094770bc00276395dc71a398a63fd768c433453d35f4e47e5d315dfacf0",
+      "gitBlobSha1": "f922dc9b2d9f677f864ef01657fd0e057683d094"
+    },
+    {
+      "path": "highlighters/main/main-highlighter.zsh",
+      "sha256": "b338a0b6b71ee276a5ff8979cb655d8fa940b15e7993706de33275984962f515",
+      "gitBlobSha1": "54938b7490ee52f8145d5d926b4c0ab6b00340ea"
+    },
+    {
+      "path": "highlighters/pattern/pattern-highlighter.zsh",
+      "sha256": "c2d5b50db13936421672b5ce16c0d7ec4f1abfeded34ea3a23bb39d2499b953b",
+      "gitBlobSha1": "e0422d08484748e18e406419f9787b781148fe12"
+    },
+    {
+      "path": "highlighters/regexp/regexp-highlighter.zsh",
+      "sha256": "f567458da4fb89cae8ea220b8febea11ed67ab6f6c8f5e0d6723ea7285e932e7",
+      "gitBlobSha1": "0d43aacd3ae226f430b20defe43b8f81effea5bc"
+    },
+    {
+      "path": "highlighters/root/root-highlighter.zsh",
+      "sha256": "7a038444d4cd60f9eaf07993b6a14d0055ad8706e09a32780cb65ea0a90530ee",
+      "gitBlobSha1": "3718c449ae43b939766be352e5b2f7d6a494f425"
+    },
+    {
+      "path": "INSTALL.md",
+      "sha256": "a2e0f968a16cf3d124fd8dba3acf4b49131b9ad2d597ebee155d312dcb0268fe",
+      "gitBlobSha1": "2e1286db30b5b2ef168e9c52f064a9061c3e2e0d"
+    },
+    {
+      "path": "README.md",
+      "sha256": "7cf98b55b87529321d0f708e04ca143601322e865c3a2efd5a2a629ab6678411",
+      "gitBlobSha1": "4768b3dd95a336aaa96559d7a12b35bd51ea9427"
+    },
+    {
+      "path": "zsh-syntax-highlighting.zsh",
+      "sha256": "156ebe9530eb991dcef54d476967e2ff4338d35dabaaff9e5462673a287cc63b",
+      "gitBlobSha1": "4295c93f46ae8ba06c7353340eac0aff5f59d4a3"
+    }
+  ]
+}

@@ -1,10 +1,9 @@
 import { reactive } from 'vue';
-import { Message } from '@arco-design/web-vue';
 import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import {
   ZELLIJ_HANDLER_NAME,
-  ZELLIJ_STATE_EVENT,
+  ZELLIJ_SURFACE_STATE_EVENT,
   ZELLIJ_SURFACE_QUERY,
   type ZellijApi,
   type ZellijErrorCode,
@@ -33,14 +32,8 @@ const logZellijFailure = (code: string, error: unknown): void => {
 
 class ZellijState {
   snapshot: ZellijSnapshot | null = null;
-  settingsOpen = false;
-  loading = false;
   initializing = false;
-  saving = false;
-  toggling = false;
   error: ZellijErrorCode | null = null;
-  draft = { splitDown: '', splitRight: '', closePane: '' };
-  revision = '';
 
   get errorMessage(): string | null {
     const error = this.error ?? this.snapshot?.error;
@@ -48,43 +41,49 @@ class ZellijState {
   }
 
   get statusLabel(): string {
-    if (!this.snapshot?.enabled) return i18nHelper.zellij.status.off;
-    return i18nHelper.zellij.status[this.snapshot.status];
+    return i18nHelper.zellij.status[this.snapshot?.status ?? 'starting'];
   }
 
-  apply(snapshot: ZellijSnapshot | null, resetDraft = false): void {
-    if (!snapshot || typeof snapshot.enabled !== 'boolean' || !snapshot.shortcuts) {
+  get opening(): boolean {
+    return !this.errorMessage && this.snapshot?.status !== 'ready';
+  }
+
+  apply(snapshot: ZellijSnapshot | null): void {
+    if (
+      !snapshot ||
+      !['idle', 'starting', 'ready', 'error'].includes(snapshot.status) ||
+      !snapshot.shortcuts
+    ) {
       // A malformed snapshot looks identical to a thrown call from the UI, so say which one it was.
-      logZellijFailure('operation-failed', new Error(`malformed snapshot: ${JSON.stringify(snapshot)}`));
+      logZellijFailure(
+        'operation-failed',
+        new Error(`malformed snapshot: ${JSON.stringify(snapshot)}`)
+      );
       this.error = 'operation-failed';
       return;
     }
     this.snapshot = snapshot;
-    if (!this.settingsOpen || resetDraft) {
-      this.draft = { ...snapshot.shortcuts };
-      this.revision = snapshot.configRevision;
-    }
   }
 
   async load(): Promise<void> {
-    this.loading = true;
     this.error = null;
     try {
-      this.apply(await api.snapshot(), true);
+      this.apply(await api.snapshot({ surfaceId: SURFACE_ID }));
     } catch (error) {
       logZellijFailure('operation-failed', error);
       this.error = 'operation-failed';
-    } finally {
-      this.loading = false;
     }
   }
 
   async initialize(): Promise<void> {
-    if (this.initializing || !this.snapshot?.enabled) return;
+    if (this.initializing) return;
     this.initializing = true;
     this.error = null;
+    if (this.snapshot?.status !== 'ready' && this.snapshot) {
+      this.snapshot = { ...this.snapshot, status: 'starting', error: null };
+    }
     try {
-      this.apply(await api.initialize());
+      this.apply(await api.initialize({ surfaceId: SURFACE_ID }));
     } catch (error) {
       logZellijFailure('operation-failed', error);
       this.error = 'operation-failed';
@@ -93,62 +92,12 @@ class ZellijState {
     }
   }
 
-  async setEnabled(value: string | number | boolean): Promise<void> {
-    if (this.toggling) return;
-    this.toggling = true;
-    this.error = null;
+  async openSettings(): Promise<void> {
     try {
-      this.apply(await api.setEnabled({ enabled: value === true }));
+      await api.openSettings();
     } catch (error) {
       logZellijFailure('operation-failed', error);
       this.error = 'operation-failed';
-    } finally {
-      this.toggling = false;
-    }
-  }
-
-  async toggleSettings(): Promise<void> {
-    this.settingsOpen = !this.settingsOpen;
-    if (this.settingsOpen) await this.load();
-  }
-
-  async save(): Promise<void> {
-    if (this.saving || this.loading) return;
-    this.saving = true;
-    this.error = null;
-    try {
-      const next = await api.saveShortcuts({
-        revision: this.revision,
-        shortcuts: { ...this.draft }
-      });
-      this.apply(next, !next?.error);
-      if (next && !next.error) Message.success(i18nHelper.zellij.saved);
-    } catch (error) {
-      logZellijFailure('operation-failed', error);
-      this.error = 'operation-failed';
-    } finally {
-      this.saving = false;
-    }
-  }
-
-  async copyDirectory(): Promise<void> {
-    try {
-      const result = await api.copyConfigDirectory();
-      if (!result?.ok) this.error = result?.error ?? 'operation-failed';
-      else Message.success(i18nHelper.zellij.copied);
-    } catch (error) {
-      logZellijFailure('operation-failed', error);
-      this.error = 'operation-failed';
-    }
-  }
-
-  async openDirectory(): Promise<void> {
-    try {
-      const result = await api.openConfigDirectory();
-      if (!result?.ok) this.error = result?.error ?? 'directory-open-failed';
-    } catch (error) {
-      logZellijFailure('directory-open-failed', error);
-      this.error = 'directory-open-failed';
     }
   }
 
@@ -165,6 +114,7 @@ class ZellijState {
 }
 
 export const zellijStore = reactive<ZellijState>(new ZellijState());
-xpcRenderer.subscribe(ZELLIJ_STATE_EVENT, (payload) => {
-  zellijStore.apply(payload.params as ZellijSnapshot);
+xpcRenderer.subscribe(ZELLIJ_SURFACE_STATE_EVENT, (payload) => {
+  const state = payload.params as { surfaceId: string; snapshot: ZellijSnapshot } | null;
+  if (state?.surfaceId === SURFACE_ID) zellijStore.apply(state.snapshot);
 });

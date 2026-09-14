@@ -1,5 +1,11 @@
 # Zellij miniapp
 
+The manual initialization, enable preference and first-run-only defaults below are superseded
+by [automatic opening, remembered cwd and ensured color defaults](zellij-auto-open-directory.md)
+(owner decision 2026-09-12). Existing session identities and native-view protections remain.
+The toolbar is 48px high; its gear opens shared Workbench Terminal settings instead of an
+inline panel. KDL template versions upgrade old configurations after backup and validation.
+
 Status: implemented; human testing pending. Owner request: 2026-09-10, launch the local
 terminal from a miniapp, initialize it there, edit shortcuts, and copy/open its
 configuration directory. This extends the existing default-off Terminal setting.
@@ -39,6 +45,13 @@ Home → Miniapps → Zellij (one window)
   Stop only that owned child, never a reused server or shell session. Never call
   `zellij web --stop`, which stops every instance. Disabling hides/detaches the
   embedded terminal, including when changed from the existing Settings page.
+- On macOS, every owned Zellij CLI/server child uses a private short socket base
+  `/tmp/bz<base36 uid>-<runtime profile id>` unless `ZELLIJ_SOCKET_DIR` is explicitly
+  supplied. Keep global `TMPDIR` and existing session names unchanged. The complete
+  session socket path must fit macOS's 103-byte limit; HTTP health alone does not
+  verify session creation. Native spawn errors, exit codes/signals and bounded,
+  sanitized stderr reach the main log; token stdout never does. See
+  [startup diagnosis and repair](../issues/zellij-terminal-no-error-trace.md).
 
 ## Configuration
 
@@ -51,8 +64,9 @@ Home → Miniapps → Zellij (one window)
   on Unix or the Windows ProjectDirs path.
   Pass the selected config file explicitly to the CLI. Missing configuration is
   created only by Initialize or explicit Save, never by opening the miniapp.
-- macOS defaults: `Super d` splits down, `Super Shift d` splits right, `Ctrl w`
-  closes the current pane. Other platforms use `Ctrl Alt d`, `Ctrl Alt Shift d`,
+- macOS defaults: `Super d` creates a pane on the right (side by side), `Super Shift d`
+  creates a pane below (stacked), and `Super w` closes the current pane. Other platforms
+  retain down/right/close on `Ctrl Alt d`, `Ctrl Alt Shift d`,
   `Ctrl Alt w` to avoid Windows desktop/tab shortcuts. Display existing bindings
   when recognized, with editable Zellij key syntax and clear action labels.
 - Read and edit only these single-action bindings in the first `keybinds` block's

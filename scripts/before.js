@@ -1,5 +1,7 @@
 const fs = require('fs');
 const path = require('path');
+const moment = require('moment');
+const { compareVersions } = require('compare-versions');
 const {
   assertSelectedRuntimeProfile,
   loadCanonicalRigEnvironment
@@ -39,6 +41,19 @@ if (pkg.versionCode != null) {
 const isDebug = viteMode === 'debug';
 const isDev = viteEnv === 'dev';
 const isPreview = releaseChannel === 'preview';
+
+if (isDebug) {
+  const buildVersionCode = moment().format('YYMMDDHHmmss');
+  if (!isTimestampVersionCode(buildVersionCode)) {
+    throw new Error('[before.js] current clock must produce a valid YYMMDDHHmmss timestamp');
+  }
+  if (compareVersions(buildVersionCode, pkg.version_code) < 0) {
+    throw new Error(
+      `[before.js] current clock ${buildVersionCode} is older than version_code ${pkg.version_code}; refusing to downgrade the DEBUG build`
+    );
+  }
+  pkg.version_code = buildVersionCode;
+}
 
 if (isPreview) {
   pkg.name = `${baseName}_PREVIEW`;

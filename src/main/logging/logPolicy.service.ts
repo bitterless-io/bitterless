@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import type { ApplicationRuntimeProfile } from '@shared/diagnostics/applicationDiagnostics.contract';
+import { ZELLIJ_SURFACE_QUERY } from '@shared/zellij/zellij.type';
 
 export const APPLICATION_LOG_FILE_MAX_SIZE = 5 * 1024 * 1024;
 
@@ -53,7 +54,17 @@ export const resolveFirstPartyRendererProcess = (
       ? rendererPath.slice(rendererPath.lastIndexOf(rendererRoot) + rendererRoot.length)
       : rendererPath;
   const entry = FIRST_PARTY_RENDERER_ENTRIES.find(({ path }) => entryPath === path);
-  if (!entry || url.search || url.username || url.password) return null;
+  if (!entry || url.username || url.password) return null;
+  if (url.search) {
+    const query = [...url.searchParams];
+    if (
+      entry.process !== 'renderer:zellij' ||
+      query.length !== 1 ||
+      query[0][0] !== ZELLIJ_SURFACE_QUERY ||
+      !/^[A-Za-z0-9_-]{1,128}$/.test(query[0][1])
+    )
+      return null;
+  }
 
   if (url.protocol === 'file:') {
     return rendererPath.includes(`${rendererRoot}/`) ? entry.process : null;

@@ -4,11 +4,11 @@ import { dirname } from 'node:path';
 import type { ZellijRuntimeDependencies, ZellijOwnedProcess } from './zellijRuntime.type';
 
 const ERRORS = new Set<ZellijErrorCode>([
-  'disabled',
   'binary-missing',
   'unsupported-platform',
   'port-occupied',
   'version-mismatch',
+  'web-sharing-disabled',
   'start-failed',
   'startup-timeout',
   'authentication-failed',
@@ -49,6 +49,7 @@ export class ZellijProcessService {
   private generation = 0;
   private pending: Promise<ZellijSnapshot> | null = null;
   private owned: ZellijOwnedProcess | null = null;
+  private stopping: Promise<void> | null = null;
 
   constructor(private readonly dependencies: ZellijRuntimeDependencies) {}
 
@@ -58,7 +59,6 @@ export class ZellijProcessService {
       config = this.dependencies.config.read();
     } catch (error) {
       return {
-        enabled: this.dependencies.readEnabled(),
         status: 'error',
         error: zellijErrorCode(error),
         configDirectory: dirname(this.dependencies.config.file),
@@ -70,30 +70,35 @@ export class ZellijProcessService {
     }
     return {
       ...config,
-      enabled: this.dependencies.readEnabled(),
       status: this.status,
       error: this.error
     };
   }
 
   initialize(): Promise<ZellijSnapshot> {
+    if (this.stopping)
+      return this.stopping.then(
+        () => this.initialize(),
+        () => this.snapshot()
+      );
+    if (this.status === 'ready') return Promise.resolve(this.snapshot());
     if (this.pending) return this.pending;
     const generation = this.generation;
-    this.pending = this.open(generation).finally(() => {
-      this.pending = null;
+    const pending = this.open(generation).finally(() => {
+      if (this.pending === pending) this.pending = null;
     });
-    return this.pending;
+    this.pending = pending;
+    return pending;
   }
 
-  async setEnabled(enabled: boolean): Promise<ZellijSnapshot> {
-    this.dependencies.persistEnabled(enabled);
-    await this.settingsChanged(enabled);
-    return this.snapshot();
-  }
-
-  async settingsChanged(enabled: boolean): Promise<void> {
-    if (!enabled) await this.stop();
-    else this.publish();
+  async settingsSnapshot(): Promise<ZellijSnapshot> {
+    try {
+      this.dependencies.checkBinary();
+      await this.dependencies.config.initialize();
+      return this.snapshot();
+    } catch (error) {
+      return { ...this.snapshot(), configRevision: '', error: zellijErrorCode(error) };
+    }
   }
 
   reportViewFailure(): void {
@@ -109,23 +114,41 @@ export class ZellijProcessService {
     try {
       this.dependencies.checkBinary();
       await this.dependencies.config.save(input);
-      this.error = null;
-      if (this.status === 'error') this.status = 'idle';
+      // A settings save does not restart a failed server. Keep Retry visible until initialization.
+      if (this.status !== 'error') this.error = null;
     } catch (error) {
-      this.error = zellijErrorCode(error);
+      return { ...this.snapshot(), error: zellijErrorCode(error) };
     }
     this.publish();
-    return this.snapshot();
+    return { ...this.snapshot(), error: null };
   }
 
-  async stop(): Promise<void> {
+  stop(): Promise<void> {
+    if (this.stopping) return this.stopping;
     this.generation += 1;
+    this.pending = null;
     const owned = this.owned;
-    this.owned = null;
     this.status = 'idle';
     this.error = null;
     this.publish();
-    if (owned) await owned.stop();
+    const stopping = (async () => {
+      try {
+        if (owned) {
+          await owned.stop();
+          if (!owned.exited()) throw new Error('operation-failed');
+          if (this.owned === owned) this.owned = null;
+        }
+      } catch {
+        this.status = 'error';
+        this.error = 'operation-failed';
+        this.publish();
+        throw new Error('operation-failed');
+      }
+    })().finally(() => {
+      if (this.stopping === stopping) this.stopping = null;
+    });
+    this.stopping = stopping;
+    return stopping;
   }
 
   private async open(generation: number): Promise<ZellijSnapshot> {
@@ -135,6 +158,13 @@ export class ZellijProcessService {
       this.status = 'starting';
       this.error = null;
       this.publish();
+      const retained = this.owned;
+      if (retained) {
+        await retained.stop();
+        if (!retained.exited()) throw new Error('operation-failed');
+        if (this.owned === retained) this.owned = null;
+        this.assertActive(generation);
+      }
       this.dependencies.config.read();
       await this.dependencies.config.initialize();
       this.assertActive(generation);
@@ -144,8 +174,11 @@ export class ZellijProcessService {
       if (probe === 'occupied') throw new Error('port-occupied');
       if (probe === 'absent') {
         const previous = this.owned;
-        this.owned = null;
-        if (previous) await previous.stop();
+        if (previous) {
+          await previous.stop();
+          if (!previous.exited()) throw new Error('operation-failed');
+          if (this.owned === previous) this.owned = null;
+        }
         this.assertActive(generation);
         const child = this.dependencies.spawn([
           '--config',
@@ -161,6 +194,7 @@ export class ZellijProcessService {
         child.onExit(() => {
           if (this.owned !== child) return;
           this.owned = null;
+          if (generation !== this.generation) return;
           this.status = 'error';
           this.error = 'start-failed';
           this.publish();
@@ -169,7 +203,9 @@ export class ZellijProcessService {
           this.assertActive(generation);
           if (child.exited()) throw new Error('start-failed');
           await this.dependencies.delay(250);
+          this.assertActive(generation);
           probe = await this.dependencies.probe();
+          this.assertActive(generation);
           if (probe === 'matching') break;
           if (probe === 'mismatch' || probe === 'occupied') throw new Error('port-occupied');
         }
@@ -199,19 +235,25 @@ export class ZellijProcessService {
     } catch (error) {
       if (generation === this.generation) {
         const child = this.owned;
-        this.owned = null;
-        if (child) await child.stop();
+        if (child) {
+          try {
+            await child.stop();
+            if (child.exited() && this.owned === child) this.owned = null;
+          } catch {
+            /* Keep ownership until actual exit; Retry cannot borrow this process. */
+          }
+        }
+        if (generation !== this.generation) return this.snapshot();
         this.status = 'error';
         this.error = zellijErrorCode(error);
       }
     }
-    this.publish();
+    if (generation === this.generation) this.publish();
     return this.snapshot();
   }
 
   private assertActive(generation: number): void {
-    if (generation !== this.generation || !this.dependencies.readEnabled())
-      throw new Error('disabled');
+    if (generation !== this.generation) throw new Error('operation-failed');
   }
 
   private publish(): void {

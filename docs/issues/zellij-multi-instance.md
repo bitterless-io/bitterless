@@ -1,11 +1,17 @@
 # Zellij 多实例:仍然共享的那几样东西
 
-Status: open (记账,不是回归)
+Status: fixed and verified, 2026-09-13 (task 176)
 Owner: Ral
 Date: 2026-09-11
 关联:`docs/features/zellij-multi-tab.md`(多 tab / per-surface 会话 / 恢复,已落地)
 
 `src/main/zellij/zellijTerminalView.ts` 里的注释指向本文件。
+
+2026-09-12：Ral 已明确选择主动关 tab 就结束其会话；应用退出则保留会话。
+[任务 176](../plan/tasks/zellij-auto-open-directory-176.md) 已完成 per-surface 状态、
+精确会话清理和 stop/start 并发隔离。相关测试及真实开发版关闭/恢复检查通过，证据见
+[审查报告](../plan/reviews/zellij-auto-open-directory-176-1.md)。以下是原始问题记录，当前契约见
+[自动打开与目录记忆](../features/zellij-auto-open-directory.md)。
 
 ## 1. 已经拆开的
 

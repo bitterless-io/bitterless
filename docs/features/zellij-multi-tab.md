@@ -1,5 +1,11 @@
 # 多个 Zellij tab,每个一条会话,重启后跟着 tab 一起回来
 
+> 2026-09-12 更新：[自动打开与目录记忆](./zellij-auto-open-directory.md) 取代本文的手动
+> Initialize 入口。每个 tab 的稳定会话身份和恢复规则保留；打开时自动准备并显示加载动画。
+> 新会话继承最近活动 pane 的目录，首次使用从 `~` 开始；Omni cell 也使用独立稳定会话。
+> 主动关闭 tab 会结束对应会话和全部 pane；退出应用仍保留会话以便恢复。
+> 下文旧入口和未覆盖范围记录原始实现背景，当前行为以新契约为准。
+
 Status: implemented; owner testing pending
 Owner: Ral
 Date: 2026-09-11

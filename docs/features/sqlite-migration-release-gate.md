@@ -29,6 +29,12 @@ macOS ARM64, macOS x64, and Windows x64.
   12-digit string `YYMMDDHHmmss`; version codes stay strings throughout application code.
 - Runtime/UI/update manifests may continue exposing the compatibility field `versionCode`, derived
   from `version_code`; source package metadata must not depend on the legacy camelCase key.
+- DEBUG build/dev preparation refreshes `version_code` to the current local build timestamp without
+  changing the semantic version. It refuses to move the identifier backwards. Release preparation
+  preserves the identity minted by the release-cut workflow so all platforms share one identity.
+- Core and Maestro SQLite preloads use the same build-embedded `__BITTERLESS_VERSION_CODE__`;
+  runtime metadata files cannot override the schema version belonging to compiled code. SQLite
+  startup/key diagnostics use the Maestro name (`[maestro sqlite]`).
 - Every version-code ordering decision uses the shared `compare-versions` library. Raw numeric,
   lexical, subtraction, or width-based comparisons are forbidden.
 - Each database owns one ordered migration manifest. Runtime boot and the release audit import the

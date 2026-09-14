@@ -8,6 +8,11 @@ verify: focused pure Node packaging tests, syntax checks, diff check, independen
 
 # Package Maestro external tools from an offline platform store
 
+Historical delivery: the Micromeet CLI preservation rules below were superseded by the
+[AI-CRMS retirement](../../features/maestro-crms-retirement.md). Current incremental initialization
+and full managed-stage replacement are defined by
+[task 174](external-tools-init-dev-ready-174.md).
+
 ## Objective
 
 Move AnyDoc and Ouch build inputs out of the ASAR-selected tree, add pinned Bun/ripgrep/fd inputs,

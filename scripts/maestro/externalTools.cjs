@@ -443,6 +443,9 @@ const validateManifestAndPayload = (
       throw new Error(`${spec.path} size mismatch: expected ${record.sizeBytes}, received ${stats.size}`)
     }
     assertDigest(filePath, spec.sha256, 'sha256', 'hex', spec.path)
+    if (spec.executable && storePlatform !== 'win' && process.platform !== 'win32' && (stats.mode & 0o111) !== 0o111) {
+      throw new Error(`${spec.path} must be executable`)
+    }
   }
   const metadata = readJson(path.join(directory, 'anydoc', 'package.json'), 'AnyDoc package.json')
   if (metadata.name !== ANYDOC_PACKAGE_NAME || metadata.version !== inventory.anydoc.version) {
@@ -461,7 +464,7 @@ const validateExternalStore = (root, storePlatform, inventory = INVENTORY) => {
   } catch (error) {
     throw new Error(
       `${storePlatform} external tools are not initialized or are invalid: ${(error && error.message) || String(error)}. ` +
-        'Run `yarn tools:init` before packaging.'
+        'Run `yarn tools:init` before development or packaging.'
     )
   }
   return directory
@@ -525,7 +528,7 @@ const initializeBinaryTool = (toolName, storePlatform, directory, temporaryDownl
   if (storePlatform !== 'win') fs.chmodSync(destination, 0o755)
 }
 
-const initializeAnydoc = (storePlatform, directory, temporaryDownloads, inventory) => {
+const initializeAnydocBundle = (storePlatform, directory, temporaryDownloads, inventory) => {
   const anydoc = inventory.anydoc
   const packageArchive = path.join(temporaryDownloads, anydoc.packageArchive.filename)
   console.log(`[external-tools] downloading ${ANYDOC_PACKAGE_NAME} ${anydoc.version} (${storePlatform})`)
@@ -560,13 +563,47 @@ const initializeAnydoc = (storePlatform, directory, temporaryDownloads, inventor
   if (metadata.name !== ANYDOC_PACKAGE_NAME || metadata.version !== anydoc.version) {
     throw new Error(`unexpected AnyDoc metadata: ${String(metadata.name)}@${String(metadata.version)}`)
   }
+}
+
+const initializeAnydocNative = (storePlatform, directory, temporaryDownloads, inventory) => {
+  const anydoc = inventory.anydoc
   const native = anydoc.targets[storePlatform]
   const downloadedNative = path.join(temporaryDownloads, native.asset)
   console.log(`[external-tools] downloading ${native.asset}`)
   download(native.url, downloadedNative)
   assertRegularFile(downloadedNative, native.asset)
   assertDigest(downloadedNative, native.sha256, 'sha256', 'hex', native.asset)
-  fs.copyFileSync(downloadedNative, path.join(directory, ...native.output.split('/')))
+  const destination = path.join(directory, ...native.output.split('/'))
+  fs.mkdirSync(path.dirname(destination), { recursive: true })
+  fs.copyFileSync(downloadedNative, destination)
+}
+
+const copyVerifiedPayload = (sourceDirectory, destinationDirectory, specs, storePlatform) => {
+  // Old manifests are not reuse authority. Check every parent and the current pinned bytes.
+  try {
+    assertRegularDirectory(sourceDirectory, 'external-tools directory')
+    for (const spec of specs) {
+      const segments = spec.path.split('/')
+      for (let index = 1; index < segments.length; index += 1) {
+        assertRegularDirectory(path.join(sourceDirectory, ...segments.slice(0, index)), spec.path)
+      }
+      const source = path.join(sourceDirectory, ...segments)
+      assertRegularFile(source, spec.path)
+      assertDigest(source, spec.sha256, 'sha256', 'hex', spec.path)
+    }
+  } catch {
+    return false
+  }
+  for (const spec of specs) {
+    const source = path.join(sourceDirectory, ...spec.path.split('/'))
+    const destination = path.join(destinationDirectory, ...spec.path.split('/'))
+    const stats = fs.statSync(source)
+    fs.mkdirSync(path.dirname(destination), { recursive: true })
+    fs.copyFileSync(source, destination)
+    if (spec.executable && storePlatform !== 'win') fs.chmodSync(destination, 0o755)
+    fs.utimesSync(destination, stats.atime, stats.mtime)
+  }
+  return true
 }
 
 const replacePlatformDirectory = (
@@ -607,10 +644,13 @@ const initializePlatform = (
   inventory = INVENTORY,
   {
     initializeBinary = initializeBinaryTool,
-    initializeDocumentTool = initializeAnydoc,
+    initializeDocumentBundle = initializeAnydocBundle,
+    initializeDocumentNative = initializeAnydocNative,
     replaceDirectory = replacePlatformDirectory
   } = {}
 ) => {
+  validatePackagePins(root, inventory)
+  const specs = payloadSpecsForPlatform(storePlatform, inventory)
   const externalRoot = path.join(root, EXTERNAL_DIR_NAME)
   const destination = path.join(externalRoot, storePlatform)
   if (!force) {
@@ -628,9 +668,20 @@ const initializePlatform = (
   try {
     copyGitkeep(destination, path.join(temporaryDirectory, '.gitkeep'))
     for (const toolName of BINARY_TOOL_NAMES) {
-      initializeBinary(toolName, storePlatform, temporaryDirectory, temporaryDownloads, inventory)
+      const toolSpecs = specs.filter((spec) => spec.tool === toolName)
+      if (force || !copyVerifiedPayload(destination, temporaryDirectory, toolSpecs, storePlatform)) {
+        initializeBinary(toolName, storePlatform, temporaryDirectory, temporaryDownloads, inventory)
+      }
     }
-    initializeDocumentTool(storePlatform, temporaryDirectory, temporaryDownloads, inventory)
+    const nativePath = inventory.anydoc.targets[storePlatform].output
+    const bundleSpecs = specs.filter((spec) => spec.tool === 'anydoc' && spec.path !== nativePath)
+    if (force || !copyVerifiedPayload(destination, temporaryDirectory, bundleSpecs, storePlatform)) {
+      initializeDocumentBundle(storePlatform, temporaryDirectory, temporaryDownloads, inventory)
+    }
+    const nativeSpecs = specs.filter((spec) => spec.path === nativePath)
+    if (force || !copyVerifiedPayload(destination, temporaryDirectory, nativeSpecs, storePlatform)) {
+      initializeDocumentNative(storePlatform, temporaryDirectory, temporaryDownloads, inventory)
+    }
     const manifest = createManifest(temporaryDirectory, storePlatform, inventory)
     fs.writeFileSync(
       path.join(temporaryDirectory, MANIFEST_FILENAME),
@@ -650,26 +701,19 @@ const initializePlatform = (
   }
 }
 
-const initializeAll = (root = DEFAULT_ROOT, force = false, inventory = INVENTORY) => {
+const initializeAll = (
+  root = DEFAULT_ROOT,
+  force = false,
+  inventory = INVENTORY,
+  { packageTarget = detectPackageTarget(), ...initializeOptions } = {}
+) => {
+  normalizePackageTarget(packageTarget)
   validatePackagePins(root, inventory)
   for (const storePlatform of STORE_PLATFORMS) {
-    initializePlatform(root, storePlatform, force, inventory)
+    initializePlatform(root, storePlatform, force, inventory, initializeOptions)
   }
+  stageExternalTools(root, packageTarget, inventory)
   console.log('[external-tools] all platforms are initialized and verified')
-}
-
-const externalRootArtifactNames = (inventory = INVENTORY) => {
-  const names = new Set([MANIFEST_FILENAME, 'anydoc'])
-  for (const toolName of BINARY_TOOL_NAMES) {
-    for (const target of Object.values(inventory[toolName].targets)) names.add(target.output)
-  }
-  return [...names]
-}
-
-const removeStaleExternalArtifacts = (stageDirectory, inventory = INVENTORY) => {
-  for (const name of externalRootArtifactNames(inventory)) {
-    fs.rmSync(path.join(stageDirectory, name), { recursive: true, force: true })
-  }
 }
 
 const copyPayload = (sourceDirectory, stageDirectory, storePlatform, inventory = INVENTORY) => {
@@ -703,15 +747,27 @@ const verifyStagedExternalTools = (
 const stageExternalTools = (
   root = DEFAULT_ROOT,
   packageTarget = detectPackageTarget(),
-  inventory = INVENTORY
+  inventory = INVENTORY,
+  { copy = copyPayload, replaceDirectory = replacePlatformDirectory } = {}
 ) => {
   validatePackagePins(root, inventory)
   const normalized = normalizePackageTarget(packageTarget)
-  const sourceDirectory = validateExternalStore(root, normalized.storePlatform, inventory)
   const stageDirectory = path.join(root, STAGE_RELATIVE_PATH)
-  removeStaleExternalArtifacts(stageDirectory, inventory)
-  copyPayload(sourceDirectory, stageDirectory, normalized.storePlatform, inventory)
-  verifyStagedExternalTools(root, normalized.packageTarget, inventory)
+  try {
+    return verifyStagedExternalTools(root, normalized.packageTarget, inventory)
+  } catch (error) {
+    console.log(`[external-tools] preparing ${normalized.packageTarget} stage: ${(error && error.message) || String(error)}`)
+  }
+  const sourceDirectory = validateExternalStore(root, normalized.storePlatform, inventory)
+  fs.mkdirSync(path.dirname(stageDirectory), { recursive: true })
+  const temporaryDirectory = fs.mkdtempSync(path.join(path.dirname(stageDirectory), '.maestro-tools.stage-'))
+  try {
+    copy(sourceDirectory, temporaryDirectory, normalized.storePlatform, inventory)
+    validateManifestAndPayload(temporaryDirectory, normalized.storePlatform, { inventory })
+    replaceDirectory(temporaryDirectory, stageDirectory)
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true })
+  }
   console.log(
     `[external-tools] staged external_tools/${normalized.storePlatform} in build/maestro-tools`
   )
@@ -740,7 +796,7 @@ const parseArgs = (argv = process.argv.slice(2)) => {
 const printHelp = () => {
   console.log(
     'Maestro external tools\n\n' +
-      '  yarn tools:init [--force]                   initialize mac_arm, mac_intel, and win\n' +
+      '  yarn tools:init [--force]                   initialize all platforms and stage this host\n' +
       '  node scripts/maestro/externalTools.cjs stage [mac_arm|mac_intel|win64]\n' +
       '  node scripts/maestro/externalTools.cjs verify-stage [mac_arm|mac_intel|win64]'
   )

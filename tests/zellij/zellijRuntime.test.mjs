@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/explicit-function-return-type -- Native Node test fixtures. */
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { mkdtempSync, readFileSync, writeFileSync, existsSync, readdirSync, rmSync } from 'node:fs';
@@ -26,7 +27,6 @@ test.after(() => rmSync(directory, { recursive: true, force: true }));
 const TOKEN = '11111111-1111-4111-8111-111111111111';
 const shortcuts = { splitDown: 'Super d', splitRight: 'Super Shift d', closePane: 'Ctrl w' };
 const fixture = (overrides = {}) => {
-  let enabled = false;
   let exitCallback;
   let exited = false;
   const calls = { spawn: 0, run: 0, stop: 0, config: 0, login: 0, token: 0 };
@@ -54,10 +54,6 @@ const fixture = (overrides = {}) => {
         calls.config += 1;
       },
       save: async () => {}
-    },
-    readEnabled: () => enabled,
-    persistEnabled: (value) => {
-      enabled = value;
     },
     checkBinary: () => {},
     port: () => 12902,
@@ -105,27 +101,26 @@ const fixture = (overrides = {}) => {
   };
 };
 
-test('opening state and enabling are read-only; explicit initialization owns one foreground server', async () => {
-  const { service, calls } = fixture();
-  assert.equal(service.snapshot().enabled, false);
-  assert.equal((await service.initialize()).error, 'disabled');
-  assert.equal(calls.spawn, 0);
-  assert.equal(calls.config, 0);
-  await service.setEnabled(true);
-  assert.equal(calls.spawn, 0);
+test('opening initializes without a setting, concurrent calls share startup and ready calls preserve siblings', async () => {
+  const states = [];
+  const { service, calls } = fixture({ changed: (s) => states.push(s.status) });
+  assert.equal('enabled' in service.snapshot(), false);
   const first = service.initialize();
   assert.equal(service.initialize(), first);
   assert.equal((await first).status, 'ready');
   assert.equal(calls.spawn, 1);
-  assert.equal(calls.run, 1);
-  await service.setEnabled(false);
+  const published = states.length;
+  await service.initialize();
+  assert.equal(states.length, published);
+  assert.equal(calls.spawn, 1);
+  assert.equal(calls.config, 1);
+  await service.stop();
   assert.equal(calls.stop, 1);
   assert.equal(service.snapshot().status, 'idle');
 });
 
 test('matching external server is reused and never killed; occupied/version mismatch fails closed', async () => {
   const reused = fixture({ probe: async () => 'matching', readToken: () => TOKEN });
-  await reused.service.setEnabled(true);
   assert.equal((await reused.service.initialize()).status, 'ready');
   await reused.service.stop();
   assert.equal(reused.calls.spawn, 0);
@@ -133,7 +128,6 @@ test('matching external server is reused and never killed; occupied/version mism
   assert.equal(reused.calls.stop, 0);
   for (const probe of ['occupied', 'mismatch']) {
     const current = fixture({ probe: async () => probe });
-    await current.service.setEnabled(true);
     const state = await current.service.initialize();
     assert.equal(state.error, probe === 'occupied' ? 'port-occupied' : 'version-mismatch');
     assert.equal(current.calls.spawn, 0);
@@ -143,7 +137,6 @@ test('matching external server is reused and never killed; occupied/version mism
 
 test('authentication failure stops only an owned server and snapshots never contain credentials', async () => {
   const current = fixture({ login: async () => false });
-  await current.service.setEnabled(true);
   const state = await current.service.initialize();
   assert.equal(state.error, 'authentication-failed');
   assert.equal(current.calls.stop, 1);
@@ -151,7 +144,7 @@ test('authentication failure stops only an owned server and snapshots never cont
   assert.throws(() => parseZellijToken('unrecognized token output'), /token-failed/);
 });
 
-test('retry with an absent listener stops the previous owned child before replacing it', async () => {
+test('ready runtime remains idempotent; a reported failure can retry with replacement', async () => {
   let spawned = 0;
   let probeCount = 0;
   const stopped = [];
@@ -159,11 +152,19 @@ test('retry with an absent listener stops the previous owned child before replac
     probe: async () => (++probeCount % 2 === 1 ? 'absent' : 'matching'),
     spawn: () => {
       const id = ++spawned;
-      return { stop: async () => stopped.push(id), onExit: () => {}, exited: () => false };
+      let exited = false;
+      return {
+        stop: async () => {
+          stopped.push(id);
+          exited = true;
+        },
+        onExit: () => {},
+        exited: () => exited
+      };
     }
   });
-  await current.service.setEnabled(true);
   assert.equal((await current.service.initialize()).status, 'ready');
+  current.service.reportViewFailure();
   assert.equal((await current.service.initialize()).status, 'ready');
   assert.equal(spawned, 2);
   assert.deepEqual(stopped, [1]);
@@ -171,7 +172,33 @@ test('retry with an absent listener stops the previous owned child before replac
   assert.deepEqual(stopped, [1, 2]);
 });
 
-test('disable during token creation fences late login/readiness and never restarts the server', async () => {
+test('unobserved web-server death retains ownership and a second stop waits for the same child', async () => {
+  let ended = false;
+  let stops = 0;
+  const current = fixture({
+    spawn: () => ({
+      stop: async () => {
+        stops++;
+        if (!ended) throw new Error('operation-failed');
+      },
+      onExit: () => {},
+      exited: () => ended
+    }),
+    probe: async () => 'matching'
+  });
+  // Use an owned spawn, then a matching health response.
+  let probes = 0;
+  current.dependency.probe = async () => (++probes === 1 ? 'absent' : 'matching');
+  assert.equal((await current.service.initialize()).status, 'ready');
+  await assert.rejects(current.service.stop(), /operation-failed/);
+  assert.equal(current.service.snapshot().status, 'error');
+  ended = true;
+  await current.service.stop();
+  assert.equal(stops, 2);
+  assert.equal(current.service.snapshot().status, 'idle');
+});
+
+test('stop during token creation fences late login/readiness and never restarts the server', async () => {
   let finish;
   const waiting = new Promise((resolve) => {
     finish = resolve;
@@ -186,13 +213,11 @@ test('disable during token creation fences late login/readiness and never restar
       return waiting;
     }
   });
-  await current.service.setEnabled(true);
   const open = current.service.initialize();
   await entered;
-  await current.service.setEnabled(false);
+  await current.service.stop();
   finish(`token_1: ${TOKEN}`);
   const state = await open;
-  assert.equal(state.enabled, false);
   assert.equal(state.status, 'idle');
   assert.equal(current.calls.stop, 1);
   assert.equal(current.calls.login, 0);
@@ -201,7 +226,6 @@ test('disable during token creation fences late login/readiness and never restar
 
 test('owned server exit becomes an error; unknown diagnostics are not leaked', async () => {
   const current = fixture();
-  await current.service.setEnabled(true);
   await current.service.initialize();
   current.exit();
   assert.equal(current.service.snapshot().error, 'start-failed');
@@ -210,10 +234,107 @@ test('owned server exit becomes an error; unknown diagnostics are not leaked', a
       throw Error(`secret:${TOKEN}`);
     }
   });
-  await failed.service.setEnabled(true);
   const state = await failed.service.initialize();
   assert.equal(state.error, 'operation-failed');
   assert.ok(!JSON.stringify(state).includes(TOKEN));
+});
+
+test('stop and reopen keeps the new startup pending when the cancelled generation finishes', async () => {
+  let finishOld;
+  let finishNew;
+  let enteredOld;
+  let enteredNew;
+  const oldWait = new Promise((r) => {
+    finishOld = r;
+  });
+  const newWait = new Promise((r) => {
+    finishNew = r;
+  });
+  const oldEntered = new Promise((r) => {
+    enteredOld = r;
+  });
+  const newEntered = new Promise((r) => {
+    enteredNew = r;
+  });
+  const current = fixture();
+  let starts = 0;
+  current.dependency.config.initialize = async () => {
+    if (++starts === 1) {
+      enteredOld();
+      await oldWait;
+    } else {
+      enteredNew();
+      await newWait;
+    }
+  };
+  const old = current.service.initialize();
+  await oldEntered;
+  await current.service.stop();
+  const next = current.service.initialize();
+  await newEntered;
+  finishOld();
+  await old;
+  assert.equal(current.service.initialize(), next);
+  finishNew();
+  assert.equal((await next).status, 'ready');
+  assert.equal(current.calls.spawn, 1);
+  await current.service.stop();
+});
+
+test('saving shortcuts after startup failure keeps Retry visible until an actual retry', async () => {
+  const current = fixture({ probe: async () => 'occupied' });
+  await current.service.initialize();
+  const saved = await current.service.saveShortcuts({ revision: 'revision', shortcuts });
+  assert.equal(saved.status, 'error');
+  assert.equal(saved.error, null, 'successful settings operation has no operation error');
+  assert.equal(current.service.snapshot().error, 'port-occupied', 'runtime still offers Retry');
+  current.dependency.probe = async () => 'matching';
+  assert.equal((await current.service.initialize()).status, 'ready');
+});
+
+test('opening settings before any terminal ensures the template without starting a session and retains edits', async () => {
+  const file = join(directory, 'settings-first', 'config.kdl');
+  const config = new ZellijConfigService(file, { platform: 'darwin', validate: async () => {} });
+  const current = fixture({ config });
+  const settings = await current.service.settingsSnapshot();
+  assert.equal(settings.configExists, true);
+  assert.equal(settings.status, 'idle');
+  assert.equal(current.calls.spawn, 0);
+  assert.equal(current.calls.run, 0);
+  const edited = { ...settings.shortcuts, splitDown: 'Alt j' };
+  const saved = await current.service.saveShortcuts({
+    revision: settings.configRevision,
+    shortcuts: edited
+  });
+  assert.equal(saved.error, null);
+  assert.notEqual(saved.configRevision, settings.configRevision);
+  await config.initialize();
+  assert.equal(config.read().shortcuts.splitDown, 'Alt j');
+});
+
+test('settings validation errors do not poison a connected runtime', async () => {
+  const current = fixture({ probe: async () => 'matching' });
+  await current.service.initialize();
+  current.dependency.config.save = async () => {
+    throw Error('shortcut-conflict');
+  };
+  const saved = await current.service.saveShortcuts({ revision: 'revision', shortcuts });
+  assert.equal(saved.error, 'shortcut-conflict');
+  assert.equal(current.service.snapshot().status, 'ready');
+  assert.equal(current.service.snapshot().error, null);
+});
+
+test('failed settings configuration initialization cannot expose an editable revision', async () => {
+  const current = fixture({
+    checkBinary: () => {
+      throw Error('binary-missing');
+    }
+  });
+  const snapshot = await current.service.settingsSnapshot();
+  assert.equal(snapshot.configRevision, '');
+  assert.equal(snapshot.error, 'binary-missing');
+  assert.equal(current.calls.spawn, 0);
+  assert.equal(current.calls.config, 0);
 });
 
 test('development token storage is memory-only and never calls keychain or creates a file', () => {

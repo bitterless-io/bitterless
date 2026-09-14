@@ -51,7 +51,7 @@ export const ACTION_SOURCE: Record<ZellijShortcutAction, string> = {
 
 export const defaultZellijShortcuts = (platform: string): ZellijShortcuts =>
   platform === 'darwin'
-    ? { splitDown: 'Super d', splitRight: 'Super Shift d', closePane: 'Super w' }
+    ? { splitDown: 'Super Shift d', splitRight: 'Super d', closePane: 'Super w' }
     : { splitDown: 'Ctrl Alt d', splitRight: 'Ctrl Alt Shift d', closePane: 'Ctrl Alt w' };
 
 export const normalizeZellijShortcut = (value: string): string => {

@@ -6,17 +6,34 @@ design document.
 
 ## Feature contracts
 
-- [Terminal setting](features/terminal-toggle.md) - default-off Terminal switch shared
-  by Home and Workbench Settings and the Zellij miniapp runtime gate.
+- [Zellij session-enumeration timeout](issues/zellij-session-enumeration-timeout.md) —
+  [repair task 177](plan/tasks/zellij-session-lifecycle-177.md) fixed and verified. Bounded exact
+  session operations and isolated web bridges prevent an unhealthy session from blocking siblings.
+  170 tests, independent review, build and manual app open/close/restart acceptance passed.
+
+- [Zellij automatic opening and working-directory memory](features/zellij-auto-open-directory.md) — implemented and verified;
+  [task 176](plan/tasks/zellij-auto-open-directory-176.md) removes manual enable/init, adds loading,
+  remembers active cwd, closes exact sessions, versions KDL defaults, and moves shared settings
+  to Workbench with a 48px terminal toolbar. Fresh-session input highlighting and ANSI output
+  verified in the development app; [review 176-1](plan/reviews/zellij-auto-open-directory-176-1.md).
+
+- [Terminal setting](features/terminal-toggle.md) - historical enable switch retired;
+  the Terminal category now edits shared configuration under task 176.
 - [Zellij miniapp](features/zellij-miniapp.md) - implemented; owner testing pending;
-  explicit initialization, native terminal view, Normal-mode shortcuts, and configuration access.
+  native terminal view and Normal-mode shortcuts; task 176 supersedes the manual startup UI.
 - [Zellij distribution](features/terminal-zellij-distribution.md) - pinned Zellij
   binaries join `tools:init`, platform manifests, offline staging, and macOS signing.
+- [Zellij DEBUG misses initialized tools](issues/zellij-debug-runtime-misses-initialized-tools.md) — fixed and tooling-verified;
+  [task 174](plan/tasks/external-tools-init-dev-ready-174.md) makes `tools:init` prepare host staging
+  and package caches with verified reuse; repeated real initialization made zero download attempts.
+- [Zellij startup loses native errors](issues/zellij-terminal-no-error-trace.md) — fixed and actual dev startup verified;
+  macOS session socket path reaches 108 bytes, beyond the native 103-byte limit. Repair adds a
+  short socket directory and captures the previously discarded native failure details.
 - [多个 Zellij tab,每个一条会话](features/zellij-multi-tab.md) — implemented; owner testing pending;
   + 按钮的 hover mini-app 菜单、per-spec `singleton`/`restorable` opt-in、Maestro 铸造并落盘的
   `instanceId`,以及「新开即新会话、重启即恢复」两条由同一个 id 决定的行为。
-- [Zellij 多实例:仍然共享的那几样东西](issues/zellij-multi-instance.md) — open(记账);
-  应用级状态灯、孤儿会话无人回收、`stop()` 不清 `pending`。
+- [Zellij 多实例:仍然共享的那几样东西](issues/zellij-multi-instance.md) — task 176 已修复并验证；
+  独立 surface 状态、主动关闭时清理会话、隔离并发 stop/start。
 
 - [INDEX CA list and Generate](plan/tasks/trench-index-generate-031.md) - Add saves metadata;
   Generate explicitly rebuilds the selected chain.
@@ -176,9 +193,9 @@ design document.
   local Home, and Royal Blue/BEM UI; core [review 1](plan/reviews/maestro-cowork-chat-core-089-1.md)
   and files [review 1](plan/reviews/maestro-cowork-chat-files-090-1.md) passed.
 - [Maestro SQLite build older than migration](issues/maestro-sqlite-build-version-behind-migration.md) -
-  implemented; owner verification pending: advanced the canonical build after migration
-  `260831200000`, retained history and the fail-closed guard, and passed the complete migration
-  matrix plus [review 1](plan/reviews/maestro-sqlite-build-version-093-1.md).
+  fixed 2026-09-12; restart verification pending: [task 173](plan/tasks/maestro-sqlite-agent-build-173.md)
+  refreshes DEBUG timestamps, aligns both SQLite preloads to the compiled version and uses
+  Maestro diagnostics; migration audit and the original DEBUG_PROD build pass.
 - [`tools:init` entry and unaudited packaged tool platform](issues/tools-init-entry-and-unaudited-packaged-tool-platform.md) —
   implemented; owner initialization/package verification pending (2026-09-10): the initialization
   command is now `yarn tools:init` in both this repository and `micromeet-cowork` (all three stores,

@@ -307,7 +307,7 @@ test('an OnlyPreview action failure is recorded with a sanitized cause', () => {
         operation: 'revealInFolder',
         code: 'OPERATION_FAILED',
         error: Object.assign(
-          new Error('open /Users/ral/Documents/secret plan.md?token=leaked-target-token'),
+          new Error('open /Users/test/Documents/secret plan.md?token=leaked-target-token'),
           { code: 'ENOENT' }
         )
       })
@@ -332,7 +332,7 @@ test('an OnlyPreview action failure is recorded with a sanitized cause', () => {
     assert.match(records[0].msg, /^operation=revealInFolder errorCode=OPERATION_FAILED cause=/);
     assert.match(records[0].msg, /errorCode=ENOENT/);
     assert.equal(records[0].msg.includes('leaked-target-token'), false);
-    assert.equal(records[0].msg.includes('/Users/ral'), false);
+    assert.equal(records[0].msg.includes('/Users/test'), false);
     assert.equal(records[1].scope, 'onlypreview');
     assert.equal(
       records[1].msg,
@@ -458,6 +458,51 @@ test('renderer log capture accepts only known first-party renderer entries', () 
     ),
     false
   );
+});
+
+test('Zellij surface queries are permitted only on the exact first-party entry and origin', () => {
+  const base = 'http://127.0.0.1:5173';
+  for (const prefix of [
+    base,
+    'file:///Applications/Bitterless.app/Contents/Resources/app.asar/out/renderer'
+  ]) {
+    assert.equal(
+      resolveFirstPartyRendererProcess(`${prefix}/zellij/index.html?surface=window`, base),
+      'renderer:zellij'
+    );
+    assert.equal(
+      resolveFirstPartyRendererProcess(`${prefix}/zellij/index.html?surface=e2c8a7d27447`, base),
+      'renderer:zellij'
+    );
+    for (const query of [
+      'surface=',
+      'surface=one&surface=two',
+      'surface=one&token=secret',
+      'other=one',
+      'surface=%2Fprivate',
+      'surface=one%0Atwo'
+    ]) {
+      assert.equal(
+        resolveFirstPartyRendererProcess(`${prefix}/zellij/index.html?${query}`, base),
+        null
+      );
+    }
+    assert.equal(
+      resolveFirstPartyRendererProcess(`${prefix}/home/index.html?surface=window`, base),
+      null
+    );
+    assert.equal(
+      resolveFirstPartyRendererProcess(`${prefix}/unknown/index.html?surface=window`, base),
+      null
+    );
+  }
+  for (const url of [
+    'https://remote.example/zellij/index.html?surface=window',
+    'http://127.0.0.1:5174/zellij/index.html?surface=window',
+    'http://user:secret@127.0.0.1:5173/zellij/index.html?surface=window',
+    'file:///outside/zellij/index.html?surface=window'
+  ])
+    assert.equal(resolveFirstPartyRendererProcess(url, base), null);
 });
 
 test('directory contract rejects renderer-provided paths and unknown keys', () => {

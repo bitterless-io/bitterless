@@ -163,12 +163,19 @@ const fixture = async () => {
   );
   const children = [];
   const window = {
+    isDestroyed: () => false,
     size: [1360, 900],
     getContentSize() {
       return this.size;
     },
     contentView: {
+      removeChildView(view) {
+        const index = children.indexOf(view);
+        if (index >= 0) children.splice(index, 1);
+      },
       addChildView(view) {
+        const index = children.indexOf(view);
+        if (index >= 0) children.splice(index, 1);
         children.push(view);
       }
     }
@@ -324,6 +331,29 @@ test('Workbench tab opens once, backgrounds without closing, and reuses its rend
   await f.controller.openWorkbenchTab();
   assert.equal(f.children.length, count);
   assert.equal(native.visible, true);
+});
+
+test('Workbench covers active and late cold composite mounts and restores only the active tab', async () => {
+  const f = await fixture(); await f.workbench.create();
+  const workbench = f.children.at(-1); const mounts = new Map(); let finish;
+  const wait = new Promise(resolve => { finish = resolve; });
+  registerMaestroCompositeTab({
+    id: 'test-workbench-cover', title: 'Terminal', favicon: '', displayUrl: 'test://terminal',
+    async open(host) {
+      if (host.instanceId === 'cold') await wait;
+      const view = new NativeView(); mounts.set(host.instanceId, view); host.attach(view); view.setVisible(true);
+    },
+    setActive(host, active) { mounts.get(host.instanceId)?.setVisible(active); },
+    refresh() {}, close() {}
+  });
+  const active = await f.browser.openCompositeTab({ id: 'test-workbench-cover', instanceId: 'active' });
+  const pending = f.browser.openCompositeTab({ id: 'test-workbench-cover', instanceId: 'cold', activate: false });
+  await f.controller.openWorkbenchTab(); assert.equal(mounts.get('active').visible, false);
+  assert.equal(f.children.at(-1), workbench);
+  finish(); await pending; assert.equal(mounts.get('cold').visible, false);
+  assert.equal(mounts.get('active').visible, false);
+  await f.controller.backgroundWorkbenchTab(); assert.equal(mounts.get('active').visible, true);
+  assert.equal(mounts.get('cold').visible, false); assert.equal(f.browser.activeTabId, active.id);
 });
 
 test('Workbench open intent survives deferred creation and reset does not restore its tab', async () => {

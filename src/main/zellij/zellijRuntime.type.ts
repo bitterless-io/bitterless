@@ -1,6 +1,12 @@
 import type { ZellijSnapshot } from '@shared/zellij/zellij.type';
 import type { ZellijConfigService } from './zellijConfig.service';
 
+export interface ZellijChildProcessOptions {
+  args: string[];
+  env?: NodeJS.ProcessEnv;
+  cwd?: string;
+}
+
 export interface ZellijOwnedProcess {
   stop(): Promise<void>;
   onExit(callback: () => void): void;
@@ -9,8 +15,6 @@ export interface ZellijOwnedProcess {
 
 export interface ZellijRuntimeDependencies {
   config: ZellijConfigService;
-  readEnabled(): boolean;
-  persistEnabled(enabled: boolean): void;
   checkBinary(): void;
   /**
    * The port this build's server binds. Injected rather than read from a constant so the same class

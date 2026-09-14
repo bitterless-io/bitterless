@@ -1,5 +1,11 @@
 # Terminal setting
 
+**Retired by owner decision 2026-09-12.** Zellij now opens directly; the preference and its UI
+are removed under [automatic opening and cwd memory](zellij-auto-open-directory.md). The
+original default-off contract below is historical and must not gate new startup behavior.
+The Terminal settings category now holds shared shortcuts/configuration for all Zellij tabs;
+its return does not restore the enable preference.
+
 Status: implemented; human testing pending. Owner decision: 2026-09-10, enable a Bitterless
 Terminal switch with the default set to off, matching Cowork.
 

@@ -14,15 +14,18 @@ body,
   color: var(--color-royalblue-800);
 }
 .zellij__toolbar {
+  height: 48px;
+  min-height: 48px;
+  flex: 0 0 48px;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 16px;
+  padding: 0 16px;
 }
 .zellij__identity,
-.zellij__actions,
-.zellij__enable {
+.zellij__actions {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -32,59 +35,13 @@ body,
   font-weight: 600;
   margin: 0;
 }
-.zellij__status,
-.zellij__hint {
+.zellij__status {
   font-size: 12px;
   color: var(--color-royalblue-500);
-}
-.zellij__enable {
-  font-size: 12px;
-  gap: 8px;
 }
 .zellij__settings-button {
   border: 0;
   background: transparent;
-}
-.zellij__settings {
-  padding: 12px 16px;
-  margin: 0 12px 8px;
-  border-radius: 12px;
-  background: oklch(95% 0.012 265);
-}
-.zellij__shortcut-fields {
-  display: flex;
-  align-items: flex-end;
-  gap: 12px;
-}
-.zellij__field {
-  min-width: 0;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  font-size: 12px;
-}
-.zellij__field .arco-input-wrapper {
-  border: 0;
-  border-radius: 6px;
-  background: oklch(100% 0 0);
-}
-.zellij__hint {
-  margin: 12px 0;
-  line-height: 1.6;
-}
-.zellij__directory {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-}
-.zellij__directory bdi {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .zellij__error {
   display: flex;
@@ -100,7 +57,7 @@ body,
   min-height: 0;
   position: relative;
 }
-.zellij__empty {
+.zellij__loading {
   display: flex;
   height: 100%;
   flex-direction: column;
@@ -109,9 +66,22 @@ body,
   gap: 12px;
   color: var(--color-royalblue-500);
 }
-.zellij__empty p {
+.zellij__loading p {
   max-width: 460px;
   line-height: 1.6;
   padding: 0 24px;
   text-align: center;
+}
+.zellij__loading-icon {
+  animation: zellij-loading 1s linear infinite;
+}
+@keyframes zellij-loading {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .zellij__loading-icon {
+    animation: none;
+  }
 }

@@ -55,6 +55,8 @@ extraResources:
     to: agent-skills/bitterless-trench
   - from: build/maestro-tools
     to: maestro-tools
+  - from: resources/zellij
+    to: zellij-shell
   - from: doc/bitterless-tray-mac-22.png
     to: app.asar.unpacked/icons/bitterless-tray-mac-22.png
   - from: doc/bitterless-tray-mac-22@2x.png

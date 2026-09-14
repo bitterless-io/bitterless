@@ -23,7 +23,11 @@ test.after(() => rmSync(directory, { recursive: true, force: true }));
 const existing = `// personal configuration\nsession_serialization false\nkeybinds clear-defaults=false {\n  normal {\n    // preserve this note\n    bind "Super d" "Alt j" { NewPane "Down"; }\n    bind "Super Shift d" { NewPane "Right"; }\n    bind "Super w" { CloseFocus; }\n    bind "Alt x" { NewPane "Down"; SwitchToMode "Normal"; }\n  }\n}\nplugins {\n  compact-bar location="zellij:compact-bar"\n}\n`;
 
 test('reads the existing single-action shortcuts and leaves multi-action bindings alone', () => {
-  assert.deepEqual(readZellijShortcuts(existing, 'darwin'), defaultZellijShortcuts('darwin'));
+  assert.deepEqual(readZellijShortcuts(existing, 'darwin'), {
+    splitDown: 'Super d',
+    splitRight: 'Super Shift d',
+    closePane: 'Super w'
+  });
   assert.equal(readZellijShortcuts('', 'win32').closePane, 'Ctrl Alt w');
 });
 
@@ -59,7 +63,7 @@ test('adds missing actions inside the first keybinds, preserves shared modes and
   assert.equal((next.match(/keybinds/g) ?? []).length, 1);
   assert.ok(next.includes('bind "Alt n" { NewPane; }'));
   assert.ok(!next.replaceAll('\r\n', '').includes('\n'));
-  assert.equal(readZellijShortcuts(next, 'darwin').splitDown, 'Super d');
+  assert.equal(readZellijShortcuts(next, 'darwin').splitDown, 'Super Shift d');
 });
 
 test('rejects malformed documents, duplicate keys, invalid syntax and unrelated key conflicts', () => {
