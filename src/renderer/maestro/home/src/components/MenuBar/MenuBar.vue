@@ -382,14 +382,14 @@ function fixedTabClass(tab: TabInfo): string {
       <button
         ref="pageTypeButton"
         name="menubar__pagetype__button"
-        :class="navBtn"
+        :class="[navBtn, 'menubar__pagetype__button']"
         :disabled="workbenchStore.visible"
         :title="i18nHelper.menuBar.maestro.pageType"
         :aria-label="i18nHelper.menuBar.maestro.pageType"
         type="button"
         @click="openPageTypeMenu()"
       >
-        <IconApps :size="18" stroke="1.8" />
+        <IconApps />
       </button>
       <!-- First-party fixed-purpose tabs expose a stable display address but cannot be
            navigated away from their trusted entry; ordinary browser tabs keep the normal

@@ -277,7 +277,7 @@ export const HOST_TOOL_CATALOG: HostToolCatalogEntry[] = [
     category: 'tab',
     risk: 'write',
     summary: 'Open a URL in a new background tab and select it as this chat\'s browser target; show=true displays it on explicit request.',
-    useWhen: 'Open a requested page or explicitly recover a closed/crashed target at its intended URL.',
+    useWhen: 'Open a requested page, recover a closed/crashed target, or start deep search after web_search fails. If no suitable session search tab exists, open a public search/site entry in the background; page_snapshot, ui_act to submit a query, inspect results, then open/read primary sources and repeat until verified or blocked. deep_fetch reads discovered URLs; it is not searching.',
     safety: 'Does not replay the failed action. Inspect the new page before continuing.'
   },
   {

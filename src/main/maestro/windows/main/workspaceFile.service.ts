@@ -249,6 +249,11 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
     return { ok: true, path: abs }
   }
 
+  /** Explicit per-session project binding only; no default-directory creation or broadcasts. */
+  projectRootForSession(sessionKey: string): string | undefined {
+    return this.workspaceRefs.get(sessionKey)?.path
+  }
+
   syncWorkspaceFromContext(sessionKey: string, workspace?: WorkspaceRef): void {
     if (!workspace?.path) return
     const current = this.workspaceRefs.get(sessionKey)

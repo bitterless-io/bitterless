@@ -103,8 +103,9 @@ const loadBaseAgent = () => {
         }
       }
       // 静态 system 提示词:守卫只关心 BaseAgent 把它传下去这件事,不关心内容。
+      if (specifier === './prompt/projectInstructions') return { readProjectInstructions: async () => '' }
       if (specifier === './prompt/sysPrompt') {
-        return { BASE_SYSTEM_PROMPT: 'STUB' }
+        return { BASE_SYSTEM_PROMPT: 'STUB', A7_DISCIPLINE: 'DISCIPLINE STUB' }
       }
       if (specifier === './runtime/modelIoLog') {
         return {
@@ -176,7 +177,7 @@ assert(piProtocol.includes('executeHostTool(spec, params') && piRuntime.includes
 assert(runtimeTypes.includes('systemPrompt: string') && !runtimeTypes.includes('systemPrompt?: string'), 'runtime systemPrompt must be required')
 assert(runtimeSystemPrompt.includes('typeof text !==') && runtimeSystemPrompt.includes('!text.trim()') && runtimeSystemPrompt.includes('return text'), 'runtime prompt contract must reject blank/missing text without rewriting it')
 assert(piRuntime.indexOf('resolveRuntimeSystemPrompt(options)') < piRuntime.indexOf("await import('@earendil-works/pi-coding-agent')", piRuntime.indexOf('async createSession')), 'pi must validate host instructions before SDK/auth side effects')
-assert(piRuntime.includes('resourceLoader: createPiResourceLoader(pi, prompt.hostText)') && piRuntime.includes('cwd: prompt.cwd'), 'pi must always use the host loader and resolved working directory')
+assert(piRuntime.includes('resourceLoader: createPiResourceLoader(pi, () => prompt.hostText)') && piRuntime.includes('cwd: prompt.cwd'), 'pi must always use the host loader and resolved working directory')
 assert(packageJson.includes('"check:maestro": "node scripts/maestro/check-maestro.mjs"'), 'package scripts should expose the embedded Maestro parity suite')
 assert(piAiTypes.includes('export interface ImageContent') && piAiTypes.includes('data: string;') && !piAiTypes.includes('url: string;'), 'pi 0.79 ImageContent is base64-data only, not URL-native')
 // 2026-08-28: re-pointed, NOT retired. The guarded fact still holds in pi-ai 0.80.10 — only the
@@ -205,8 +206,8 @@ assert(baseAgent.includes('if (options?.freshSession) this.reset()'), 'prompt sh
 // 新机制:`fullSystemPrompt()` = 表 1 + 表 2,建会话时交给运行时,每轮由 pi 重发。
 // 下面三条是**正向**守卫 —— 防止那套 user 前缀机制被重新引入。
 assert(
-  baseAgent.includes('private fullSystemPrompt(): string') && baseAgent.includes('${BASE_SYSTEM_PROMPT}'),
-  'BaseAgent 必须有 fullSystemPrompt(),且在里面内插 BASE_SYSTEM_PROMPT(表 1)'
+  baseAgent.includes('private fullSystemPrompt(') && baseAgent.includes('[BASE_SYSTEM_PROMPT, projectInstructions, A7_DISCIPLINE, product]'),
+  'BaseAgent 必须有 fullSystemPrompt(),且按顺序拼接 BASE_SYSTEM_PROMPT、A6 项目指令、A7 与产品层'
 )
 assert(
   baseAgent.includes('systemPrompt: this.fullSystemPrompt()'),
@@ -354,6 +355,7 @@ const agent = new BaseAgent({
   modelId: 'gpt-test',
   authPath: '/tmp/coach-auth.json',
   runtime: fakeRuntime,
+  describeTarget: () => ({ providerLabel: 'Fixture', modelLabel: 'Test', supplier: 'fixture' }),
   buildTools: () => [{ name: 'read_file', description: 'Read a file', params: [], execute: async () => 'ok' }],
   onStream: (delta) => streamed.push(delta),
   onActivity: (step) => activities.push(step),

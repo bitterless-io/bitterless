@@ -8,6 +8,7 @@ import { OnlyPreviewContractError } from '@shared/onlypreview/onlyPreview.contra
 import { openOnlyPreviewAbsoluteTarget } from '@main/miniapps/onlypreview/onlyPreviewExplicitOpen.service';
 import { onlyPreviewWindowHelper } from '@main/windows/onlyPreviewWindow.helper';
 import { OnlyPreviewCoworkMount } from '@main/windows/onlyPreviewCoworkMount';
+import { onlyPreviewPreviewRegionService } from '@main/miniapps/onlypreview/views/onlyPreviewPreviewRegion.service';
 
 /**
  * Teach Cowork that OnlyPreview can live in one of its tabs.
@@ -47,6 +48,11 @@ export const registerOnlyPreviewCoworkTab = (): void => {
     title: 'OnlyPreview',
     favicon: MAESTRO_ICON_ONLY_PREVIEW,
     displayUrl: MAESTRO_ONLY_PREVIEW_DISPLAY_URL,
+    getDisplayedFile: () => {
+      const host = onlyPreviewWindowHelper.getStandaloneHost();
+      if (!mount?.isAlive() || !host || onlyPreviewWindowHelper.getMountKind(host.hostToken) !== 'cowork') return null;
+      return onlyPreviewPreviewRegionService.displayedFilePath(host.hostToken);
+    },
     // One bound workspace and one search runtime, so a second copy would be a second view of the
     // same thing — the closure below holds exactly one mount, which is that fact in code.
     singleton: true,

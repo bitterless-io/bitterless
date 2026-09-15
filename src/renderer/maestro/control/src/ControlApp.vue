@@ -296,7 +296,7 @@ const triggerInjectedSkill = async (trigger: InjectedSkillTrigger): Promise<void
   }
   channelStore.selectSource('cowork')
   await nextTick()
-  const session = activeSession.value || (await channelStore.startFreshMaestroSession('Maestro'))
+  const session = activeSession.value || (await channelStore.startFreshMaestroSession())
   if (!session || session.turn || session.archivedAt) {
     Message.warning('Maestro is busy. Try the injected skill again after the current turn finishes.')
     return

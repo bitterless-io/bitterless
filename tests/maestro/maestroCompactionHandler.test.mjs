@@ -83,6 +83,7 @@ const fakeSurface = (over = {}) => {
 /** 桩掉进程边界后加载 handler。`pi` / `surface` / `ledger` / `target` 由用例给。 */
 const loadHandler = (opts = {}) => {
   cache.clear();
+  const chainStore = load('src/main/agent/userChainStore.service.ts', {});
   const seen = { getExisting: 0, getOrCreate: 0, generateSummary: 0 };
   const piStub = {
     calculateContextTokens: (u) => u?.totalTokens ?? 0,
@@ -114,7 +115,16 @@ const loadHandler = (opts = {}) => {
   const handler = load('src/main/xpc/compaction.handler.ts', {
     'electron-xpc/main': { XpcMainHandler: class {} },
     '@earendil-works/pi-coding-agent': piStub,
-    '@maestro-main/llm/llmPaths': { maestroAuthPath: () => '/tmp/auth', maestroModelsPath: () => '/tmp/models' },
+    '@maestro-main/llm/llmPaths': {
+      maestroAuthPath: () => '/tmp/auth',
+      maestroModelsPath: () => '/tmp/models',
+      maestroUserChainDir: () => '/fixture/maestro-user-chain'
+    },
+    '@maestro-main/llm/llmModels': { DEFAULT_CONTEXT_WINDOW_TOKENS: 1000 },
+    '@main/agent/userChainStore.service': {
+      ...chainStore,
+      readChainRecords: () => opts.chainRecords ?? []
+    },
     '@maestro-main/windows/main/maestroWindow.controller': {
       maestroWindowHelper: {
         getLlmRuntimeTarget: () => ({ provider: 'openai-codex', model: 'gpt-5.6-luna' }),
@@ -206,7 +216,7 @@ test('没登录 → 如实报错,不碰会话面', async () => {
 
 test('落回 pi 会话的顺序是 ③ 摘要 → ② U 链 → ④ 清单', async () => {
   const surface = fakeSurface();
-  const { handler } = loadHandler({ surface });
+  const { handler } = loadHandler({ surface, chainRecords: [{ n: 1, at: 'fixed', ws: '', tab: '', text: 'U-CHAIN' }] });
   const reply = await handler.compact({
     sessionId: 's1',
     keepRecentTokens: 10,

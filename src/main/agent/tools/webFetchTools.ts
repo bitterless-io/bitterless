@@ -1,4 +1,5 @@
 import type { AgentToolSpec } from '@main/agent/runtime/agentRuntime.types'
+import { BROWSER_FETCH_RECOVERY, CURRENT_SOURCE_GUIDANCE } from '@main/agent/deepFetch.skill'
 import { moduleLog } from '@main/logging/moduleLog'
 import { FetchPolicyError, narrowForLog } from '@main/net/fetchPolicy'
 import { ExtractError } from '@main/net/articleExtract'
@@ -52,44 +53,42 @@ const clampChars = (raw: unknown): number => {
 
 /** 所有失败都要说**下一步做什么** —— 否则模型只会原样重试。 */
 const describeFailure = (err: unknown, via: 'web_fetch' | 'deep_fetch'): string => {
-  if (err instanceof FetchPolicyError) {
-    return `ERROR: ${err.message}. Only public http/https pages can be fetched — do not retry this URL.`
+  const detail = err instanceof Error ? err.message : String(err)
+  if (err instanceof FetchPolicyError || (err instanceof DeepFetchError && err.kind === 'policy')) {
+    return `ERROR: ${via} failed: ${detail}. Only permitted public http/https pages can be fetched. Do not retry this URL or use browser tools to bypass the URL/access policy refusal.`
   }
+  let nextStep = ''
   if (err instanceof ExtractError) {
-    if (err.reason === 'too-large') return `ERROR: ${err.message}. Do not retry; find a smaller page or a specific section.`
-    return `ERROR: ${err.message}.${via === 'web_fetch' ? ' Try deep_fetch — the content may be rendered by JavaScript.' : ' The page may be a login wall.'}`
-  }
-  if (err instanceof WebFetchError) {
+    nextStep = err.reason === 'too-large'
+      ? 'Keep the size limit; find a smaller relevant page or section.'
+      : via === 'web_fetch' ? 'A native deep_fetch may read JavaScript-rendered content; if it fails, use the browser workflow.' : 'The temporary rendered read did not yield usable content.'
+  } else if (err instanceof WebFetchError) {
     switch (err.kind) {
       case 'challenge':
-        return `ERROR: ${err.message}. Try deep_fetch — it uses a real browser session and often gets through.`
       case 'forbidden':
-        return `ERROR: ${err.message}. Try deep_fetch, which carries the user's signed-in session.`
+        nextStep = 'Native deep_fetch can use the existing browser session where access is permitted; do not bypass an access denial.'
+        break
       case 'not-found':
-        return `ERROR: ${err.message}. Check the URL, or search for the page instead of guessing it.`
+        nextStep = 'Search for the page instead of guessing another URL.'
+        break
       case 'unsupported-type':
-        return `ERROR: ${err.message}`
+        nextStep = 'For a relevant binary document, use the available download/file tools instead of this text reader.'
+        break
       case 'too-large':
-        return `ERROR: ${err.message}. Do not retry; find a smaller page.`
+        nextStep = 'Do not retry the oversized response; find a smaller relevant page.'
+        break
       case 'timeout':
-        return `ERROR: ${err.message}. Try once more, or try deep_fetch.`
+        nextStep = 'You may retry once or continue directly with the browser workflow.'
+        break
       default:
-        return `ERROR: ${err.message}. Try deep_fetch, or continue without this page and say you could not read it.`
+        nextStep = 'The direct page reader failed; this does not establish that browser retrieval is unavailable.'
     }
+  } else if (err instanceof DeepFetchError) {
+    nextStep = err.kind === 'busy'
+      ? 'Native deep_fetch runs one page at a time; do not repeatedly call the busy helper.'
+      : 'The temporary rendered reader failed; use an ordinary browser tab and observe it before deciding the next action.'
   }
-  if (err instanceof DeepFetchError) {
-    switch (err.kind) {
-      case 'busy':
-        return `ERROR: ${err.message}. deep_fetch runs one page at a time.`
-      case 'timeout':
-        return `ERROR: ${err.message}. The page may render endlessly; use web_fetch, or continue without it.`
-      case 'crashed':
-        return `ERROR: ${err.message}. Do not retry the same URL.`
-      default:
-        return `ERROR: ${err.message}. Continue without this page and say you could not read it.`
-    }
-  }
-  return `ERROR: ${via} failed: ${err instanceof Error ? err.message : String(err)}`
+  return `ERROR: ${via} failed: ${detail}. ${nextStep} ${BROWSER_FETCH_RECOVERY}`
 }
 
 const URL_PARAM = {
@@ -115,6 +114,7 @@ export const buildWebFetchTools = (surface?: DeepFetchSurface): AgentToolSpec[] 
       'Read ONE web page you already have the URL for, and get its main article text — free, and the',
       'first thing to reach for once you know where to look. (web_search is how you FIND a url; this is',
       'how you READ it.)',
+      CURRENT_SOURCE_GUIDANCE,
       '',
       'Boilerplate is stripped: you get the article body, not the nav bar, cookie banner and footer.',
       'If the site serves markdown directly, you get that untouched.',
@@ -145,9 +145,13 @@ export const buildWebFetchTools = (surface?: DeepFetchSurface): AgentToolSpec[] 
   {
     name: 'deep_fetch',
     description: [
-      'Read a web page THE WAY A BROWSER SEES IT: it opens in a real browser tab, JavaScript runs, and you',
+      'Optional lower-level reader for ONE known public URL. User intent such as "deep fetch Shanghai weather"',
+      'uses builtin:deep-fetch, the browser text workflow: open_tab → page_snapshot → ui_act → read sources,',
+      'not this single-URL helper by itself. No get_skill_contract is needed for that built-in text skill.',
+      '',
+      'Read a web page THE WAY A BROWSER SEES IT: a temporary browser surface loads it, JavaScript runs, and you',
       "get the rendered result plus an accessibility snapshot of the page structure. It uses the user's",
-      'own browser session, so pages behind a login work. Free, but slower than web_fetch and one page at',
+      'browser session and may read pages already signed in. Free, but slower than web_fetch and one page at',
       'a time — so it is the ESCALATION, not the default.',
       '',
       'Use it when: web_fetch came back as an app shell / spinner / login wall / anti-bot challenge · the',
@@ -158,6 +162,10 @@ export const buildWebFetchTools = (surface?: DeepFetchSurface): AgentToolSpec[] 
       "snapshot is the page's structure — roles, names, and the urls behind links — which is how you find",
       'the next url to follow. If no article body is detected the tool says so and gives the whole visible',
       'text instead; that is normal for a list or a dashboard.',
+      'The temporary surface may be disposed after this read. Its snapshot refs are not live ui_act targets:',
+      'use an ordinary session tab and take a fresh page_snapshot before acting. Non-policy failures should',
+      'continue through that ordinary browser workflow, not end verification or repeatedly guess URLs.',
+      CURRENT_SOURCE_GUIDANCE,
       '',
       'Only public http/https pages; private, loopback and link-local addresses are refused. Downloads,',
       'popups and permission prompts are blocked. The tool reports the FINAL url — if a redirect moved you',

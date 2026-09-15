@@ -1,4 +1,6 @@
 import { MaestroHistoryViewService } from './maestroHistoryView.service';
+import { showMaestroSessionMenu } from './maestroSessionMenu.service';
+import type { SessionMenuResult } from '@maestro-shared/coach.api';
 import { BrowserWindow, WebContentsView, app, shell } from 'electron'
 import { xpcMain } from 'electron-xpc/main'
 import { MAESTRO_ONLY_PREVIEW_TAB_ID } from '@maestro-shared/compositeTab.identity'
@@ -7,6 +9,7 @@ import { readFileSync } from 'fs'
 import { randomUUID } from 'crypto'
 import { inject, injectable } from 'inversify'
 import { WindowHelper } from '../window.helper'
+import { i18nHelper } from '@main/i18n/i18n.helper'
 import { DebuggerCapture } from '@maestro-main/capture/debuggerCapture'
 import {
   CaptureService,
@@ -139,7 +142,7 @@ import type {
   SkillImportResult,
   SkillSummary,
   SnapshotResult,
-  ActiveTabContent,
+  AgentWindowTabSnapshot,
   TabInfo,
   ViewRect,
   WorkspaceRef,
@@ -402,13 +405,10 @@ class MaestroWindowController
     return this.browserView.tabs
   }
 
-  /**
-   * **D3 —— 当前 tab 激活的内容**(表 3)。同步转发,分型逻辑归 `browserView`(逐 kind 的语义只有它知道)。
-   *
-   * 刻意不走 `getTabs()`:那个是 `async` 签名,塞进同步的提示词拼装要白加一层 `await`。
-   */
-  describeActiveTabContent(): ActiveTabContent | null {
-    return this.browserView.describeActiveContent()
+  /** D3/D4 share one synchronous UI snapshot, independent of session execution targets. */
+  describeWindowTabs(): AgentWindowTabSnapshot {
+    const labels = i18nHelper.getMessages().menuBar.maestro
+    return this.browserView.describeWindowTabs(labels, this.workbenchView.getState())
   }
 
   get activeTabId(): string | null {
@@ -956,6 +956,10 @@ class MaestroWindowController
     return await fileThumbnail(params.path)
   }
 
+  projectRootForSession(sessionKey: string): string | undefined {
+    return this.workspaceFile.projectRootForSession(sessionKey)
+  }
+
   syncWorkspaceFromContext(sessionKey: string, workspace?: WorkspaceRef): void {
     this.workspaceFile.syncWorkspaceFromContext(sessionKey, workspace)
   }
@@ -1066,6 +1070,24 @@ class MaestroWindowController
 
   async copySessionIoPath(params: { sessionId: string }): Promise<SessionIoPathResult> {
     return await this.agentService.copySessionIoPath(params)
+  }
+
+  async editControlText(params: { action: 'undo' }): ReturnType<CoachXpcContract['editControlText']> {
+    return this.controlView.editControlText(params);
+  }
+
+  async showSessionMenu(params: { sessionId: string }): Promise<SessionMenuResult> {
+    try {
+      if (!this.browserWindow || this.browserWindow.isDestroyed()) return { ok: true, action: null }
+      const action = await showMaestroSessionMenu(this.browserWindow)
+      if (!action) return { ok: true, action: null }
+      const result = action === 'copy'
+        ? await this.agentService.copySessionIoPath(params)
+        : await this.agentService.openSessionIoDirectory(params)
+      return result.ok === true ? { ok: true, action, path: result.path } : { ok: false, error: result.error }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
   }
 
   async compactConversation(params: AgentCompactRequest): Promise<AgentCompactReply> {
@@ -1472,7 +1494,7 @@ class MaestroWindowController
       },
       {
         name: 'open_tab',
-        description: 'Open an absolute http(s) URL in a new background browser tab and select it as this chat\'s browser target. During a drill, this takes over the new tab as a recorded branch. Use show=true only when the user explicitly asks to see it. Also use this to explicitly reopen a closed, crashed, destroyed, or failed target at its intended URL. Inspect the new page before continuing; failed actions are never replayed automatically.',
+        description: 'Open an absolute http(s) URL in a new background browser tab and select it as this chat\'s browser target. When web_search fails and verification is needed, start deep search with existing browser tools: reuse a suitable session search tab, or open a public search/site entry page with show=false. Use page_snapshot, then ui_act to enter and submit the query; inspect results, open primary sources and read their content. Repeat search/read until verified or blocked. web_fetch/deep_fetch may read discovered URLs; deep_fetch alone is not searching. If no suitable session search tab exists, create one before observing. Respect user browsing restrictions and access limits. During a drill, this takes over the new tab as a recorded branch. Use show=true only when the user explicitly asks to see it. Also use this to explicitly reopen a closed, crashed, destroyed, or failed target at its intended URL. Inspect the new page before continuing; failed actions are never replayed automatically.',
         params: [{ name: 'url', required: true, description: 'Absolute http(s) URL to open or reopen.' }, { name: 'show', required: false, description: 'true only when the user explicitly asks to see the page; default false opens it in the background.' }],
         execute: async (args) => {
           try {

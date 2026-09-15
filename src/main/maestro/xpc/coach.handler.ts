@@ -3,6 +3,7 @@ import { maestroWindowHelper } from '@maestro-main/windows/main/maestroWindow.co
 import { getMaestroPreviewOpener } from '@maestro-main/windows/main/previewOpener.registry'
 import { updateService } from '@maestro-main/update/update.service'
 import { taskRegistry } from '@maestro-main/tasks/taskRegistry.service'
+import { sessionTitleService } from '@main/agent/sessionTitle.service';
 import type { MaestroTask } from '@maestro-shared/task.api'
 import type {
   AgentConversationContext,
@@ -255,6 +256,18 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
 
   async copySessionIoPath(params: { sessionId: string }): Promise<SessionIoPathResult> {
     return await maestroWindowHelper.copySessionIoPath(params)
+  }
+
+  async showSessionMenu(params: { sessionId: string }): ReturnType<CoachXpcContract['showSessionMenu']> {
+    return maestroWindowHelper.showSessionMenu(params)
+  }
+
+  async editControlText(params: { action: 'undo' }): ReturnType<CoachXpcContract['editControlText']> {
+    return maestroWindowHelper.editControlText(params);
+  }
+
+  async generateSessionTitle(params: Parameters<CoachXpcContract['generateSessionTitle']>[0]): ReturnType<CoachXpcContract['generateSessionTitle']> {
+    return sessionTitleService.generate(params);
   }
 
   async compactConversation(params: AgentCompactRequest): Promise<AgentCompactReply> {

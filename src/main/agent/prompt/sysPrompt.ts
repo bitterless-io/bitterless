@@ -6,13 +6,14 @@
  * 原厂那段 A1–A5 **整块不生成**,只剩下 pi 仍会追加的 appendSystemPrompt /
  * `<project_context>` / skills / `Current working directory:`(`system-prompt.js:17-33`)。
  *
- * **这里只有「全局基础」这一层**(设计文档表 1):进程级,所有会话共用。另两层不在这个文件里 ——
+ * **这里包含表 1 的固定 A1–A5 与 A7**:进程级,所有会话共用。A6 项目指令由 `projectInstructions.ts`
+ * 读取、`BaseAgent` 插入。另两层不在这个文件里 ——
  * 「会话基础」(角色/场景,会话内不变、会话间可不同)尚无内容;「动态」(当前页面、时间、预算)
  * 每轮重拼,**刻意不进 system** —— 放进来会让缓存前缀(system → tools → 会话历史)每轮作废。
  * 等那两层真有内容时再写组装,那时才知道它该长什么样。
  *
- * **段号 A1–A5 与设计文档一一对应**,查取舍去那里:
- * `areas/agent-runtime/chat/prompt-structure.html` #2 表 1。
+ * **段号 A1–A5 与设计文档一一对应；A6 项目指令由宿主逐回合读取**,查取舍去那里:
+ * `areas/agent-runtime/chat/prompt-structure.html` #1 表 1。
  * 契约:`docs/features/maestro-system-prompt-layers.md`
  *
  * 段的来源分两类:
@@ -20,7 +21,7 @@
  *    只有 A1 的宿主名换成了本产品。**A5 是唯一的删除** —— `Pi documentation` 块
  *    (1408 字符,占原基座 49%),它教模型去读 pi 自己的 README/docs/examples,
  *    Maestro 的场景里永远用不到。Ral 2026-09-11:「A5 确实需要去掉」。
- *  · **SESSION_ROLE_HINT**(段 6) —— **我们自己加的**,不在 pi 的模板里,**占掉 A5 的位**。
+ *  · **SESSION_ROLE_HINT**(A5) —— **我们自己加的**,不在 pi 的模板里,替代原厂文档索引段。
  *    它是表 2 的桥,见那一段的注释。
  */
 
@@ -85,8 +86,8 @@ const A4_GUIDELINES = `Guidelines:
 - Show file paths clearly when working with files`;
 
 /**
- * **段 6 · 职责不限于写代码。** 这一段**不是** pi 原文,是我们自己加的,**占掉 A5 的位**
- * (A5 是 pi 的文档索引块,已删)。
+ * **A5 · 职责不限于写代码。** 这一段**不是** pi 原文,是我们自己加的。
+ * 原厂的 Pi documentation 文档索引块已删；2026-09-15 从 A6 改编号为 A5，原文不变。
  *
  * Ral 2026-09-11:「agent 除了 coding agent 可能承担别的职责,需要在 system prompt 中指明下,
  * 后续 agent 就能按会话基础提示词里定义的角色或职责等来行动了」;随后要求**只留这两句**
@@ -113,3 +114,16 @@ export const BASE_SYSTEM_PROMPT = [
   A4_GUIDELINES,
   SESSION_ROLE_HINT
 ].join('\n\n');
+
+/** A7 · Shared discipline. A6 is inserted before this block by BaseAgent. */
+export const A7_DISCIPLINE = `## Discipline
+- Treat interruptions as updates to the active task. Complete earlier unfinished requests alongside new requests when they do not conflict. Follow the latest instruction for conflicting parts; drop earlier work only when explicitly cancelled or replaced. Update the plan with update_plan when available.
+- Instructions vs data
+- Think before acting
+- Be decisive otherwise
+- Minimum & surgical
+- Endpoints are grounded, not guessed
+- Verify against the goal
+- Name conflicts
+- Report honestly
+- Link every file you produce.`;

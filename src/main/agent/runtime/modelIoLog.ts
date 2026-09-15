@@ -25,8 +25,8 @@ import { join } from 'path'
  * agent-io 证据链的落盘根目录。
  *
  * SDK 不认识 Electron,所以由宿主在 boot 时注入一次;`micromeet-cowork` 传的是
- * `join(app.getPath('userData'), 'agent-io')`。**不调 = 不落盘**(这也是 bitterless 的默认姿态,
- * 它从来没有这条证据链),而不是退到某个临时目录去 —— 见 `root()` 里的说明。
+ * `join(app.getPath('userData'), 'agent-io')`，Bitterless 使用同一目录规则。
+ * **不调 = 不落盘**，不会退到某个临时目录去 —— 见 `root()` 里的说明。
  */
 let resolveIoRoot: (() => string) | null = null
 let warnedNoRoot = false
@@ -180,16 +180,37 @@ class ModelIoLog {
    * 在盘上找最近的一个,这样重启后翻旧会话也拿得到。
    */
   async dirForSession(sessionId: string): Promise<string | null> {
-    const live = this.handles.get(sessionId)?.dir
-    if (live) return live
-    const suffix = `-${safeSessionSegment(sessionId)}`
     try {
-      const names = (await readdir(this.root())).filter((n) => n.endsWith(suffix)).sort()
-      const last = names[names.length - 1]
-      return last ? join(this.root(), last) : null
+      const handle = this.handles.get(sessionId)
+      // opening 完成时还会追加 session-open，必须在它之后读取写队列。
+      if (handle?.opening) await handle.opening
+      if (handle) await handle.queue
+      const live = handle?.dir
+      if (live && await this.hasSavedParts(live)) return live
+      const suffix = `-${safeSessionSegment(sessionId)}`
+      const names = (await readdir(this.root())).filter((n) => /^\d{17}-/.test(n) && n.slice(17) === suffix).sort()
+      for (const name of names.reverse()) {
+        const dir = join(this.root(), name)
+        if (dir !== live && await this.hasSavedParts(dir)) return dir
+      }
+      return null
     } catch {
       return null
     }
+  }
+
+  /** mkdir 成功不代表写入成功；空目录不能作为已保存日志交给用户。 */
+  private async hasSavedParts(dir: string): Promise<boolean> {
+    try {
+      for (const name of await readdir(dir)) {
+        if (!/^part-\d{3,}\.jsonl$/.test(name)) continue
+        const file = await stat(join(dir, name)).catch(() => null)
+        if (file?.isFile() && file.size > 0) return true
+      }
+    } catch {
+      // 日志被清理或读取失败时继续查其他已保存目录。
+    }
+    return false
   }
 
   /**

@@ -1,6 +1,6 @@
 # FEATURE · Maestro 回合内 steering(AI 回话时人可以继续发)
 
-- **Status:** ✅ 已实现，待 Ral 运行时/E2E 验收（2026-08-31）。
+- **Status:** ✅ 已实现；2026-09-15 queue → steering 修复通过定向代码验证，待 Ral 人工验收。
 - **Design owner:** Ral, 2026-08-28。
 - **性质:上游 backport,不是新设计。** maestro 是 `projects/micromeet-cowork` 的 vendored fork
   (`docs/features/maestro.md:5-7`,基线 commit `689832d`,2026-07-14)。本 feature 把上游
@@ -13,7 +13,59 @@
   `src/renderer/maestro/control/src/{ChatPanel.vue,store/message.store.ts}` ·
   `src/shared/maestro/coach.api.ts` · `scripts/maestro/`
 
-## 当前交付
+## 2026-09-15 当前投递契约（已实现，待人工验收）
+
+活跃 Turn 的 preparing、工具安全点与最终收尾都接收有序 steering。不能把 runtime 的
+`isStreaming=false` 等同于没有活跃 Turn，也不能通过第二次普通 `prompt()` 并发启动模型。
+Main 在保留的 Turn 上持有专用 inbox，按接收顺序保留 messageId、turnId 和本条消息的页面、
+站点技能、时间及会话上下文；准备阶段不因为模型尚未开始而丢弃消息。
+
+运行时明确提供 `enqueueSteering`，只入原生安全点队列；缺少原生能力或暂不可入队时保留 host
+FIFO，现有 owned run 在安全位置串行续送，不并发第二次普通 prompt。未消费残留通过
+`takePendingSteering` 交还同一个 owned run 串行续送。该 run 保持同一订阅、计时及累计用量，
+原始 root 不重发，不重复已消费消息。空队列检查与关闭接收同步完成。自然成功结束后的迟到消息
+通过显式 `continueAsRoot` 回执安全接续，复用原 human/messageId 与动态快照；连续迟到消息共用
+同一继承 owner，其他新 owner 不接收旧回合消息。Main 保留有界完成记录，UI 确认不删除接续资格。
+停止、启动失败、模型失败或超时取消尚未消费项，保留每条消息身份并让 renderer 显示真实失败原因，
+不自动误跑到新 Turn。排队反馈只表示 queued，消费回执才表示已加入本轮上下文，不保证远端
+模型已理解或执行。未消费消息保留为排除于 prompt 的 human 记录，停止/失败原因另行明确展示。
+
+新增请求默认与先前未完成请求一起完成；仅冲突部分以新指令为准。用户明确取消或替换才删除
+先前工作。查杭州天气后补香港天气应完成两项；“改成只查香港”才替换杭州任务。基础 A7 第一条
+同步写入此规则，其他九条不变；不是只修改文档或依赖一次用户提示。
+
+本次覆盖 preparing、顺序、安全点、final-settled 空窗、重复消息、停止/失败、会话隔离和动态
+上下文快照。仅比例适当的单元/类型验证；不启动 app、真实模型、E2E、build 或独立 review。
+
+实现落点：`steering/turnSteeringInbox.ts` 保有队列与消费身份；`BaseAgent.runPrompt` 保持同一个
+owned run 并串行 drain；`PiRuntimeSession` 对接原生 steer/queue 与消费事件；
+`MaestroAgentService` 从 claim 起保留 inbox，并验证自然结束接续关系；renderer `TurnService`
+在准备阶段接收追加消息、复用迟到 human 的身份和快照，首条 fallback/后台标题仍只触发一次。
+
+代码验证（2026-09-15）：
+
+- `node --test tests/maestro/maestroConcurrentTurns.test.mjs tests/maestro/maestroChatTabIndependence.test.mjs tests/maestro/maestroQueuedSteering.test.mjs`：42/42。
+- `node --test tests/maestro/maestroComposerCleanup.test.mjs tests/maestro/maestroProjectInstructions.test.mjs`：38/38；其中包含安装的 Pi SDK 与模拟 provider 的真实回合测试，不发送外部请求。
+- BaseAgent/Pi/project instructions 定向 `tsc` 与 Control（含 Maestro 全局类型）的定向 `vue-tsc` 均通过。
+- Main 服务的扩展依赖检查仍有 30 项原有非本轮诊断（fileSearch、logging、skill、OnlyPreview 等）；本轮 Main service、inbox、BaseAgent、Pi session 和 renderer 代码无剩余类型诊断。未扩修无关模块。
+- `git diff --check` 通过。人工需覆盖准备中连续发送、工具结束安全点、自然收尾连续追加、主动 Stop，以及“杭州 + 香港”与“只查香港”的区别。
+
+## 2026-09-15 响应式 Turn 归属回归（已修复，待人工验收）
+
+BL 的准备阶段已按 turnId 检查，不产生 CoWork 同名的 preparation 错误，但最终回复与兜底释放
+仍直接比较新建 raw Turn 与 Vue 代理对象，可能误认为回合被替换。所有本轮归属判断以稳定 turnId
+为准；新建后从 session 读取响应式 Turn。Stop 状态和真正更换 turnId 仍应阻止旧准备工作投递，
+迟到回调不能释放或修改接管的回合。验证使用真实 Vue reactive/ref 包装的旧会话恢复与异步准备
+fixture，不依赖 Main 完成广播替 renderer 掩盖最终回复路径。
+
+`TurnService` 已统一稳定 ID 归属判断，新建后读取存储于 session 的代理；准备期和 steering
+等待结束时同时拒绝 aborting。新增 3 项真实响应式恢复测试，修复前复现其中 2 项失败：最终
+RPC 回复未显示、Stop IPC 尚未返回时仍投递 root；真正换 Turn 的保护原本通过。修复后
+`node --test tests/maestro/maestroComposerCleanup.test.mjs` **35/35 通过（原 32 + 新 3）**，
+既有双迟到消息测试改为真实 `ref` 包装后同样通过。Control 定向 `vue-tsc` 与
+`git diff --check` 通过；本轮只重跑受影响 renderer 验证，未重复上面的 80 项或运行 app/E2E。
+
+## 2026-08/09 先前交付记录
 
 Steering 已作为 [Cowork chat core 089](../plan/tasks/maestro-cowork-chat-core-089.md) 的 Turn
 垂直切片落地，而不是按本文最早的散字段方案单独接线。Main 原子持有全局 root Turn，root 与

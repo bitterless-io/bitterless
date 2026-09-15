@@ -7,13 +7,14 @@ import { basename, extname, join, resolve, sep } from 'path'
 import { mkdirSync, statSync, writeFileSync } from 'fs'
 import { fetch } from 'undici'
 import { injectable } from 'inversify'
+import { i18nHelper } from '@main/i18n/i18n.helper'
 import { CommonService } from '@maestro-shared/iocHelper/ioc.helper'
-import { BaseAgent, STEER_NOT_STREAMING, type PiToolSpec } from '@main/agent/BaseAgent'
-import { buildContextRecord, entriesOfSurface, renderContextText } from '@main/agent/contextExport.service'
+import { BaseAgent, type PiToolSpec } from '@main/agent/BaseAgent'
+import { TurnSteeringInbox } from './steering/turnSteeringInbox'
+import { buildContextRecord, contextEntriesOfSurface, entriesOfSurface, renderContextText } from '@main/agent/contextExport.service'
 import { buildContextGraph } from '@main/agent/contextGraph.service'
 import { assertContextTextSize } from './runtime/contextExportLimit.service'
-import { MAESTRO_SYSTEM_PROMPT } from './prompt/maestroSysPrompt'
-import { BASE_SYSTEM_PROMPT } from './prompt/sysPrompt'
+import { A7_DISCIPLINE, BASE_SYSTEM_PROMPT } from './prompt/sysPrompt'
 import type {
   ContextExportRequest,
   ContextExportSummary,
@@ -24,6 +25,7 @@ import type {
 import { MaestroAgent } from '@main/agent/MaestroAgent'
 import { DelegateAgent } from '@main/agent/DelegateAgent'
 import { readHostToolCatalog } from '@main/agent/hostToolCatalog'
+import { DEEP_FETCH_BUILTIN_SKILL } from '@main/agent/deepFetch.skill'
 import { extractVariablesFromMessage } from '@main/agent/naturalLanguageVariables'
 import {
   hasRequiredInputs,
@@ -102,6 +104,7 @@ import type {
   AgentTurnRecoverySnapshot,
   AgentTurnSnapshot,
   AgentTurnUpdate,
+  AgentThinkingState,
   AttachFileResult,
   HostApprovalEvent,
   HostApprovalExportResult,
@@ -111,6 +114,7 @@ import type {
   HostToolPolicyMode,
   HostToolPolicyResult,
   ActiveTabContent,
+  AgentWindowTabSnapshot,
   HostToolScope,
   LlmEffort,
   ReplayResult,
@@ -195,8 +199,8 @@ export interface MaestroAgentServiceState {
   browserWindow: BrowserWindow | null
   activeTabId: string | null
   currentUrl: string
-  /** D3 —— 当前 tab 激活的内容(文件 / miniapp / 网页)。同步。见 `ActiveTabContent`。 */
-  describeActiveTabContent(): ActiveTabContent | null
+  /** D3 and D4 are one synchronous snapshot of the user-facing window tabs. */
+  describeWindowTabs(): AgentWindowTabSnapshot
   beginBrowserTurn(sessionId: string, tabId?: string): void
   endBrowserTurn(sessionId: string): void
   agentBrowserSession(sessionId: string): AgentBrowserSessionState
@@ -210,6 +214,7 @@ export interface MaestroAgentServiceState {
   replaySkill(params: { skillId: string; variables: Record<string, string> }): Promise<ReplayResult>
   replayAgentSkill(sessionId: string, params: { skillId: string; variables: Record<string, string> }): Promise<ReplayResult>
   syncWorkspaceFromContext(sessionKey: string, workspace?: WorkspaceRef): void
+  projectRootForSession(sessionKey: string): string | undefined
   emitTrace(event: TraceEvent): void
 }
 
@@ -220,8 +225,12 @@ export interface MaestroAgentInstances {
 }
 
 interface ActiveAgentTurn extends AgentTurnSnapshot {
+  continuationOf?: string
   generation: number
   rootStarted: boolean
+  steeringInbox: TurnSteeringInbox
+  finished: Promise<AgentTurnFinished>
+  resolveFinished: (finished: AgentTurnFinished) => void
   rootStartPromise: Promise<boolean>
   resolveRootStart: (started: boolean) => void
   reservationTimer: ReturnType<typeof setTimeout> | undefined
@@ -279,7 +288,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
   private agentTurnRevision = 0
   private readonly recentFinishedAgentTurns = new Map<
     string,
-    { finished: AgentTurnFinished; expiresAt: number }
+    { finished: AgentTurnFinished; expiresAt: number; acknowledged?: boolean; continuationBlocked?: boolean }
   >()
 
   private lastAgentRunFallback: {
@@ -447,6 +456,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     this.shuttingDown = true
     const activeTurns = [...this.activeAgentTurns.values()]
     for (const activeTurn of activeTurns) {
+      activeTurn.steeringInbox.cancel('The application stopped before this message was delivered.')
       activeTurn.state = 'aborting'
       if (activeTurn.reservationTimer) clearTimeout(activeTurn.reservationTimer)
       activeTurn.reservationTimer = undefined
@@ -777,11 +787,25 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       }
     }
 
+    this.pruneFinishedAgentTurns()
+    if (params.continuationOf) {
+      const record = this.recentFinishedAgentTurns.get(this.agentTurnKey(sessionId, params.continuationOf))
+      if (record?.continuationBlocked || record?.finished.reason !== 'completed' || !record.finished.reply?.ok) {
+        throw new Error('The previous turn cannot be continued after stopping or failing.')
+      }
+    }
+    for (const record of this.recentFinishedAgentTurns.values()) {
+      if (record.finished.turn.sessionId === sessionId && record.finished.turn.turnId !== params.continuationOf) record.continuationBlocked = true
+    }
+
     let resolveRootStart: (started: boolean) => void = () => undefined
     const rootStartPromise = new Promise<boolean>((resolveStart) => {
       resolveRootStart = resolveStart
     })
+    let resolveFinished: ActiveAgentTurn['resolveFinished'] = () => undefined
+    const finished = new Promise<AgentTurnFinished>(resolve => { resolveFinished = resolve })
     const turn: ActiveAgentTurn = {
+      continuationOf: params.continuationOf,
       sessionId,
       operationTabId: this._state.activeTabId || undefined,
       turnId,
@@ -790,6 +814,8 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       state: 'reserved',
       generation: ++this.agentTurnGeneration,
       rootStarted: false,
+      steeringInbox: new TurnSteeringInbox(),
+      finished, resolveFinished,
       rootStartPromise,
       resolveRootStart,
       reservationTimer: undefined
@@ -811,12 +837,13 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       revision: this.agentTurnRevision,
       turn: turns[0] ?? null,
       turns,
-      finished: [...this.recentFinishedAgentTurns.values()].map((record) => record.finished)
+      finished: [...this.recentFinishedAgentTurns.values()].filter(record => !record.acknowledged).map((record) => record.finished)
     }
   }
 
   ackAgentTurnFinished(params: { sessionId: string; turnId: string }): void {
-    this.recentFinishedAgentTurns.delete(this.agentTurnKey(params.sessionId, params.turnId))
+    const record = this.recentFinishedAgentTurns.get(this.agentTurnKey(params.sessionId, params.turnId))
+    if (record) record.acknowledged = true
   }
 
   hasActiveAgentTurn(): boolean {
@@ -864,7 +891,9 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     if (turn.reservationTimer) clearTimeout(turn.reservationTimer)
     turn.reservationTimer = undefined
     turn.resolveRootStart(false)
+    turn.steeringInbox.cancel('The turn ended before this message was delivered.')
     this.activeAgentTurns.delete(turn.sessionId)
+    turn.resolveFinished({ turn: snapshot, reason, reply })
     this._state.endBrowserTurn(turn.sessionId)
     this.broadcastAgentTurn({
       turn: null,
@@ -902,15 +931,27 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
    */
   async copySessionIoPath(params: { sessionId: string }): Promise<SessionIoPathResult> {
     try {
-      const sessionId = typeof params?.sessionId === 'string' ? params.sessionId.trim() : ''
-      if (!sessionId) throw new Error('A chat session is required.')
-      const dir = await modelIoLog.dirForSession(this.agentSessionKey(sessionId))
-      if (!dir) {
-        // 明确报"还没有",不给一个空串让人以为复制成功了。
-        return { ok: false, error: 'This session has no model I/O log yet — send a message first.' }
-      }
+      const dir = await this.resolveSessionIoDirectory(params?.sessionId)
       clipboard.writeText(dir)
       return { ok: true, path: dir }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  private async resolveSessionIoDirectory(sessionId: string): Promise<string> {
+    const id = typeof sessionId === 'string' ? sessionId.trim() : ''
+    if (!id) throw new Error('A chat session is required.')
+    const dir = await modelIoLog.dirForSession(this.agentSessionKey(id))
+    if (!dir) throw new Error(i18nHelper.getMessages().maestroControl.chat.sessionLogMissing)
+    return dir
+  }
+
+  async openSessionIoDirectory(params: { sessionId: string }): Promise<SessionIoPathResult> {
+    try {
+      const dir = await this.resolveSessionIoDirectory(params?.sessionId)
+      const error = await shell.openPath(dir)
+      return error ? { ok: false, error } : { ok: true, path: dir }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
@@ -919,6 +960,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
   async copyNextTurnContext(params: ContextExportRequest): Promise<ContextExportSummary> {
     try {
       this.assertAgentRuntimeActive()
+      const windowTabs = this._state.describeWindowTabs()
       if (!params || typeof params.sessionId !== 'string' || !params.sessionId.trim() || typeof params.draft !== 'string') {
         throw new Error('A chat session and draft are required for context export.')
       }
@@ -930,7 +972,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       if (!Array.isArray(attachmentPaths) || attachmentPaths.some((path) => typeof path !== 'string')) {
         throw new Error('Attachment references must be paths.')
       }
-      const surface = agent ? await agent.existingContextSurface() : null
+      const surface = agent ? await agent.existingContextSurface({ readOnly: true }) : null
       if (agent !== (sessionKey === 'default' ? this.pi : this.maestroAgents.get(sessionKey))) {
         throw new Error('The model session changed during context export. Retry.')
       }
@@ -945,8 +987,8 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         context,
         includeConversationMemory: !this.hydratedMaestroAgentSessions.has(sessionKey),
         nowLocal: localNow(),
-        activeTab: this._state.describeActiveTabContent(),
-        browserSession,
+        activeTab: windowTabs.activeTab,
+        openTabs: windowTabs.openTabs,
         userChainPath: chainFilePath(maestroUserChainDir(), sessionKey),
         currentUrl,
         briefs: this.agentSkillBriefs(message, recordings, registry)
@@ -963,13 +1005,12 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
          * 活实例的组装结果 —— `composedSystemPrompt()` 返回的就是交给运行时的**完整**那份
          * (表 1 + 表 2),所以导出永远不会和实际跑的漂开。
          *
-         * 还没有 agent 时退回两个**静态**层拼起来:表 1 + 表 2。
-         * **不能只退回 `MAESTRO_SYSTEM_PROMPT`** —— 2026-09-11 表 2 搬进 system 槽位之后,
-         * 那个常量只剩产品层,单独导出会少掉整个表 1(1568 字符),读的人会以为基座不存在。
+         * 还没有 agent 时展示固定 A1–A5 + A7；A6 只在发送回合时读取。
          * 唯一差别:没有活实例就没有后端事实块(`targetBlock()` 要读活的 provider/model)。
          */
-        systemPrompt: agent ? agent.composedSystemPrompt() : `${BASE_SYSTEM_PROMPT}\n\n${MAESTRO_SYSTEM_PROMPT}`,
-        entries: entriesOfSurface(surface),
+        systemPrompt: agent ? agent.composedSystemPrompt() : `${BASE_SYSTEM_PROMPT}\n\n${A7_DISCIPLINE}`,
+        entries: contextEntriesOfSurface(surface),
+        ioLogDir: await modelIoLog.dirForSession(sessionKey) ?? undefined,
         pending: { attachments: attachmentPaths, draft: pending },
         timestamp: new Date().toISOString()
       })
@@ -1011,6 +1052,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
   async readContextGraph(params: ContextGraphRequest): Promise<ContextGraphResult> {
     try {
       this.assertAgentRuntimeActive()
+      const windowTabs = this._state.describeWindowTabs()
       if (!params || typeof params.sessionId !== 'string' || !params.sessionId.trim() || typeof params.draft !== 'string') {
         throw new Error('A chat session and draft are required to read the context graph.')
       }
@@ -1041,8 +1083,8 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         context,
         includeConversationMemory: !this.hydratedMaestroAgentSessions.has(sessionKey),
         nowLocal: localNow(),
-        activeTab: this._state.describeActiveTabContent(),
-        browserSession,
+        activeTab: windowTabs.activeTab,
+        openTabs: windowTabs.openTabs,
         userChainPath: chainFilePath(maestroUserChainDir(), sessionKey),
         currentUrl,
         briefs: this.agentSkillBriefs(message, recordings, registry)
@@ -1051,8 +1093,8 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         sessionId: sessionKey,
         provider: this.activeLlmProvider,
         model: this.activeLlmModel,
-        // 兜底同上:表 1 + 表 2,不能只给产品层。
-        systemPrompt: agent ? agent.composedSystemPrompt() : `${BASE_SYSTEM_PROMPT}\n\n${MAESTRO_SYSTEM_PROMPT}`,
+        // No live agent: fixed A1–A5 + A7 only, without loading project instructions.
+        systemPrompt: agent ? agent.composedSystemPrompt() : `${BASE_SYSTEM_PROMPT}\n\n${A7_DISCIPLINE}`,
         entries: entriesOfSurface(surface),
         pending: {
           // workspace 从入参里的 `WorkspaceRef` 取:渲染层早就把它一起送上来了,不为一行显示字段
@@ -1102,9 +1144,9 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
    * 三样元数据只有 main 知道(它就是拼 D1/D2/D3 的地方),所以必须在这里取:
    * 发送时间、当时的 workspace、当时激活的页面。Ral 2026-09-11 指定要带。
    */
-  private recordUserChainMessage(message: string, sessionId?: string, context?: AgentConversationContext): void {
+  private recordUserChainMessage(message: string, sessionId?: string, context?: AgentConversationContext, activeTab?: ActiveTabContent | null): void {
     const path = ensureSessionChainFile(maestroUserChainDir(), this.agentSessionKey(sessionId))
-    const tab = this._state.describeActiveTabContent()
+    const tab = activeTab === undefined ? this._state.describeWindowTabs().activeTab : activeTab
     const written = appendUserChainRecord(path, {
       at: localNow(),
       ws: context?.workspace?.path || '',
@@ -1115,8 +1157,11 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
   }
 
   async sendAgentMessage(params: AgentMessageRequest): Promise<AgentReply> {
+    // Fix D3/D4 at receipt, before turn reservations, persistence, or media preparation can await.
+    const windowTabs = params.snapshot?.windowTabs || this._state.describeWindowTabs()
+    const snapshot = { windowTabs, sentAt: params.snapshot?.sentAt || localNow() }
     const message = this.offloadLongPasteIfNeeded(params.message.trim(), params.sessionId)
-    if (message) this.recordUserChainMessage(message, params.sessionId, params.context)
+    if (message) this.recordUserChainMessage(message, params.sessionId, params.context, windowTabs.activeTab)
     if (!message) {
       return {
         ok: false,
@@ -1128,6 +1173,14 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     const sessionKey = this.agentSessionKey(params.sessionId)
     const turn = this.activeTurnFor(sessionKey, params.turnId)
     if (!turn || turn.state === 'aborting') {
+      if (!turn && params.intent === 'steering') {
+        const record = this.recentFinishedAgentTurns.get(this.agentTurnKey(sessionKey, params.turnId))
+        const previous = record?.finished
+        const successor = this.activeAgentTurns.get(sessionKey)
+        if (!record?.continuationBlocked && previous?.reason === 'completed' && previous.reply?.ok && (!successor || successor.continuationOf === params.turnId)) {
+          return { ok: false, text: '', ts: Date.now(), continueAsRoot: { turnId: params.turnId, reply: previous.reply, snapshot } }
+        }
+      }
       return {
         ok: false,
         text: 'This Maestro turn is no longer active.',
@@ -1152,16 +1205,22 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       turn.reservationTimer = undefined
       turn.resolveRootStart(true)
       this.broadcastAgentTurn({ turn: this.agentTurnSnapshot(turn) })
-    } else if (!turn.rootStarted) {
-      const started = await turn.rootStartPromise
-      if (!started || this.activeTurnFor(sessionKey, params.turnId) !== turn || turn.state === 'aborting') {
-        return {
-          ok: false,
-          text: 'The root turn ended before this message could be added.',
-          ts: Date.now(),
-          error: 'steer-failed'
+    } else {
+      // Capture all dynamic context before any root preparation or provider work can await.
+      const text = this.buildMessagePrompt(message, params.context, windowTabs, sessionKey, false, snapshot.sentAt)
+      if (turn.steeringInbox.isClosed) {
+        const finished = await turn.finished
+        const successor = this.activeAgentTurns.get(sessionKey)
+        const blocked = this.recentFinishedAgentTurns.get(this.agentTurnKey(sessionKey, turn.turnId))?.continuationBlocked
+        if (!blocked && finished.reason === 'completed' && finished.reply?.ok && (!successor || successor.continuationOf === turn.turnId)) {
+          return { ok: false, text: '', ts: Date.now(), continueAsRoot: { turnId: turn.turnId, reply: finished.reply, snapshot } }
         }
+        return { ok: false, text: 'The previous turn stopped or failed before this message could be added.', ts: Date.now(), error: 'steer-failed' }
       }
+      const delivered = await turn.steeringInbox.enqueue({ text, messageId: params.messageId, turnId: params.turnId })
+      return delivered.outcome === 'delivered'
+        ? { ok: true, text: '', ts: Date.now(), mergedIntoTurn: true }
+        : { ok: false, text: delivered.error || 'The message was not delivered.', ts: Date.now(), error: 'steer-failed' }
     }
 
     let reply: AgentReply
@@ -1172,7 +1231,9 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         params.sessionId,
         params.context,
         turn,
-        !root
+        !root,
+        windowTabs,
+        params.messageId, snapshot.sentAt
       )
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err)
@@ -1264,8 +1325,12 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
   async abortAgent(params: { sessionId: string; turnId: string }): Promise<void> {
     const sessionKey = this.agentSessionKey(params.sessionId)
     const turn = this.activeTurnFor(sessionKey, params.turnId)
+    for (const record of this.recentFinishedAgentTurns.values()) {
+      if (record.finished.turn.sessionId === sessionKey) record.continuationBlocked = true
+    }
     if (!turn || turn.state === 'aborting') return
     turn.state = 'aborting'
+    turn.steeringInbox.cancel('Stopped before this message was delivered.')
     if (turn.reservationTimer) clearTimeout(turn.reservationTimer)
     turn.reservationTimer = undefined
     turn.resolveRootStart(false)
@@ -1552,7 +1617,10 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     sessionId?: string,
     context?: AgentConversationContext,
     turn?: ActiveAgentTurn,
-    steeringOnly = false
+    steeringOnly = false,
+    windowTabs?: AgentWindowTabSnapshot,
+    messageId?: string,
+    messageSentAt?: string
   ): Promise<AgentReply> {
     const sessionKey = this.agentSessionKey(sessionId)
     const isCancelled = (): boolean =>
@@ -1592,7 +1660,10 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         mediaInput,
         onAgentSessionUsed: () => this.hydratedMaestroAgentSessions.add(sessionKey),
         isCancelled,
-        steeringOnly
+        steeringOnly,
+        steeringInbox: turn.steeringInbox,
+        messageId, messageSentAt, turnId: turn.turnId,
+        windowTabs
       })
     }))
   }
@@ -1607,6 +1678,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
   private agentSkillBriefs(message: string, recordings: SkillSummary[], registry: SkillRegistryService): AgentSkillBrief[] {
     return [
       DRILL_BUILTIN_SKILL,
+      DEEP_FETCH_BUILTIN_SKILL,
       ...recordings.map((skill) => {
       const recipe = registry.readRecipe(skill.id)
       const seed = recipe ? extractVariablesFromMessage(message, recipe) : {}
@@ -1624,6 +1696,18 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     ]
   }
 
+  private buildMessagePrompt(message: string, context: AgentConversationContext | undefined, windowTabs: AgentWindowTabSnapshot, sessionKey: string, includeConversationMemory: boolean, sentAt = localNow()): string {
+    const currentUrl = windowTabs.activeTab?.kind === 'web' ? windowTabs.activeTab.url : ''
+    const registry = this._state.existingSkillRegistry() || this._state.ensureServices().registry
+    const recordings = registry.listSkillsForDomain(currentUrl)
+    return buildAgentTurnPrompt({
+      message, context, includeConversationMemory, nowLocal: sentAt,
+      activeTab: windowTabs.activeTab, openTabs: windowTabs.openTabs,
+      userChainPath: chainFilePath(maestroUserChainDir(), sessionKey), currentUrl,
+      briefs: this.agentSkillBriefs(message, recordings, registry)
+    })
+  }
+
   private async handleAgentTurn(
     message: string,
     agent: BaseAgent,
@@ -1638,6 +1722,12 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       onAgentSessionUsed?: () => void
       isCancelled?: () => boolean
       steeringOnly?: boolean
+      steeringInbox?: TurnSteeringInbox
+      messageId?: string
+      messageSentAt?: string
+      turnId?: string
+      /** D3/D4 fixed at message receipt, including an empty window. */
+      windowTabs?: AgentWindowTabSnapshot
       /** 这一轮属于哪个聊天会话 —— 表 3 那行用户原话历史路径要按它取。缺省 `'default'`。 */
       sessionKey?: string
     }
@@ -1653,44 +1743,28 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     // before the first await so a tab switch cannot mix one page's identity with another's skills.
     const browserSession = this._state.agentBrowserSession(this.agentSessionKey(options?.sessionKey))
     const currentUrl = browserSession.tabs.find((tab) => tab.id === browserSession.selectedTabId)?.url || browserSession.initiatingTab?.url || this._state.currentUrl
-    const activeTab = this._state.describeActiveTabContent()
+    const windowTabs = options?.windowTabs ?? this._state.describeWindowTabs()
     const registry = this._state.existingSkillRegistry() || this._state.ensureServices().registry
     const recordings = registry.listSkillsForDomain(currentUrl)
     const skillBriefs = this.agentSkillBriefs(message, recordings, registry)
-    const nowLocal = localNow()
+    const nowLocal = options?.messageSentAt || localNow()
     const buildTurnPrompt = (includeConversationMemory: boolean): string => buildAgentTurnPrompt({
       message,
       context,
       includeConversationMemory,
       nowLocal,
-      activeTab,
-      browserSession,
+      activeTab: windowTabs.activeTab,
+      openTabs: windowTabs.openTabs,
       userChainPath: chainFilePath(maestroUserChainDir(), this.agentSessionKey(options?.sessionKey)),
       currentUrl,
       briefs: skillBriefs
     })
-    // SDK 的 steerActiveTurn 只收一个参数:非流式时**当场**报 failed,不等回合起来
-    // (它那段长注释讲了为什么不能在非流式窗口里投 —— 会变成角色反转 + 孤儿 run)。
-    // bitterless 原来的 waitForStreaming 轮询随之取消;idle 仍由下面的 steeringOnly 分支兜。
-    const steered = await agent.steerActiveTurn(buildTurnPrompt(false))
-    if (options?.isCancelled?.()) return cancelledReply()
-    if (steered.outcome === 'delivered') {
-      return { ok: true, text: '', ts: Date.now(), mergedIntoTurn: true }
-    }
-    if (steered.outcome === 'failed') {
-      return {
-        ok: false,
-        text: steered.error || 'Could not deliver the message into the active turn.',
-        ts: Date.now(),
-        error: 'steer-failed'
-      }
-    }
-    if (options?.steeringOnly) {
-      return {
-        ok: false,
-        text: STEER_NOT_STREAMING,
-        ts: Date.now(),
-        error: 'steer-failed'
+    if (!options?.steeringInbox) {
+      const steered = await agent.steerActiveTurn(buildTurnPrompt(false))
+      if (options?.isCancelled?.()) return cancelledReply()
+      if (steered.outcome === 'delivered') return { ok: true, text: '', ts: Date.now(), mergedIntoTurn: true }
+      if (steered.outcome === 'failed' || options?.steeringOnly) {
+        return { ok: false, text: steered.error || 'The turn has finished; this message was not queued.', ts: Date.now(), error: 'steer-failed' }
       }
     }
 
@@ -1703,10 +1777,22 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
           skillId: candidate.id,
           variables: seed
         })
-        return this.replayReply(candidate, replay)
+        const replayReply = this.replayReply(candidate, replay)
+        if (!replayReply.ok || options?.isCancelled?.()) {
+          options?.steeringInbox?.cancel('The replay stopped or failed before this message was delivered.')
+          return replayReply
+        }
+        const next = options?.steeringInbox?.next()
+        if (!next) return replayReply
+        await agent.setProjectRoot(this._state.projectRootForSession(this.agentSessionKey(options?.sessionKey)))
+        if (options?.isCancelled?.()) return cancelledReply()
+        const follow = await agent.prompt(next.text, undefined, { steeringInbox: options?.steeringInbox, messageId: next.messageId, turnId: next.turnId })
+        return { ...replayReply, ok: follow.ok && !follow.errorMessage, text: [replayReply.text, follow.text].filter(Boolean).join('\n\n'), error: follow.error || follow.errorMessage }
       }
     }
 
+    await agent.setProjectRoot(this._state.projectRootForSession(this.agentSessionKey(options?.sessionKey)))
+    if (options?.isCancelled?.()) return cancelledReply()
     this.lastAgentRun = {}
     this.lastAgentArtifacts = []
     this.tabsOpenedThisTurn = []
@@ -1717,6 +1803,8 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         undefined,
         {
           freshSession: false,
+          steeringInbox: options?.steeringInbox?.isClosed ? undefined : options?.steeringInbox,
+          messageId: options?.messageId, turnId: options?.turnId,
           media: turnMedia.media,
           images: turnMedia.images
         }

@@ -19,6 +19,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
+import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
 import { build } from 'esbuild';
 
@@ -46,8 +47,7 @@ const output = await build({
       export * from '@main/agent/contextExport.service';
       export * from './src/main/agent/runtime/contextExportLimit.service';
       export { buildAgentTurnPrompt } from './src/main/agent/runtime/agentPrompt';
-      export { MAESTRO_SYSTEM_PROMPT } from './src/main/agent/prompt/maestroSysPrompt';
-      export { BASE_SYSTEM_PROMPT } from './src/main/agent/prompt/sysPrompt';
+      export { A7_DISCIPLINE, BASE_SYSTEM_PROMPT } from './src/main/agent/prompt/sysPrompt';
       export { PiRuntimeSession } from './src/main/agent/runtime/piRuntimeSession';
     `,
     resolveDir: root, loader: 'ts'
@@ -61,9 +61,12 @@ const noopIoLog = { append: () => undefined, dirForSession: async () => null };
 const { BaseAgent } = load(join(sdk, 'BaseAgent.ts'), {
   './runtime/inputBudget': { inputBudget: noopBudget, subjectOf: () => '' },
   './runtime/modelIoLog': { modelIoLog: noopIoLog },
-  './prompt/sysPrompt': { BASE_SYSTEM_PROMPT: real.BASE_SYSTEM_PROMPT }
+  './prompt/sysPrompt': { A7_DISCIPLINE: real.A7_DISCIPLINE, BASE_SYSTEM_PROMPT: real.BASE_SYSTEM_PROMPT },
+  './prompt/projectInstructions': { readProjectInstructions: () => { throw new Error('Context export must not read project files'); } }
 });
 const { PiRuntimeSession } = real;
+const { SessionManager } = await import(pathToFileURL(resolve(root, 'node_modules/@earendil-works/pi-coding-agent/dist/core/session-manager.js')).href);
+const { Agent: NativeAgent } = await import(pathToFileURL(resolve(root, 'node_modules/@earendil-works/pi-agent-core/dist/agent.js')).href);
 
 const method = (path, name, bindings = {}) => {
   const source = read(path);
@@ -82,7 +85,7 @@ const method = (path, name, bindings = {}) => {
 /** pi 条目形状(`SessionEntry`)—— 组装侧按 type/message 分型,测试里照它构造。 */
 const messageEntry = message => ({ type: 'message', message });
 
-const mainHarness = () => {
+const mainHarness = (ioLogDir = null) => {
   const clipboardWrites = [];
   const registry = { listSkillsForDomain: () => [], readRecipe: () => { throw new Error('No fixture recipe'); } };
   const owner = {
@@ -93,7 +96,7 @@ const mainHarness = () => {
     _state: {
       agentBrowserSession: sessionId => ({sessionId, tabs: []}),
       currentUrl: 'https://example.com', existingSkillRegistry: () => registry,
-      describeActiveTabContent: () => ({ type: 'browser', url: 'https://example.com' }),
+      describeWindowTabs: () => ({ activeTab: { tab_id: 'foreground-tab', kind: 'web', title: 'Visible page', url: 'https://example.com' }, openTabs: [{ tab_id: 'foreground-tab', kind: 'web', title: 'Visible page', url: 'https://example.com' }, { tab_id: 'background-tab', kind: 'miniapp', title: 'Trench', miniapp: 'trench' }] }),
       ensureServices: () => { throw new Error('Export must not initialize services'); },
       replaySkill: () => { throw new Error('Export must not replay'); },
       syncWorkspaceFromContext: () => { throw new Error('Export must not mutate workspace'); }
@@ -105,6 +108,7 @@ const mainHarness = () => {
   });
   owner.copyNextTurnContext = method(servicePath, 'copyNextTurnContext', {
     ...real, clipboard: { writeText: text => clipboardWrites.push(text) },
+    modelIoLog: { dirForSession: async sessionId => { assert.equal(sessionId, 'chat-1'); return ioLogDir; } },
     localNow: () => '2026-09-14 12:00:00',
     maestroUserChainDir: () => '/fixture/user-chain',
     chainFilePath: (directory, session) => `${directory}/${session}.jsonl`
@@ -122,12 +126,13 @@ test('pi context surface reads the live entry tree — tool calls and tool resul
     messageEntry({ role: 'toolResult', toolName: 'read_file', content: [{ type: 'text', text: 'tool result in full' }] })
   ];
   const native = {
-    sessionManager: { getEntries: () => entries },
+    sessionManager: { getEntries: () => entries, buildContextEntries: () => entries },
     prompt: () => { throw new Error('Must not prompt'); },
     abort: () => { throw new Error('Must not abort'); }
   };
   const surface = new PiRuntimeSession(native).context;
   assert.deepEqual(surface.entries(), entries);
+  assert.deepEqual(surface.contextEntries(), entries);
 
   const rows = real.flattenEntries(surface.entries());
   const call = rows.find(row => row.type === 'tool_call');
@@ -142,11 +147,14 @@ test('pi context surface reads the live entry tree — tool calls and tool resul
 
 // ③ 反面:拿不到面就是空历史,不拿渲染端消息冒充
 // (原来拿 AI-CRMS 那条运行时当实例,它 2026-09 退役了;立论不依赖具体 provider。)
-test('a runtime with no context surface exports empty history instead of faking it', () => {
+test('no runtime has empty context, while unsupported effective reads fail instead of using raw history', () => {
   const session = { messages: [{ role: 'tool', tool_call_id: '1', content: 'tool result' }] };
   assert.equal(session.context, undefined);
   assert.deepEqual(real.entriesOfSurface(session.context ?? null), []);
   assert.deepEqual(real.entriesOfSurface(undefined), []);
+  assert.deepEqual(real.contextEntriesOfSurface(null), []);
+  assert.throws(() => real.contextEntriesOfSurface({ entries: () => [] }), /does not support.*effective/);
+  assert.throws(() => new PiRuntimeSession({}).context.contextEntries(), /does not support.*effective/);
 });
 
 // ① 导出不建会话、不预热 preamble
@@ -159,6 +167,7 @@ test('no model session is created by export; an idle agent yields no context sur
     buildTools: () => { throw new Error('No tools'); }
   });
   assert.equal(await agent.existingContextSurface(), null);
+  assert.equal(await agent.existingContextSurface({ readOnly: true }), null);
   assert.equal(creations, 0);
   // 组装用的系统提示词读自**活实例**,与会话 preamble 同一个 systemPrompt() 覆写 —— 不会漂。
   const composed = agent.composedSystemPrompt();
@@ -167,17 +176,23 @@ test('no model session is created by export; an idle agent yields no context sur
   assert.match(composed, /Codex/);
 });
 
-// ①:回合进行中不导出半截历史
-test('a busy agent yields no surface rather than exporting mid-turn history', async () => {
+// 写入仍受 busy 门保护，显式只读可读取当前已存在的快照。
+test('a busy agent permits read-only snapshots while retaining the compaction write guard', async () => {
   const agent = new BaseAgent({
     runtime: { createSession: async () => ({}) },
     describeTarget: () => ({ providerLabel: 'p', modelLabel: 'm', supplier: 's' }),
     buildTools: () => []
   });
-  agent.sessionPromise = Promise.resolve({ context: { entries: () => [messageEntry({ role: 'user', content: 'x' })] } });
+  const surface = { contextEntries: () => [messageEntry({ role: 'user', content: 'x' })] };
+  agent.sessionPromise = Promise.resolve({ context: surface });
   assert.ok(await agent.existingContextSurface());
   agent.busy = true;
   assert.equal(await agent.existingContextSurface(), null);
+  assert.equal(await agent.existingContextSurface({ readOnly: true }), surface);
+  agent.sessionPromise = Promise.resolve({});
+  await assert.rejects(agent.existingContextSurface({ readOnly: true }), /does not support.*effective/);
+  agent.sessionPromise = Promise.reject(new Error('session unavailable'));
+  await assert.rejects(agent.existingContextSurface({ readOnly: true }), /session unavailable/);
 });
 
 // ②④ 首轮:如实的待发内容 + 零副作用
@@ -194,9 +209,12 @@ test('typed handler/controller/service export truthful first-turn pending contex
   const text = h.clipboardWrites[0];
   assert.equal(result.chars, text.length);
   assert.match(text, /no model-side history yet/);
-  // 还没有 agent 时系统段退回静态提示词 —— 它就是下一轮会注入的那份。
-  assert.ok(text.includes(real.MAESTRO_SYSTEM_PROMPT.trim().slice(0, 80)));
+  assert.doesNotMatch(text, /model-io jsonl:/);
+  // No live agent: inspect fixed A1–A5 and A7 without initializing runtime or reading A6.
+  assert.ok(text.includes(real.A7_DISCIPLINE));
+  assert.doesNotMatch(text, /Your additional responsibility: you are the operator of the built-in browser/);
   assert.match(text, /Active workspace: \/workspace/);
+  assert.match(text, /Active tab when this message was sent:\n\{"tab_id":"foreground-tab","kind":"web","title":"Visible page","url":"https:\/\/example.com"\}/);
   assert.match(text, /restored memory/);
   assert.match(text, /\/unread\/attachment\.png/);
   // 附件只是路径:没有读过、没有校验过、没有上传过 —— 结果里不该出现文件内容或结构化回传。
@@ -205,11 +223,16 @@ test('typed handler/controller/service export truthful first-turn pending contex
 
 // ③⑧ 活会话:用运行时条目 + 与 send 同一个构建器
 test('live context uses runtime entry history, existing memory hydration and the same send builder', async () => {
-  const h = mainHarness();
+  const h = mainHarness('/fixture/agent-io/saved-chat-1');
   h.owner.maestroAgents.set('chat-1', {
-    existingContextSurface: async () => ({
-      entries: () => [messageEntry({ role: 'toolResult', toolName: 'read_file', content: [{ type: 'text', text: 'full result' }] })]
-    }),
+    existingContextSurface: async options => {
+      assert.deepEqual(options, { readOnly: true });
+      h.owner._state.describeWindowTabs = () => ({ activeTab: null, openTabs: [] });
+      return {
+        entries: () => { throw new Error('Export must not read the raw tree'); },
+        contextEntries: () => [messageEntry({ role: 'toolResult', toolName: 'read_file', content: [{ type: 'text', text: 'full result' }] })]
+      };
+    },
     composedSystemPrompt: () => 'native system'
   });
   h.owner.hydratedMaestroAgentSessions.add('chat-1');
@@ -218,6 +241,11 @@ test('live context uses runtime entry history, existing memory hydration and the
   assert.equal(result.entries, 1);
   assert.match(h.clipboardWrites[0], /native system/);
   assert.match(h.clipboardWrites[0], /full result/);
+  assert.match(h.clipboardWrites[0], /"tab_id":"foreground-tab"/);
+  assert.match(h.clipboardWrites[0], /Open tabs when this message was sent:\n\[\{/);
+  assert.match(h.clipboardWrites[0], /\"tab_id\":\"background-tab\"/);
+  assert.doesNotMatch(h.clipboardWrites[0], /Session browser targets|operation_tab_ids|active_use_tab_ids/);
+  assert.match(h.clipboardWrites[0], /model-io jsonl: \/fixture\/agent-io\/saved-chat-1/);
   assert.doesNotMatch(h.clipboardWrites[0], /must not replay/);
   // ⑧ send / export / context-graph 必须**共用** buildAgentTurnPrompt,不允许有人另拼一份。
   //
@@ -246,11 +274,151 @@ test('unsupported live context and missing catalog fail visibly without a clipbo
   const h = mainHarness();
   h.owner.maestroAgents.set('bad', { existingContextSurface: async () => { throw new Error('unsupported live context'); } });
   assert.deepEqual(await h.copy({ sessionId: 'bad', draft: '' }), { ok: false, error: 'unsupported live context' });
+  h.owner.maestroAgents.set('chat-1', {
+    existingContextSurface: async () => ({ entries: () => [messageEntry({ role: 'user', content: 'raw history must not leak' })] }),
+    composedSystemPrompt: () => 'system'
+  });
+  const unsupported = await h.copy({ sessionId: 'chat-1', draft: '' });
+  assert.equal(unsupported.ok, false);
+  assert.match(unsupported.error, /does not support.*effective/);
   h.owner._state.existingSkillRegistry = () => null;
   const missing = await h.copy({ sessionId: 'new', draft: '' });
   assert.equal(missing.ok, false);
   assert.match(missing.error, /not ready/);
   assert.equal(h.clipboardWrites.length, 0);
+});
+
+const nativeFixture = () => {
+  const manager = SessionManager.inMemory('/fixture/effective-context');
+  const agent = new NativeAgent({ streamFn: () => { throw new Error('No model calls in context tests'); } });
+  const surface = new PiRuntimeSession({ sessionManager: manager, agent }).context;
+  const user = text => manager.appendMessage({ role: 'user', content: text, timestamp: 1 });
+  const exported = () => {
+    const tree = structuredClone(manager.getEntries());
+    const leaf = manager.getLeafId();
+    const messages = agent.state.messages;
+    const messageSnapshot = structuredClone(messages);
+    const record = real.buildContextRecord({
+      sessionId: 'fixture-context', systemPrompt: 'fixture system', timestamp: 'fixed',
+      entries: real.contextEntriesOfSurface(surface)
+    });
+    assert.deepEqual(manager.getEntries(), tree, 'export must not mutate raw history');
+    assert.equal(manager.getLeafId(), leaf, 'export must not move the leaf');
+    assert.equal(agent.state.messages, messages, 'export must not replace live messages');
+    assert.deepEqual(agent.state.messages, messageSnapshot, 'export must not mutate live messages');
+    return { record, text: real.renderContextText(record) };
+  };
+  return { manager, agent, surface, user, exported };
+};
+
+test('real pi context before compaction excludes metadata and preserves message/custom content without mutation', () => {
+  const h = nativeFixture();
+  h.manager.appendModelChange('fixture-provider', 'fixture-model');
+  h.manager.appendThinkingLevelChange('high');
+  h.manager.appendCustomEntry('diagnostic', { note: 'metadata must not become context' });
+  h.user('current user request');
+  h.manager.appendCustomMessageEntry('instruction', 'custom model instruction', false);
+  const { record, text } = h.exported();
+  assert.deepEqual(record.entries.map(entry => entry.type), ['user', 'custom_message:instruction']);
+  assert.match(text, /current user request/);
+  assert.match(text, /custom model instruction/);
+  assert.doesNotMatch(text, /fixture-provider|thinking_level_change|diagnostic|metadata must/);
+  assert.equal(h.surface.entries().length, 5, 'raw graph/candidate history remains intact');
+});
+
+test('real pi first compaction exports only its summary, retained tool pair and subsequent messages', async () => {
+  const h = nativeFixture();
+  h.user('ABSORBED_RAW_UNIQUE_TEXT');
+  const kept = h.manager.appendMessage({
+    role: 'assistant', content: [{ type: 'toolCall', id: 'tool-1', name: 'read_file', arguments: { path: '/fixture/kept.txt' } }], timestamp: 2
+  });
+  h.manager.appendMessage({ role: 'toolResult', toolCallId: 'tool-1', toolName: 'read_file', content: [{ type: 'text', text: 'KEPT_TOOL_RESULT' }], timestamp: 3 });
+  h.manager.appendCompaction('CURRENT_SUMMARY', kept, 1000);
+  h.user('AFTER_COMPACTION');
+  const { record, text } = h.exported();
+  assert.deepEqual(record.entries.map(entry => entry.type), ['compaction', 'tool_call', 'tool_result', 'user']);
+  assert.match(text, /CURRENT_SUMMARY/);
+  assert.match(text, /kept\.txt/);
+  assert.match(text, /KEPT_TOOL_RESULT/);
+  assert.match(text, /AFTER_COMPACTION/);
+  assert.doesNotMatch(text, /ABSORBED_RAW_UNIQUE_TEXT/);
+  assert.match(JSON.stringify(h.surface.entries()), /ABSORBED_RAW_UNIQUE_TEXT/);
+  // Run the actual host method through handler/controller, not only the projection helper.
+  const host = mainHarness();
+  host.owner.maestroAgents.set('chat-1', { existingContextSurface: async () => h.surface, composedSystemPrompt: () => 'system' });
+  host.owner.hydratedMaestroAgentSessions.add('chat-1');
+  const result = await host.copy({ sessionId: 'chat-1', draft: '' });
+  assert.equal(result.ok, true, result.error);
+  assert.doesNotMatch(host.clipboardWrites[0], /ABSORBED_RAW_UNIQUE_TEXT/);
+  assert.match(host.clipboardWrites[0], /CURRENT_SUMMARY/);
+});
+
+test('real pi repeated compaction retains only the latest summary and its selected tail', () => {
+  const h = nativeFixture();
+  h.user('FIRST_ABSORBED_RAW');
+  const oldTail = h.user('OLD_TAIL_NOW_ABSORBED');
+  h.manager.appendCompaction('OLD_SUMMARY_NOW_ABSORBED', oldTail, 1000);
+  const latestTail = h.user('LATEST_RETAINED_TAIL');
+  h.manager.appendCompaction('LATEST_SUMMARY', latestTail, 2000);
+  h.user('LATEST_POST_COMPACTION');
+  const { record, text } = h.exported();
+  assert.deepEqual(record.entries.map(entry => entry.type), ['compaction', 'user', 'user']);
+  assert.match(text, /LATEST_SUMMARY/);
+  assert.match(text, /LATEST_RETAINED_TAIL/);
+  assert.match(text, /LATEST_POST_COMPACTION/);
+  assert.doesNotMatch(text, /FIRST_ABSORBED_RAW|OLD_TAIL_NOW_ABSORBED|OLD_SUMMARY_NOW_ABSORBED/);
+});
+
+test('real pi missing keep ID is an empty retained tail, without raw-history fallback', () => {
+  const h = nativeFixture();
+  h.user('RAW_BEFORE_EMPTY_TAIL');
+  h.manager.appendCompaction('EMPTY_TAIL_SUMMARY', 'nonexistent-entry', 1000);
+  assert.deepEqual(h.exported().record.entries.map(entry => entry.type), ['compaction']);
+  h.user('AFTER_EMPTY_TAIL');
+  const { record, text } = h.exported();
+  assert.deepEqual(record.entries.map(entry => entry.type), ['compaction', 'user']);
+  assert.match(text, /EMPTY_TAIL_SUMMARY/);
+  assert.match(text, /AFTER_EMPTY_TAIL/);
+  assert.doesNotMatch(text, /RAW_BEFORE_EMPTY_TAIL/);
+});
+
+test('real pi export follows the current branch leaf and includes branch summary text', () => {
+  const h = nativeFixture();
+  const shared = h.user('SHARED_ROOT');
+  const abandoned = h.user('ABANDONED_BRANCH_RAW');
+  h.manager.branchWithSummary(shared, 'RETURNED_BRANCH_SUMMARY');
+  h.user('CURRENT_BRANCH_ONLY');
+  const { record, text } = h.exported();
+  assert.deepEqual(record.entries.map(entry => entry.type), ['user', 'branch_summary', 'user']);
+  assert.match(text, /RETURNED_BRANCH_SUMMARY/);
+  assert.match(text, /CURRENT_BRANCH_ONLY/);
+  assert.doesNotMatch(text, /ABANDONED_BRANCH_RAW/);
+  h.manager.branch(abandoned);
+  const returned = h.exported().text;
+  assert.match(returned, /ABANDONED_BRANCH_RAW/);
+  assert.doesNotMatch(returned, /RETURNED_BRANCH_SUMMARY|CURRENT_BRANCH_ONLY/);
+});
+
+test('manual pi appends update the real live agent context after compaction and both supplemental messages', () => {
+  const h = nativeFixture();
+  h.user('ABSORBED_ASSISTANT_CONTEXT');
+  const kept = h.user('RETAINED_REQUEST');
+  h.agent.state.messages = h.manager.buildSessionContext().messages;
+  const original = structuredClone(h.agent.state.messages);
+  assert.ok(h.surface.appendCompaction('LIVE_COMPACTED_SUMMARY', kept, 1000));
+  assert.notDeepEqual(h.agent.state.messages, original);
+  assert.deepEqual(h.agent.state.messages, h.manager.buildSessionContext().messages);
+  assert.doesNotMatch(JSON.stringify(h.agent.state.messages), /ABSORBED_ASSISTANT_CONTEXT/);
+  assert.ok(h.surface.appendCustomMessage('user-verbatim', 'EXPLICIT_RETAINED_USER_CHAIN'));
+  assert.deepEqual(h.agent.state.messages, h.manager.buildSessionContext().messages);
+  assert.ok(h.surface.appendCustomMessage('manifest', 'EXPLICIT_CONTEXT_MANIFEST'));
+  assert.deepEqual(h.agent.state.messages, h.manager.buildSessionContext().messages);
+  const { text } = h.exported();
+  assert.match(text, /LIVE_COMPACTED_SUMMARY/);
+  assert.match(text, /RETAINED_REQUEST/);
+  assert.match(text, /EXPLICIT_RETAINED_USER_CHAIN/);
+  assert.match(text, /EXPLICIT_CONTEXT_MANIFEST/);
+  assert.doesNotMatch(text, /ABSORBED_ASSISTANT_CONTEXT/);
 });
 
 // ⑥⑦ 内联媒体只标记;超限是清晰失败

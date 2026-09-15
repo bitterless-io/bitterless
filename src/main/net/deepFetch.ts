@@ -5,7 +5,7 @@ import { extractArticle, MAX_HTML_BYTES, type ExtractedArticle } from '@main/net
 import { DebuggerCapture } from '@main/maestro/capture/debuggerCapture'
 
 /**
- * `deep_fetch` —— 用**隐藏的 BrowserWindow**打开网页、等 JS 渲染完,再读结果。
+ * `deep_fetch` —— 用临时浏览器载体打开网页、等 JS 渲染完,再读结果。
  *
  * 三件事决定了这个文件的形状,设计与依据见 docs/features/agent-web-fetch.md `#2`/`#3`:
  *
@@ -263,7 +263,7 @@ export const deepFetchPage = async (
         })
       })
       const doWork = async (): Promise<DeepFetchResult> => {
-        await win
+        await wc
           .loadURL(start.toString())
           .then(() => loaded)
           .catch((err) => {

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
+import { setImmediate } from 'node:timers/promises';
 import ts from 'typescript';
 import { build } from 'esbuild';
 
@@ -44,6 +45,19 @@ const channelHarness = (remembered = '', sessions = []) => {
   };
   return { store, calls, saved, reload, channel: reload(), setBusy: value => { busy = value; } };
 };
+
+test('ordinary initialization and fresh-chat entry points opt in to New chat titles while explicit Coaches titles stay named', async () => {
+  const h = channelHarness();
+  await h.channel.init();
+  assert.equal(h.channel.activeSession.title, 'New chat');
+  assert.equal(h.channel.activeSession.autoTitlePending, true);
+  const ordinary = await h.channel.startFreshMaestroSession();
+  assert.equal(ordinary.title, 'New chat');
+  assert.equal(ordinary.autoTitlePending, true);
+  const coaches = await h.channel.startFreshMaestroSession('Coaches');
+  assert.equal(coaches.title, 'Coaches');
+  assert.equal(coaches.autoTitlePending, false);
+});
 
 test('tab creation, activation and closure preserve the selected chat and its mutable state', async () => {
   const session = { id: 'remembered', operationTabId: 'closed-tab', messages: [{ content: 'kept history' }], draft: 'unsent draft', attachments: ['/test/file.txt'], detail: { workspace: { path: '/test/project' } }, turn: { id: 'running-turn' } };
@@ -151,7 +165,7 @@ test('history and New Chat explicitly select and remember chats without a browse
   assert.notEqual(reloaded.activeSession.id, second.id);
   assert.deepEqual(reloaded.activeSession.messages, []);
   assert.equal(second.archivedAt, undefined);
-  assert.deepEqual(harness.calls.filter(([kind]) => kind === 'create'), [['create', { title: 'Maestro', intent: 'chat' }]]);
+  assert.deepEqual(harness.calls.filter(([kind]) => kind === 'create'), [['create', { title: 'New chat', intent: 'chat', autoTitlePending: true }]]);
   assert.equal(harness.saved.get('bitterless.maestro.activeSessionId'), reloaded.activeSession.id);
   const empty = channelHarness('archived', [{ id: 'archived', archivedAt: 1 }]);
   await empty.channel.init();
@@ -170,21 +184,26 @@ const method = (name, bindings = {}) => {
   return new Function(...Object.keys(bindings), `${compile(`class Actual { ${member.getText(ast)} }`)}; return Actual.prototype.${name}`)(...Object.values(bindings));
 };
 const bundled = await build({
-  stdin: { contents: `export { buildAgentTurnPrompt } from './src/main/agent/runtime/agentPrompt'; export { BASE_SYSTEM_PROMPT } from './src/main/agent/prompt/sysPrompt';`, resolveDir: root },
+  stdin: { contents: `export { buildAgentTurnPrompt } from './src/main/agent/runtime/agentPrompt'; export { A7_DISCIPLINE, BASE_SYSTEM_PROMPT } from './src/main/agent/prompt/sysPrompt';`, resolveDir: root },
   bundle: true, write: false, format: 'esm', platform: 'node', tsconfig: resolve(root, 'tsconfig.node.json')
 });
 const real = await import(`data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString('base64')}`);
 const baseExports = {};
+const steeringExports = {};
+new Function('exports', compile(read('src/main/agent/steering/turnSteeringInbox.ts')))(steeringExports);
 new Function('exports', 'require', compile(read('src/main/agent/BaseAgent.ts')))(baseExports, name => ({
   './prompt/sysPrompt': real,
+  './prompt/projectInstructions': { readProjectInstructions: async () => '' },
   './runtime/inputBudget': { inputBudget: new Proxy({}, { get: () => () => undefined }) },
-  './runtime/modelIoLog': { modelIoLog: { append: () => undefined } }
+  './runtime/modelIoLog': { modelIoLog: { append: () => undefined } },
+  './steering/turnSteeringInbox': steeringExports
 }[name] || require(name)));
 
 test('later root and steering messages use the new page and site skills while reusing the live runtime and fixed system', async () => {
   const creationOptions = [];
   const prompts = [];
   const listeners = new Set();
+  const queued = [];
   let finishHeld;
   let heldStarted;
   let hold = false;
@@ -192,10 +211,13 @@ test('later root and steering messages use the new page and site skills while re
   const runtimeSession = {
     isStreaming: false,
     subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); },
+    enqueueSteering: async message => { queued.push(message); },
+    takePendingSteering: () => queued.splice(0),
     async prompt(prompt) {
+      assert.equal(this.isStreaming, false, 'Ordinary prompts may not overlap the owned root');
       prompts.push(prompt.text);
-      if (this.isStreaming) return;
       this.isStreaming = true;
+      if (prompt.messageId) for (const listener of listeners) listener({ type: 'steering_consumed', messageId: prompt.messageId });
       if (hold) {
         heldStarted();
         await new Promise(done => { finishHeld = done; });
@@ -219,9 +241,10 @@ test('later root and steering messages use the new page and site skills while re
     agentSessionKey: value => value || 'default',
     agentSkillBriefs: (_message, recordings) => recordings.map(item => ({ ...item, seed: {}, missing: [] })),
     _state: {
-      agentBrowserSession: sessionId => ({sessionId, tabs: []}),
+      agentBrowserSession(sessionId) { return { sessionId, selectedTabId: 'execution-tab', tabs: [{ id: 'execution-tab', title: 'Execution target', url: this.currentUrl, status: 'ready' }] }; },
+      projectRootForSession: () => undefined,
       currentUrl: 'https://alpha.example/page',
-      describeActiveTabContent() { return { state: 'web', url: this.currentUrl, title: this.currentUrl.includes('alpha') ? 'Alpha title' : 'Beta title' }; },
+      describeWindowTabs() { const activeTab = { tab_id: 'foreground-tab', kind: 'web', url: this.currentUrl, title: this.currentUrl.includes('alpha') ? 'Alpha title' : 'Beta title' }; return { activeTab, openTabs: [activeTab] }; },
       existingSkillRegistry: () => registry,
       ensureServices: () => { throw new Error('Steering must not initialize services'); },
       replaySkill: () => { throw new Error('Steering must not execute a recipe'); }
@@ -233,14 +256,20 @@ test('later root and steering messages use the new page and site skills while re
     MODEL_RETRY_MAX: 1, STEER_NOT_STREAMING: 'not streaming', providerLabel: () => 'Fixture'
   }).bind(owner);
   const context = { recentMessages: [{ role: 'human', content: 'RESTORED MEMORY', ts: 1 }], workspace: { path: '/test/project' } };
-  assert.equal((await handle('first request', agent, context, { sessionKey: 'stable-chat', includeConversationMemory: true })).ok, true);
+  const foreground = { tab_id: 'user-tab', kind: 'web', title: 'User alias', url: 'https://foreground.example/' };
+  assert.equal((await handle('first request', agent, context, { sessionKey: 'stable-chat', includeConversationMemory: true, windowTabs: { activeTab: foreground, openTabs: [foreground] } })).ok, true);
   owner._state.currentUrl = 'https://beta.example/page';
   assert.equal((await handle('follow-up request', agent, context, { sessionKey: 'stable-chat' })).ok, true);
-  assert.match(prompts[0], /alpha\.example\/page/);
-  assert.match(prompts[0], /Alpha title/);
+  assert.match(prompts[0], /alpha\.example-skill/);
+  const snapshot = prompt => JSON.parse(prompt.split('Active tab when this message was sent:\n')[1].split('\n')[0]);
+  assert.deepEqual(snapshot(prompts[0]), foreground, 'D3 uses receipt-time foreground even when execution and skills target another page');
+  const openTabs = prompt => JSON.parse(prompt.split('Open tabs when this message was sent:\n')[1].split('\n')[0]);
+  assert.deepEqual(openTabs(prompts[0]), [foreground]);
+  assert.doesNotMatch(prompts[0], /Session browser targets|operation_tab_ids|active_use_tab_ids/);
   assert.match(prompts[0], /alpha\.example-skill/);
   assert.match(prompts[1], /beta\.example\/page/);
   assert.match(prompts[1], /Beta title/);
+  assert.equal(snapshot(prompts[1]).tab_id, 'foreground-tab');
   assert.match(prompts[1], /beta\.example-skill/);
   assert.doesNotMatch(prompts[1], /alpha\.example|RESTORED MEMORY/);
   hold = true;
@@ -250,27 +279,135 @@ test('later root and steering messages use the new page and site skills while re
   const runState = owner.lastAgentRun;
   const openedTabs = owner.tabsOpenedThisTurn;
   owner._state.currentUrl = 'https://alpha.example/other';
-  const steered = await handle('look at this page now', agent, context, { sessionKey: 'stable-chat', includeConversationMemory: true, steeringOnly: true });
-  assert.equal(steered.mergedIntoTurn, true);
+  const steering = handle('look at this page now', agent, context, { sessionKey: 'stable-chat', includeConversationMemory: true, steeringOnly: true });
+  await setImmediate();
+  assert.equal(queued.length, 1);
+  assert.equal(prompts.length, 3, 'The addition stays queued while the root is running');
+  const consumed = queued.shift();
+  prompts.push(consumed.text);
+  for (const listener of listeners) listener({ type: 'steering_consumed', messageId: consumed.messageId });
+  assert.equal((await steering).mergedIntoTurn, true);
   assert.match(prompts.at(-1), /alpha\.example\/other/);
+  assert.equal(snapshot(prompts.at(-1)).url, 'https://alpha.example/other');
+  assert.deepEqual(openTabs(prompts.at(-1)), [snapshot(prompts.at(-1))]);
+  assert.deepEqual(openTabs(prompts[0]), [foreground], 'historical D4 is immutable');
+  assert.deepEqual(snapshot(prompts[0]), foreground, 'later steering leaves the historical snapshot unchanged');
   assert.match(prompts.at(-1), /alpha\.example-skill/);
   assert.doesNotMatch(prompts.at(-1), /beta\.example|RESTORED MEMORY/);
   assert.equal(owner.lastAgentRun, runState);
   assert.equal(owner.tabsOpenedThisTurn, openedTabs);
   assert.equal(creationOptions.length, 1, 'tab switches and steering reuse one model runtime session');
-  assert.equal(creationOptions[0].systemPrompt, real.BASE_SYSTEM_PROMPT);
+  assert.ok(creationOptions[0].systemPrompt.startsWith(real.BASE_SYSTEM_PROMPT + '\n\n' + real.A7_DISCIPLINE));
+  assert.match(creationOptions[0].systemPrompt, /Which model you are/);
   assert.doesNotMatch(creationOptions[0].systemPrompt, /alpha\.example|beta\.example/);
   assert.equal(aborts, 0);
   finishHeld();
   assert.equal((await running).ok, true);
 });
 
+test('a successful deterministic replay drains queued additions through one live agent without repeating the replay root', async () => {
+  const listeners = new Set(), prompts = [], replays = [];
+  let finishReplay, replayStarted;
+  const started = new Promise(resolve => { replayStarted = resolve; });
+  const replaying = new Promise(resolve => { finishReplay = resolve; });
+  const runtimeSession = {
+    subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); },
+    async prompt(message) {
+      prompts.push(message);
+      if (message.messageId) for (const listener of listeners) listener({ type: 'steering_consumed', messageId: message.messageId });
+      for (const listener of listeners) listener({ type: 'assistant_message_end', text: `follow-up ${prompts.length}`, stopReason: 'stop' });
+    },
+    abort: async () => assert.fail('Successful replay continuation must not abort')
+  };
+  let created = 0;
+  const agent = new baseExports.BaseAgent({
+    providerId: 'fixture', modelId: 'fixture', buildTools: () => [],
+    describeTarget: () => ({ providerLabel: 'Fixture', modelLabel: 'Fixture', supplier: 'fixture' }),
+    runtime: { createSession: async () => { created++; return runtimeSession; } }
+  });
+  const registry = {
+    listSkillsForDomain: () => [{ id: 'fixture-recipe', name: 'Fixture recipe' }],
+    readRecipe: () => ({ fixture: true })
+  };
+  const owner = {
+    agentSessionKey: value => value || 'default',
+    agentSkillBriefs: (_message, recordings) => recordings,
+    replayReply: (_candidate, replay) => ({ ok: replay.ok, text: replay.ok ? 'recipe completed' : 'recipe failed' }),
+    _state: {
+      agentBrowserSession: () => ({ selectedTabId: 'page', tabs: [{ id: 'page', url: 'https://fixture.example/' }] }),
+      describeWindowTabs: () => ({ activeTab: null, openTabs: [] }),
+      existingSkillRegistry: () => registry,
+      projectRootForSession: () => undefined,
+      async replayAgentSkill(sessionId, request) {
+        replays.push({ sessionId, request });
+        replayStarted();
+        return replaying;
+      }
+    }
+  };
+  const handle = method('handleAgentTurn', {
+    ...real, localNow: () => 'fixture-time',
+    chainFilePath: () => '/fixture/chain.jsonl', maestroUserChainDir: () => '/fixture',
+    extractVariablesFromMessage: () => ({}), hasRequiredInputs: () => true,
+    requiredInputsSatisfied: () => true
+  }).bind(owner);
+  const inbox = new steeringExports.TurnSteeringInbox();
+  const root = handle('original deterministic request', agent, undefined, { sessionKey: 'chat', steeringInbox: inbox });
+  await started;
+  const first = inbox.enqueue({ text: 'first queued text', messageId: 'queued-1', turnId: 'turn' });
+  const second = inbox.enqueue({ text: 'second queued text', messageId: 'queued-2', turnId: 'turn' });
+  assert.deepEqual(prompts, [], 'Replay stays the single active root until its safe boundary');
+  finishReplay({ ok: true });
+  const reply = await root;
+  assert.equal(reply.ok, true);
+  assert.match(reply.text, /recipe completed/);
+  assert.deepEqual(await Promise.all([first, second]), [{ outcome: 'delivered' }, { outcome: 'delivered' }]);
+  assert.deepEqual(prompts.map(message => message.text), ['first queued text', 'second queued text']);
+  assert.deepEqual(prompts.map(message => message.messageId), ['queued-1', 'queued-2']);
+  assert.equal(replays.length, 1);
+  assert.equal(created, 1);
+  assert.equal(listeners.size, 0);
+});
+
+test('a failed deterministic replay fails queued additions and never starts a model continuation', async () => {
+  let finishReplay, replayStarted;
+  const started = new Promise(resolve => { replayStarted = resolve; });
+  const replaying = new Promise(resolve => { finishReplay = resolve; });
+  const inbox = new steeringExports.TurnSteeringInbox();
+  const owner = {
+    agentSessionKey: value => value,
+    agentSkillBriefs: (_message, recordings) => recordings,
+    replayReply: () => ({ ok: false, text: 'fixture replay failure' }),
+    _state: {
+      agentBrowserSession: () => ({ tabs: [] }),
+      describeWindowTabs: () => ({ activeTab: null, openTabs: [] }),
+      existingSkillRegistry: () => ({ listSkillsForDomain: () => [{ id: 'recipe' }], readRecipe: () => ({ fixture: true }) }),
+      replayAgentSkill: () => { replayStarted(); return replaying; }
+    }
+  };
+  const handle = method('handleAgentTurn', {
+    ...real, localNow: () => 'fixture-time',
+    extractVariablesFromMessage: () => ({}), hasRequiredInputs: () => true, requiredInputsSatisfied: () => true
+  }).bind(owner);
+  const agent = { prompt: () => assert.fail('A failed replay may not start a queued model root') };
+  const root = handle('recipe root', agent, undefined, { sessionKey: 'chat', steeringInbox: inbox });
+  await started;
+  const pending = inbox.enqueue({ text: 'follow-up', messageId: 'pending', turnId: 'turn' });
+  finishReplay({ ok: false });
+  assert.equal((await root).ok, false);
+  const result = await pending;
+  assert.equal(result.outcome, 'failed');
+  assert.match(result.error, /replay.*failed/i);
+  assert.equal(inbox.isClosed, true);
+});
+
 test('new turn ownership records the current main tab and does not rewrite an existing turn', () => {
   const owner = {
     _state: { activeTabId: 'current-page', beginBrowserTurn: () => undefined }, activeAgentTurns: new Map(), agentTurnGeneration: 0,
+    recentFinishedAgentTurns: new Map(), pruneFinishedAgentTurns: () => undefined,
     agentSessionKey: id => id, agentTurnSnapshot: turn => turn, broadcastAgentTurn: () => undefined, assertAgentRuntimeActive: () => undefined
   };
-  const claim = method('claimAgentTurn', { AGENT_TURN_RESERVATION_TIMEOUT_MS: 60000, MAX_CONCURRENT_AGENT_TURNS: 4 }).bind(owner);
+  const claim = method('claimAgentTurn', { ...steeringExports, AGENT_TURN_RESERVATION_TIMEOUT_MS: 60000, MAX_CONCURRENT_AGENT_TURNS: 4 }).bind(owner);
   const request = { sessionId: 'stable-chat', turnId: 'turn-1', rootText: 'request', operationTabId: 'creation-page' };
   try {
     assert.equal(claim(request).turn.operationTabId, 'current-page');

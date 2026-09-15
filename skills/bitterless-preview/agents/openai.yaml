@@ -1,7 +1,7 @@
 interface:
-  display_name: "Bitterless Preview"
-  short_description: "Open explicit local targets in read-only Bitterless Preview"
-  default_prompt: "Use $bitterless-preview to open an explicit local file or folder in Bitterless Preview."
+  display_name: "Bitterless Preview / OnlyPreview"
+  short_description: "OnlyPreview / only preview：预览本地文件或目录"
+  default_prompt: "Use $bitterless-preview to preview the specified local file or folder through OnlyPreview (only preview)."
 dependencies:
   tools:
     - type: "mcp"

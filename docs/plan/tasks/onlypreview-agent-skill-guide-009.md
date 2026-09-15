@@ -197,3 +197,21 @@ English copy action whose complete instructions include both MCP connection and 
   folder in OnlyPreview.
 - Independent review `onlypreview-agent-skill-guide-009-1` passed with no open P1, P2, or P3
   finding after the Guide renderer client was narrowed to `getAgentSkillGuideInfo` only.
+
+## 2026-09-15 trigger wording update
+
+- Skill version `260915135852` adds OnlyPreview / onlypreview / only preview aliases and Chinese
+  requests such as “通过 onlypreview 预览” to the description, Codex discovery text, Guide, and
+  `preview.open` MCP tool description.
+  An explicit edition or current installation Guide takes precedence over the Production default;
+  the MCP server names and known-path, read-only contract stay intact.
+- Installed the complete current Preview bundle additively, then synchronized the updated skill
+  to the workspace skill trees, skill archive, Codex, and Claude Code user directories. All six
+  source/installed trees match, including both references and the Codex sidecar.
+- Four focused skill/Guide tests and the MCP preview dispatch test pass, as does focused ESLint.
+  The full five-test skill file retains an unrelated inventory
+  failure: its existing guard expects 16 renderers while the inventory already contains 17.
+  Strict YAML and skill-shape checks pass with Node/js-yaml; the Python validator cannot load
+  PyYAML in the system Python. No Electron/E2E, packaging, or application restart was performed.
+- Human check: keep Bitterless Preview running, start a new agent session, and request
+  “通过 onlypreview 预览” with a known absolute file path; repeat with “only preview”.

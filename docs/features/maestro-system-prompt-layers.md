@@ -3,7 +3,82 @@
 Ral 2026-09-11：「`prompt/sysPrompt.ts` 下要有完整的系统提示词并给 base agent 应用上」、
 「A5 确实需要去掉」、「A1 的你的改动不对，需要还原成 pi 默认的 —— 我没提要求你不能改」。
 
-设计与逐层取舍：[`areas/agent-runtime/chat/prompt-structure.html`](../../../../areas/agent-runtime/chat/prompt-structure.html) #2。
+设计与逐层取舍：[`areas/agent-runtime/chat/prompt-structure.html`](../../../../areas/agent-runtime/chat/prompt-structure.html) #1。
+
+## 2026-09-15：D3 前台快照
+
+D4 与 D3 在同一个同步窗口快照内取样。`Open tabs when this message was sent:` 下一行
+为一个 JSON array，无 tab 为 `[]`；每项复用 D3 字段，按用户 tab 条顺序包含全部打开项，
+包括后台网页、重复 URL、miniapp、文件和已打开的 Workbench，不按聊天过滤或截断。
+Workbench 位于最后一个 pinned tab 后（没有 pinned 时在第一项后），后台仍保留。
+预热 slot、独立隐藏临时 BrowserWindow 没有用户 tab 条目，不纳入；`open_tab(show:false)`
+以及当前 Maestro 宿主为 deep_fetch 创建的受控 tab 仍有 tab 条目，因此在关闭前纳入。
+旧 D4 会话操作集合提示词被此数组替换，内部执行目标和 UI 列表保持。
+
+D4 验证：59 项前台投影、消息入口、普通/steering、并发会话、只读上下文导出和操作目标
+回归通过。覆盖 tab 条顺序、53 项不截断/去重、后台 Workbench、两个文件 tab 各读自身
+展示状态，以及 D3/D4 同次采样和历史不改写。共享契约与 prompt builder 的局部 TypeScript
+检查通过。没有运行 Electron、E2E、build 或独立 review。
+
+每条普通消息和 steering 在 Main 接收入口同步固定当前前台值，使用同一 builder 写入：
+`Active tab when this message was sent:`，下一行仅一个 JSON object 或 `null`。
+对象包含实际 `tab_id`、`kind`、tab 条显示的 `title`（alias 优先），并按种类仅带
+`url`、`path` 或稳定 `miniapp` key。没有前台时为 `null`；独立 Workbench 覆盖层的
+`tab_id` 为 `null`，`miniapp` 为 `workbench`，不会误报下层网页。
+
+文件路径来自预览当前 revision 的已确认展示状态。OnlyPreview 从 A 切到 B、B 尚未 ready 时
+报告 `miniapp: only-preview`；B 确认后才报告 B 的绝对 `path`，不信任可能滞后的地址栏。
+宿主通过 composite spec 的同步窄接口提供此事实，Maestro 不导入 OnlyPreview 子系统。
+`view_context` / context graph 只读当前快照并共用 builder；已进入历史的消息不改写，pi 内部
+toolResult 循环也不重新采样。D3 不承担会话操作目标或 D4 清单职责。
+
+代码验证：58 项前台、普通/steering、并发会话、上下文导出、浏览器目标及真实预览 revision
+测试通过；共享契约与 prompt builder 的局部 TypeScript 检查通过。宽图类型检查仍有外围错误，
+OnlyPreview 全套中的旧订阅源码断言，以及 Maestro 边界检查中已有的 Workbench Zellij 引用未通过；
+本次不修改这些外围内容。未运行 Electron、E2E 或 build。
+
+## 2026-09-15：移除 B1，精简 B2 为全局 A7
+
+聊天 agent 不再注入额外的内置浏览器操作员职责（B1）。原 B2 长篇纪律删除，由以下 A7 十条英文正文替代，
+不保留括号说明或旧长文；所有 BaseAgent 共用一次。空产品层仍保留当前 provider/model 身份，其他专用子类的产品职责保持。
+
+```text
+## Discipline
+- Treat interruptions as course corrections. Restate the plan with `update_plan`; the latest instruction wins when instructions conflict.
+- Instructions vs data
+- Think before acting
+- Be decisive otherwise
+- Minimum & surgical
+- Endpoints are grounded, not guessed
+- Verify against the goal
+- Name conflicts
+- Report honestly
+- Link every file you produce.
+```
+
+组装顺序为固定 A1–A5 → 项目 A6 → 全局 A7 → 当前模型身份 → 子类产品职责（若有）。
+重新读取 A6 时 A7 不重复；`/view_context` 与 runtime 使用相同组装。没有活实例时检查器继续只展示固定层，不启动模型会话。
+
+本次验证：32 项提示词、项目指令、上下文导出和 runtime 测试通过；tab/steering 提示词的定向测试通过。
+局部 TypeScript 与 agent runtime 守卫通过。完整 tab 测试另有 1 项与并行 New chat 标题改动有关的旧断言失败，未改该交互。未跑 E2E。
+
+## 2026-09-15：A5 会话职责桥与 A6 项目指令
+
+表 1 移除旧 A5（Pi documentation）条目；原 A6 `SESSION_ROLE_HINT` 改编号为 A5，原文不变。
+新 A6 读取当前会话明确绑定的项目根目录内一份 `AGENTS.md`，由宿主提示词模块放在 A5 之后、表 2 之前。
+项目根来自发送上下文 `context.workspace.path` 同步后的会话 workspace 绑定，不使用工具 cwd、浏览器 tab、
+进程 cwd 或默认资料目录；不向父目录寻找，也不加载 `CLAUDE.md`。
+
+每个普通模型回合开始前重读文件，workspace 改动与文件修改从下一回合生效。活跃回合中的 steering
+继续使用该回合已注入的快照。无项目、文件不存在或内容为空时省略 A6；其他读取错误明确返回失败。
+更新通过 runtime 的提示词协议映射完成，不 reset 会话、不清历史或压缩摘要；只有 runtime 更新成功才更新宿主缓存。
+`composedSystemPrompt()`、`/view_context` 与 context graph 读取同一份已注入缓存，查看动作不读文件或改写运行时。
+尚未发送的会话没有已注入 A6；绑定项目后发送一次，查看即可看到实际加载内容。
+
+pi 的最小 loader 仍关闭自动项目发现。SDK 暂无公开的 system setter，更新使用可更新的宿主 loader，
+再通过 `setActiveToolsByName(getActiveToolNames())` 重建 system，保持原工具集与会话消息。
+验证已通过：新增 5 项行为测试覆盖单根读取、缺失/错误、跨会话隔离、回合中快照、真实 workspace 映射的修改/清除，以及真实 pi 下一回合的提示词、压缩摘要与工具保持。
+相关 runtime / context export / session path / tab independence 共 41 项回归测试通过；agent runtime 守卫与 BaseAgent、项目读取及 pi 映射模块的局部 TypeScript 检查通过。未运行 Electron E2E。
 
 ## 2026-09-14 的 runtime 契约
 
@@ -58,7 +133,7 @@ dev 下从仓库启动就可能把 `overmind/CLAUDE.md`（47 KB ≈ 1.2 万 toke
 最小 loader 的 `getAgentsFiles()` 返回空，这条路直接断掉。
 
 
-## 段 6 · `SESSION_ROLE_HINT`（pi 没有的，我们加的）
+## A5 · `SESSION_ROLE_HINT`（pi 没有的，我们加的）
 
 Ral 2026-09-11：「agent 除了 coding agent 可能承担别的职责，需要在 system prompt 中指明下，
 后续 agent 就能按会话基础提示词里定义的角色或职责等来行动了」。
@@ -102,7 +177,7 @@ pi 对 `customPrompt` 只做 truthy 判断（`system-prompt.js:15`），实测�
 
 - `TYPECHECK_SURFACES_LIST_ERRORS=1 yarn typecheck:node` —— 不高于基线
 - 组装结果断言：**不含** `Pi documentation`；**除 A1 那个宿主名外与 pi 原文逐字节相同**；
-  A2 七行齐、A4 九条齐；段 6 在且是最后一段；最终 **1599** 字符（接管前 2858，省 43%）
+  A2 七行齐、A4 九条齐；A5 在且是固定基座最后一段；最终 **1599** 字符（接管前 2858，省 43%）
 - `node scripts/maestro/check-agent-runtime.mjs`
 - **未跑 Electron E2E**（项目规则：非 Ral 当场要求不主动跑）
 

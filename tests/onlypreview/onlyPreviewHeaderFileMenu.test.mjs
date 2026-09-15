@@ -59,14 +59,21 @@ const nativeHarness = () => {
       }
     },
     i18nHelper: { getMessages: () => ({ app: { onlyPreviewFileMenu: {
-      openExternally: 'Localized Open', revealInFolder: 'Localized Reveal'
+      openExternally: 'Localized Open', revealInFolder: 'Localized Reveal', copyPath: 'Localized Copy Path'
     } } }) }
   });
   state.open = () => api.showOnlyPreviewFileMenu(window);
   return state;
 };
 const handlerHarness = () => {
-  const state = { window: { isDestroyed: () => false }, current: presentation(), menus: 0 };
+  const state = {
+    window: { isDestroyed: () => false }, current: presentation(), menus: 0,
+    authorityCalls: [], clipboardWrites: [], authorityError: null, clipboardError: null,
+    roots: new Map([
+      ['project', '/Projects/中文 workspace'],
+      ['external-workspace', '/Users/test/外部 文档']
+    ])
+  };
   state.result = deferred();
   const Handler = evaluate(`export class Handler {
     ${methods('src/main/xpc/onlyPreview.handler.ts', ['showPreviewFileMenu'])}
@@ -83,6 +90,22 @@ const handlerHarness = () => {
     // 预览区**按 host 解析**(不再是进程级单例)。这个用例只有一个 host,两者指向同一个假实例。
     onlyPreviewPreviewRegionService: { snapshot: () => state.current },
     resolveOnlyPreviewPreviewRegion: () => ({ snapshot: () => state.current }),
+    onlyPreviewWorkspaceRegistry: {
+      getPreviewAuthorityItemRef: (hostToken, fileRef) => {
+        state.authorityCalls.push({ hostToken, fileRef });
+        assert.equal(hostToken, 'host');
+        assert.deepEqual(fileRef, state.current.fileRef);
+        if (state.authorityError) throw state.authorityError;
+        const rootPath = state.roots.get(fileRef.workspaceId);
+        assert.ok(rootPath, 'Only the currently authorized preview can supply a path');
+        return { rootPath, relativePath: fileRef.relativePath };
+      }
+    },
+    clipboard: { writeText: (text) => {
+      if (state.clipboardError) throw state.clipboardError;
+      state.clipboardWrites.push(text);
+    } },
+    resolve,
     showOnlyPreviewFileMenu: async () => { state.menus++; return state.result.promise; }
   }).Handler;
   state.handler = new Handler();
@@ -136,11 +159,13 @@ test('native menu imports resolve against the app host configuration', () => {
   }
 });
 
-test('native menu has exactly two localized actions and is owned by the current window', async () => {
-  for (const [index, action] of ['open', 'reveal'].entries()) {
+test('native menu has exactly three localized actions and is owned by the current window', async () => {
+  for (const [index, action] of ['open', 'reveal', 'copy-path'].entries()) {
     const state = nativeHarness();
     const pending = state.open();
-    assert.deepEqual(state.template.map((item) => item.label), ['Localized Open', 'Localized Reveal']);
+    assert.deepEqual(state.template.map((item) => item.label), [
+      'Localized Open', 'Localized Reveal', 'Localized Copy Path'
+    ]);
     assert.equal(state.popup.window, state.window);
     state.template[index].click();
     state.popup.callback();
@@ -176,22 +201,55 @@ test('Main rejects invalid/stale/no-file requests and never exposes a path in th
   state.current.fileRef = null;
   assert.equal(unwrap(await state.open()), null);
   assert.equal(state.menus, 0);
+  assert.deepEqual(state.clipboardWrites, []);
 });
 
 test('Main drops a choice when the presentation or owner changes while the menu is open', async () => {
-  for (const change of ['revision', 'window', 'file']) {
+  for (const action of ['open', 'copy-path']) for (const change of ['revision', 'window', 'file', 'replacement']) {
     const state = handlerHarness();
     const pending = state.open();
     if (change === 'revision') state.current = presentation(2);
     if (change === 'window') state.window.isDestroyed = () => true;
     if (change === 'file') state.current.fileRef = null;
-    state.result.resolve('open');
+    if (change === 'replacement') state.current = presentation(2, 'external-workspace');
+    state.result.resolve(action);
     assert.equal(unwrap(await pending), null);
+    assert.deepEqual(state.authorityCalls, []);
+    assert.deepEqual(state.clipboardWrites, []);
   }
   const state = handlerHarness();
   const pending = state.open();
   state.result.resolve('reveal');
   assert.equal(unwrap(await pending), 'reveal');
+});
+
+test('Main copies the authorized project or external preview path literally and returns no renderer action', async () => {
+  for (const [workspaceId, relativePath, expectedPath] of [
+    ['project', 'notes/说明 #100%.md', '/Projects/中文 workspace/notes/说明 #100%.md'],
+    ['external-workspace', '季度 报告.pdf', '/Users/test/外部 文档/季度 报告.pdf']
+  ]) {
+    const state = handlerHarness();
+    state.current = { ...presentation(1, workspaceId), fileRef: { workspaceId, relativePath } };
+    const pending = state.open();
+    assert.deepEqual(state.clipboardWrites, [], 'Opening the menu does not copy a path');
+    state.result.resolve('copy-path');
+    assert.equal(unwrap(await pending), null);
+    assert.deepEqual(state.authorityCalls, [{ hostToken: 'host', fileRef: { workspaceId, relativePath } }]);
+    assert.deepEqual(state.clipboardWrites, [expectedPath]);
+  }
+});
+
+test('Main surfaces authority and clipboard failures without reporting a completed copy', async () => {
+  for (const failure of ['authorityError', 'clipboardError']) {
+    const state = handlerHarness();
+    const error = new Error(failure === 'authorityError' ? 'Preview authority was revoked' : 'Clipboard unavailable');
+    state[failure] = error;
+    const pending = state.open();
+    state.result.resolve('copy-path');
+    await assert.rejects(pending, (actual) => actual === error);
+    assert.equal(state.authorityCalls.length, 1);
+    assert.deepEqual(state.clipboardWrites, []);
+  }
 });
 
 test('Shell dispatches either choice through existing routes including external files', async () => {

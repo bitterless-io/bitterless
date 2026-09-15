@@ -361,7 +361,7 @@ const tools: McpTool[] = [
   {
     name: 'preview.open',
     description:
-      'Open one explicit absolute local file or folder in the existing read-only Bitterless OnlyPreview window. This tool does not read content, enumerate directories, mutate files, or return the path.',
+      'Open one explicit absolute local file or folder in the existing read-only Bitterless OnlyPreview window. OnlyPreview, onlypreview, only preview, and bitterless-preview refer to this preview feature; use it for requests such as "通过 onlypreview 预览" or "preview this file in only preview". This tool does not read content, enumerate directories, mutate files, or return the path.',
     inputSchema: {
       type: 'object',
       required: ['path'],

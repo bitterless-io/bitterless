@@ -112,7 +112,7 @@ test('cwd defaults, relative paths, home paths and file URLs resolve identically
 
 test('tool policy preserves no-tool, host-only and builtin-plus-host allowlists', async () => {
   const tool = { name: 'host_read', description: 'host read', params: [], execute: async () => 'ok' };
-  for (const [tools, builtinTools, expected] of [[[], ['read'], { noTools: 'all' }], [[tool], [], { noTools: 'builtin' }], [[tool], ['read', 'read'], { tools: ['read', 'host_read'] }]]) {
+  for (const [tools, builtinTools, expected] of [[[], [], { noTools: 'all' }], [[], ['read'], { noTools: 'all' }], [[tool], [], { noTools: 'builtin' }], [[tool], ['read', 'read'], { tools: ['read', 'host_read'] }]]) {
     const h = harness();
     await h.adapter.createSession(options({ tools, builtinTools }));
     const args = h.calls.sessions[0];
@@ -183,20 +183,92 @@ test('native steering policy preserves idle/streaming/queued/compacting/aborting
   assert.deepEqual(h.calls.prompts.map(p => p.text), ['root', 'steer', 'queued', 'compacting', 'aborting', 'after abort']);
 });
 
-test('context bridge keeps live entries and native append arguments, with unsupported fallback', () => {
-  const entries = [{ type: 'message', message: { role: 'toolResult', content: 'full result' } }];
+test('context bridge preserves raw entries, exposes effective entries and synchronizes every native append', () => {
+  const entries = [{ id: 'old', type: 'message', message: { role: 'toolResult', content: 'full result' } }];
+  const effectiveEntries = [{ id: 'compact-id', type: 'compaction', summary: 'summary' }];
+  const state = { messages: [{ role: 'toolResult', content: 'full result' }] };
+  let projectedMessages = [{ role: 'compactionSummary', summary: 'summary' }];
   const writes = [];
-  const session = new PiRuntimeSession({ sessionManager: {
+  const context = new PiRuntimeSession({ agent: { state }, sessionManager: {
     getEntries: () => entries,
+    buildContextEntries: () => effectiveEntries,
+    buildSessionContext: () => ({ messages: projectedMessages }),
     appendCustomMessageEntry: (...args) => { writes.push(args); return 'custom-id'; },
     appendCompaction: (...args) => { writes.push(args); return 'compact-id'; }
-  } });
-  assert.equal(session.context.entries(), entries);
-  assert.equal(session.context.appendCustomMessage('user-verbatim', 'original'), 'custom-id');
-  assert.equal(session.context.appendCompaction('summary', 'kept', 42), 'compact-id');
-  assert.deepEqual(writes, [['user-verbatim', 'original', false], ['summary', 'kept', 42]]);
+  } }).context;
+  assert.equal(context.entries(), entries);
+  assert.equal(context.contextEntries(), effectiveEntries);
+  assert.equal(context.appendCompaction('summary', 'kept', 42), 'compact-id');
+  assert.deepEqual(state.messages, projectedMessages);
+  projectedMessages = [...projectedMessages, { role: 'custom', content: 'original' }];
+  assert.equal(context.appendCustomMessage('user-verbatim', 'original'), 'custom-id');
+  assert.deepEqual(state.messages, projectedMessages);
+  projectedMessages = [...projectedMessages, { role: 'custom', content: 'retained files' }];
+  assert.equal(context.appendCustomMessage('manifest', 'retained files'), 'custom-id');
+  assert.deepEqual(state.messages, projectedMessages);
+  assert.equal(context.entries(), entries);
+  assert.deepEqual(writes, [['summary', 'kept', 42], ['user-verbatim', 'original', false], ['manifest', 'retained files', false]]);
+});
+
+test('context bridge refuses writes before mutation when live synchronization is unsupported', () => {
+  for (const missing of ['buildSessionContext', 'agent', 'state']) {
+    const writes = [];
+    const native = {
+      agent: { state: { messages: [] } },
+      sessionManager: {
+        buildSessionContext: () => ({ messages: [] }),
+        appendCustomMessageEntry: (...args) => { writes.push(args); return 'custom-id'; },
+        appendCompaction: (...args) => { writes.push(args); return 'compact-id'; }
+      }
+    };
+    if (missing === 'buildSessionContext') delete native.sessionManager.buildSessionContext;
+    else if (missing === 'agent') delete native.agent;
+    else delete native.agent.state;
+    const context = new PiRuntimeSession(native).context;
+    assert.equal(context.appendCustomMessage('user-verbatim', 'original'), null, missing);
+    assert.equal(context.appendCompaction('summary', 'kept', 42), null, missing);
+    assert.deepEqual(writes, [], missing);
+  }
+});
+
+test('context append failures do not synchronize stale messages or report success', () => {
+  for (const append of [undefined, () => undefined, () => { throw new Error('append failed'); }]) {
+    const original = [{ role: 'user', content: 'unchanged live context' }];
+    const state = { messages: original };
+    let projections = 0;
+    const context = new PiRuntimeSession({ agent: { state }, sessionManager: {
+      buildSessionContext: () => { projections++; return { messages: [] }; },
+      appendCustomMessageEntry: append,
+      appendCompaction: append
+    } }).context;
+    assert.equal(context.appendCompaction('summary', 'kept', 42), null);
+    assert.equal(context.appendCustomMessage('manifest', 'files'), null);
+    assert.equal(projections, 0, 'a failed append must not reset live context');
+    assert.equal(state.messages, original);
+  }
+});
+
+test('context synchronization runs after append and a projection failure is reported as failed', () => {
+  const calls = [];
+  const original = [{ role: 'user', content: 'live context' }];
+  const state = { messages: original };
+  const context = new PiRuntimeSession({ agent: { state }, sessionManager: {
+    appendCompaction: () => { calls.push('append'); return 'compact-id'; },
+    buildSessionContext: () => { calls.push('project'); throw new Error('projection failed'); }
+  } }).context;
+  assert.equal(context.appendCompaction('summary', 'kept', 42), null);
+  assert.deepEqual(calls, ['append', 'project']);
+  assert.equal(state.messages, original);
+});
+
+test('unsupported effective context fails explicitly without falling back to raw entries', () => {
+  const entries = [{ type: 'message', message: { role: 'toolResult', content: 'full result' } }];
+  const context = new PiRuntimeSession({ sessionManager: { getEntries: () => entries } }).context;
+  assert.equal(context.entries(), entries);
+  assert.throws(() => context.contextEntries(), /does not support reading effective context entries/);
   const unsupported = new PiRuntimeSession({}).context;
   assert.deepEqual(unsupported.entries(), []);
+  assert.throws(() => unsupported.contextEntries(), /does not support reading effective context entries/);
   assert.equal(unsupported.appendCustomMessage('x', 'y'), null);
   assert.equal(unsupported.appendCompaction('x', 'y', 1), null);
 });

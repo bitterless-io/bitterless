@@ -265,16 +265,18 @@ test('human list click shows a secondary tab without changing the selected opera
   assert.equal(controller.activeTabId, 'b')
 })
 
-test('Table 3 contains structured session targets alongside foreground miniapp context', () => {
+test('D4 lists the user window without injecting the session target set or altering its routing', () => {
   const { controller } = setup()
   controller.browserSessions.enroll('chat-a', 'a', true)
   controller.browserSessions.enroll('chat-a', 'b', false)
-  const prompt = real.buildAgentTurnPrompt({ message: 'continue', nowLocal: 'now', activeTab: { state: 'miniapp', app: 'OnlyPreview' }, browserSession: controller.agentBrowserSession('chat-a'), currentUrl: 'https://a.example', briefs: [] })
-  assert.match(prompt, /Active tab: mini-app/)
-  assert.match(prompt, /"operation_tab_id":"a"/)
-  assert.match(prompt, /"operation_tab_ids":\["a","b"\]/)
-  assert.match(prompt, /"status":"ready"/)
-  assert.match(prompt, /foreground context never authorizes changing these targets/)
+  const activeTab = { tab_id: 'preview', kind: 'miniapp', title: 'OnlyPreview', miniapp: 'only-preview' }
+  const openTabs = [activeTab, { tab_id: 'visible-other-chat', kind: 'web', title: 'Visible alias', url: 'https://other.example/' }]
+  const prompt = real.buildAgentTurnPrompt({ message: 'continue', nowLocal: 'now', activeTab, openTabs, currentUrl: 'https://a.example', briefs: [] })
+  assert.match(prompt, /Active tab when this message was sent:\n\{"tab_id":"preview","kind":"miniapp"/)
+  assert.deepEqual(JSON.parse(prompt.split('Open tabs when this message was sent:\n')[1].split('\n')[0]), openTabs)
+  assert.doesNotMatch(prompt, /Session browser targets|operation_tab_ids|active_use_tab_ids|initiating_tab/)
+  assert.equal(controller.agentBrowserSession('chat-a').selectedTabId, 'a')
+  assert.deepEqual(controller.agentBrowserSession('chat-a').tabs.map(tab => tab.id), ['a', 'b'])
 })
 
 test('Vue template, script, and Less compile; count/list are scoped to selected chat and localized', async () => {

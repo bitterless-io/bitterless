@@ -59,6 +59,12 @@ export interface MaestroChatMessage {
 export interface MaestroChatDetail {
   compressedContext: string
   titleCustomized?: boolean
+  /** Only new ordinary chats opt in; consumed by their first actual user message. */
+  autoTitlePending?: boolean
+  /** Monotonic across manual renames and their undo; protects against late generated titles. */
+  titleRevision?: number
+  /** Durable attempt marker. Reload never resumes or retries this request. */
+  titleGeneration?: { requestId: string; firstMessageId: string; expectedRevision: number }
   draft?: { text: string; files: { name: string; path: string; isDirectory?: boolean }[] }
   compressedUntilMessageId?: string
   compressedAt?: number

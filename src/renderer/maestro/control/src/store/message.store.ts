@@ -9,6 +9,7 @@ import type {
   AgentCompactRequest,
   AgentCompactMessage,
   AgentConversationContext,
+  AgentMessageSnapshot,
   AgentReply,
   AgentStreamDelta,
   AgentThinkingState,
@@ -20,7 +21,7 @@ import type {
   ModelRetryProgress,
   WorkspaceRef
 } from '@maestro-shared/coach.api'
-import type { MaestroChatApi, MaestroChatMessage, MaestroChatSession, MaestroCompactionApi } from '@maestro-shared/maestroChat.api'
+import type { MaestroChatApi, MaestroChatDetail, MaestroChatMessage, MaestroChatSession, MaestroCompactionApi } from '@maestro-shared/maestroChat.api'
 import type { MaestroTask, MaestroTaskPart } from '@maestro-shared/task.api'
 import type {
   ChatAttachment,
@@ -74,6 +75,7 @@ interface SessionOptions {
   intent: MessageIntent
   source?: MessageSource
   operationTabId?: string
+  autoTitlePending?: boolean
 }
 
 const DEFAULT_OPERATION_TAB_ID = 'active-operation-tab'
@@ -208,6 +210,7 @@ const jsonSafe = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
 @injectable()
 export class MessageStoreState {
+  editingTitleSessionId = ''
   constructor(
     @inject(Symbol.for(TurnService.name))
     public readonly turnService: TurnService
@@ -656,24 +659,61 @@ export class MessageStoreState {
     })
   }
 
-  async renameSession(sessionId: string, title: string): Promise<boolean> {
+  async renameSession(sessionId: string, title: string, customized = true): Promise<boolean> {
     const value = title.trim()
     if (!value) return false
     const session = await this.loadPersistedSession(sessionId)
     if (!session) return false
     return this.queueSessionSave(session.id, async () => {
       if (session.archivedAt) return false
-      const previous = { title: session.title, titleCustomized: session.detail.titleCustomized, updatedAt: session.updatedAt }
+      const previous = { title: session.title, titleCustomized: session.detail.titleCustomized, titleRevision: session.detail.titleRevision, updatedAt: session.updatedAt }
       session.title = value
-      session.detail.titleCustomized = true
+      session.detail.titleCustomized = customized || undefined
+      session.detail.titleRevision = (session.detail.titleRevision || 0) + 1
       session.updatedAt = Date.now()
       const ok = await this.saveSessionNow(session)
       if (!ok) {
         session.title = previous.title
         session.detail.titleCustomized = previous.titleCustomized
+        session.detail.titleRevision = previous.titleRevision
         session.updatedAt = previous.updatedAt
       }
       return ok
+    })
+  }
+
+  /** Called once when the first human text supplies the fallback; never from session restore. */
+  scheduleSessionTitle(session: MessageSession, message: ChatMessage): void {
+    if (session.detail.titleGeneration || session.detail.titleCustomized) return
+    const attempt = { requestId: uid(), firstMessageId: message.id, expectedRevision: session.detail.titleRevision || 0 }
+    session.detail.titleGeneration = { ...attempt }
+    void this.persistSession(session).then(async (saved) => {
+      if (!saved || !this.canApplySessionTitle(session, attempt)) return
+      const result = await coach.generateSessionTitle({ sessionId: session.id, requestId: attempt.requestId, firstMessageId: attempt.firstMessageId, text: message.content })
+      if (result.ok) await this.applySessionTitle(session, attempt, result.title)
+    }).catch(() => undefined)
+  }
+
+  private canApplySessionTitle(session: MessageSession, attempt: NonNullable<MaestroChatDetail['titleGeneration']>): boolean {
+    const current = session.detail.titleGeneration
+    return this.getSession(session.id) === session && !session.archivedAt && !session.detail.titleCustomized
+      && this.editingTitleSessionId !== session.id && (session.detail.titleRevision || 0) === attempt.expectedRevision
+      && current?.requestId === attempt.requestId && current.firstMessageId === attempt.firstMessageId
+      && current.expectedRevision === attempt.expectedRevision
+      && session.messages.some((message) => message.id === attempt.firstMessageId && message.role === 'human'
+        && !message.localOnly && !message.promptExcluded && (!message.type || message.type === 'text') && Boolean(message.content.trim()))
+  }
+
+  private async applySessionTitle(session: MessageSession, attempt: NonNullable<MaestroChatDetail['titleGeneration']>, title: string): Promise<boolean> {
+    // Check on arrival as well as under the queue: a result received during editing is discarded.
+    if (!this.canApplySessionTitle(session, attempt) || typeof title !== 'string' || !title.trim()) return false
+    return this.queueSessionSave(session.id, async () => {
+      if (!this.canApplySessionTitle(session, attempt)) return false
+      const previous = session.title
+      session.title = title
+      const saved = await this.saveSessionNow(session)
+      if (!saved) session.title = previous
+      return saved
     })
   }
 
@@ -814,13 +854,13 @@ export class MessageStoreState {
    *
    * `promptExcluded: true` 是这条的关键 —— 少了它,一句给人看的路径会占进下一轮的提示词,
    * 而且会被 `/view_context` 导出成"模型看过的历史",那是假的。
-   * 也**不落库**:它不改 `updatedAt`、不调 `persistSession` —— 一条本地留痕不值得让会话变"脏"。
+   * 也**不落库**:不改 `updatedAt`、不调 `persistSession`，且 `localOnly` 在后续保存时排除它。
    */
   pushLocalNote(sessionId: string, content: string): void {
     const session = this.getSession(sessionId)
     if (!session) return
-    this.turnService.appendTimelineEntry(
-      session,
+    // 本地提示不构成模型对话边界，不能封口正在 streaming 的 assistant。
+    session.messages.push(
       this.withTokenCount({
         id: uid(),
         source: 'cowork',
@@ -828,6 +868,7 @@ export class MessageStoreState {
         content,
         streaming: false,
         promptExcluded: true,
+        localOnly: true,
         ts: Date.now()
       })
     )
@@ -1153,7 +1194,7 @@ export class MessageStoreState {
       // connector/customer-facing channels do not.
       allowFiles: (options.source || 'cowork') === 'cowork',
       messages: [],
-      detail: { ...emptyDetail(), workspace: this.cloneWorkspace(this.defaultWorkspace) },
+      detail: { ...emptyDetail(), autoTitlePending: options.autoTitlePending || undefined, workspace: this.cloneWorkspace(this.defaultWorkspace) },
       contextUsage: emptyUsage(),
       createdAt: now,
       updatedAt: now
@@ -1167,14 +1208,18 @@ export class MessageStoreState {
     currentHumanMessageId: string | undefined,
     attachedPaths: string[] | undefined,
     intent: 'root' | 'steering',
-    turnId: string
+    turnId: string,
+    context?: AgentConversationContext,
+    snapshot?: AgentMessageSnapshot
   ): Promise<AgentReply> {
     return await coach.sendAgentMessage({
       sessionId: session.id,
       turnId,
       intent,
       message,
-      context: this.buildAgentContext(session, currentHumanMessageId, attachedPaths)
+      messageId: currentHumanMessageId,
+      snapshot,
+      context: context || this.buildAgentContext(session, currentHumanMessageId, attachedPaths)
     })
   }
 
@@ -1552,6 +1597,9 @@ export class MessageStoreState {
       detail: {
         compressedContext: session.detail.compressedContext || '',
         titleCustomized: session.detail.titleCustomized,
+        autoTitlePending: session.detail.autoTitlePending,
+        titleRevision: session.detail.titleRevision,
+        titleGeneration: session.detail.titleGeneration ? { ...session.detail.titleGeneration } : undefined,
         draft: session.detail.draft ? jsonSafe(session.detail.draft) : undefined,
         compressedUntilMessageId: session.detail.compressedUntilMessageId,
         compressedAt: session.detail.compressedAt,
@@ -1561,7 +1609,7 @@ export class MessageStoreState {
         // **只要绑了工作区,会话就一直静默存不进库**(2026-09-10 与发送失败同一根因)。
         workspace: this.cloneWorkspace(session.detail.workspace)
       },
-      messages: session.messages.map((message) => ({
+      messages: session.messages.filter((message) => !message.localOnly).map((message) => ({
         id: message.id,
         source: 'cowork',
         role: message.role,

@@ -354,6 +354,16 @@ export class OnlyPreviewPreviewRegionService {
     return this.snapshotInternal();
   }
 
+  /** A pending selection must never expose the previous file as currently displayed. */
+  displayedFilePath(hostToken: string): string | null {
+    requireOnlyPreviewPreviewRuntime(hostToken, this.runtime);
+    if (this.presentation.status !== 'ready' ||
+        this.presentation.selectionRevision !== this.selectionRevision || !this.presentation.fileRef) return null;
+    const fileRef = this.presentation.fileRef;
+    const workspace = onlyPreviewWorkspaceRegistry.requireWorkspace(hostToken, fileRef.workspaceId);
+    return resolve(workspace.displayPath, fileRef.relativePath);
+  }
+
   snapshotForVue(hostToken: string, previewRuntimeToken: string): OnlyPreviewPreviewPresentation {
     requireOnlyPreviewVueRuntime(hostToken, previewRuntimeToken, this.runtime, this.viewService);
     return this.snapshotInternal(true);

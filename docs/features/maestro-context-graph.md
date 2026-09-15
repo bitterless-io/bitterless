@@ -103,17 +103,11 @@ Ral 2026-09-09 的全局规则:「你尽量不要用带 border 的 UI 设计,除
 既有的 `SlashMenu.less` 里有 `border: 1px solid var(--bl-royalblue-100, …)`:**不在本次清理范围**
 (规则明说"已经存在的边框不要顺手清")。
 
-### #2.5 **没有 jsonl 页脚** —— 而且顺带发现一条缺陷
+### #2.5 **没有 jsonl 页脚**
 
-cowork 那份底部显示会话的 model-io jsonl 目录。bitterless **不做**:`setModelIoRoot()`
-(`main/agent/runtime/modelIoLog.ts:34`)在整个 `src/` 里**没有任何调用点**,所以那条证据链是死的,
-`dirForSession()` 只会回 `null`。给一个永远空的页脚就是"读起来像我们有这个信息",与 cowork 删掉
-`contextWindow` 同一条理由。
-
-> **单独记的缺陷**:今天新加的 `/copy_session_path`(`maestroAgent.service.ts:1078`)依赖同一条死链,
-> 所以它大概**永远**回 `This session has no model I/O log yet — send a message first.`。
-> 这不是本次改动的一部分,也不该顺手改(它属于另一份契约 `maestro-slash-commands.md`)——
-> 记进 `docs/issues/`,由 owner 决定是补 boot 时的 `setModelIoRoot()` 还是撤掉那条命令。
+结构图保持只展示上下文结构，不添加日志页脚。原先未配置 `setModelIoRoot()` 的缺陷已由
+[日志入口修复](../issues/maestro-model-io-chain-is-dead.md) 单独处理（2026-09-15）；
+日志路径通过 `/copy_session_path` 和 `/view_context` 获取。
 
 ### #2.6 加一条命令要改三个文件,而且 Enter 分支在两处
 
@@ -218,15 +212,14 @@ cowork 那份底部显示会话的 model-io jsonl 目录。bitterless **不做**
 ## #7 不做
 
 - **不移植 cowork 的 Tailwind 类、`controlText()`、ioc/inversify store**(#2.2 / #2.3)。
-- **不改 `/view_context` 的剪贴板语义。** 它在 bitterless 也是 `getEntries()` 的**超集**
-  (压缩之后多报模型看不到的条目)—— 同一个缺陷,cowork 那边已单独记
-  (`view-context-over-reports-after-compaction.md`),这边照记不照改。
+- 结构图继续用原始条目统计被吸收的内容；`/view_context` 的有效上下文读取由
+  [独立修复](../issues/view-context-includes-compacted-history.md) 处理。
 - **不给工具条目可点**(它们在界面上没有载体)。
 - **不加持久化的 turn 字段**(上下文回合是 main 侧算得出的派生量)。
 - **不用 Arco `a-modal`**:它的 `content` 收窄成 string、且本仓规矩要求 closable + 关闭按钮,
   而这里要的是"面板内半透明遮罩 + 底下就是跳转落点"。用既有的手写遮罩先例
   (`.chat-panel__drop-overlay`)。
-- **不抽公共插值器、不清 `SlashMenu.less` 既有边框、不修 `/copy_session_path` 的死链**(#2.5 单独记)。
+- **不抽公共插值器、不清 `SlashMenu.less` 既有边框**；日志入口修复见 #2.5 的独立 issue。
 
 ## #8 验收
 

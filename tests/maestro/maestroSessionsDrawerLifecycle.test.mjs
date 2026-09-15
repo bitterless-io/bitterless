@@ -14,19 +14,33 @@ assert.deepEqual(controlRender.errors, [])
 const drawerSource = readFileSync(resolve(root, 'src/renderer/maestro/control/src/SessionsDrawer.vue'), 'utf8')
 const drawer = parse(drawerSource).descriptor
 const drawerScript = compileScript(drawer, { id: 'stable-drawer', inlineTemplate: true })
-const fixture = { listeners: new Map(), mounted: 0, unmounted: 0, panelsMounted: 0, panelsUnmounted: 0, visibility: [], notices: new Map(), focusCount: 0 }
+const searchSource = readFileSync(resolve(root, 'src/renderer/maestro/control/src/SessionSearchModal.vue'), 'utf8')
+const searchScript = compileScript(parse(searchSource).descriptor, { id: 'session-search', inlineTemplate: true })
+const titleSource = readFileSync(resolve(root, 'src/renderer/maestro/control/src/SessionTitle.vue'), 'utf8')
+const titleScript = compileScript(parse(titleSource).descriptor, { id: 'session-title', inlineTemplate: true })
+const fixture = { listeners: new Map(), mounted: 0, unmounted: 0, panelsMounted: 0, panelsUnmounted: 0, visibility: [], notices: new Map(), focusCount: 0, menuCalls: [], editCalls: [], sessionActions: [] }
 const session = (id) => ({ id, title: `Session ${id}`, messages: [], detail: {}, updatedAt: 1 })
-fixture.sessions = ['a', 'b', 'c'].map(session)
+fixture.sessions = vue.reactive(['a', 'b', 'c'].map(session))
 fixture.messages = vue.reactive({
   sessionListItems: fixture.sessions.map((item) => ({ ...item, running: false, unread: false, preview: '' })),
   refreshHistory: async () => {},
-  archive: async (id) => { fixture.messages.sessionListItems = fixture.messages.sessionListItems.filter((item) => item.id !== id); return true },
-  restore: async (id) => { fixture.messages.sessionListItems.push({ ...session(id), running: false, unread: false, preview: '' }); return true }
+  loadPersistedSession: async (id) => fixture.sessions.find((item) => item.id === id),
+  renameSession: async (id, title, customized = true) => {
+    fixture.sessionActions.push({ method: 'renameSession', id, title, customized })
+    const session = fixture.sessions.find((item) => item.id === id)
+    session.title = title
+    session.detail.titleCustomized = customized || undefined
+    const item = fixture.messages.sessionListItems.find((entry) => entry.id === id)
+    if (item) item.title = title
+    return true
+  },
+  archive: async (id) => { fixture.sessionActions.push({ method: 'archive', id }); fixture.messages.sessionListItems = fixture.messages.sessionListItems.filter((item) => item.id !== id); return true },
+  restore: async (id) => { fixture.sessionActions.push({ method: 'restore', id }); fixture.messages.sessionListItems.push({ ...session(id), running: false, unread: false, preview: '' }); return true }
 })
 fixture.channel = vue.reactive({
   activeSessionId: 'a',
-  selectAfterArchive: async (id) => { if (fixture.channel.activeSessionId === id) fixture.channel.activeSessionId = fixture.messages.sessionListItems[0]?.id || '' },
-  selectMaestroHistorySession: async (id) => { fixture.channel.activeSessionId = id; return true }
+  selectAfterArchive: async (id) => { fixture.sessionActions.push({ method: 'selectAfterArchive', id }); if (fixture.channel.activeSessionId === id) fixture.channel.activeSessionId = fixture.messages.sessionListItems[0]?.id || '' },
+  selectMaestroHistorySession: async (id) => { fixture.sessionActions.push({ method: 'selectMaestroHistorySession', id }); fixture.channel.activeSessionId = id; return true }
 })
 fixture.chat = new Proxy({}, { get: (_, key) => String(key) })
 fixture.Button = vue.defineComponent({ setup(_, { attrs, slots }) { return () => vue.h('button', attrs, slots.default?.()) } })
@@ -38,6 +52,10 @@ fixture.Drawer = vue.defineComponent({
     vue.watch(() => props.visible, (visible) => fixture.visibility.push(visible), { immediate: true })
     return () => vue.h('aside', { visible: props.visible, popupContainer: props.popupContainer }, slots.default?.())
   }
+})
+fixture.Modal = vue.defineComponent({
+  props: ['visible'],
+  setup(props, { slots }) { return () => vue.h('dialog', { visible: props.visible }, slots.default?.()) }
 })
 globalThis.__drawerFixture = fixture
 globalThis.__drawerVue = vue
@@ -60,29 +78,37 @@ after(() => {
 })
 const mocks = {
   vue: Object.keys(vue).filter((key) => /^[a-zA-Z_$][\w$]*$/.test(key)).map((key) => `export const ${key} = globalThis.__drawerVue.${key};`).join('\n'),
-  '@arco-design/web-vue': `export const Button = globalThis.__drawerFixture.Button; export const Drawer = globalThis.__drawerFixture.Drawer; export const Message = { success: (notice) => globalThis.__drawerFixture.notices.set(notice.id, notice), error: (notice) => globalThis.__drawerFixture.notices.set(notice.id, notice) };`,
+  '@arco-design/web-vue': `export const Button = globalThis.__drawerFixture.Button; export const Drawer = globalThis.__drawerFixture.Drawer; export const Modal = globalThis.__drawerFixture.Modal; export const Message = { success: (notice) => globalThis.__drawerFixture.notices.set(notice.id, notice), error: (notice) => globalThis.__drawerFixture.notices.set(notice.id, notice) };`,
   '@tabler/icons-vue': `export const IconArchive = 'span', IconSearch = 'span', IconX = 'span';`,
   '@renderer/common/i18n/i18n.helper': `export const i18nHelper = { maestroControl: { chat: globalThis.__drawerFixture.chat } };`,
-  'electron-xpc/renderer': `export const xpcRenderer = { subscribe: () => {} };`,
+  'electron-xpc/renderer': `export const xpcRenderer = { subscribe: () => {} }; export const createXpcRendererEmitter = (handler) => ({ showSessionMenu: async (params) => { globalThis.__drawerFixture.menuCalls.push({ handler, params }); return { ok: true }; }, editControlText: async (params) => { globalThis.__drawerFixture.editCalls.push({ handler, params }); return { ok: true }; } });`,
   './store/message.store': 'export const messageStore = globalThis.__drawerFixture.messages;',
   './message.store': 'export const messageStore = globalThis.__drawerFixture.messages;',
   './store/channel.store': 'export const channelStore = globalThis.__drawerFixture.channel;',
   './channel.store': 'export const channelStore = globalThis.__drawerFixture.channel;',
   '../../../common/components/IconBtn/IconBtn.vue': 'export default globalThis.__drawerFixture.Button;',
   './SessionsDrawer.less': '',
+  './SessionSearchModal.less': '',
+  './SessionTitle.less': '',
   'fixture-drawer': drawerScript.content,
+  'fixture-search': searchScript.content,
+  'fixture-title': titleScript.content,
   'fixture-control-render': controlRender.code
 }
 const compiled = await build({
-  stdin: { contents: `export { default as SessionsDrawer } from 'fixture-drawer'; export { render } from 'fixture-control-render'; export { sessionActions } from './store/sessionActions.store';`, resolveDir: resolve(root, 'src/renderer/maestro/control/src'), loader: 'ts' },
+  stdin: { contents: `export { default as SessionsDrawer } from 'fixture-drawer'; export { default as SessionSearchModal } from 'fixture-search'; export { default as SessionTitle } from 'fixture-title'; export { render } from 'fixture-control-render'; export { sessionActions } from './store/sessionActions.store';`, resolveDir: resolve(root, 'src/renderer/maestro/control/src'), loader: 'ts' },
   bundle: true, write: false, format: 'esm', platform: 'node', tsconfig: resolve(root, 'tsconfig.web.json'),
   plugins: [{ name: 'drawer-lifecycle', setup(ctx) {
     ctx.onResolve({ filter: /.*/ }, ({ path }) => Object.hasOwn(mocks, path) ? { path, namespace: 'drawer-fixture' } : undefined)
     ctx.onLoad({ filter: /.*/, namespace: 'drawer-fixture' }, ({ path }) => ({ contents: mocks[path], loader: 'ts', resolveDir: resolve(root, 'src/renderer/maestro/control/src') }))
   } }]
 })
-const { SessionsDrawer, render, sessionActions } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`)
-const node = (type, text = '') => ({ type, text, children: [], parent: null, props: {}, querySelector: () => null })
+const { SessionsDrawer, SessionSearchModal, SessionTitle, render, sessionActions } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`)
+const node = (type, text = '') => vue.markRaw(Object.assign(new TestElement(type === 'input' || type === 'textarea'), {
+  type, text, children: [], parent: null, props: {}, listeners: new Map(), querySelector: () => null,
+  addEventListener(event, handler) { this.listeners.set(event, handler) },
+  focus() { document.activeElement = this }, select() { this.selected = true }
+}))
 const renderer = vue.createRenderer({
   createElement: (type) => node(type), createText: (text) => node('#text', text), createComment: (text) => node('#comment', text),
   setText: (entry, text) => { entry.text = text }, setElementText: (entry, text) => { entry.text = text; entry.children = [] },
@@ -103,6 +129,7 @@ const flush = async () => { await vue.nextTick(); await new Promise((done) => se
 function mountControl() {
   const components = Object.fromEntries([...control.template.content.matchAll(/<([A-Z]\w*)\b/g)].map((match) => [match[1], { render: () => vue.h('span') }]))
   components.SessionsDrawer = SessionsDrawer
+  components.SessionTitle = SessionTitle
   components.ChatPanel = vue.defineComponent({
     props: ['session'],
     setup(props) { vue.onMounted(() => fixture.panelsMounted++); vue.onBeforeUnmount(() => fixture.panelsUnmounted++); return () => vue.h('main', { sessionId: props.session.id }) }
@@ -151,11 +178,11 @@ test('actual Control template keeps the same Drawer instance and host node while
     await flush()
     assert.equal(find(container, (entry) => entry.type === 'aside'), originalDrawer)
     assert.deepEqual(fixture.visibility, [])
-    await sessionActions.undoArchive()
+    await sessionActions.undo()
     await flush()
     assert.equal(fixture.channel.activeSessionId, 'c')
     assert.equal(find(container, (entry) => entry.type === 'aside'), originalDrawer)
-    assert.equal(sessionActions.lastArchived, null)
+    assert.equal(sessionActions.lastUndo, null)
   } finally {
     app.unmount()
   }
@@ -196,11 +223,22 @@ test('stable drawer owns history navigation, search, IME guards and editable und
     await flush()
     assert.equal(sessionActions.historyVisible, false)
     assert.equal(sessionActions.searchVisible, true)
-    sessionActions.lastArchived = { id: 'a', title: 'Session a' }
+    sessionActions.lastUndo = { kind: 'archive', id: 'a', title: 'Session a' }
+    const pendingUndo = sessionActions.lastUndo
+    const actionsBeforeUndo = fixture.sessionActions.length
+    fixture.editCalls.length = 0
     const undo = key('z', { metaKey: true, target: new TestElement(true) })
-    assert.equal(undo.defaultPrevented, undefined)
-    assert.equal(sessionActions.lastArchived.id, 'a')
-    sessionActions.lastArchived = null
+    await flush()
+    assert.equal(undo.defaultPrevented, true)
+    assert.equal(undo.stopped, true)
+    assert.deepEqual(fixture.editCalls, [{ handler: 'CoachXpcHandler', params: { action: 'undo' } }])
+    assert.equal(fixture.sessionActions.length, actionsBeforeUndo)
+    assert.equal(sessionActions.lastUndo, pendingUndo)
+    const redo = key('z', { metaKey: true, shiftKey: true, target: new TestElement(true) })
+    assert.equal(redo.defaultPrevented, undefined)
+    assert.equal(redo.stopped, undefined)
+    assert.equal(fixture.editCalls.length, 1)
+    sessionActions.lastUndo = null
     sessionActions.closeSearch()
     fixture.messages.sessionListItems = []
     key('h', { metaKey: true })
@@ -209,6 +247,191 @@ test('stable drawer owns history navigation, search, IME guards and editable und
     await flush()
     assert.equal(sessionActions.historyVisible, false)
   } finally { app.unmount() }
+})
+
+test('right-clicking an actual non-current drawer row opens its native menu without selection or drawer closure', async () => {
+  sessionActions.historyVisible = false
+  sessionActions.searchVisible = false
+  fixture.channel.activeSessionId = 'a'
+  fixture.messages.sessionListItems = fixture.sessions.map((item) => ({ ...item, running: item.id === 'b', unread: false, preview: '' }))
+  fixture.menuCalls.length = 0
+  fixture.sessionActions.length = 0
+  fixture.notices.clear()
+  const { app, container } = mountControl()
+  try {
+    sessionActions.toggleHistory()
+    await flush()
+    const originalDrawer = find(container, (entry) => entry.type === 'aside')
+    const originalPanel = find(container, (entry) => entry.type === 'main')
+    const row = find(container, (entry) => entry.props.name === 'maestro__history-item'
+      && find(entry, (child) => child.props.class === 'chat-panel__history-item-title' && child.text === 'Session b'))
+    assert.equal(row.props['aria-current'], undefined)
+    assert.ok(find(row, (entry) => entry.props.name === 'maestro__history-item-running'))
+    fixture.visibility.length = 0
+    const event = { preventDefault() { this.defaultPrevented = true }, stopPropagation() { this.stopped = true } }
+    await row.props.onContextmenu(event)
+    await flush()
+    assert.equal(event.defaultPrevented, true)
+    assert.equal(event.stopped, true)
+    assert.deepEqual(fixture.menuCalls, [{ handler: 'CoachXpcHandler', params: { sessionId: 'b' } }])
+    assert.deepEqual(fixture.sessionActions, [])
+    assert.equal(fixture.channel.activeSessionId, 'a')
+    assert.equal(sessionActions.historyVisible, true)
+    assert.equal(sessionActions.searchVisible, false)
+    assert.equal(find(container, (entry) => entry.type === 'aside'), originalDrawer)
+    assert.equal(find(container, (entry) => entry.type === 'main'), originalPanel)
+    assert.deepEqual(fixture.visibility, [])
+    assert.deepEqual(fixture.messages.sessionListItems.map((item) => item.id), ['a', 'b', 'c'])
+    assert.equal(fixture.notices.size, 0, 'native menu dismissal has no toast')
+  } finally { app.unmount() }
+})
+
+test('actual title-search results right-click the running/unread session without selecting or closing the modal', async () => {
+  sessionActions.historyVisible = false
+  sessionActions.searchVisible = true
+  fixture.channel.activeSessionId = 'a'
+  fixture.messages.sessionListItems = fixture.sessions.map((item) => ({ ...item, running: item.id === 'b', unread: item.id === 'c', preview: '' }))
+  fixture.menuCalls.length = 0
+  fixture.sessionActions.length = 0
+  let closed = 0
+  const app = renderer.createApp(SessionSearchModal, { onClose: () => { closed++ } })
+  const container = node('root')
+  app.mount(container)
+  try {
+    const input = find(container, (entry) => entry.props.name === 'maestro__session-search-input')
+    input.value = 'Session'
+    input.listeners.get('input')({ target: input })
+    await flush()
+    for (const [id, status] of [['b', 'running'], ['c', 'unread']]) {
+      const row = find(container, (entry) => entry.props.id === `maestro-session-search-${id}`)
+      assert.ok(find(row, (entry) => entry.props.class === `chat-panel__history-item-${status}`))
+      const event = { preventDefault() { this.defaultPrevented = true }, stopPropagation() { this.stopped = true } }
+      await row.props.onContextmenu(event)
+      await flush()
+      assert.equal(event.defaultPrevented, true)
+      assert.equal(event.stopped, true)
+    }
+    assert.deepEqual(fixture.menuCalls, [
+      { handler: 'CoachXpcHandler', params: { sessionId: 'b' } },
+      { handler: 'CoachXpcHandler', params: { sessionId: 'c' } }
+    ])
+    assert.deepEqual(fixture.sessionActions, [])
+    assert.equal(fixture.channel.activeSessionId, 'a')
+    assert.equal(sessionActions.searchVisible, true)
+    assert.equal(find(container, (entry) => entry.type === 'dialog').props.visible, true)
+    assert.equal(find(container, (entry) => entry.props.id === 'maestro-session-search-a').props['aria-selected'], true)
+    assert.equal(closed, 0)
+    assert.deepEqual(fixture.messages.sessionListItems.map((item) => item.id), ['a', 'b', 'c'])
+  } finally { app.unmount(); sessionActions.searchVisible = false }
+})
+
+test('actual title Enter commit focuses the label so Cmd+Z undoes the saved rename exactly once', async () => {
+  sessionActions.historyVisible = false
+  sessionActions.searchVisible = false
+  sessionActions.lastUndo = { kind: 'archive', id: 'c', title: 'Session c' }
+  fixture.channel.activeSessionId = 'a'
+  fixture.sessions[0].title = 'Session a'
+  fixture.sessions[0].detail = {}
+  fixture.sessionActions.length = 0
+  fixture.editCalls.length = 0
+  fixture.notices.clear()
+  const { app, container } = mountControl()
+  const keyboardEvent = (key, target, options = {}) => ({ key, target, preventDefault() { this.defaultPrevented = true }, stopPropagation() { this.stopped = true }, ...options })
+  try {
+    const label = find(container, (entry) => entry.props.name === 'maestro__session-title-label')
+    await label.props.onDblclick()
+    await flush()
+    const input = find(container, (entry) => entry.props.name === 'maestro__session-title-input')
+    assert.equal(document.activeElement, input)
+    assert.equal(input.selected, true)
+    assert.equal(fixture.messages.editingTitleSessionId, 'a')
+    const previousUndo = sessionActions.lastUndo
+    const textUndo = keyboardEvent('z', input, { metaKey: true })
+    fixture.listeners.get('keydown')(textUndo)
+    await flush()
+    assert.equal(textUndo.defaultPrevented, true)
+    assert.deepEqual(fixture.editCalls, [{ handler: 'CoachXpcHandler', params: { action: 'undo' } }])
+    assert.equal(sessionActions.lastUndo, previousUndo)
+    assert.deepEqual(fixture.sessionActions, [])
+
+    input.value = '  Saved title  '
+    input.listeners.get('input')({ target: input })
+    input.props.onKeydown(keyboardEvent('Enter', input))
+    await flush()
+    const savedLabel = find(container, (entry) => entry.props.name === 'maestro__session-title-label')
+    assert.equal(savedLabel.text, 'Saved title')
+    assert.equal(fixture.messages.editingTitleSessionId, '')
+    assert.equal(document.activeElement, savedLabel)
+    assert.equal(sessionActions.lastUndo.kind, 'rename')
+    assert.equal(fixture.sessions[0].detail.titleCustomized, true)
+    assert.deepEqual(fixture.sessionActions, [{ method: 'renameSession', id: 'a', title: 'Saved title', customized: true }])
+
+    const undo = keyboardEvent('z', document.activeElement, { metaKey: true })
+    fixture.listeners.get('keydown')(undo)
+    await flush()
+    assert.equal(undo.defaultPrevented, true)
+    assert.equal(undo.stopped, true)
+    assert.equal(fixture.editCalls.length, 1, 'saved-title undo does not call the native text endpoint')
+    assert.equal(fixture.sessions[0].title, 'Session a')
+    assert.equal(fixture.sessions[0].detail.titleCustomized, undefined)
+    assert.equal(find(container, (entry) => entry.props.name === 'maestro__session-title-label').text, 'Session a')
+    assert.deepEqual(fixture.sessionActions, [
+      { method: 'renameSession', id: 'a', title: 'Saved title', customized: true },
+      { method: 'renameSession', id: 'a', title: 'Session a', customized: false }
+    ])
+    assert.equal(sessionActions.lastUndo, null)
+    assert.equal(fixture.notices.size, 1)
+    const secondUndo = keyboardEvent('z', document.activeElement, { metaKey: true })
+    fixture.listeners.get('keydown')(secondUndo)
+    await flush()
+    assert.equal(secondUndo.defaultPrevented, undefined)
+    assert.equal(fixture.sessionActions.length, 2)
+    assert.equal(fixture.channel.activeSessionId, 'a')
+  } finally { app.unmount() }
+})
+
+test('actual title blur commits the rename without stealing focus from the next control', async () => {
+  sessionActions.historyVisible = false
+  sessionActions.searchVisible = false
+  sessionActions.lastUndo = null
+  fixture.channel.activeSessionId = 'a'
+  fixture.sessions[0].title = 'Session a'
+  fixture.sessions[0].detail = {}
+  fixture.sessionActions.length = 0
+  const { app, container } = mountControl()
+  try {
+    await find(container, (entry) => entry.props.name === 'maestro__session-title-label').props.onDblclick()
+    await flush()
+    const input = find(container, (entry) => entry.props.name === 'maestro__session-title-input')
+    input.value = 'Blur title'
+    input.listeners.get('input')({ target: input })
+    const nextControl = node('textarea')
+    nextControl.focus()
+    await input.props.onBlur()
+    await flush()
+    assert.equal(document.activeElement, nextControl)
+    assert.equal(fixture.messages.editingTitleSessionId, '')
+    assert.equal(fixture.sessions[0].title, 'Blur title')
+    assert.equal(find(container, (entry) => entry.props.name === 'maestro__session-title-label').text, 'Blur title')
+    assert.equal(sessionActions.lastUndo.kind, 'rename')
+    assert.deepEqual(fixture.sessionActions, [{ method: 'renameSession', id: 'a', title: 'Blur title', customized: true }])
+  } finally { app.unmount(); sessionActions.lastUndo = null }
+})
+
+test('title editor registers only its current session and clears on escape and unmount', async () => {
+  fixture.channel.activeSessionId = 'a'
+  const { app, container } = mountControl()
+  await find(container, entry => entry.props.name === 'maestro__session-title-label').props.onDblclick()
+  await flush()
+  assert.equal(fixture.messages.editingTitleSessionId, 'a')
+  find(container, entry => entry.props.name === 'maestro__session-title-input').props.onKeydown({ key: 'Escape', preventDefault() {}, stopPropagation() {} })
+  await flush()
+  assert.equal(fixture.messages.editingTitleSessionId, '')
+  await find(container, entry => entry.props.name === 'maestro__session-title-label').props.onDblclick()
+  await flush()
+  assert.equal(fixture.messages.editingTitleSessionId, 'a')
+  app.unmount()
+  assert.equal(fixture.messages.editingTitleSessionId, '')
 })
 
 test('active-row emphasis uses the requested 4 px left border and no current-session arrow', () => {

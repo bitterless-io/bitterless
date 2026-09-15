@@ -6,13 +6,13 @@ import { toolResultLooksFailed } from './toolResultFailure'
 export type PiModule = typeof import('@earendil-works/pi-coding-agent')
 
 /** Supply only host instructions. Disk prompts, agent files, skills and extensions remain off. */
-export const createPiResourceLoader = (pi: PiModule, systemPrompt: string) => ({
+export const createPiResourceLoader = (pi: PiModule, systemPrompt: string | (() => string)) => ({
   getExtensions: () => ({ extensions: [], errors: [], runtime: pi.createExtensionRuntime() }),
   getSkills: () => ({ skills: [], diagnostics: [] }),
   getPrompts: () => ({ prompts: [], diagnostics: [] }),
   getThemes: () => ({ themes: [], diagnostics: [] }),
   getAgentsFiles: () => ({ agentsFiles: [] }),
-  getSystemPrompt: () => systemPrompt,
+  getSystemPrompt: () => typeof systemPrompt === 'function' ? systemPrompt() : systemPrompt,
   getSystemPromptSource: () => undefined,
   getAppendSystemPrompt: () => [],
   getAppendSystemPromptSources: () => [],

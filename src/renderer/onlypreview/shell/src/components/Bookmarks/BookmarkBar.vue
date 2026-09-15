@@ -1,6 +1,6 @@
 <template>
   <nav
-    v-if="onlyPreviewShellStore.workspace"
+    v-if="onlyPreviewShellStore.workspace && onlyPreviewShellStore.projectionReady"
     name="onlypreview__bookmarks"
     class="onlypreview-bookmarks"
     :aria-label="onlyPreviewI18n.bookmarks.label"

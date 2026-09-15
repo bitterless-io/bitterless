@@ -58,6 +58,8 @@ export interface ChatMessage {
   confirm?: MaestroChatConfirm
   compressed?: boolean
   promptExcluded?: boolean
+  /** Renderer-only notice; exclude it from every session save. */
+  localOnly?: boolean
   compactSummary?: string
   compactUntilMessageId?: string
   tokenCount?: number
@@ -102,6 +104,7 @@ export interface Turn {
   steering?: {
     count: number
     pending: boolean
+    pendingCount?: number
   }
 }
 

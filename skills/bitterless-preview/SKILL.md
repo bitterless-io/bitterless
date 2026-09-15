@@ -1,16 +1,23 @@
 ---
 name: bitterless-preview
 metadata:
-  version_code: "260904151653"
+  version_code: "260915135852"
 description: >-
-  Open one explicit local file or folder in the running Bitterless OnlyPreview window for
-  read-only human inspection through the `bitterless` (Production) or `bitterless-preview`
-  (Preview) MCP server. Use when the user asks to preview a known local target or an artifact the
-  agent has just produced. Never guess, search for, enumerate, edit, or infer a target path. DEV
-  and DEBUG MCP aliases are test-only.
+  Preview an explicit local file or folder for read-only human inspection in Bitterless
+  OnlyPreview. Use for requests such as “通过 onlypreview 预览”, “用 only preview 打开这个文件”,
+  “bitterless-preview 预览”, or “preview this file in OnlyPreview”, including an artifact the
+  agent just produced. OnlyPreview, onlypreview, only preview, and bitterless-preview mean the
+  same preview intent; no explicit skill invocation is needed. Use the configured real
+  `bitterless` (Production) or `bitterless-preview` (Preview) MCP server. Never guess, search for,
+  enumerate, edit, or infer a target path. DEV and DEBUG MCP aliases are test-only.
 ---
 
 # Bitterless Preview
+
+Treat “通过 onlypreview 预览”, “用 only preview 预览”, and “通过 bitterless-preview 打开” as
+requests to use this skill when the local target is known. OnlyPreview / onlypreview / only preview
+are equivalent names for the preview feature, regardless of spacing or case. They are not MCP
+server names; keep the exact server name from the current installation Guide.
 
 Use OnlyPreview only as a read-only handoff for a local file or folder whose exact path is already
 known from the user's request or from an artifact you just created in this session. Two server
@@ -36,6 +43,7 @@ dependency is configured, read [references/mcp-setup.md](references/mcp-setup.md
 
 Use `bitterless` or `bitterless-preview` for real work — they are shipped editions holding the
 user's own data in separate storage. Names such as `bitterless-debug`, `bitterless-debug-prod`,
-`bitterless-debug-dev`, and `bitterless-dev` are test-only. If both real editions are configured,
+`bitterless-debug-dev`, and `bitterless-dev` are test-only. Honor an edition explicitly selected by
+the user or the current installation Guide. Otherwise, if both real editions are configured,
 prefer `bitterless`. If the configured bridge is unavailable, ask the user to start or keep that
 edition of Bitterless running; never silently substitute a DEV or DEBUG instance.

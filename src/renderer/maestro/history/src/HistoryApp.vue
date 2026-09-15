@@ -1,5 +1,5 @@
 <template>
-  <div name="browser-history" class="browser-history full-container" @keydown="historyStore.keydown($event)" @mouseup="historyStore.action('focus')">
+  <div name="browser-history" class="browser-history full-container" @keydown="historyStore.keydown($event)">
     <div name="browser-history__panel" class="browser-history__panel">
       <div name="browser-history__header" class="browser-history__header">
         <span>{{ i18nHelper.browserHistory.title }}</span>

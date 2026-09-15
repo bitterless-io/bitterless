@@ -13,7 +13,6 @@ const messageStore = readFileSync(join(root, 'renderer/maestro/control/src/store
 const messageType = readFileSync(join(root, 'renderer/maestro/control/src/store/message.type.ts'), 'utf8')
 const chatPanel = readFileSync(join(root, 'renderer/maestro/control/src/ChatPanel.vue'), 'utf8')
 const messageItem = readFileSync(join(root, 'renderer/maestro/control/src/MessageItem.vue'), 'utf8')
-const maestroPrompt = readFileSync(join(root, 'main/agent/prompt/maestroSysPrompt.ts'), 'utf8')
 
 const assert = (condition, message) => {
   if (!condition) throw new Error(message)
@@ -111,7 +110,6 @@ assert(resolveWorkspacePath.includes('isInsideRoot(realRoot, realExisting)'), 'w
 
 for (const tool of ['read_file', 'list_workspace_files', 'search_files', 'write_file', 'create_artifact', 'workspace_context']) {
   assert(maestroWindow.includes(`name: '${tool}'`), `agent should expose ${tool}`)
-  assert(maestroPrompt.includes(tool), `system prompt should mention ${tool}`)
 }
 for (const delegation of [
   'this.workspaceFile.toolReadFile(sessionKey, pathArg, options)',

@@ -198,6 +198,7 @@ select {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  border-right: 1px solid var(--onlypreview-divider);
   background: var(--onlypreview-project-surface);
 }
 
@@ -476,6 +477,7 @@ select {
 }
 
 .onlypreview-shell__project-empty,
+.onlypreview-shell__project-loading,
 .onlypreview-shell__no-results {
   min-height: 0;
   flex: 1;
@@ -486,6 +488,15 @@ select {
   padding: 22px;
   color: var(--onlypreview-muted);
   text-align: center;
+}
+
+.onlypreview-shell__project-loading {
+  gap: 10px;
+  font-size: 11px;
+}
+
+.onlypreview-shell__project-loading .arco-spin-icon {
+  color: var(--onlypreview-royal);
 }
 
 .onlypreview-shell__index-progress {

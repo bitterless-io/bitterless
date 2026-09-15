@@ -1,6 +1,8 @@
 import { homedir } from 'os'
 import { join } from 'path'
-import { BASE_SYSTEM_PROMPT } from './prompt/sysPrompt'
+import { A7_DISCIPLINE, BASE_SYSTEM_PROMPT } from './prompt/sysPrompt'
+import { readProjectInstructions } from './prompt/projectInstructions'
+import { TurnSteeringInbox } from './steering/turnSteeringInbox'
 import { inputBudget } from './runtime/inputBudget'
 import { modelIoLog } from './runtime/modelIoLog'
 import type { AgentActivityStep, AgentThinkingState, CodexDebugEvent, LlmEffort } from './runtime/runtime.types'
@@ -24,6 +26,9 @@ export type PiToolSpec = AgentToolSpec
 export type PiAgentReply = AgentTurnReply
 
 export interface BaseAgentPromptOptions {
+  steeringInbox?: TurnSteeringInbox
+  messageId?: string
+  turnId?: string
   freshSession?: boolean
   media?: AgentRuntimeMediaRef[]
   images?: AgentRuntimeImage[]
@@ -42,14 +47,6 @@ export interface BaseAgentSteerResult {
   outcome: BaseAgentSteerOutcome
   error?: string
 }
-
-/**
- * 有活跃回合、但那个回合**还没进入流式** —— 消息**一个字都没排进去**(见 `steerActiveTurn` 注释
- * 第 4 条:那个窗口里投出去会角色反转,留下一个无人订阅的孤儿 run)。
- *
- * 导出仅为可测:守卫要能断言「非流式时报的正是这一档 `failed`」,而不是把这句话在两处各抄一遍。
- */
-export const STEER_NOT_STREAMING = 'active turn has not started streaming yet — nothing was queued'
 
 export interface BaseAgentOptions {
   /** pi-ai provider id. Default 'openai-codex'. Env: COACH_PI_PROVIDER. */
@@ -148,6 +145,9 @@ export class BaseAgent {
   private sessionPromise: Promise<AgentRuntimeSession> | null = null
   private readonly runtime: AgentRuntimeAdapter
   private busy = false
+  private activeSteeringInbox?: TurnSteeringInbox
+  private steeringSequence = 0
+  private projectInstructions = ''
   // Runtime overrides set by the UI provider switch; take precedence over env/opts.
   private providerOverride?: string
   private modelOverride?: string
@@ -190,10 +190,10 @@ export class BaseAgent {
     ].join('\n')
   }
 
-  /** systemPrompt() + 当前后端事实块。空提示词的 agent 不加(它本来就没有 preamble)。 */
+  /** Current backend identity remains present even when there is no product role. */
   protected composeSystemPrompt(): string {
     const sys = this.systemPrompt().trim()
-    return sys ? `${this.targetBlock()}\n\n${sys}` : sys
+    return sys ? `${this.targetBlock()}\n\n${sys}` : this.targetBlock()
   }
 
   /**
@@ -201,14 +201,31 @@ export class BaseAgent {
    *
    * 表 1 = `BASE_SYSTEM_PROMPT`(`prompt/sysPrompt.ts`,进程级,所有 agent 共用);
    * 表 2 = 本子类的 `composeSystemPrompt()`(后端事实块 + `systemPrompt()` 的产品层)。
-   * 分层见 `overmind:areas/agent-runtime/chat/prompt-structure.html` #2。
+   * A6 由宿主读取会话项目根 AGENTS.md，插在固定 A1–A5 后；A7 是所有 agent 共用的纪律。
+   * 分层见 `overmind:areas/agent-runtime/chat/prompt-structure.html` #1。
    *
    * 2026-09-11 起表 2 **进 system 槽位**,不再拼在第一条 user 消息上 —— 那种做法一次压缩
    * 就把产品人格冲掉了(`primed` 机制连同它那个坑一起删掉了)。
    */
-  private fullSystemPrompt(): string {
+  private fullSystemPrompt(projectInstructions = this.projectInstructions): string {
     const product = this.composeSystemPrompt().trim()
-    return product ? `${BASE_SYSTEM_PROMPT}\n\n${product}` : BASE_SYSTEM_PROMPT
+    return [BASE_SYSTEM_PROMPT, projectInstructions, A7_DISCIPLINE, product].filter(Boolean).join('\n\n')
+  }
+
+  /** Read the current project's A6 between turns without replacing conversation or compaction state. */
+  async setProjectRoot(projectRoot?: string): Promise<void> {
+    if (this.busy) return
+    const instructions = await readProjectInstructions(projectRoot)
+    if (this.busy || instructions === this.projectInstructions) return
+    const live = this.sessionPromise
+    if (live) {
+      const session = await live
+      if (this.busy) return
+      if (!session.setSystemPrompt) throw new Error('This runtime cannot update project instructions in the current session.')
+      await session.setSystemPrompt(this.fullSystemPrompt(instructions))
+    }
+    // Keep inspection on the last successfully applied snapshot when a runtime rejects an update.
+    this.projectInstructions = instructions
   }
 
   /**
@@ -288,19 +305,23 @@ export class BaseAgent {
    *
    * 1. **绝不建会话。** 用 `this.sessionPromise` 而不是 `ensureSession()`:开一个 pi 会话只为
    *    「看看有没有上下文可压」是本末倒置 —— 没有会话就等于模型侧没有上下文,压缩无事可做。
-   * 2. **`busy` 为真时不交出去。** 写入(`appendCompaction` / `appendCustomMessage`)会推进 pi 的
+   * 2. **默认 `busy` 为真时不交出去。** 写入(`appendCompaction` / `appendCustomMessage`)会推进 pi 的
    *    `leafId`,对着一个正在流式的回合做等于在它脚下换地板。压缩的两个调用点
    *    (`turn.service.ts:234` 发送前 / `:310` 回合结束后)都在回合之外,所以这道闸只会挡住误用。
-   * 3. **拿不到就返回 null,不抛。** 运行时不实现这个面也是一个合法答案:
+   *    只读导出使用 `readOnly` 绕过此门，不写入或重建会话。
+   * 3. **默认拿不到返回 null。** 只读导出遇到已有 runtime 无读取能力/读取失败则明确抛错。
    *    调用方据此如实报「这条运行时没有可压的上下文」,而不是假装压了。
    */
-  async existingContextSurface(): Promise<AgentRuntimeContextSurface | null> {
-    if (this.busy) return null
+  async existingContextSurface(options?: { readOnly?: boolean }): Promise<AgentRuntimeContextSurface | null> {
+    if (this.busy && !options?.readOnly) return null
     const live = this.sessionPromise
     if (!live) return null
     try {
-      return (await live).context ?? null
-    } catch {
+      const surface = (await live).context
+      if (!surface && options?.readOnly) throw new Error('The runtime does not support reading effective context entries.')
+      return surface ?? null
+    } catch (error) {
+      if (options?.readOnly) throw error
       return null
     }
   }
@@ -385,10 +406,12 @@ export class BaseAgent {
     options?: BaseAgentPromptOptions
   ): Promise<AgentTurnReply> {
     if (this.busy) return { ok: false, text: '', error: 'agent is already handling a message' }
+    if (options?.freshSession) this.reset()
     this.busy = true
+    const steeringInbox = options?.steeringInbox || new TurnSteeringInbox()
+    this.activeSteeringInbox = steeringInbox
     const startedAt = Date.now()
     try {
-      if (options?.freshSession) this.reset()
       inputBudget.turnStart()
       // 提示词原文落盘。这是"喂给模型的内容"里我们自己拼的那一半(系统提示 + 本轮指令),
       // 它不在录制里、也不在任何别的地方 —— 不记就永远看不到。
@@ -412,7 +435,7 @@ export class BaseAgent {
         this.sessionPromise = null
         throw err
       }
-      const turn = await this.runPrompt(session, { text: message, media: options?.media, images: options?.images }, timeoutMs)
+      const turn = await this.runPrompt(session, { text: message, media: options?.media, images: options?.images, messageId: options?.messageId, turnId: options?.turnId }, timeoutMs, steeringInbox)
       // 上下文归因(Ral 2026-08-20:「我得知道是什么太大导致的,然后才能让 agent 制定拆分的方案」)。
       // **每回合都记**,不是只在出错时记 —— 撑爆上下文是累积的结果,只在爆掉那一刻看一眼,
       // 看到的是终局而不是过程,而拆分方案要的是过程(哪个工具在涨、涨得多快)。
@@ -452,87 +475,20 @@ export class BaseAgent {
       const error = err instanceof Error ? err.message : String(err)
       // After a timeout the in-flight turn's state is unknown — start fresh.
       if (isTimeoutError(err)) this.reset()
+      steeringInbox.cancel(`The turn failed before this message was delivered: ${error}`)
       this.debug('agent-error', 'error', 'agent runtime prompt failed.', { error, durationMs: Date.now() - startedAt })
       return { ok: false, text: '', error }
     } finally {
+      steeringInbox.cancel('The turn ended before this message was delivered.')
+      if (this.activeSteeringInbox === steeringInbox) this.activeSteeringInbox = undefined
       this.busy = false
     }
   }
 
-  /**
-   * 回合活跃时的**第二条消息**入口(steer-003 · `docs/features/cowork-turn-steering.md`「三道闸」)。
-   *
-   * `prompt()` 的第一行是 `if (this.busy) return … 'agent is already handling a message'`,于是
-   * 回合活跃时的第二条 prompt **根本到不了** `PiRuntimeSession.prompt()` —— steer-001 写好的投递
-   * 策略永远不会被触发。这个入口就是那道闸的绕行:**不吃 `busy` 锁,但打到同一个活会话**。
-   *
-   * 和 `scopedRun()` 的分别:后者也不吃锁,但它 `createSession(true)` 开的是一次性 throwaway 会话,
-   * 用完即弃 —— 形状不对。steering 的消息必须落在**当前**这个会话上,否则模型根本看不到它。
-   *
-   * 三条硬约束(steer-003「要点」):
-   *
-   * 1. **不新起一份回合记账。** 这条消息是**当前**回合的一部分(契约「一个活跃回合」不变),
-   *    所以这里刻意**不经过 `runPrompt()`**:那条路上有回合计时、`inputBudget.turnStart()`、
-   *    `modelIoLog` 的 prompt/turn_end 两条,以及把 usage 账本归零的那次 `onUsage` 基线回调。
-   *    走一遍等于给同一个回合记第二份账 —— 钻探的 token 预算取的正是那个基线,会当场失真。
-   * 2. **不吃 `busy` 锁,也不清它。** 置位/清位仍然只由 `prompt()` 的 `finally` 与 `abort()` 负责。
-   *    这里若顺手清一下,真正在跑的那个回合就失去了互斥保护,下一条普通消息会撞进它。
-   * 3. **`busy` 为假时不走这条路。** 那时没有活跃回合,返回 `idle` 让调用方回到 `prompt()`。
-   *
-   * 文本**逐字**交给会话:不加系统前缀(系统提示词在建会话时就进 system 槽位了)、不套回合模板 —— 压缩契约要求
-   * steering 消息原样进「② 用户原话链」。投递方式(steer / followUp)由适配器里的策略决定
-   * (`steering/steeringPolicy.ts`),这里不判断,也不给调用方任何选择的口子。
-   *
-   * ## 4. **投递之前**必须确认会话真的在流式(steer-003 review F1)
-   *
-   * 「`busy` 已置位但 pi 还没进入流式」**不是几毫秒**:首个回合的 `await ensureSession()` 是整个
-   * pi 会话创建,上界 `DEFAULT_SESSION_START_TIMEOUT_MS = 45_000`;之后 pi 自己还有 skill 展开 /
-   * 模型校验 / `_checkCompaction`(可能先跑一整轮压缩)才到 `isStreaming = true`。用户「发完立刻
-   * 补一句」正落在这段里。
-   *
-   * 而在那个窗口里投出去,后果不是「等一会儿」,是**角色反转 + 孤儿 run**:
-   *
-   * 1. pi 只在 `isStreaming` 为真时走入队分支(`agent-session.js:737`),非流式就走完整路径 ——
-   *    **steering 这条变成了这个回合的 prompt**,抢走 `activeRun`。
-   * 2. 真正的第一条随后到达时 `isStreaming` 已为真 → 它被当成 steer **入队,立刻 resolve**。
-   * 3. 于是外层 `runPrompt` 的 `await session.prompt()` 瞬间返回 → `finally` 拆掉订阅、
-   *    `prompt()` 的 `finally` 清掉 `busy`。
-   *
-   * ⇒ pi 那次 run 还在跑却**没有任何订阅者**:文字不外播(UI 静默)、`usage` 事件不累加
-   * (`usageLedger` 少记一整轮,压缩触发线读到偏低的上下文)、`busy` 已清(互斥失效)。
-   *
-   * 所以非流式时**不投**,直接报 `failed` —— 此刻什么都还没排进去,说「没投出去」是诚实的。
-   *
-   * **不要把它改成投递超时。** 超时会给一条其实已经排进队的消息编一个不存在的结局;判定放在
-   * 交出去**之前**就没有这个问题。会话投递本身照旧不设超时:pi 在流式中只是入队,立刻返回。
-   */
+  /** Additional text belongs to the current owned run, including its startup window. */
   async steerActiveTurn(message: string): Promise<BaseAgentSteerResult> {
-    if (!this.busy) return { outcome: 'idle' }
-    const live = this.sessionPromise
-    // `busy` 为真但会话已被撤掉 —— 会话启动失败时 `prompt()` 先把 sessionPromise 清成 null,
-    // 隔几行才在 finally 里清 busy。这几毫秒里既没有活会话可投,也不该退回 prompt() 去撞那道闸。
-    if (!live) return { outcome: 'failed', error: 'no live runtime session to steer' }
-    try {
-      const session = await withTimeout(
-        live,
-        sessionStartTimeoutMs(),
-        `agent runtime session start timed out after ${Math.round(sessionStartTimeoutMs() / 1000)}s`
-      )
-      // ⚠ 顺序是判据的一部分:这一句必须排在 `session.prompt()` **之前**(理由见上面第 4 条)。
-      if (session.isStreaming !== true) {
-        this.debug('agent-steer-not-streaming', 'warn', 'active turn has not started streaming — steering message was NOT queued.', { chars: message.length })
-        return { outcome: 'failed', error: STEER_NOT_STREAMING }
-      }
-      await session.prompt({ text: message })
-      this.debug('agent-steer', 'info', 'steering message handed to the live turn.', { chars: message.length })
-      return { outcome: 'delivered' }
-    } catch (err) {
-      const error = err instanceof Error ? err.message : String(err)
-      // 失败也**不 reset()、不清 busy** —— 那个回合还在跑,动它等于把人正看着的输出掐掉,
-      // 而这里失败的只是"多发的这一条"。
-      this.debug('agent-steer-error', 'warn', 'steering message was not delivered.', { error })
-      return { outcome: 'failed', error }
-    }
+    if (!this.busy || !this.activeSteeringInbox) return { outcome: 'idle' }
+    return this.activeSteeringInbox.enqueue({ text: message, messageId: 'steering-' + ++this.steeringSequence })
   }
 
   /**
@@ -606,6 +562,7 @@ export class BaseAgent {
 
   /** Drop the current conversation; the next prompt starts a fresh session. */
   reset(): void {
+    this.activeSteeringInbox?.cancel('The turn was reset before this message was delivered.')
     const existing = this.sessionPromise
     this.sessionPromise = null
     // 会话没了,累计数也要归零 —— 不清的话下一个会话的"累计"里混着上一个的,
@@ -622,6 +579,7 @@ export class BaseAgent {
    * the session so aborted output is never reused as later model context. No-op when idle.
    */
   async abort(): Promise<void> {
+    this.activeSteeringInbox?.cancel('Stopped before this message was delivered.')
     if (!this.busy || !this.sessionPromise) return
     try {
       const session = await Promise.race([this.sessionPromise, sleep(500).then(() => null)])
@@ -635,7 +593,7 @@ export class BaseAgent {
   }
 
 
-  private async runPrompt(session: AgentRuntimeSession, message: AgentRuntimePrompt, timeoutMs: number): Promise<PiTurnResult> {
+  private async runPrompt(session: AgentRuntimeSession, message: AgentRuntimePrompt, timeoutMs: number, steeringInbox?: TurnSteeringInbox): Promise<PiTurnResult> {
     let streamed = ''
     let finalText = ''
     let stopReason = ''
@@ -676,7 +634,9 @@ export class BaseAgent {
     let compactedChars = 0
     const unsubscribe = session.subscribe((event: AgentRuntimeEvent) => {
       const type = event?.type
-      if (type === 'text_delta') {
+      if (type === 'steering_consumed') {
+        steeringInbox?.consume(event.messageId)
+      } else if (type === 'text_delta') {
         if (compacting) {
           compactedChars += event.delta.length
           return
@@ -747,13 +707,35 @@ export class BaseAgent {
       }
     })
     try {
-      await withTimeout(session.prompt(message), timeoutMs, `pi agent turn timed out after ${Math.round(timeoutMs / 1000)}s`)
+      await withTimeout((async () => {
+        let next: AgentRuntimePrompt | undefined = message
+        while (next) {
+          if (steeringInbox?.isClosed) break
+          const current = next
+          const running = session.prompt(current)
+          steeringInbox?.start(session)
+          await running
+          await steeringInbox?.pause()
+          if (errorMessage || stopReason === 'error' || stopReason === 'aborted') {
+            steeringInbox?.cancel(errorMessage || 'The turn stopped before this message was delivered.')
+            session.takePendingSteering?.()
+            break
+          }
+          // A serial continuation has completed even when the runtime has no native queue events.
+          if (current.messageId) steeringInbox?.consume(current.messageId)
+          if (steeringInbox?.isClosed) break
+          next = steeringInbox?.next(session)
+        }
+      })(), timeoutMs, `pi agent turn timed out after ${Math.round(timeoutMs / 1000)}s`)
     } catch (err) {
+      steeringInbox?.cancel(`The turn failed before this message was delivered: ${err instanceof Error ? err.message : String(err)}`)
       if (isTimeoutError(err)) {
         await Promise.race([session.abort(), sleep(1500)]).catch(() => undefined)
       }
       throw err
     } finally {
+      await steeringInbox?.pause()
+      session.takePendingSteering?.()
       if (typeof unsubscribe === 'function') unsubscribe()
       setThinking(false)
     }

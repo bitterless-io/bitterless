@@ -16,6 +16,28 @@ import {
   withFakeTimeouts
 } from './onlyPreviewPreviewRegionTest.helper.mjs';
 
+test('foreground file facts clear immediately for a pending selection and require its ready revision', async () => {
+  const { service } = createHarness();
+  service.updateBounds(host.hostToken, bounds);
+  assert.equal(service.displayedFilePath(host.hostToken), null);
+  await service.present(host.hostToken, fileRef('notes/A.md'));
+  let vue = acknowledgeCurrentVue(service);
+  const revisionA = service.snapshot(host.hostToken).selectionRevision;
+  service.reportVueReady(host.hostToken, revisionA, vue.previewRuntimeToken);
+  assert.equal(service.displayedFilePath(host.hostToken), '/workspace/notes/A.md');
+  const opening = service.present(host.hostToken, fileRef('notes/B.md'));
+  assert.equal(service.displayedFilePath(host.hostToken), null, 'old A is unavailable before B preparation awaits');
+  await opening;
+  assert.equal(service.displayedFilePath(host.hostToken), null, 'prepared B is not yet confirmed visible');
+  vue = acknowledgeCurrentVue(service);
+  assert.throws(() => service.reportVueReady(host.hostToken, revisionA, vue.previewRuntimeToken));
+  assert.equal(service.displayedFilePath(host.hostToken), null);
+  service.reportVueReady(host.hostToken, service.snapshot(host.hostToken).selectionRevision, vue.previewRuntimeToken);
+  assert.equal(service.displayedFilePath(host.hostToken), '/workspace/notes/B.md');
+  service.clearWorkspace(host.hostToken);
+  assert.equal(service.displayedFilePath(host.hostToken), null);
+});
+
 test('late preview pulls current workspace listing readiness independently of its index', () => {
   const { service } = createHarness();
   service.updateBounds(host.hostToken, bounds);

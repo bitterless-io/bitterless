@@ -42,9 +42,89 @@ const fixture = () => {
   store.setActiveTab('tab-1');
   const currentRequest = () => calls.filter(([name]) => name === 'show').at(-1)?.[1];
   const receive = (patch = {}) => store.receive({ revision: 1, sessionId: currentRequest().sessionId, query: currentRequest().query, entries: [{ url: 'https://example.invalid/a', title: 'A', favicon: '', visitCount: 1, lastVisitedAt: 1 }, { url: 'https://example.invalid/b', title: 'B', favicon: '', visitCount: 1, lastVisitedAt: 1 }], selectedIndex: -1, loading: false, error: false, ...patch });
-  return { store, calls, input, currentRequest, receive };
+  return { store, calls, input, popup, currentRequest, receive };
 };
 const key = (value, options = {}) => ({ key: value, prevented: false, preventDefault() { this.prevented = true; }, ...options });
+
+test('empty and whitespace input stay hidden on focus, input, IME completion and arrow reopening', () => {
+  for (const value of ['', ' \t\n', '\u3000']) {
+    const f = fixture();
+    f.input.value = value;
+    f.store.focus();
+    f.store.inputChanged();
+    f.store.compositionStart();
+    f.store.compositionEnd();
+    for (const direction of ['ArrowDown', 'ArrowUp']) {
+      const event = key(direction);
+      assert.equal(f.store.keydown(event), false);
+      assert.equal(event.prevented, false);
+    }
+    assert.equal(f.store.open, false);
+    assert.equal(f.calls.length, 0);
+  }
+});
+
+test('typing opens suggestions with the original characters, and explicit recents remain available when empty', () => {
+  const f = fixture();
+  f.input.value = '  发现 & 100%  ';
+  f.store.inputChanged();
+  assert.equal(f.currentRequest().query, f.input.value);
+  assert.equal(new URL(f.store.candidateUrls[0]).searchParams.get('q'), f.input.value);
+  f.store.hide();
+  f.store.keydown(key('ArrowDown'));
+  assert.equal(f.store.open, true);
+  assert.equal(f.currentRequest().query, f.input.value);
+  f.input.value = '';
+  f.store.inputChanged();
+  assert.equal(f.store.open, false);
+  f.store.toggle();
+  assert.equal(f.store.open, true);
+  assert.equal(f.currentRequest().query, '');
+  f.receive();
+  f.store.keydown(key('ArrowDown'));
+  assert.equal(f.store.candidateUrls[f.store.selectedIndex], 'https://example.invalid/a');
+});
+
+test('clearing input cancels pending suggestions and their late reply cannot reopen or replace a new query', async () => {
+  const f = fixture();
+  let reject;
+  const pending = new Promise((_resolve, fail) => { reject = fail; });
+  const show = f.popup.show;
+  f.popup.show = (params) => { void show(params); return pending; };
+  f.input.value = 'old'; f.store.inputChanged();
+  const old = f.currentRequest();
+  f.input.value = ''; f.store.inputChanged();
+  assert.equal(f.store.open, false);
+  assert.equal(f.store.loading, false);
+  assert.equal(f.store.selectedIndex, -1);
+  assert.equal(f.calls.at(-1)[0], 'hide');
+  assert.equal(f.calls.at(-1)[1].sessionId, old.sessionId);
+  f.receive({ revision: 1, sessionId: old.sessionId, query: old.query });
+  assert.equal(f.store.open, false);
+  assert.equal(f.store.entries.length, 0);
+  f.popup.show = show;
+  f.input.value = 'new'; f.store.inputChanged();
+  assert.notEqual(f.currentRequest().sessionId, old.sessionId);
+  f.receive({ revision: 2, sessionId: old.sessionId, query: old.query });
+  reject(new Error('late old query failure'));
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(f.store.open, true);
+  assert.equal(f.store.error, false);
+  assert.equal(f.store.entries.length, 0);
+  assert.equal(f.currentRequest().query, 'new');
+});
+
+test('clearing to whitespace hides immediately during IME without publishing partial text', () => {
+  const f = fixture();
+  f.input.value = 'old'; f.store.inputChanged(); f.receive();
+  f.store.compositionStart();
+  f.input.value = ' \u3000'; f.store.inputChanged();
+  assert.equal(f.store.open, false);
+  assert.equal(f.store.entries.length, 0);
+  f.store.compositionEnd();
+  assert.equal(f.calls.filter(([name]) => name === 'show').length, 1);
+  assert.equal(f.store.open, false);
+});
 
 test('focus shows matches; arrows select and Enter uses the exact selected URL without waiting on XPC', () => {
   const f = fixture();
@@ -63,7 +143,7 @@ test('focus shows matches; arrows select and Enter uses the exact selected URL w
 
 test('fresh typing clears stale selection; ordinary Enter stays on the existing URL/path navigation path', () => {
   const f = fixture();
-  f.store.focus(); f.receive(); f.store.keydown(key('ArrowUp'));
+  f.store.toggle(); f.receive(); f.store.keydown(key('ArrowUp'));
   assert.equal(f.store.selectedIndex, 1);
   f.input.value = '/Users/example/document.pdf';
   f.store.inputChanged();
@@ -75,7 +155,7 @@ test('fresh typing clears stale selection; ordinary Enter stays on the existing 
 
 test('Escape closes, Tab keeps normal focus traversal, dismissed queries never reopen the UI', () => {
   const f = fixture();
-  f.store.focus();
+  f.store.toggle();
   const request = f.currentRequest();
   const escape = key('Escape');
   f.store.keydown(escape);
@@ -92,7 +172,7 @@ test('Escape closes, Tab keeps normal focus traversal, dismissed queries never r
 
 test('stale dismissal from an earlier session cannot close a reopened history list', () => {
   const f = fixture();
-  f.store.focus(); const old = f.currentRequest().sessionId;
+  f.store.toggle(); const old = f.currentRequest().sessionId;
   f.store.hide(); f.store.toggle();
   f.receive({ revision: 10, sessionId: null, dismissedSessionId: old });
   assert.equal(f.store.open, true);
@@ -102,7 +182,7 @@ test('stale dismissal from an earlier session cannot close a reopened history li
 
 test('IME keys do not navigate or select and composition completion queries the committed text', () => {
   const f = fixture();
-  f.store.focus(); f.receive();
+  f.store.toggle(); f.receive();
   f.store.compositionStart();
   const before = f.calls.length;
   assert.equal(f.store.keydown(key('Enter', { isComposing: true })), true);

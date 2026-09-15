@@ -65,6 +65,7 @@ export const registerOnlyPreviewMaestroOpener = (): void => {
         title: basename(absolutePath),
         favicon: '',
         displayUrl: pathToFileURL(absolutePath).href,
+        getDisplayedFile: () => surface?.displayedFilePath() ?? null,
         open: async (host) => {
           const window = host.window();
           if (!window) throw new Error('The file preview window is unavailable.');

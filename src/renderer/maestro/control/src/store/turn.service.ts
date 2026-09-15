@@ -5,6 +5,8 @@ import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
 import { describeErrorForLog, turnDiagnostics, type MaestroTurnStage } from './turnDiagnostics.service'
 import type {
   AgentActivityStep,
+  AgentConversationContext,
+  AgentMessageSnapshot,
   AgentReply,
   AgentStreamDelta,
   AgentThinkingState,
@@ -99,8 +101,21 @@ const interpolateChatCopy = (
     Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : placeholder
   )
 const summarizeTitle = (text: string): string => {
-  const firstLine = text.trim().split('\n')[0]?.trim() || 'Maestro'
+  const firstLine = text.trim().split('\n')[0]?.trim() || 'New chat'
   return firstLine.length > 36 ? firstLine.slice(0, 36) + '…' : firstLine
+}
+
+const titleFromFirstMessage = (session: MessageSession, message: ChatMessage): boolean => {
+  if (!session.detail.autoTitlePending || !message.content.trim()) return false
+  const humanMessages = session.messages.filter((entry) => entry.role === 'human' && !entry.promptExcluded && !entry.localOnly && !entry.id.startsWith('welcome-')
+    && (!entry.type || entry.type === 'text') && Boolean(entry.content.trim()))
+  // Consume even with a manual title; undoing that rename must not make the next message the first.
+  session.detail.autoTitlePending = undefined
+  if (!session.detail.titleCustomized && humanMessages.length === 1 && humanMessages[0].id === message.id) {
+    session.title = summarizeTitle(message.content)
+    return true
+  }
+  return false
 }
 
 /**
@@ -142,6 +157,13 @@ export type SendResult = AgentReply | TurnRejection
 export const isRejection = (result: SendResult | null): result is TurnRejection =>
   Boolean(result) && (result as TurnRejection).ok === false && 'reason' in (result as TurnRejection)
 
+interface SteeringContinuation {
+  tail: Promise<void>
+  ownerId?: string
+  previousFinished: boolean
+  requests: number
+}
+
 interface RootDispatchWaiter {
   promise: Promise<boolean>
   resolve: (ready: boolean) => void
@@ -162,6 +184,7 @@ interface RootDispatchWaiter {
  */
 @injectable()
 export class TurnService extends CommonService<MessageStoreState> {
+  private readonly steeringContinuations = new Map<string, SteeringContinuation>()
   private readonly rootDispatchWaiters = new Map<string, RootDispatchWaiter>()
 
   /** Any running session, used only for global controls; ownership always uses sessionId. */
@@ -304,55 +327,56 @@ export class TurnService extends CommonService<MessageStoreState> {
    * `role:'human' + type:'text'` 的收割规则天然涵盖它)。投递失败时那条消息会被标成
    * `promptExcluded`:它从来没到过模型,留在 ② 用户原话链里就是让链谎报上下文。
    */
-  private async sendSteering(session: MessageSession, text: string): Promise<SendResult> {
+  private async sendSteering(session: MessageSession, text: string, existingMessage?: ChatMessage, capturedContext?: AgentConversationContext, snapshot?: AgentMessageSnapshot): Promise<SendResult> {
     const store = this._state
     const turn = session.turn!
+    if (turn.aborting) return { ok: false, reason: 'not-sendable' }
+    const context = capturedContext || store.buildAgentContext(session)
     const pendingRoot = this.rootDispatchWaiters.get(turn.id)
     if (pendingRoot) {
       const ready = await pendingRoot.promise
-      if (!ready || session.turn !== turn) return { ok: false, reason: 'not-sendable' }
+      if (!ready || turn.aborting || session.turn?.id !== turn.id) return { ok: false, reason: 'not-sendable' }
     }
-    const humanMessage = this.appendTimelineEntry(
+    const humanMessage = existingMessage || this.appendTimelineEntry(
       session,
-      store.withTokenCount({ id: uid(), source: 'cowork', role: 'human', content: text, streaming: false, ts: Date.now() })
+      store.withTokenCount({ id: uid(), source: 'cowork', role: 'human', content: text, promptExcluded: true, streaming: false, ts: Date.now() })
     )
     // PQ-4 留痕。**先置 pending,再发** —— 投递途中那一段也要有话说,否则人按下发送到 main 回话
     // 之间是一段没有任何反馈的静默,而那正是「以为没发成功」的窗口。
-    turn.steering = { count: turn.steering?.count ?? 0, pending: true }
+    turn.steering = { count: turn.steering?.count ?? 0, pending: true, pendingCount: (turn.steering?.pendingCount ?? 0) + 1 }
     store.updateSessionContextUsage(session)
     store.stickToBottom = true
     store.scrollToBottom(true)
+    void store.persistSession(session)
 
     let reply: AgentReply
     try {
-      reply = await store.dispatch(session, text, humanMessage.id, undefined, 'steering', turn.id)
+      reply = await store.dispatch(session, text, humanMessage.id, undefined, 'steering', turn.id, context, snapshot)
     } catch (err) {
       reply = { ok: false, text: String(err), ts: Date.now(), error: String(err) }
     }
+    if (reply.continueAsRoot?.turnId === turn.id) {
+      const continued = await this.continueSteeringAfterCompletion(session, turn, humanMessage, context, reply.continueAsRoot.reply, reply.continueAsRoot.snapshot)
+      if (!isRejection(continued)) return continued
+      reply = { ok: false, text: 'Another turn took ownership before this message could continue. Send it again.', ts: Date.now(), error: 'steer-failed' }
+    }
     // 回合已经被别处收尾(stop / 超时 / 它自己跑完了)→ 留痕无处可挂,但回复照样如实返回。
-    const live = session.turn === turn ? turn : undefined
+    const live = session.turn?.id === turn.id ? session.turn : undefined
+    const pendingCount = Math.max(0, (turn.steering?.pendingCount ?? 1) - 1)
 
     // ⚠ **判据是 `mergedIntoTurn`,不是 `text === ''`。** 空正文是会被别的路径复用的值 ——
     // 超时、被内容过滤、模型这一轮真的没说话,全都可能是空。拿它当哨兵迟早误伤:那时会静默
     // 吃掉一条真正需要被看见的回复。`mergedIntoTurn` 是 main 在 `delivered` 那一支显式置的,
     // 只有「已并入当前回合」这一件事会置它(shared/maestro/coach.api.ts)。
     if (reply.mergedIntoTurn) {
-      if (live) live.steering = { count: (live.steering?.count ?? 0) + 1, pending: false }
+      humanMessage.promptExcluded = undefined
+      store.withTokenCount(humanMessage)
+      if (live) live.steering = { count: (live.steering?.count ?? 0) + 1, pending: pendingCount > 0, pendingCount }
       void store.persistSession(session)
       return reply
     }
 
-    // 没并进回合 —— **如实呈现,绝不让人以为发出去了**(契约「本 feature 只在 pi 这条运行时上成立」)。
-    // 两种来源,处置相同:
-    //  · **不支持流式插话的后端**:`AgentRuntimeSession.isStreaming` 是可选面,不实现时 steering 一律
-    //    `failed`。之所以不能开:它的 `prompt()` 自己就跑一整轮工具循环,第二次调用等于并发再跑一轮。
-    //  · **pi 但回合还没进流式**:那个窗口是秒级的(会话创建 + 压缩预检),投出去会角色反转,
-    //    所以 main 在投递之前就报 failed(BaseAgent.steerActiveTurn 的第 4 条)。
-    //
-    // 为什么选「如实呈现」而不是「该后端下保持输入区禁用」:后者要在 renderer 里维护一张
-    // 「哪条运行时支持 steering」的表,而那正是契约交给 main 的判断(「renderer 只管发」)。
-    // 那张表会在新增运行时、改 provider id 的那天静默过期 —— 而它错的方向是**把 pi 也锁回去**,
-    // 一声不响地把整个 feature 关掉。失败回执走的是同一条已有通道,永远不会过期。
+    // A failed receipt identifies this undelivered message; temporary queueing is not failure.
     const detail =
       (reply.error === 'steer-failed' ? reply.text : reply.error || reply.text) ||
       i18nHelper.maestroControl.chat.unknownError
@@ -371,11 +395,43 @@ export class TurnService extends CommonService<MessageStoreState> {
         ts: Date.now()
       })
     )
-    if (live) live.steering = { count: live.steering?.count ?? 0, pending: false }
+    if (live) live.steering = { count: live.steering?.count ?? 0, pending: pendingCount > 0, pendingCount }
     store.updateSessionContextUsage(session)
     store.scrollToBottom(true)
     void store.persistSession(session)
     return reply
+  }
+
+  /** Serialize only ownership handoff, not the new model run: later messages steer that successor. */
+  private continueSteeringAfterCompletion(session: MessageSession, previous: Turn, message: ChatMessage, context: AgentConversationContext, reply: AgentReply, snapshot: AgentMessageSnapshot): Promise<SendResult> {
+    let continuation = this.steeringContinuations.get(previous.id)
+    if (!continuation) {
+      continuation = { tail: Promise.resolve(), previousFinished: false, requests: 0 }
+      this.steeringContinuations.set(previous.id, continuation)
+    }
+    const current = continuation
+    current.requests += 1
+    let finish: (result: SendResult) => void = () => undefined
+    const result = new Promise<SendResult>(resolve => { finish = resolve })
+    current.tail = current.tail.then(async () => {
+      if (!current.previousFinished) {
+        current.previousFinished = true
+        await this.finishFromMain(session, previous.id, reply, 'completed')
+      }
+      if (session.turn && session.turn.id !== current.ownerId) {
+        finish({ ok: false, reason: 'busy-here' })
+        return
+      }
+      const sending = session.turn
+        ? this.sendSteering(session, message.content, message, context, snapshot)
+        : this.send(session.id, message.content, undefined, message, context, snapshot, previous.id)
+      current.ownerId = session.turn?.id
+      void sending.then(value => finish(value || { ok: false, reason: 'not-sendable' }), () => finish({ ok: false, reason: 'not-sendable' }))
+    }).catch(() => finish({ ok: false, reason: 'not-sendable' }))
+    return result.finally(() => {
+      current.requests -= 1
+      if (!current.requests && this.steeringContinuations.get(previous.id) === current) this.steeringContinuations.delete(previous.id)
+    })
   }
 
   /**
@@ -384,12 +440,12 @@ export class TurnService extends CommonService<MessageStoreState> {
    * 收成一处只为一件事:退出前留痕,说清是在哪一档之后丢的。判定语义一字未改。
    */
   private turnLost(session: MessageSession, turnId: string, at: string): boolean {
-    if (session.turn?.id === turnId) return false
+    if (session.turn?.id === turnId && !session.turn.aborting) return false
     turnDiagnostics.emit('reject', { turnId, reason: 'not-sendable', at, nowTurnId: session.turn?.id ?? 'none' })
     return true
   }
 
-  async send(sessionId: string, message: string, files?: ChatAttachment[]): Promise<SendResult | null> {
+  async send(sessionId: string, message: string, files?: ChatAttachment[], existingMessage?: ChatMessage, capturedContext?: AgentConversationContext, snapshot?: AgentMessageSnapshot, continuationOf?: string): Promise<SendResult | null> {
     const store = this._state
     const session = store.getSession(sessionId)
     const text = message.trim()
@@ -407,6 +463,7 @@ export class TurnService extends CommonService<MessageStoreState> {
     // (docs/features/maestro-turn-steering.md「对 turn 模型的修订」)。原来这里返回 `busy-here`,
     // 那正是三道闸的第一道。**投递方式(steer / followUp)不在这里判** —— 那是 main 侧策略的事。
     if (session.turn) {
+      if (existingMessage) return { ok: false, reason: 'busy-here' }
       turnDiagnostics.emit('send-start', { sessionId, route: 'steering', turnId: session.turn.id })
       return await this.sendSteering(session, text)
     }
@@ -420,7 +477,7 @@ export class TurnService extends CommonService<MessageStoreState> {
     //
     // **但气泡不预建**:落点等第一个字符(或收尾)时才由 `ensureSink()` 建出来。在此之前这一轮
     // 在干什么由底部状态条表达,时间线上不留一条空占位 —— 那条占位正是「播报排在回复上方」的病根。
-    const turn: Turn = {
+    session.turn = {
       id: uid(),
       generation: 0,
       rootText: text,
@@ -434,7 +491,8 @@ export class TurnService extends CommonService<MessageStoreState> {
       streamCoverageComplete: true,
       aborting: false
     }
-    session.turn = turn
+    // Read the stored proxy so changes stay reactive; ownership itself is always the stable ID.
+    const turn = session.turn
     let resolveRootDispatch: (ready: boolean) => void = () => undefined
     const rootDispatchPromise = new Promise<boolean>((resolve) => {
       resolveRootDispatch = resolve
@@ -457,6 +515,7 @@ export class TurnService extends CommonService<MessageStoreState> {
       const claim = await turnDiagnostics.stage(turn.id, 'claim', () =>
         withStageTimeout('claim', () =>
           coach.claimAgentTurn({
+            continuationOf,
             sessionId: session.id,
             operationTabId: session.operationTabId,
             turnId: turn.id,
@@ -472,6 +531,19 @@ export class TurnService extends CommonService<MessageStoreState> {
       }
       turn.generation = claim.turn.generation
       if (this.turnLost(session, turn.id, 'after-claim')) return { ok: false, reason: 'not-sendable' }
+
+      humanMessage = existingMessage || this.appendTimelineEntry(
+        session,
+        store.withTokenCount({ id: uid(), source: 'cowork', role: 'human', content: text, streaming: false, ts: Date.now() })
+      )
+      humanMessage.promptExcluded = undefined
+      turn.rootHumanMessageId = humanMessage.id
+      const generateTitle = titleFromFirstMessage(session, humanMessage)
+      store.updateSessionContextUsage(session)
+      if (generateTitle) store.scheduleSessionTitle(session, humanMessage)
+      else void store.persistSession(session)
+      // Main already owns the inbox; subsequent messages need not wait for workspace/media preparation.
+      this.settleRootDispatch(turn.id, true)
 
       await turnDiagnostics.stage(turn.id, 'workspace', () =>
         withStageTimeout('workspace', () => store.refreshWorkspace(session.id))
@@ -498,14 +570,6 @@ export class TurnService extends CommonService<MessageStoreState> {
         )
       }
 
-      humanMessage = this.appendTimelineEntry(
-        session,
-        store.withTokenCount({ id: uid(), source: 'cowork', role: 'human', content: text, streaming: false, ts: Date.now() })
-      )
-      turn.rootHumanMessageId = humanMessage.id
-      if (!session.detail.titleCustomized && session.title === 'Maestro') session.title = summarizeTitle(text)
-      store.updateSessionContextUsage(session)
-      void store.persistSession(session)
       await turnDiagnostics.stage(turn.id, 'compaction', () =>
         withStageTimeout('compaction', () =>
           store.compactSessionIfNeeded(session, { protectMessageIds: new Set([humanMessage!.id]) })
@@ -523,7 +587,7 @@ export class TurnService extends CommonService<MessageStoreState> {
           humanMessage.id,
           stagedFiles.map((file) => file.path),
           'root',
-          turn.id
+          turn.id, capturedContext, snapshot
         ),
         CHAT_TURN_TIMEOUT_MS,
         // Waiting for an in-app decision is an explicit paused state, not a hung provider. Once the
@@ -557,7 +621,7 @@ export class TurnService extends CommonService<MessageStoreState> {
           store.withTokenCount({ id: uid(), source: 'cowork', role: 'human', content: text, streaming: false, ts: Date.now() })
         )
         turn.rootHumanMessageId = humanMessage.id
-        if (!session.detail.titleCustomized && session.title === 'Maestro') session.title = summarizeTitle(text)
+        if (titleFromFirstMessage(session, humanMessage)) store.scheduleSessionTitle(session, humanMessage)
         store.updateSessionContextUsage(session)
       }
       reply = { ok: false, text: error, ts: Date.now(), error }
@@ -601,7 +665,7 @@ export class TurnService extends CommonService<MessageStoreState> {
     /**
      * **回合的释放必须是无条件的。**
      *
-     * `finishReply` 有两条早退(`session.turn !== turn`、拿不到落点)、中间还有一整段格式化与
+     * `finishReply` 有两条早退(当前 turnId 不匹配、拿不到落点)、中间还有一整段格式化与
      * 持久化 —— 任何一处抛出或早退,`session.turn = undefined` 那一句就到不了。而 `session.turn`
      * 还在 = 状态条永久停在「Sent · waiting for a response…」并继续计时,**而且**下一条消息会被
      * 判成 steering、插进这个已经死掉的回合 —— 于是"发消息永远没回复"
@@ -615,7 +679,7 @@ export class TurnService extends CommonService<MessageStoreState> {
     try {
       await this.finishReply(session, turn, reply)
     } finally {
-      if (session.turn === turn) {
+      if (session.turn?.id === turn.id) {
         turnDiagnostics.emit('send-terminal', {
           turnId: turn.id,
           outcome: 'failure',
@@ -647,7 +711,7 @@ export class TurnService extends CommonService<MessageStoreState> {
   }
 
   private async finishReply(session: MessageSession, turn: Turn, reply: AgentReply): Promise<void> {
-    if (session.turn !== turn) return
+    if (session.turn?.id !== turn.id) return
     const store = this._state
     // Drain the RAF tail before choosing the final segment. A reply text is the whole logical Turn,
     // while the timeline may already contain sealed segments; never copy that whole payload into
@@ -659,7 +723,7 @@ export class TurnService extends CommonService<MessageStoreState> {
       : undefined
     // 收尾时才可能第一次建气泡:一轮只发工具调用、没有任何文字的回合(钻探就是),到这里才有正文。
     const assistant = openAssistant ?? sealedAssistant ?? this.ensureSink(session)
-    if (!assistant || session.turn !== turn) return
+    if (!assistant || session.turn?.id !== turn.id) return
     const wasAborted = turn.aborting
     const fallback = wasAborted
       ? i18nHelper.maestroControl.chat.stopped

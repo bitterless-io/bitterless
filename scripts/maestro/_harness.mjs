@@ -93,6 +93,8 @@ const hostAliasAllowlist = new Map([
 const hostAliasPrefixAllowlist = [
   // 已抽出的 agent 树(Maestro 反向引用它是允许的)。
   '@main/agent/',
+  // Main uses the same localized tab labels as the renderer for foreground snapshots.
+  '@main/i18n/',
   // 宿主的 i18n 与主题是**跨切面服务**,Maestro 的 renderer 合法依赖它们。
   // 以前这是逐文件放行(4 条),而守卫自 2026 年某时起整套没执行过 ⇒ 漂移到 13 处没人发现。
   // 改成前缀:是规则就不会随文件增加而腐烂。

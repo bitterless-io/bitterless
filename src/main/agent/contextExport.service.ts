@@ -9,7 +9,7 @@ import type { AgentRuntimeContextSurface } from './runtime/runtime.types'
  *
  * **为什么在 main 而不是渲染端**:渲染端的 `context.service.ts` 算的是**预算账**(五段 + token,
  * 用来决定该不该压缩),它**没有工具调用与工具返回正文** —— 而那是上下文里最大的一块。真源是
- * pi 的条目树(`AgentRuntimeContextSurface.entries()`,压缩后的保留起点也由 pi 定)+ main 追加的
+ * pi 的有效条目投影(`AgentRuntimeContextSurface.contextEntries()`，按当前分支/压缩边界)+ main 追加的
  * 系统提示词与本回合前缀。渲染端拿不到这些,拿它拼出来的"上下文"会骗人,而这个命令的全部价值
  * 就是"它就是发出去的那份"。
  *
@@ -145,12 +145,11 @@ export const flattenEntryRows = (
       push(`custom_message:${String(record.customType || '')}`, textOfContent(record.content))
       continue
     }
-    if (type === 'compaction') {
-      push('compaction', String(record.summary || ''))
+    if (type === 'compaction' || type === 'branch_summary') {
+      push(type, String(record.summary || ''))
       continue
     }
-    // 其余条目(model_change / thinking_level_change / label / session_info)只留类型 —— 它们不是正文,
-    // 但它们**在**上下文里,漏掉会让 index 与真实条目数对不上。
+    // 原始结构图需要保留元数据的类型/索引；有效导出在 contextEntriesOfSurface 已过滤这些条目。
     push(type, '')
   }
   return rows
@@ -211,5 +210,17 @@ export const renderContextText = (record: ContextExportRecord): string => {
 /** 一次读取:面拿不到就是空历史 —— 不拿渲染端消息冒充(契约 #3.1)。 */
 export const entriesOfSurface = (surface: AgentRuntimeContextSurface | null): SessionEntry[] =>
   (surface?.entries() ?? []) as SessionEntry[]
+
+/** 只读有效上下文；元数据不参与模型消息，原始历史入口保持独立。 */
+export const contextEntriesOfSurface = (surface: AgentRuntimeContextSurface | null): SessionEntry[] => {
+  if (!surface) return []
+  if (typeof surface.contextEntries !== 'function') {
+    throw new Error('The runtime does not support reading effective context entries.')
+  }
+  return (surface.contextEntries() as SessionEntry[]).filter((entry) =>
+    entry.type === 'message' || entry.type === 'custom_message' || entry.type === 'compaction'
+    || (entry.type === 'branch_summary' && Boolean(entry.summary))
+  )
+}
 
 export const CONTEXT_HISTORY_EMPTY_NOTE = HISTORY_EMPTY

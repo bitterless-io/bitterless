@@ -90,7 +90,8 @@ watch(() => sessionActions.searchRevision, () => {
         class="session-search__results" role="listbox" :aria-label="i18nHelper.maestroControl.chat.searchSessions">
         <div v-for="(item, index) in results" :id="optionId(item.id)" :key="item.id" name="maestro__session-search-result"
           class="session-search__result" :class="{ 'session-search__result--selected': index === cursor }"
-          role="option" :aria-selected="index === cursor" @mousedown.prevent @click="select(item.id)">
+          role="option" :aria-selected="index === cursor" @mousedown.prevent @click="select(item.id)"
+          @contextmenu.prevent.stop="sessionActions.showMenu(item.id)">
           <span class="session-search__title">{{ item.title }}</span>
           <span v-if="item.running" class="chat-panel__history-item-running" :title="i18nHelper.maestroControl.chat.sessionRunning" :aria-label="i18nHelper.maestroControl.chat.sessionRunning"></span>
           <span v-else-if="item.unread" class="chat-panel__history-item-unread" :title="i18nHelper.maestroControl.chat.sessionUnread" :aria-label="i18nHelper.maestroControl.chat.sessionUnread"></span>

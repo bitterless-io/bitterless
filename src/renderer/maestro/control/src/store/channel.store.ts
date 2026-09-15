@@ -71,7 +71,7 @@ export class ChannelStoreState {
     if (!previous || previous.archivedAt) return false
     this.creatingSession = true
     try {
-      const session = messageStore.createSession({ title: 'Maestro', intent: 'chat' })
+      const session = messageStore.createSession({ title: 'New chat', intent: 'chat', autoTitlePending: true })
       this.activeSessionId = session.id
       this.syncActiveSession()
       // A running chat retains its work; optional draft cleanup cannot undo the new selection.
@@ -84,14 +84,14 @@ export class ChannelStoreState {
     }
   }
 
-  async startFreshMaestroSession(title = 'Maestro'): Promise<MessageSession | undefined> {
+  async startFreshMaestroSession(title?: string): Promise<MessageSession | undefined> {
     this.activeSource = 'cowork'
     const currentId = this.activeSessionId
     const current = currentId ? messageStore.getSession(currentId) : undefined
     if (current?.turn) return undefined
     if (current && !current.archivedAt) await messageStore.archive(current.id)
 
-    const session = messageStore.createSession({ title, intent: 'chat' })
+    const session = messageStore.createSession({ title: title ?? 'New chat', intent: 'chat', autoTitlePending: title === undefined })
     this.activeSessionId = session.id
     this.syncActiveSession()
     return session
@@ -125,7 +125,7 @@ export class ChannelStoreState {
       return persisted
     }
 
-    const session = messageStore.createSession({ title: 'Maestro', intent: 'chat' })
+    const session = messageStore.createSession({ title: 'New chat', intent: 'chat', autoTitlePending: true })
     this.activeSessionId = session.id
     return session
   }

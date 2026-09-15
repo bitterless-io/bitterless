@@ -109,6 +109,8 @@ export const createOnlyPreviewAgentSetupInstruction = ({
     'Copy the directory contents additively into the destination and overwrite same-named files. Do not delete other skills.',
     "When installing a different or newer Bitterless edition later, copy that edition's current Guide again; its setup supersedes this one and overwrites same-named skill files.",
     '',
+    'Treat OnlyPreview, onlypreview, only preview, and bitterless-preview as equivalent names when the user asks to preview a local file or folder. Use the installed skill without requiring an explicit skill invocation; keep the MCP server name exactly as configured above.',
+    '',
     'After installing or updating the skill, start a new agent session. Keep the current Bitterless application running while the agent uses MCP.',
     createInstanceSafetyInstruction(serverName)
   ].join('\n');

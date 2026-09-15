@@ -240,9 +240,8 @@ test('a presentation nudge updates the current recent without changing keyboard 
   const { store, setSnapshot } = harness();
   await store.initialize();
   store.select('old');
-  const callback = globalThis.__onlyPreviewRecentsSubscriptions.get('onlypreview/previewPresentation');
   setSnapshot({ ...snapshot(2), activeEntryId: 'new' });
-  callback({ params: { hostId: 'host' } });
+  store.handlePreviewPresentation();
   await Promise.resolve();
   await Promise.resolve();
   assert.equal(store.snapshot.activeEntryId, 'new');
@@ -256,9 +255,8 @@ test('a slow earlier presentation response cannot overwrite the latest current f
   const newer = deferred();
   let count = 0;
   client.getRecents = () => (++count === 1 ? older.promise : newer.promise);
-  const callback = globalThis.__onlyPreviewRecentsSubscriptions.get('onlypreview/previewPresentation');
-  callback({ params: { hostId: 'host' } });
-  callback({ params: { hostId: 'host' } });
+  store.handlePreviewPresentation();
+  store.handlePreviewPresentation();
   newer.resolve(ok({ ...snapshot(3), activeEntryId: 'new' }));
   await Promise.resolve();
   await Promise.resolve();

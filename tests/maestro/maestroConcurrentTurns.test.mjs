@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import test from 'node:test';
+import { setImmediate } from 'node:timers/promises';
 import ts from 'typescript';
 
 const root = resolve(import.meta.dirname, '../..');
@@ -20,6 +21,7 @@ const load = (path, stubs = {}) => {
   return module.exports;
 };
 const context = load('src/main/agent/runtime/agentSessionContext.ts');
+const { TurnSteeringInbox } = load('src/main/agent/steering/turnSteeringInbox.ts');
 const taskApi = load('src/shared/maestro/task.api.ts');
 const source = read('src/main/agent/maestroAgent.service.ts');
 const ast = ts.createSourceFile('maestroAgent.service.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -31,19 +33,21 @@ const members = new Set([
   'claimAgentTurn', 'getActiveAgentTurn', 'ackAgentTurnFinished', 'hasActiveAgentTurn', 'agentTurnSnapshot',
   'activeTurnFor', 'broadcastAgentTurn', 'finishAgentTurn', 'agentTurnKey', 'pruneFinishedAgentTurns',
   'abortAgent', 'agentSessionKey', 'agentTurnIdentity', 'broadcastActiveAgentActivity', 'broadcastModelRetry',
-  'routeAgentMessage', 'sendAgentMessage', 'recordAgentArtifact',
+  'routeAgentMessage', 'sendAgentMessage', 'recordAgentArtifact', 'buildMessagePrompt',
   'shutdown', 'assertAgentRuntimeActive', 'shuttingDown', 'maestroAgents', 'delegateAgents', 'attachedPaths', 'pi', 'piDelegate', 'piGen'
 ]);
 const classSource = `class Harness { ${agentClass.members.filter(node => members.has(node.name?.getText(ast))).map(node => node.getText(ast)).join('\n')} } exports.Harness = Harness;`;
 const deferred = () => {
-  let resolve;
-  const promise = new Promise(done => { resolve = done; });
-  return { promise, resolve };
+  let resolve, reject;
+  const promise = new Promise((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
 };
 const makeHarness = (t, reservationMs = 60_000) => {
   const events = [], cancelled = [], activity = [];
   const dependencies = {
-    AsyncLocalStorage, ...context,
+    AsyncLocalStorage, ...context, TurnSteeringInbox,
+    buildAgentTurnPrompt: params => JSON.stringify(params), localNow: () => 'fixture-time-at-receipt',
+    chainFilePath: (_directory, id) => `/fixture/chains/${id}.jsonl`, maestroUserChainDir: () => '/fixture/chains',
     AGENT_TURN_RESERVATION_TIMEOUT_MS: reservationMs,
     MAX_CONCURRENT_AGENT_TURNS: Number(source.match(/const MAX_CONCURRENT_AGENT_TURNS = (\d+)/)[1]),
     FINISHED_AGENT_TURN_TTL_MS: 60_000, MAX_RECENT_FINISHED_AGENT_TURNS: 20,
@@ -61,9 +65,12 @@ const makeHarness = (t, reservationMs = 60_000) => {
   Object.assign(agent, {
     _state: {
       activeTabId: 'page-a', beginBrowserTurn: (...args) => begun.push(args), endBrowserTurn: id => ended.push(id),
+      describeWindowTabs: () => ({ activeTab: null, openTabs: [] }),
+      existingSkillRegistry: () => ({ listSkillsForDomain: url => url ? [{ id: `${new URL(url).hostname}-skill` }] : [] }),
       ensurePersistedCaptureRecordsLoaded: async () => undefined, syncWorkspaceFromContext: () => undefined
     },
     offloadLongPasteIfNeeded: text => text, recordUserChainMessage: () => undefined,
+    agentSkillBriefs: (_message, recordings) => recordings,
     loadHostToolPolicies: async () => undefined,
     buildAgentMediaInput: async () => ({ note: '' }),
     getMaestroAgent: id => ({ id }), getExistingMaestroAgent: () => undefined
@@ -71,6 +78,14 @@ const makeHarness = (t, reservationMs = 60_000) => {
   t.after(() => { for (const turn of agent.activeAgentTurns.values()) clearTimeout(turn.reservationTimer); });
   const claim = (sessionId, turnId = `${sessionId}-1`) => agent.claimAgentTurn({ sessionId, turnId, rootText: `request ${sessionId}`, startedAt: 1 });
   return { agent, claim, events, cancelled, activity, ended, begun };
+};
+const captureSteering = turn => {
+  const queued = [];
+  turn.steeringInbox.start({
+    enqueueSteering: async message => { queued.push(message); },
+    takePendingSteering: () => []
+  });
+  return queued;
 };
 
 test('main admits four chat roots, preserves same-chat identity, and releases only the finished slot', t => {
@@ -125,24 +140,240 @@ test('root and steering identify their own chat while another root remains runni
   const seen = [];
   agent.handleAgentTurn = async (message, runtime, _context, options) => {
     seen.push([runtime.id, message, options.steeringOnly, context.currentChatSessionId()]);
-    if (options.steeringOnly) return { ok: true, text: '', mergedIntoTurn: true };
     starts[runtime.id].resolve();
     await releases[runtime.id].promise;
     return { ok: true, text: `answer ${runtime.id}` };
   };
   claim('A'); claim('B');
-  const request = (id, intent, message) => ({ sessionId: id, turnId: `${id}-1`, intent, message });
+  const request = (id, intent, message) => ({ sessionId: id, turnId: `${id}-1`, messageId: `${id}-${intent}`, intent, message });
   const a = agent.sendAgentMessage(request('A', 'root', 'root A'));
   const b = agent.sendAgentMessage(request('B', 'root', 'root B'));
   await Promise.all([starts.A.promise, starts.B.promise]);
   assert.equal((await agent.sendAgentMessage(request('A', 'root', 'duplicate'))).error, 'duplicate-root-turn');
-  assert.equal((await agent.sendAgentMessage(request('B', 'steer', 'addition B'))).mergedIntoTurn, true);
-  assert.equal((await agent.sendAgentMessage({ ...request('A', 'steer', 'wrong'), turnId: 'old' })).error, 'turn-not-active');
-  assert.deepEqual(seen, [['A', 'root A', false, 'A'], ['B', 'root B', false, 'B'], ['B', 'addition B', true, 'B']]);
+  const turnB = agent.activeAgentTurns.get('B'), queued = captureSteering(turnB);
+  const steering = agent.sendAgentMessage(request('B', 'steering', 'addition B'));
+  await setImmediate();
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0].messageId, 'B-steering');
+  assert.equal(JSON.parse(queued[0].text).message, 'addition B');
+  turnB.steeringInbox.consume(queued[0].messageId);
+  assert.equal((await steering).mergedIntoTurn, true);
+  assert.equal((await agent.sendAgentMessage({ ...request('A', 'steering', 'wrong'), turnId: 'old' })).error, 'turn-not-active');
+  assert.deepEqual(seen, [['A', 'root A', false, 'A'], ['B', 'root B', false, 'B']], 'steering never enters the ordinary route');
   releases.A.resolve(); await a;
   assert.deepEqual(agent.getActiveAgentTurn().turns.map(turn => turn.sessionId), ['B']);
   releases.B.resolve(); await b;
   assert.equal(agent.hasActiveAgentTurn(), false);
+});
+
+test('ordinary messages and steering keep their receipt-time foreground across initialization waits', async t => {
+  const { agent, claim } = makeHarness(t);
+  const ready = deferred(), rootRelease = deferred(), started = deferred();
+  const snapshotA = { tab_id: 'visible-a', kind: 'web', title: 'Alias A', url: 'https://a.example/' };
+  const snapshotB = { tab_id: 'visible-b', kind: 'miniapp', title: 'Trench', miniapp: 'trench' };
+  let foreground = snapshotA;
+  const seen = [], chain = [];
+  agent._state.describeWindowTabs = () => ({ activeTab: foreground && { ...foreground }, openTabs: foreground ? [{ ...foreground }] : [] });
+  agent._state.ensurePersistedCaptureRecordsLoaded = () => ready.promise;
+  agent.recordUserChainMessage = (_message, _id, _context, snapshot) => chain.push(snapshot);
+  agent.handleAgentTurn = async (_message, _runtime, _context, options) => {
+    seen.push(options.windowTabs);
+    if (options.sessionKey === 'A') { started.resolve(); await rootRelease.promise; }
+    return { ok: true };
+  };
+  claim('A'); claim('B');
+  let sequence = 0;
+  const request = (sessionId, intent) => ({ sessionId, turnId: `${sessionId}-1`, messageId: `message-${++sequence}`, message: 'inspect', intent });
+  const a = agent.sendAgentMessage(request('A', 'root'));
+  const b = agent.sendAgentMessage(request('B', 'root'));
+  foreground = snapshotB;
+  ready.resolve(); await started.promise; await b;
+  assert.deepEqual(seen, [{ activeTab: snapshotA, openTabs: [snapshotA] }, { activeTab: snapshotA, openTabs: [snapshotA] }], 'both chats describe the same actual window');
+  agent.buildAgentMediaInput = () => assert.fail('Steering must not enter asynchronous media/root preparation');
+  const turnA = agent.activeAgentTurns.get('A'), queued = captureSteering(turnA);
+  const steer = agent.sendAgentMessage(request('A', 'steering'));
+  foreground = null;
+  await setImmediate();
+  const captured = JSON.parse(queued[0].text);
+  assert.deepEqual(captured.activeTab, snapshotB);
+  assert.deepEqual(captured.openTabs, [snapshotB]);
+  turnA.steeringInbox.consume(queued[0].messageId);
+  assert.equal((await steer).mergedIntoTurn, true);
+  const emptySteer = agent.sendAgentMessage(request('A', 'steering'));
+  await setImmediate();
+  assert.equal(JSON.parse(queued[1].text).activeTab, null, 'an empty window must not reuse an earlier snapshot');
+  assert.deepEqual(JSON.parse(queued[1].text).openTabs, []);
+  turnA.steeringInbox.consume(queued[1].messageId);
+  await emptySteer;
+  assert.equal(seen.length, 2, 'both additions bypass the root handler');
+  assert.deepEqual(chain, [snapshotA, snapshotA, snapshotB, null]);
+  rootRelease.resolve(); await a;
+});
+
+test('Main accepts steering while the reserved root prepares, fixes all prompt inputs, and deduplicates its message ID', async t => {
+  const { agent, claim } = makeHarness(t);
+  const preparing = deferred(), started = deferred(), release = deferred();
+  const page = { tab_id: 'page-at-receipt', kind: 'web', title: 'Receipt page', url: 'https://receipt.example/page' };
+  let currentPage = page;
+  const conversation = { workspace: { path: '/fixture/receipt-workspace' }, recentMessages: [{ role: 'human', content: 'earlier', ts: 1 }] };
+  agent._state.describeWindowTabs = () => ({ activeTab: currentPage, openTabs: [currentPage] });
+  agent._state.ensurePersistedCaptureRecordsLoaded = () => preparing.promise;
+  let queued;
+  agent.handleAgentTurn = async (_message, _runtime, _context, options) => {
+    const turn = agent.activeAgentTurns.get('A');
+    assert.equal(options.steeringInbox, turn.steeringInbox);
+    queued = captureSteering(turn);
+    started.resolve();
+    await release.promise;
+    return { ok: true, text: 'root completed' };
+  };
+  claim('A');
+  const root = agent.sendAgentMessage({ sessionId: 'A', turnId: 'A-1', messageId: 'root', intent: 'root', message: 'root' });
+  const request = { sessionId: 'A', turnId: 'A-1', messageId: 'addition', intent: 'steering', message: 'original addition', context: conversation };
+  let settled = false;
+  const steering = agent.sendAgentMessage(request).then(reply => { settled = true; return reply; });
+  const duplicate = agent.sendAgentMessage({ ...request, message: 'duplicate changed body' });
+  currentPage = { tab_id: 'later', kind: 'web', url: 'https://later.example/' };
+  conversation.workspace.path = '/fixture/later-workspace';
+  await setImmediate();
+  assert.equal(settled, false);
+  assert.equal(queued, undefined, 'No native runtime starts just to deliver the addition');
+  preparing.resolve();
+  await started.promise;
+  await setImmediate();
+  assert.equal(queued.length, 1);
+  assert.deepEqual({ messageId: queued[0].messageId, turnId: queued[0].turnId }, { messageId: 'addition', turnId: 'A-1' });
+  const payload = JSON.parse(queued[0].text);
+  assert.equal(payload.message, 'original addition');
+  assert.deepEqual(payload.activeTab, page);
+  assert.deepEqual(payload.openTabs, [page]);
+  assert.equal(payload.currentUrl, page.url);
+  assert.deepEqual(payload.briefs, [{ id: 'receipt.example-skill' }]);
+  assert.equal(payload.context.workspace.path, '/fixture/receipt-workspace');
+  assert.equal(payload.nowLocal, 'fixture-time-at-receipt');
+  assert.equal(payload.includeConversationMemory, false);
+  assert.equal(settled, false, 'Queue acceptance is not the consumed receipt');
+  agent.activeAgentTurns.get('A').steeringInbox.consume('addition');
+  assert.equal((await steering).mergedIntoTurn, true);
+  assert.equal((await duplicate).mergedIntoTurn, true);
+  release.resolve();
+  await root;
+});
+
+test('Main Stop and failed root preparation fail queued additions without converting them to new roots', async t => {
+  for (const stop of [true, false]) {
+    const { agent, claim } = makeHarness(t);
+    const preparing = deferred();
+    agent._state.ensurePersistedCaptureRecordsLoaded = () => preparing.promise;
+    agent.handleAgentTurn = () => assert.fail('Stopped or failed preparation cannot enter a model run');
+    claim('A');
+    const root = agent.sendAgentMessage({ sessionId: 'A', turnId: 'A-1', messageId: 'root', intent: 'root', message: 'root' });
+    const pending = agent.sendAgentMessage({ sessionId: 'A', turnId: 'A-1', messageId: 'waiting', intent: 'steering', message: 'waiting' });
+    if (stop) {
+      await agent.abortAgent({ sessionId: 'A', turnId: 'A-1' });
+      preparing.resolve();
+    } else preparing.reject(new Error('fixture startup failed'));
+    const result = await pending;
+    assert.equal(result.ok, false);
+    assert.equal(result.error, 'steer-failed');
+    assert.equal(result.continueAsRoot, undefined);
+    assert.ok(result.text);
+    await root;
+    assert.equal(agent.activeAgentTurns.size, 0);
+  }
+});
+
+test('a closed successful owner returns a typed continuation only after finish, without claiming a new root', async t => {
+  const { agent, claim } = makeHarness(t);
+  claim('A'); claim('B');
+  const turn = agent.activeAgentTurns.get('A');
+  assert.equal(turn.steeringInbox.next(), undefined);
+  const request = { sessionId: 'A', turnId: 'A-1', messageId: 'late', intent: 'steering', message: 'late addition' };
+  let settled = false;
+  const waiting = agent.sendAgentMessage(request).then(reply => { settled = true; return reply; });
+  await setImmediate();
+  assert.equal(settled, false, 'Closed admission must wait for the real success/failure outcome');
+  const reply = { ok: true, text: 'original result', ts: 1 };
+  const snapshot = { windowTabs: { activeTab: null, openTabs: [] }, sentAt: 'fixture-time-at-receipt' };
+  agent.finishAgentTurn(turn, 'completed', reply);
+  const result = await waiting;
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.continueAsRoot, { turnId: 'A-1', reply, snapshot });
+  assert.equal(result.mergedIntoTurn, undefined);
+  const repeated = await Promise.all([agent.sendAgentMessage(request), agent.sendAgentMessage(request)]);
+  assert.ok(repeated.every(item => item.ok === false));
+  assert.deepEqual(repeated.map(item => item.continueAsRoot), [{ turnId: 'A-1', reply, snapshot }, { turnId: 'A-1', reply, snapshot }]);
+  assert.deepEqual([...agent.activeAgentTurns.keys()], ['B'], 'Only renderer ownership serialization may claim the continuation');
+});
+
+test('closed or finished failed owners and superseding owners never authorize continueAsRoot', async t => {
+  for (const scenario of ['failed', 'stopped', 'expired', 'superseded-while-waiting', 'superseded-after-finish']) {
+    const { agent, claim } = makeHarness(t);
+    claim('A');
+    const turn = agent.activeAgentTurns.get('A');
+    turn.steeringInbox.next();
+    const request = { sessionId: 'A', turnId: 'A-1', messageId: 'late', intent: 'steering', message: 'late' };
+    const waiting = scenario.endsWith('while-waiting') ? agent.sendAgentMessage(request) : null;
+    const reason = scenario === 'stopped' ? 'stopped' : scenario === 'expired' ? 'reservation-expired' : 'completed';
+    agent.finishAgentTurn(turn, reason, { ok: scenario !== 'failed', text: scenario });
+    if (scenario.startsWith('superseded')) claim('A', 'A-2');
+    const response = await (waiting || agent.sendAgentMessage(request));
+    assert.equal(response.ok, false, scenario);
+    assert.equal(response.continueAsRoot, undefined, scenario);
+    assert.ok(['steer-failed', 'turn-not-active'].includes(response.error), scenario);
+    if (scenario.startsWith('superseded')) assert.equal(agent.activeAgentTurns.get('A').turnId, 'A-2');
+  }
+});
+
+test('a continued root keeps the original addition and the page/time snapshot returned by its finished owner', async t => {
+  const { agent, claim } = makeHarness(t);
+  const page = { tab_id: 'original-page', kind: 'web', title: 'Original', url: 'https://original.example/' };
+  agent._state.describeWindowTabs = () => ({ activeTab: page, openTabs: [page] });
+  claim('A');
+  const turn = agent.activeAgentTurns.get('A');
+  turn.steeringInbox.next();
+  const addition = { sessionId: 'A', turnId: 'A-1', messageId: 'addition', intent: 'steering', message: 'original addition text' };
+  const late = agent.sendAgentMessage(addition);
+  agent._state.describeWindowTabs = () => ({ activeTab: { tab_id: 'later-page', kind: 'web', url: 'https://later.example/' }, openTabs: [] });
+  agent.finishAgentTurn(turn, 'completed', { ok: true, text: 'previous answer' });
+  const marker = (await late).continueAsRoot;
+  assert.deepEqual(marker.snapshot, { windowTabs: { activeTab: page, openTabs: [page] }, sentAt: 'fixture-time-at-receipt' });
+  const routed = [];
+  agent.handleAgentTurn = async (message, _runtime, _context, options) => {
+    routed.push({ message, windowTabs: options.windowTabs, sentAt: options.messageSentAt });
+    return { ok: true, text: 'new answer' };
+  };
+  claim('A', 'A-2');
+  assert.equal((await agent.sendAgentMessage({ ...addition, turnId: 'A-2', intent: 'root', snapshot: marker.snapshot })).ok, true);
+  assert.deepEqual(routed, [{ message: addition.message, windowTabs: marker.snapshot.windowTabs, sentAt: marker.snapshot.sentAt }]);
+});
+
+test('acknowledged completion allows another late addition only through its continuation lineage, and Stop revokes it', async t => {
+  for (const continuation of [true, false]) {
+    const { agent, claim } = makeHarness(t);
+    const reply = { ok: true, text: 'original completed result' };
+    agent.handleAgentTurn = async () => reply;
+    claim('A');
+    await agent.sendAgentMessage({ sessionId: 'A', turnId: 'A-1', messageId: 'root', intent: 'root', message: 'original root' });
+    agent.ackAgentTurnFinished({ sessionId: 'A', turnId: 'A-1' });
+    assert.deepEqual(agent.getActiveAgentTurn().finished, []);
+    assert.equal(agent.claimAgentTurn({ sessionId: 'A', turnId: 'A-2', rootText: 'first late addition', startedAt: 2,
+      ...(continuation ? { continuationOf: 'A-1' } : {}) }).ok, true);
+    const late = { sessionId: 'A', turnId: 'A-1', messageId: 'second-late', intent: 'steering', message: 'second late addition' };
+    const result = await agent.sendAgentMessage(late);
+    if (continuation) {
+      assert.equal(result.continueAsRoot.turnId, 'A-1');
+      assert.deepEqual(result.continueAsRoot.reply, reply);
+      assert.equal(agent.activeAgentTurns.get('A').turnId, 'A-2');
+      await agent.abortAgent({ sessionId: 'A', turnId: 'A-2' });
+      assert.equal((await agent.sendAgentMessage(late)).continueAsRoot, undefined);
+      assert.throws(() => agent.claimAgentTurn({ sessionId: 'A', turnId: 'A-3', continuationOf: 'A-1', rootText: 'after Stop' }), /cannot be continued/);
+    } else {
+      assert.equal(result.continueAsRoot, undefined);
+      assert.equal(result.error, 'turn-not-active');
+      assert.equal(agent.activeAgentTurns.get('A').turnId, 'A-2');
+    }
+  }
 });
 
 test('aborting A settles only A and stale stop or callbacks cannot affect its new turn or B', async t => {

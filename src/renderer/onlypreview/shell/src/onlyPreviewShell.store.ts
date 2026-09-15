@@ -52,6 +52,7 @@ import {
 } from './onlyPreviewSearchProgress.service';
 import { resolveOnlyPreviewProjectionCommit } from './onlyPreviewProjectionCommit.service';
 import { subscribeOnlyPreviewShellEvents } from './onlyPreviewShellEvents.service';
+import { onlyPreviewRecentsStore } from './onlyPreviewRecents.store';
 import { onlyPreviewFindStore } from './onlyPreviewFind.store';
 import {
   createOnlyPreviewSearchDiagnostics,
@@ -90,6 +91,7 @@ export class OnlyPreviewShellStore {
   readonly treeExpansion = new OnlyPreviewTreeExpansionStore();
   projectWidth = projectWidthPersistence.restore(window.innerWidth);
   indexLoading = false;
+  projectListingFailed = false;
   targetLoading = false;
   previewFileMenuOpen = false;
   errorMessage = '';
@@ -114,6 +116,9 @@ export class OnlyPreviewShellStore {
   }
   get projectionReady(): boolean {
     return this.browseProjection.ready;
+  }
+  get projectListingLoading(): boolean {
+    return Boolean(this.workspace && !this.projectionReady && !this.projectListingFailed);
   }
   get indexProgress(): OnlyPreviewSearchBuildProgress | null {
     return this.indexProgressState.progress;
@@ -241,7 +246,7 @@ export class OnlyPreviewShellStore {
   }
   async locateSelectedFile(): Promise<string> {
     const fileRef = this.previewFileRef;
-    if (!fileRef || fileRef.workspaceId !== this.workspace?.workspaceId) return '';
+    if (!this.projectionReady || !fileRef || fileRef.workspaceId !== this.workspace?.workspaceId) return '';
     this.selectedRelativePath = fileRef.relativePath;
     return await this.treeExpansion.locate(this, () => this.loadSelectedParentListings());
   }
@@ -379,7 +384,11 @@ export class OnlyPreviewShellStore {
         }
       },
       characterCountReady: (revision) => this.characterCountGate.acceptReady(revision),
-      previewPresentation: () => void this.syncPreviewPresentation(),
+      // electron-xpc keeps one callback per event; fan out here without another subscription.
+      previewPresentation: () => {
+        void this.syncPreviewPresentation();
+        onlyPreviewRecentsStore.handlePreviewPresentation();
+      },
       refresh: () => void this.refresh(),
       browseListing: (listing) => this.applyBrowseListing(listing),
       searchProgress: (progress) => this.applySearchProgress(progress),
@@ -536,6 +545,7 @@ export class OnlyPreviewShellStore {
     const generation = this.searchWorkspaceGeneration;
     const snapshotRevision = this.searchSnapshotRevision;
     this.indexLoading = true;
+    this.projectListingFailed = false;
     this.errorMessage = '';
     try {
       const snapshot = unwrapOnlyPreviewResult(
@@ -565,6 +575,7 @@ export class OnlyPreviewShellStore {
     const generation = this.searchWorkspaceGeneration;
     const snapshotRevision = this.searchSnapshotRevision;
     this.indexLoading = true;
+    this.projectListingFailed = false;
     this.errorMessage = '';
     try {
       const snapshot = unwrapOnlyPreviewResult(
@@ -589,6 +600,7 @@ export class OnlyPreviewShellStore {
   }
   private failIndex(hostToken: string, workspaceId: string, error: unknown): void {
     this.indexLoading = false;
+    this.projectListingFailed = !this.projectionReady;
     this.errorMessage = describeOnlyPreviewError(error);
     this.indexErrorDetail = onlyPreviewErrorDetail.detail;
     this.indexProgressState = settleOnlyPreviewSearchProgress(this.indexProgressState);
@@ -666,11 +678,13 @@ export class OnlyPreviewShellStore {
     result: OnlyPreviewBrowseProjectionResult,
     context: OnlyPreviewBrowseProjectionContext
   ): boolean {
+    const current = context.workspaceId === this.workspace?.workspaceId &&
+      context.generation === this.searchWorkspaceGeneration;
     const commit = resolveOnlyPreviewProjectionCommit({ result, index: this.index,
-      current: context.workspaceId === this.workspace?.workspaceId &&
-        context.generation === this.searchWorkspaceGeneration,
+      current,
       treeSelectedRelativePath: this.treeSelectedRelativePath, readRows: () => this.visibleRows });
     if (commit.errorMessage) this.errorMessage = commit.errorMessage;
+    if (current && result.loaded && this.projectionReady) this.projectListingFailed = false;
     if (!result.changed) return result.loaded;
     this.index = result.index;
     if (result.rootReplaced) {
@@ -692,6 +706,7 @@ export class OnlyPreviewShellStore {
   }
 
   private clearBrowseProjection(): void {
+    this.projectListingFailed = false;
     this.treeExpansion.reset();
     this.browseProjection.clear(this.expandedPaths);
     this.index = null;

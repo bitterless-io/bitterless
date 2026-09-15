@@ -56,6 +56,13 @@ const parseJson = <T>(value: string, fallback: T): T => {
 const normalizeDetail = (detail: MaestroChatDetail | undefined): MaestroChatDetail => ({
   compressedContext: detail?.compressedContext || '',
   titleCustomized: detail?.titleCustomized === true || undefined,
+  autoTitlePending: detail?.autoTitlePending === true || undefined,
+  titleRevision: typeof detail?.titleRevision === 'number' && Number.isSafeInteger(detail.titleRevision) && detail.titleRevision >= 0 ? detail.titleRevision : undefined,
+  titleGeneration: typeof detail?.titleGeneration?.requestId === 'string' && detail.titleGeneration.requestId
+    && typeof detail.titleGeneration.firstMessageId === 'string' && detail.titleGeneration.firstMessageId
+    && Number.isSafeInteger(detail.titleGeneration.expectedRevision) && detail.titleGeneration.expectedRevision >= 0
+    ? { requestId: detail.titleGeneration.requestId, firstMessageId: detail.titleGeneration.firstMessageId, expectedRevision: detail.titleGeneration.expectedRevision }
+    : undefined,
   draft: detail?.draft
     ? {
         text: typeof detail.draft.text === 'string' ? detail.draft.text : '',

@@ -32,6 +32,7 @@ import {
   stopEyesOnAgentsRuntime as stopEyesOnAgentsRuntimeImpl,
 } from './xpc/eyesOnAgents.handler';
 import { configureMaestroPiAgentDir } from '@maestro-main/llm/llmPaths';
+import { setModelIoRoot } from '@main/agent/runtime/modelIoLog';
 import { submodulesWindowHandler } from './xpc/submodulesWindow.handler';
 import { zellijWindowService } from '@main/zellij/zellijWindow.service';
 import { todoWindowHandler } from './xpc/todoWindow.handler';
@@ -261,6 +262,7 @@ const configureE2EUserData = (): void => {
 };
 
 configureE2EUserData();
+setModelIoRoot(() => join(app.getPath('userData'), 'agent-io'));
 
 if (!isHelperMode) {
   // The shared default workspace exists from boot, not from the first write: it is where every file

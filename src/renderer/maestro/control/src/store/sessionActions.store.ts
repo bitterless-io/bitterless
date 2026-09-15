@@ -1,11 +1,15 @@
 import { h, nextTick, reactive } from 'vue'
 import { Button, Message } from '@arco-design/web-vue'
-import { xpcRenderer } from 'electron-xpc/renderer'
+import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer'
+import type { CoachXpcContract } from '@maestro-shared/coach.api'
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
 import { channelStore } from './channel.store'
 import { messageStore } from './message.store'
+import type { SessionUndoRecord } from './sessionActions.type'
 
 const NOTICE_ID = 'maestro-session-archive'
+const SESSION_PATH_NOTICE_ID = 'maestro-session-path'
+const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
 
 export const matchesSessionTitle = (title: string, query: string): boolean => {
   const normalize = (value: string): string => value.normalize('NFKC').toLocaleLowerCase()
@@ -21,7 +25,7 @@ export class SessionActionsState {
   historyVisible = false
   searchVisible = false
   searchRevision = 0
-  lastArchived: { id: string; title: string } | null = null
+  lastUndo: SessionUndoRecord | null = null
   pendingIds: string[] = []
   private initialized = false
   private actions: Promise<void> = Promise.resolve()
@@ -49,10 +53,52 @@ export class SessionActionsState {
     this.searchVisible = false
   }
 
-  private enqueue(action: () => Promise<void>): Promise<void> {
+  async showMenu(sessionId: string): Promise<void> {
+    try {
+      const result = await coach.showSessionMenu({ sessionId })
+      if (result.ok === false) throw new Error(result.error)
+      if (!result.action) return
+      Message.success({
+        id: SESSION_PATH_NOTICE_ID, duration: 4500,
+        content: result.action === 'copy' ? i18nHelper.maestroControl.chat.slashPathCopied : i18nHelper.maestroControl.chat.sessionDirectoryOpened
+      })
+    } catch (error) {
+      Message.error({ id: SESSION_PATH_NOTICE_ID, duration: 6000, content: error instanceof Error ? error.message : String(error) })
+    }
+  }
+
+  private enqueue<T>(action: () => Promise<T>): Promise<T> {
     const next = this.actions.then(action)
-    this.actions = next.catch(() => undefined)
+    this.actions = next.then(() => undefined, () => undefined)
     return next
+  }
+
+  async undoTextEdit(): Promise<void> {
+    try {
+      const result = await coach.editControlText({ action: 'undo' })
+      if (!result.ok) throw new Error(result.error || i18nHelper.maestroControl.chat.undoFailed)
+    } catch (error) {
+      this.showError(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  rename(id: string, title: string): Promise<boolean> {
+    return this.enqueue(async () => {
+      try {
+        const session = await messageStore.loadPersistedSession(id)
+        const value = title.trim()
+        if (!session || !value) throw new Error('rename')
+        if (value === session.title && session.detail.titleCustomized) return true
+        const previous = { title: session.title, titleCustomized: session.detail.titleCustomized }
+        if (!await messageStore.renameSession(id, value)) throw new Error('rename')
+        this.lastUndo = { kind: 'rename', id, title: value, previous }
+        this.showUndoNotice(i18nHelper.maestroControl.chat.sessionRenamed.replace('{title}', value))
+        return true
+      } catch {
+        this.showError(i18nHelper.maestroControl.chat.renameFailed)
+        return false
+      }
+    })
   }
 
   archive(id: string): Promise<void> {
@@ -63,7 +109,7 @@ export class SessionActionsState {
         const title = messageStore.sessionListItems.find((item) => item.id === id)?.title || 'Maestro'
         const wasCurrent = channelStore.activeSessionId === id
         if (!await messageStore.archive(id)) throw new Error('archive')
-        this.lastArchived = { id, title }
+        this.lastUndo = { kind: 'archive', id, title }
         await channelStore.selectAfterArchive(id)
         if (wasCurrent) {
           await nextTick()
@@ -71,7 +117,7 @@ export class SessionActionsState {
             || document.querySelector<HTMLElement>('[name="maestro__session-title-label"]')
           focusTarget?.focus()
         }
-        this.showArchivedNotice(title)
+        this.showUndoNotice(i18nHelper.maestroControl.chat.sessionArchived.replace('{title}', title))
       } catch {
         this.showError(i18nHelper.maestroControl.chat.archiveFailed)
       } finally {
@@ -80,29 +126,38 @@ export class SessionActionsState {
     })
   }
 
-  undoArchive(): Promise<void> {
+  undo(): Promise<void> {
     return this.enqueue(async () => {
-      const archived = this.lastArchived
-      if (!archived) return
+      const record = this.lastUndo
+      if (!record) return
       try {
-        if (!await messageStore.restore(archived.id)) throw new Error('restore')
-        this.lastArchived = null
-        await channelStore.selectMaestroHistorySession(archived.id)
-        Message.success({ id: NOTICE_ID, content: i18nHelper.maestroControl.chat.sessionRestored.replace('{title}', archived.title), duration: 4500, resetOnHover: true })
+        let content: string
+        if (record.kind === 'archive') {
+          if (!await messageStore.restore(record.id)) throw new Error('restore')
+          await channelStore.selectMaestroHistorySession(record.id)
+          content = i18nHelper.maestroControl.chat.sessionRestored.replace('{title}', record.title)
+        } else {
+          if (!await messageStore.renameSession(record.id, record.previous.title, Boolean(record.previous.titleCustomized))) throw new Error('rename')
+          content = i18nHelper.maestroControl.chat.sessionTitleRestored.replace('{title}', record.previous.title)
+        }
+        if (this.lastUndo === record) {
+          this.lastUndo = null
+          Message.success({ id: NOTICE_ID, content, duration: 4500, resetOnHover: true })
+        }
       } catch {
-        this.showError(i18nHelper.maestroControl.chat.restoreFailed)
+        this.showError(record.kind === 'archive' ? i18nHelper.maestroControl.chat.restoreFailed : i18nHelper.maestroControl.chat.renameFailed)
       }
     })
   }
 
-  private showArchivedNotice(title: string): void {
+  private showUndoNotice(content: string): void {
     Message.success({
       id: NOTICE_ID,
       duration: 4500,
       resetOnHover: true,
       content: () => h('span', { class: 'session-actions__notice' }, [
-        h('span', i18nHelper.maestroControl.chat.sessionArchived.replace('{title}', title)),
-        h(Button, { type: 'text', size: 'mini', onClick: () => void this.undoArchive() },
+        h('span', content),
+        h(Button, { type: 'text', size: 'mini', onClick: () => void this.undo() },
           { default: () => `${i18nHelper.maestroControl.chat.undoArchive} (${navigator.platform.toLowerCase().includes('mac') ? '⌘' : 'Ctrl+'}Z)` })
       ])
     })

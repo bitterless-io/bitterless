@@ -1,5 +1,8 @@
 # OnlyPreview Project bookmarks
 
+Current loading visibility follows [Project loading gates](onlypreview-project-loading-gates.md):
+show bookmarks only after the current root listing is ready, including a successful empty root.
+
 Status: implemented; owner testing pending, 2026-09-08. Supersedes the top bookmark bar and
 setting-store persistence in task 165; selection focus behavior is unchanged.
 

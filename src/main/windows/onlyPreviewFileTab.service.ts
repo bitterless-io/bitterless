@@ -123,6 +123,10 @@ export class OnlyPreviewFileTabSurface {
     }
   }
 
+  displayedFilePath(): string | null {
+    return this.isLive() ? this.region.displayedFilePath(this.host.hostToken) : null;
+  }
+
   refresh(): void {
     if (!this.isLive()) return;
     const bounds = this.owner.bounds();

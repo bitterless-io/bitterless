@@ -173,7 +173,7 @@ export const buildContextGraph = (input: ContextGraphInput): ContextGraphView =>
     byType: totalsOf(live),
     pending: { workspace: input.pending?.workspace, attachments, draft, chars: pendingChars },
     // `ContextExportInput` 带的 `ioLogDir` / `contextWindow` 在这里**刻意不出现**:
-    // 前者在本仓是一条死链(`setModelIoRoot()` 无调用点 ⇒ `dirForSession()` 永远回 null,契约 #2.5),
+    // 前者由 /copy_session_path 与 /view_context 提供，结构图不重复展示(契约 #2.5)；
     // 后者的单位是 token 而这份投影的单位是字符,写成一个比值看着精确、实际是两个单位相除。
     noHistory: rows.length === 0
   }

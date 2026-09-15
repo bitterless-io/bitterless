@@ -1,4 +1,5 @@
-import { app, shell } from 'electron';
+import { app, clipboard, shell } from 'electron';
+import { resolve } from 'node:path';
 import { createXpcMainEmitter, XpcMainHandler, xpcMain } from 'electron-xpc/main';
 import {
   OnlyPreviewContractError,
@@ -581,7 +582,15 @@ class OnlyPreviewHandler
       const action = await showOnlyPreviewFileMenu(window);
       if (!action || window.isDestroyed()) return null;
       const current = resolveOnlyPreviewPreviewRegion(params.hostToken).snapshot(params.hostToken);
-      return current.fileRef && current.selectionRevision === revision ? action : null;
+      if (!current.fileRef || current.selectionRevision !== revision) return null;
+      if (action === 'copy-path') {
+        const authority = onlyPreviewWorkspaceRegistry.getPreviewAuthorityItemRef(
+          params.hostToken, current.fileRef
+        );
+        clipboard.writeText(resolve(authority.rootPath, authority.relativePath));
+        return null;
+      }
+      return action;
     });
   }
 

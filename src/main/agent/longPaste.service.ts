@@ -69,7 +69,7 @@ export const longPasteFileName = (params: { sessionId: string; now: number; seq:
   const d = new Date(params.now);
   const p2 = (n: number): string => String(n).padStart(2, '0');
   const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
-  return `${stamp}-${safeSession}-${params.seq}.md`;
+  return `${stamp}-${safeSession}-${params.seq}.txt`;
 };
 
 /**

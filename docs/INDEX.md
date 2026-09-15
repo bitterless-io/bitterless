@@ -1,5 +1,32 @@
 # Bitterless Documentation
 
+- [Deep fetch tab loading and built-in browser workflow](issues/deep-fetch-tab-workflow.md) — code complete; human acceptance pending;
+  repair the tab loader and route explicit deep-fetch requests through ordinary browser controls.
+
+- [Queued steering throughout a running turn](features/maestro-turn-steering.md) — implemented; code-verified, human testing pending;
+  keep preparing/safe-point additions in order, continue late messages after normal completion, and preserve earlier unfinished requests unless replaced.
+
+- [Browser history single-click navigation](issues/browser-history-single-click.md) — implemented; code-verified, human testing pending;
+  remove the popup mouseup focus transfer that precedes candidate click handling.
+
+- [Browser retrieval after web search failure](issues/web-search-browser-fallback.md) — implemented; code-verified, human testing pending;
+  fall back to deep search through browser query submission, result inspection and source verification.
+
+- [Miniapp tab title on switch](issues/miniapp-tab-title-on-switch.md) — implemented; code-verified, human testing pending;
+  publish the target name before mounting and ignore callbacks from replaced miniapps.
+
+- [Project-root AGENTS.md in the system prompt](features/maestro-system-prompt-layers.md) — implemented; code-verified, human testing pending;
+  A6 reads one explicit session project file between turns; A7 supplies ten shared rules, with no extra browser role and model identity retained.
+
+- [Project directory loading gates](features/onlypreview-project-loading-gates.md) — implemented; code-verified, human testing pending;
+  hide bookmarks and disable Locate until the current directory list is ready, with list-area loading.
+
+- [Current preview header and locate action](issues/onlypreview-current-file-controls-missing.md) — implemented; code-verified, human testing pending;
+  repair missing current-file state and unavailable Project location, with BL/COWORK parity.
+
+- [Effective context export after compaction](issues/view-context-includes-compacted-history.md) — implemented; code-verified; human testing pending;
+  export the current branch's latest summary and effective tail without absorbed history or metadata.
+
 - [New chat during running work](plan/tasks/browseruse-new-chat-003.md) — implemented; code-verified; human testing pending;
   keep the existing task running while creating/selecting a fresh conversation.
 
@@ -30,6 +57,9 @@ Older implementation notes remain under `doc/` and are reference-only unless lin
 design document.
 
 ## Feature contracts
+
+- [Sessions, undo, search and background titles](features/session-management.md) — implemented; code-verified, human testing pending;
+  title-only search, one business undo, native text undo, and isolated first-message naming with late-result protection.
 
 - [EyesOnAgents restore Read all](plan/tasks/eyes-on-agents-restore-read-all-102.md) — implemented; owner verification pending;
   Search-right bulk acknowledgement clears non-active unread red dots without ending work.
@@ -182,12 +212,9 @@ design document.
   EXPIRED token (pi's `checkProviderAuth` never looks at `expires`). Fix = one store + cowork's forward-merge (without
   cowork's cross-channel inheritance, deliberately) + a diagnostic that names the account and the expiry.
 
-- [Maestro model-io chain is dead](issues/maestro-model-io-chain-is-dead.md) — open, needs an owner decision (2026-09-09):
-  `setModelIoRoot()` has no caller anywhere in `src/`, so `dirForSession()` always returns null and
-  `/copy_session_path` always answers "this session has no model I/O log yet" — a sentence that reads like
-  "you have not sent a message" rather than "this build does not write that log". Two ways out (wire the root,
-  or retire the command and the `ioLogDir` line); also records that `/view_context` never passes
-  `pending.workspace`, so its clipboard export always prints `workspace: (none)`.
+- [Maestro model-io log path](issues/maestro-model-io-chain-is-dead.md) — implemented; code-verified, human testing pending (2026-09-15):
+  connect existing diagnostics to `<userData>/agent-io`; wait for queued writes before copying a saved
+  session directory, and report missing historical logs accurately without recreating them.
 
 - [Maestro · AI-CRMS 链路整体退役](features/maestro-crms-retirement.md) — 删除契约,实施中(2026-09-10):
   Ral 定「bl 的 Maestro 不能包含 crms 的东西」,代价是 bl 从此没有 `ai-crms` 这个 LLM provider,
@@ -199,8 +226,8 @@ design document.
   boundary) in a semi-transparent in-panel modal; clicking a user/assistant block jumps to that chat message and
   blocks with no UI carrier deliberately cannot be clicked. Ported from Cowork with six deliberate divergences —
   reuses BL's own `compactionBoundary()` (it has pi's `firstKeptEntryId` fallback that Cowork's version lacks),
-  two-table `i18nHelper` with no interpolator, sibling `.less` + flat BEM, borderless, and no jsonl footer because
-  `setModelIoRoot()` has no caller in this repo.
+  two-table `i18nHelper` with no interpolator, sibling `.less` + flat BEM, borderless, and no jsonl footer.
+  Saved log paths are available separately through `/copy_session_path` and `/view_context`.
 
 - [Maestro slash commands](features/maestro-slash-commands.md) — implemented; owner testing pending: Cowork-style
   `/clear` and `/view_context` menu, preserving BL runtime and composer behavior.

@@ -55,8 +55,9 @@ export class MaestroControlViewService extends CommonService<MaestroControlViewS
       if (mouse.type === 'mouseDown') this._state.dismissBrowserHistory?.();
     });
     view.webContents.on('focus', () => this._state.dismissBrowserHistory?.());
-    // Chat shortcuts reach DOM handlers; editable controls retain Chromium's native text undo.
-    // Keep DOM events intact; every other key (including key-up) restores normal menu routing.
+    // Cmd/Ctrl+Z reaches the DOM handler, which calls editControlText over XPC for editable targets
+    // to invoke this fixed view's native undo(). Returning from DOM alone cannot restore menu undo.
+    // Every other key (including Shift+Cmd/Ctrl+Z and key-up) restores normal menu routing.
     view.webContents.on('before-input-event', (_event, input) => {
       const command = process.platform === 'darwin' ? input.meta : input.control
       view.webContents.setIgnoreMenuShortcuts(Boolean(
@@ -98,6 +99,15 @@ export class MaestroControlViewService extends CommonService<MaestroControlViewS
 
   layout(bounds: { x: number; y: number; width: number; height: number }): void {
     this.setBounds(bounds)
+  }
+
+  editControlText(params: { action: 'undo' }): { ok: boolean } {
+    const window = this._state.browserWindow;
+    const contents = this.view?.webContents;
+    if (params?.action !== 'undo' || !window || window.isDestroyed() || !window.isFocused() ||
+        !contents || contents.isDestroyed() || !contents.isFocused()) return { ok: false };
+    contents.undo();
+    return { ok: true };
   }
 
   openSessionSearch(): boolean {

@@ -70,12 +70,14 @@ class BrowserHistoryState {
 
   focus(): void {
     if (this.focusSuppressed || !this.input || this.input.disabled) return;
-    this.show(this.input.value);
+    this.inputChanged();
   }
 
   inputChanged(): void {
+    const query = this.input?.value ?? '';
+    if (!query.trim()) { this.hide(); return; }
     if (this.composing) return;
-    this.show(this.input?.value ?? '');
+    this.show(query);
   }
 
   compositionStart(): void {
@@ -170,8 +172,9 @@ class BrowserHistoryState {
       return event.key === 'Escape';
     }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      if (!this.open) this.inputChanged();
+      if (!this.open) return false;
       event.preventDefault();
-      if (!this.open) this.show(this.input?.value ?? '');
       const action = event.key === 'ArrowDown' ? 'next' : 'previous';
       const count = this.candidateUrls.length;
       if (count) this.selectedIndex = action === 'next' ? (this.selectedIndex + 1) % count : (this.selectedIndex < 0 ? count - 1 : (this.selectedIndex - 1 + count) % count);

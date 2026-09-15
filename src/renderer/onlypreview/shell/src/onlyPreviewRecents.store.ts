@@ -3,7 +3,6 @@ import { xpcRenderer } from 'electron-xpc/renderer';
 import { unwrapOnlyPreviewResult } from '@shared/onlypreview/onlyPreview.contract';
 import {
   ONLY_PREVIEW_RECENTS_CHANGED_EVENT,
-  ONLY_PREVIEW_PREVIEW_PRESENTATION_EVENT,
   type OnlyPreviewRecentsSnapshot
 } from '@shared/onlypreview/onlyPreview.types';
 import { onlyPreviewClient } from '../../common/onlyPreviewClient';
@@ -63,9 +62,12 @@ export class OnlyPreviewRecentsStore {
         }
       };
       xpcRenderer.subscribe(ONLY_PREVIEW_RECENTS_CHANGED_EVENT, refreshForHost);
-      xpcRenderer.subscribe(ONLY_PREVIEW_PREVIEW_PRESENTATION_EVENT, refreshForHost);
     }
     await this.refresh();
+  }
+
+  handlePreviewPresentation(): void {
+    if (this.active) void this.refresh();
   }
 
   dispose(): void {

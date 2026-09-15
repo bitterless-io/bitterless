@@ -7,6 +7,10 @@ area: agent 工具面 · 联网读页 / 受控标签
 
 # bl 的联网工具:`web_search` · `web_fetch` · `deep_fetch`(+ 受控 tab)
 
+2026-09-15：[deep-fetch 文本技能与 tab 加载修复](../issues/deep-fetch-tab-workflow.md)
+规定，用户说「deep fetch / deep search」时先走内置浏览器操作流程，主动开页、观察、
+检索并核验；原生 `deep_fetch` 保留为已知 URL 的可选一次性读取工具，失败可转普通 tab。
+
 - **提出**:Ral 2026-09-11 ——「在一个 miniapp 里让 agent 查看天气,agent 让我自己去打开 tab」;
   随后:「websearch 是不能获取那些需要 js 渲染的页面的内容的,所以还需要一个内置技能,
   当 websearch 不够能升级到 deep_fetch」;
@@ -108,5 +112,11 @@ Ral 2026-09-11 拍板:**先在 bitterless-private 实现,和 cowork 共用一个
 - 失效路径三条都清:渲染层 `clearLocalSession()`、主进程 `deactivateSession()` 与
   `invalidateSession()` —— 后两条不等渲染层广播回来,401 之后主进程手里的 token 立刻作废。
 
-未登录时 `web_search` 返回的是 `not-signed-in`,描述里明写「让用户去登录 Bitterless 再重试」,
-而不是一句会被模型原样重试的裸错误。
+未登录时 `web_search` 返回 `not-signed-in`，指出该搜索服务需要登录并停止对它的重复调用。
+需要在线核验时，转入 deep search：复用合适的会话 tab 或后台 `open_tab`，用
+`page_snapshot / ui_act` 输入查询、查看结果、打开来源并核验；没有操作 tab 时先创建。
+这是现有浏览器工具组成的流程，不是独立 `deep_search` 工具。`web_fetch` / `deep_fetch`
+可读取流程中找到的 URL；`deep_fetch` 本身只渲染单页，不等于完成搜索。
+只有实际阻塞任务的登录或工具限制才需要交给用户处理，不要求先修好可替代的搜索服务。
+其他搜索失败也遵守[搜索失败后的浏览器检索约定](../issues/web-search-browser-fallback.md)，
+保留当前 user 前置提示词机制及用户对浏览器操作的明确限制。

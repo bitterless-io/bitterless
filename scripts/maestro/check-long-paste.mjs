@@ -96,7 +96,7 @@ assertOk(Boolean(quoted), '路径必须单独成行(嵌在句子里模型容易�
 // (或直接 ENOENT),而这在真实会话 id 变形时才会暴露。
 const name = longResult.path.slice(dir.length + 1)
 assertOk(!name.includes('/') && !name.includes(':') && !name.includes('*'), `文件名必须已清洗,实得 ${name}`)
-assertOk(name.endsWith('.md'), '落盘用 .md —— 预览器和 read 都按文本处理')
+assertOk(name.endsWith('.txt'), '长粘贴原文落盘用 .txt')
 
 // —— 5. 写盘失败时退回原文,不抛 ————————————————————————————————————————————
 // 一次粘贴太大是可以降级的情形:原文进上下文只是占地方,把发送整个打断是用户立刻看得见的故障。

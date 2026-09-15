@@ -11,8 +11,14 @@ verify: Native menu and selection-fenced renderer tests, SFC/Less checks
 Replace the two labelled Shell header buttons with one right-aligned Tabler dots IconBtn, matching
 the 27px navigation controls. Keep existing system type and OnlyPreview surface/ink/muted/Royal
 Blue/focus tokens; no global theme change. The existing error indicator remains beside the button.
-The native menu contains only Open in default/system app and Reveal in folder, using existing
+The native menu contains Open in default/system app, Reveal in folder and Copy Path, using existing
 localized Main labels. Leave unsupported-content recovery buttons and Project context menus alone.
+
+Copy Path (owner addition, 2026-09-15) copies the current preview's absolute native file path as
+plain text, including external previews. Main resolves it from the current host's preview authority
+after checking the menu's selection revision, then writes the clipboard without another asynchronous
+step. It does not use Project tree selection or require directory/index readiness. Cancelled or
+stale menus do not copy; failures use the existing preview action error indicator.
 
 Renderer sends host capability and selection revision, never a native path. Main validates the
 current presentation and opens an Electron Menu parented to the current tab/standalone host. The
@@ -45,3 +51,13 @@ The frontend-design skill kept the compact toolbar dimensions, existing tokens a
 Owner testing pending: in both apps, open a normal file, PDF and an external file in tab/standalone
 OnlyPreview. Use the single dots button to open/reveal the current file; Escape/click-outside must
 cancel without opening anything. Unsupported-file recovery buttons remain separate and unchanged.
+
+## Copy Path addition — 2026-09-15
+
+Added the localized native menu action; Main writes the authorized current file's absolute path
+directly to the text clipboard. The public menu response and Shell action routes are unchanged.
+Each app passes 11/11 header-menu tests, including project/external paths with spaces and Unicode,
+stale selection/closed host cancellation, and authority/clipboard failures. Changed Main sources
+transpile successfully; shared implementations and tests match, and diff checks pass. Electron/E2E
+was not run. Human check: open the dots menu on a project file and an external file, choose Copy
+Path and paste into a text field to confirm the complete path.

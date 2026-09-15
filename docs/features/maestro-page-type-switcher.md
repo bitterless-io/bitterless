@@ -101,3 +101,18 @@ CLI 回退路径 `kill-session` + `delete-session` 并轮询确认。**全程不
 | A5 | 已经有一个 OnlyPreview 时,在另一个 tab 上选 OnlyPreview:聚焦已有的那个,当前 tab 不变 |
 | A6 | pinned Home tab 上按钮可点但菜单项全灰 |
 | A7 | 退出 app 再启动:Zellij tab 照旧恢复(本改动没有碰通用拆卸) |
+
+## #7 按钮尺寸对齐 Cowork（2026-09-15）
+
+Ral:「bl 的 menubar__pagetype__button 应该像 cowork 那样的尺寸」。
+
+两边按钮容器均为 32×32 CSS px；实际差异是 BL 显式指定了 18×18、stroke 1.8 的 IconApps，
+Cowork 使用 Tabler 默认 24×24、stroke 2。沿用既有配色、无边框透明背景、居中布局与交互，
+只让 BL 此按钮的图标使用 Cowork 同样的尺寸与线宽，并补齐同名 BEM class。
+通过 Vue 模板编译、图标渲染属性和编译后的 Less 核对；人工对比两边地址栏按钮。
+
+Status: implemented; code-verified, human testing pending.
+
+Vue script/template 编译通过；实际 Tabler SSR 属性为 24×24、stroke 2，两边参数一致。
+编译后的 MenuBar Less 确认容器为 32×32、border 0、透明背景和双向居中。
+未启动 Electron/E2E，视觉比较由 Ral 完成。

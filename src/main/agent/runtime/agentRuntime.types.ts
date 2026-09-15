@@ -55,6 +55,8 @@ export interface AgentRuntimeImage extends AgentRuntimeMediaRef {
 }
 
 export interface AgentRuntimePrompt {
+  messageId?: string
+  turnId?: string
   text: string
   media?: AgentRuntimeMediaRef[]
   images?: AgentRuntimeImage[]
@@ -83,6 +85,7 @@ export interface AgentRuntimeSessionOptions {
 
 
 export type AgentRuntimeEvent =
+  | { type: 'steering_consumed'; messageId: string }
   | { type: 'text_delta'; delta: string }
   | { type: 'thinking_start' }
   | { type: 'thinking_delta'; delta: string }
@@ -107,20 +110,18 @@ export type AgentRuntimeEvent =
 
 
 export interface AgentRuntimeSession {
+  /** Apply host-authored instructions between turns without resetting conversation context. */
+  setSystemPrompt?: (systemPrompt: string) => void | Promise<void>
   subscribe: (listener: (event: AgentRuntimeEvent) => void) => undefined | (() => void)
   prompt: (message: AgentRuntimePrompt) => Promise<unknown>
   abort: () => Promise<void>
+  /** Queue only; never start a concurrent ordinary prompt. */
+  enqueueSteering?: (message: AgentRuntimePrompt) => Promise<void | boolean>
+  /** Take only unconsumed messages after the native run settles or is stopped. */
+  takePendingSteering?: () => AgentRuntimePrompt[]
   /** 上下文条目面。见 `AgentRuntimeContextSurface`。 */
   readonly context?: AgentRuntimeContextSurface
-  /**
-   * 这个会话此刻是不是**真的在流式输出**。只读,给回合内 steering 当前置条件用
-   * (`BaseAgent.steerActiveTurn` 在投递**之前**读它 —— 理由见那里的方法注释)。
-   *
-   * **可选**:只有支持「把消息带进正在跑的那个回合」的运行时才实现它。不实现 = 这条运行时上
-   * 没有可插进去的活跃流,steering 会如实报 `failed` 而不是投出去 —— 这正是我们要的:
-   * 一条自己跑整轮工具循环的运行时(2026-09 退役的 AI-CRMS 那条就是),第二次调用 `prompt()`
-   * 等于并发再跑一轮,比「没投出去」坏得多。
-   */
+  /** Runtime activity snapshot, not a host Turn admission gate. */
   readonly isStreaming?: boolean
 }
 

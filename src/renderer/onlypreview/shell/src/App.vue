@@ -226,7 +226,17 @@
         >
         <BookmarkBar />
         <div
-          v-if="onlyPreviewShellStore.workspace && onlyPreviewShellStore.visibleRows.length"
+          v-if="onlyPreviewShellStore.projectListingLoading"
+          name="onlypreview__projectLoading"
+          class="onlypreview-shell__project-loading"
+          role="status"
+          :aria-label="onlyPreviewI18n.preview.loadingProjectTitle"
+        >
+          <a-spin :size="22" aria-hidden="true" />
+          <span>{{ onlyPreviewI18n.preview.loadingProjectTitle }}</span>
+        </div>
+        <div
+          v-else-if="onlyPreviewShellStore.workspace && onlyPreviewShellStore.projectionReady && onlyPreviewShellStore.visibleRows.length"
           ref="treeRef"
           name="onlypreview__tree"
           class="onlypreview-shell__tree"
@@ -690,6 +700,7 @@ const locateCurrentFile = async (): Promise<void> => {
 const canLocateCurrentPreview = computed(() => {
   const fileRef = onlyPreviewShellStore.previewFileRef;
   return Boolean(
+    onlyPreviewShellStore.projectionReady &&
     fileRef && fileRef.workspaceId === onlyPreviewShellStore.workspace?.workspaceId
   );
 });

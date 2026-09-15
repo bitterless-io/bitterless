@@ -3,16 +3,20 @@ import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { after, test } from 'node:test';
 import { build } from 'esbuild';
+import { DatabaseSync } from 'node:sqlite';
 
 const root = resolve(import.meta.dirname, '../..');
 const greeting = 'Hi — how can I help you today?';
 const mocks = {
+  'electron-xpc/preload': 'export class XpcPreloadHandler {}',
+  './sqliteManager': 'export const sqliteManager = { get db() { return globalThis.__sessionTitleDb } };',
   inversify: `
     export const injectable = () => (target) => target;
     export const inject = () => () => undefined;
   `,
   'gpt-tokenizer': 'export const countTokens = (text) => Math.ceil(text.length / 4);',
   '@maestro-shared/iocHelper/ioc.helper': `
+    export class CommonService { setState(state) { this._state = state; } }
     export const iocHelper = {
       bind: ({ controller, services }) => new controller(new services[0]())
     };
@@ -51,7 +55,10 @@ const bundled = await build({
     contents: `
       export { MessageStoreState } from './src/renderer/maestro/control/src/store/message.store.ts';
       export { TurnService } from './turn.service';
-      export { reactive } from 'vue';
+      export { TurnService as ActualTurnService } from './src/renderer/maestro/control/src/store/turn.service.ts';
+      export { MaestroChatDao } from './src/preload/maestro/sqlite/maestroChat.dao.ts';
+      export { createMaestroSqliteSchema } from './src/preload/maestro/sqlite/maestroSqlite.release.ts';
+      export { reactive, ref, isReactive, toRaw } from 'vue';
     `,
     resolveDir: root
   },
@@ -75,14 +82,15 @@ const bundled = await build({
     }
   ]
 });
-const { MessageStoreState, TurnService, reactive } = await import(
+const { MessageStoreState, TurnService, ActualTurnService, MaestroChatDao, createMaestroSqliteSchema, reactive, ref, isReactive, toRaw } = await import(
   `data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString('base64')}`
 );
 after(() => {
   delete globalThis.__maestroComposerFixture;
+  delete globalThis.__sessionTitleDb;
 });
 
-const createHarness = () => {
+const createHarness = (useActualTurnService = false) => {
   const fixture = {
     calls: [],
     saved: [],
@@ -102,6 +110,7 @@ const createHarness = () => {
     CoachXpcHandler: {
       getActiveAgentTurn: async () => fixture.recovery,
       ackAgentTurnFinished: async () => ({ ok: true }),
+      generateSessionTitle: async () => ({ ok: false }),
       getWorkspaceDirectory: async () => ({ ok: true, workspace: fixture.defaultWorkspace }),
       setWorkspaceDirectory: async () => fixture.workspaceResult
     },
@@ -120,11 +129,29 @@ const createHarness = () => {
     }
   };
   globalThis.__maestroComposerFixture = fixture;
-  const turnService = new TurnService();
+  const turnService = useActualTurnService ? new ActualTurnService() : new TurnService();
   const store = reactive(new MessageStoreState(turnService));
   return { store, fixture, turnService };
 };
 const options = { title: 'Maestro', intent: 'chat', operationTabId: 'operation-tab' };
+const ordinaryChat = { title: 'New chat', intent: 'chat', autoTitlePending: true };
+const sendHarness = () => {
+  const h = createHarness(true);
+  h.fixture.routes.CoachXpcHandler.claimAgentTurn = async params => ({ ok: true, turn: { ...params, generation: 1 } });
+  h.fixture.routes.CoachXpcHandler.sendAgentMessage = async ({ sessionId }) => {
+    const reply = { ok: true, text: 'Fixture reply', ts: 2 };
+    const session = h.store.getSession(sessionId);
+    // Main broadcasts completion before returning its final reply. Exercise that real lifecycle.
+    await h.turnService.finishFromMain(session, session.turn.id, reply, 'completed');
+    return reply;
+  };
+  h.fixture.routes.CoachXpcHandler.abortAgent = async () => ({ ok: true });
+  h.store.compactSessionIfNeeded = async () => false;
+  return h;
+};
+const flush = () => new Promise(resolve => setImmediate(resolve));
+const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
+const titleCalls = fixture => fixture.calls.filter(call => call.method === 'generateSessionTitle');
 const message = (id, role, content = greeting, ts = 1000) => ({
   id,
   source: 'cowork',
@@ -133,6 +160,422 @@ const message = (id, role, content = greeting, ts = 1000) => ({
   content,
   streaming: false,
   ts
+});
+
+test('new chat derives its title once from the first actual user text, including literal defaults and first-line truncation', async () => {
+  for (const first of ['New chat', 'Maestro', 'First line\nSecond line', 'A'.repeat(40)]) {
+    const { store, fixture } = sendHarness();
+    const session = store.createSession(ordinaryChat);
+    assert.equal(session.title, 'New chat');
+    store.pushLocalNote(session.id, '/fixture/local-command-result');
+    assert.equal((await store.send(session.id, ' \n ')).reason, 'not-sendable');
+    assert.equal(session.detail.autoTitlePending, true);
+    session.messages.push(
+      message('welcome-human', 'human', 'Welcome should not count'),
+      { ...message('local-human', 'human', 'Local-only should not count'), localOnly: true },
+      { ...message('excluded-human', 'human', 'Excluded should not count'), promptExcluded: true },
+      { ...message('file-human', 'human', 'File should not count'), type: 'files' }
+    );
+    const result = await store.send(session.id, first);
+    assert.equal(result.ok, true, result.error);
+    const expected = first.startsWith('AAAA') ? 'A'.repeat(36) + '…' : first.split('\n')[0];
+    assert.equal(session.title, expected);
+    assert.equal(session.detail.autoTitlePending, undefined);
+    assert.equal(fixture.saved.at(-1).title, expected);
+    assert.equal(fixture.saved.at(-1).detail.autoTitlePending, undefined);
+    assert.equal((await store.send(session.id, 'Second request must not rename')).ok, true);
+    assert.equal(session.title, expected);
+  }
+});
+
+test('manual titles consume first-message eligibility without changing the title, and rename undo does not revive it', async () => {
+  const { store } = sendHarness();
+  const session = store.createSession(ordinaryChat);
+  assert.equal(await store.renameSession(session.id, 'Pinned name'), true);
+  assert.equal(session.detail.autoTitlePending, true);
+  assert.equal((await store.send(session.id, 'First real request')).ok, true);
+  assert.equal(session.title, 'Pinned name');
+  assert.equal(session.detail.autoTitlePending, undefined);
+  assert.equal(await store.renameSession(session.id, 'New chat', false), true);
+  assert.equal(session.detail.titleCustomized, undefined);
+  assert.equal((await store.send(session.id, 'Second request')).ok, true);
+  assert.equal(session.title, 'New chat');
+  const untouched = store.createSession(ordinaryChat);
+  await store.renameSession(untouched.id, 'Temporary');
+  await store.renameSession(untouched.id, 'New chat', false);
+  assert.equal((await store.send(untouched.id, 'First after undo')).ok, true);
+  assert.equal(untouched.title, 'First after undo');
+});
+
+test('explicit Coaches and legacy titles do not acquire automatic-title eligibility', async () => {
+  const { store } = sendHarness();
+  for (const title of ['Coaches', 'Maestro', 'Existing named chat']) {
+    const session = store.createSession({ title, intent: 'chat' });
+    assert.equal((await store.send(session.id, 'A first request')).ok, true);
+    assert.equal(session.title, title);
+    assert.equal(session.detail.autoTitlePending, undefined);
+  }
+});
+
+test('title eligibility and undo metadata round-trip through actual serialization, DAO normalization and restored sessions', async t => {
+  const db = new DatabaseSync(':memory:');
+  t.after(() => { db.close(); delete globalThis.__sessionTitleDb; });
+  const adapter = {
+    exec: sql => db.exec(sql), prepare: sql => db.prepare(sql),
+    transaction: fn => (...args) => {
+      db.exec('BEGIN');
+      try { const result = fn(...args); db.exec('COMMIT'); return result; }
+      catch (error) { db.exec('ROLLBACK'); throw error; }
+    }
+  };
+  createMaestroSqliteSchema(adapter);
+  globalThis.__sessionTitleDb = adapter;
+  const dao = new MaestroChatDao();
+  const { store, fixture } = sendHarness();
+  fixture.routes.MaestroChatDao.saveSession = args => dao.saveSession(args);
+  fixture.routes.MaestroChatDao.getSession = args => dao.getSession(args);
+  const session = store.createSession(ordinaryChat);
+  session.detail.draft = { text: 'Unsent first message', files: [] };
+  assert.equal(await store.persistSession(session), true);
+  store.sessions = [];
+  const restored = await store.loadPersistedSession(session.id);
+  assert.equal(restored.title, 'New chat');
+  assert.equal(restored.detail.autoTitlePending, true);
+  await store.renameSession(restored.id, 'Hand edited');
+  assert.equal((await dao.getSession({ id: restored.id })).detail.titleCustomized, true);
+  await store.renameSession(restored.id, 'New chat', false);
+  assert.equal((await dao.getSession({ id: restored.id })).detail.titleCustomized, undefined);
+  assert.equal((await store.send(restored.id, 'New chat')).ok, true);
+  store.sessions = [];
+  const consumed = await store.loadPersistedSession(restored.id);
+  assert.equal(consumed.detail.autoTitlePending, undefined);
+  assert.equal(consumed.detail.titleRevision, 2);
+  assert.equal(consumed.detail.titleGeneration.expectedRevision, 2);
+  assert.deepEqual(consumed.detail.titleGeneration, (await dao.getSession({ id: consumed.id })).detail.titleGeneration);
+  const requestsBeforeReloadSend = titleCalls(fixture).length;
+  assert.equal((await store.send(consumed.id, 'Second after reload')).ok, true);
+  assert.equal(consumed.title, 'New chat');
+  assert.equal((await dao.getSession({ id: consumed.id })).title, 'New chat');
+  await flush();
+  assert.equal(titleCalls(fixture).length, requestsBeforeReloadSend, 'restored attempt is never resumed or retried');
+});
+
+test('first send persists its one title attempt before requesting and does not await the title model', async () => {
+  const { store, fixture } = sendHarness();
+  const saving = deferred(), generated = deferred();
+  let first = true;
+  fixture.routes.MaestroChatDao.saveSession = async ({ session }) => {
+    fixture.saved.push(structuredClone(session));
+    if (first) { first = false; return saving.promise; }
+    return { ok: true };
+  };
+  fixture.routes.CoachXpcHandler.generateSessionTitle = () => generated.promise;
+  const session = store.createSession(ordinaryChat);
+  const sending = store.send(session.id, 'First fallback\nAdditional request detail');
+  await flush();
+  assert.equal(titleCalls(fixture).length, 0, 'no model request until the initial save succeeds');
+  assert.ok(fixture.calls.some(call => call.method === 'sendAgentMessage'), 'main turn starts despite the pending metadata save');
+  assert.equal(fixture.saved[0].title, 'First fallback');
+  assert.equal(fixture.saved[0].detail.autoTitlePending, undefined);
+  assert.equal(fixture.saved[0].detail.titleGeneration.firstMessageId, session.messages.find(m => m.role === 'human').id);
+  saving.resolve({ ok: true });
+  assert.equal((await sending).ok, true, 'main send finishes while title model remains unresolved');
+  await flush();
+  assert.equal(titleCalls(fixture).length, 1);
+  assert.equal(titleCalls(fixture)[0].params.text, 'First fallback\nAdditional request detail');
+  assert.equal(titleCalls(fixture)[0].params.sessionId, session.id);
+  const before = { updatedAt: session.updatedAt, unread: [...store.unreadSessionIds], active: store.activeSessionId };
+  generated.resolve({ ok: true, title: 'Generated topic' });
+  await flush();
+  assert.equal(session.title, 'Generated topic');
+  assert.deepEqual({ updatedAt: session.updatedAt, unread: [...store.unreadSessionIds], active: store.activeSessionId }, before);
+  assert.equal(session.detail.titleCustomized, undefined);
+  assert.equal(session.detail.titleRevision, undefined);
+  assert.equal(fixture.saved.at(-1).title, 'Generated topic');
+  assert.equal((await store.send(session.id, 'Second text')).ok, true);
+  await flush();
+  assert.equal(titleCalls(fixture).length, 1);
+});
+
+test('failed first save and failed title requests retain fallback with no automatic retry', async () => {
+  const { store, fixture } = sendHarness();
+  let first = true;
+  fixture.routes.MaestroChatDao.saveSession = async ({ session }) => {
+    fixture.saved.push(structuredClone(session));
+    if (first) { first = false; return { ok: false }; }
+    return { ok: true };
+  };
+  const session = store.createSession(ordinaryChat);
+  await store.send(session.id, 'Save failure fallback');
+  await flush();
+  assert.equal(titleCalls(fixture).length, 0);
+  assert.equal(session.title, 'Save failure fallback');
+  assert.ok(session.detail.titleGeneration);
+  await store.send(session.id, 'A later successful save');
+  await flush();
+  assert.equal(titleCalls(fixture).length, 0);
+  const failedModel = store.createSession(ordinaryChat);
+  fixture.routes.CoachXpcHandler.generateSessionTitle = async () => { throw new Error('synthetic unavailable'); };
+  await store.send(failedModel.id, 'Model failure fallback');
+  await flush();
+  assert.equal(failedModel.title, 'Model failure fallback');
+  await store.send(failedModel.id, 'No retry');
+  await flush();
+  assert.equal(titleCalls(fixture).length, 1);
+});
+
+test('late title results cannot override rename undo, editor, archive, deletion or a changed request', async () => {
+  for (const change of ['rename-undo', 'editing', 'archive', 'removed', 'token', 'first-message', 'revision']) {
+    const { store, fixture } = sendHarness();
+    const generated = deferred();
+    fixture.routes.CoachXpcHandler.generateSessionTitle = () => generated.promise;
+    const session = store.createSession(ordinaryChat);
+    await store.send(session.id, 'Fallback');
+    await flush();
+    assert.equal(titleCalls(fixture).length, 1);
+    if (change === 'rename-undo') {
+      assert.equal(await store.renameSession(session.id, 'Manual'), true);
+      assert.equal(await store.renameSession(session.id, 'Fallback', false), true);
+      assert.equal(session.detail.titleCustomized, undefined);
+      assert.equal(session.detail.titleRevision, 2, 'undo increments rather than rolling revision back');
+    } else if (change === 'editing') store.editingTitleSessionId = session.id;
+    else if (change === 'archive') assert.equal(await store.archive(session.id), true);
+    else if (change === 'removed') store.sessions = [];
+    else if (change === 'token') session.detail.titleGeneration.requestId = 'newer-attempt';
+    else if (change === 'first-message') session.detail.titleGeneration.firstMessageId = 'other-human';
+    else session.detail.titleRevision = 1;
+    const saves = fixture.saved.length;
+    generated.resolve({ ok: true, title: 'Obsolete result' });
+    await flush();
+    assert.equal(session.title, 'Fallback', change);
+    assert.equal(fixture.saved.length, saves, change);
+    if (change === 'editing') {
+      store.editingTitleSessionId = '';
+      await flush();
+      assert.equal(session.title, 'Fallback', 'ending editing does not replay a discarded result');
+    }
+  }
+});
+
+test('title application rechecks a queued archive and save failures roll back only generated metadata', async () => {
+  const { store, fixture } = sendHarness();
+  const generated = deferred();
+  fixture.routes.CoachXpcHandler.generateSessionTitle = () => generated.promise;
+  const session = store.createSession(ordinaryChat);
+  await store.send(session.id, 'Fallback');
+  await flush();
+  const saving = deferred();
+  fixture.routes.MaestroChatDao.saveSession = () => saving.promise;
+  const blocked = store.persistSession(session);
+  await flush();
+  const archived = store.archive(session.id);
+  await flush();
+  generated.resolve({ ok: true, title: 'Queued obsolete result' });
+  await flush();
+  fixture.routes.MaestroChatDao.saveSession = async () => ({ ok: true });
+  saving.resolve({ ok: true });
+  await blocked;
+  assert.equal(await archived, true);
+  await flush();
+  assert.equal(session.title, 'Fallback');
+
+  const second = store.createSession(ordinaryChat), failed = deferred();
+  fixture.routes.CoachXpcHandler.generateSessionTitle = () => failed.promise;
+  await store.send(second.id, 'Second fallback');
+  await flush();
+  const before = second.updatedAt;
+  fixture.routes.MaestroChatDao.saveSession = async () => ({ ok: false });
+  failed.resolve({ ok: true, title: 'Cannot save this' });
+  await flush();
+  assert.equal(second.title, 'Second fallback');
+  assert.equal(second.updatedAt, before);
+  assert.equal(await store.renameSession(second.id, 'Failed manual'), false);
+  assert.equal(second.detail.titleRevision, undefined, 'failed manual save rolls revision back');
+  assert.equal(second.detail.titleCustomized, undefined);
+});
+
+test('independent title results update their originating sessions without selecting them', async () => {
+  const { store, fixture } = sendHarness();
+  const pending = new Map();
+  fixture.routes.CoachXpcHandler.generateSessionTitle = ({ sessionId }) => {
+    const result = deferred(); pending.set(sessionId, result); return result.promise;
+  };
+  const a = store.createSession(ordinaryChat), b = store.createSession(ordinaryChat);
+  await store.send(a.id, 'Topic a');
+  await store.send(b.id, 'Topic b');
+  await flush();
+  store.activeSessionId = b.id;
+  pending.get(b.id).resolve({ ok: true, title: 'Generated b' });
+  pending.get(a.id).resolve({ ok: true, title: 'Generated a' });
+  await flush();
+  assert.equal(a.title, 'Generated a');
+  assert.equal(b.title, 'Generated b');
+  assert.equal(store.activeSessionId, b.id);
+});
+
+test('steering reaches the reserved inbox during root preparation and preserves root-first title and message IDs', async () => {
+  const { store, fixture, turnService } = sendHarness();
+  const workspace = deferred(), delivered = deferred(), rootDone = deferred();
+  store.refreshWorkspace = () => workspace.promise;
+  fixture.routes.CoachXpcHandler.sendAgentMessage = async params => {
+    if (params.intent === 'steering') return delivered.promise;
+    await rootDone.promise;
+    const session = store.getSession(params.sessionId);
+    const reply = { ok: true, text: 'Both requests completed', ts: 2 };
+    await turnService.finishFromMain(session, params.turnId, reply, 'completed');
+    return reply;
+  };
+  const session = store.createSession(ordinaryChat);
+  const first = store.send(session.id, 'Hangzhou weather');
+  await flush();
+  const rootId = session.messages.find(m => m.role === 'human').id;
+  const second = store.send(session.id, 'Also Hong Kong weather');
+  await flush();
+  const secondMessage = session.messages.find(m => m.content === 'Also Hong Kong weather');
+  const sends = fixture.calls.filter(c => c.method === 'sendAgentMessage');
+  assert.deepEqual(sends.map(c => c.params.intent), ['steering'], 'steering does not wait for root workspace/media setup');
+  assert.equal(sends[0].params.messageId, secondMessage.id);
+  assert.equal(sends[0].params.turnId, session.turn.id);
+  assert.deepEqual(session.messages.filter(m => m.role === 'human').map(m => m.id), [rootId, secondMessage.id]);
+  assert.equal(secondMessage.promptExcluded, true, 'queued is not yet confirmed as model context');
+  assert.equal(session.turn.steering.pending, true);
+  assert.equal(session.title, 'Hangzhou weather');
+  assert.equal(titleCalls(fixture).length, 1);
+  workspace.resolve();
+  await flush();
+  delivered.resolve({ ok: true, text: '', ts: 2, mergedIntoTurn: true });
+  assert.equal((await second).mergedIntoTurn, true);
+  assert.equal(secondMessage.promptExcluded, undefined);
+  rootDone.resolve();
+  assert.equal((await first).ok, true);
+  assert.equal(titleCalls(fixture).length, 1);
+});
+
+test('two late steering messages continue once in order, reusing their IDs and original snapshots without renaming', async t => {
+  const { store, fixture, turnService } = sendHarness();
+  const oldDone = deferred(), handoff = deferred(), nextDone = deferred(), nextStarted = deferred();
+  let oldTurnId, nextTurnId;
+  const previousReply = { ok: true, text: 'Original completed', ts: 2 };
+  const snapshot = { windowTabs: { activeTab: { id: 'page-original', title: 'Original page', url: 'https://example.com/original' }, openTabs: [] }, sentAt: 'original-time' };
+  fixture.routes.CoachXpcHandler.sendAgentMessage = async params => {
+    if (params.intent === 'root' && !oldTurnId) { oldTurnId = params.turnId; await oldDone.promise; return previousReply; }
+    if (params.turnId === oldTurnId) { await handoff.promise; return { ok: false, text: '', ts: 3, continueAsRoot: { turnId: oldTurnId, reply: previousReply, snapshot } }; }
+    if (params.intent === 'root') {
+      nextTurnId = params.turnId; nextStarted.resolve(); await nextDone.promise;
+      const reply = { ok: true, text: 'All additional work completed', ts: 4 };
+      await turnService.finishFromMain(store.getSession(params.sessionId), params.turnId, reply, 'completed');
+      return reply;
+    }
+    await nextStarted.promise;
+    assert.equal(params.turnId, nextTurnId);
+    return { ok: true, text: '', ts: 3, mergedIntoTurn: true };
+  };
+  const selected = ref(store.createSession(ordinaryChat));
+  const session = selected.value;
+  assert.equal(isReactive(session), true);
+  const original = store.send(session.id, 'Original topic');
+  await flush();
+  const second = store.send(session.id, 'Second request');
+  const third = store.send(session.id, 'Third request');
+  t.after(async () => { handoff.resolve(); oldDone.resolve(); nextDone.resolve(); await Promise.allSettled([original, second, third]); });
+  await flush();
+  const ids = session.messages.filter(m => m.role === 'human').map(m => m.id);
+  handoff.resolve(); oldDone.resolve();
+  await nextStarted.promise;
+  await flush();
+  const sends = fixture.calls.filter(c => c.method === 'sendAgentMessage').map(c => c.params);
+  assert.equal(sends.filter(p => p.intent === 'root').length, 2, 'only one successor is claimed');
+  assert.equal(sends.find(p => p.turnId === nextTurnId && p.intent === 'root').messageId, ids[1]);
+  assert.equal(sends.find(p => p.turnId === nextTurnId && p.intent === 'steering').messageId, ids[2]);
+  assert.deepEqual(sends.filter(p => p.turnId === nextTurnId).map(p => p.snapshot), [snapshot, snapshot]);
+  assert.equal(fixture.calls.filter(c => c.method === 'claimAgentTurn').length, 2);
+  nextDone.resolve();
+  const results = await Promise.all([original, second, third]);
+  assert.ok(results.every(r => r.ok));
+  assert.deepEqual(session.messages.filter(m => m.role === 'human').map(m => m.id), ids);
+  assert.ok(session.messages.filter(m => m.role === 'human').every(m => !m.promptExcluded));
+  assert.equal(session.messages.filter(m => m.content === 'Original completed').length, 1);
+  assert.equal(session.messages.filter(m => m.content === 'All additional work completed').length, 1);
+  assert.equal(session.title, 'Original topic');
+  assert.equal(titleCalls(fixture).length, 1);
+});
+
+test('a stopped queued message is excluded and saved with its actual failure rather than automatically retried', async () => {
+  const { store, fixture } = sendHarness();
+  const root = deferred(), delivery = deferred();
+  fixture.routes.CoachXpcHandler.sendAgentMessage = params => params.intent === 'root' ? root.promise : delivery.promise;
+  const session = store.createSession(ordinaryChat);
+  const first = store.send(session.id, 'First task');
+  await flush();
+  const second = store.send(session.id, 'Queued task');
+  await flush();
+  delivery.resolve({ ok: false, text: 'Stopped before this message was delivered.', error: 'steer-failed', ts: 2 });
+  assert.equal((await second).ok, false);
+  const queued = session.messages.find(m => m.content === 'Queued task');
+  assert.equal(queued.promptExcluded, true);
+  assert.ok(session.messages.some(m => m.error && m.content.includes('Stopped before this message was delivered.')));
+  assert.ok(session.messages.every(m => !m.content.includes('provider may not support')));
+  assert.equal(fixture.calls.filter(c => c.method === 'claimAgentTurn').length, 1);
+  root.resolve({ ok: false, text: 'Stopped.', error: 'aborted', ts: 2 });
+  await first; await flush();
+  assert.equal(fixture.saved.at(-1).messages.find(m => m.id === queued.id).promptExcluded, true);
+});
+
+test('local path notices stay out of subsequent saves and prompt context while other excluded records persist', async () => {
+  const { store, fixture } = createHarness();
+  const session = store.createSession(options);
+  session.messages.push(message('human', 'human', 'Real user text'));
+  session.messages.push({ ...message('error', 'ai', 'Visible failure'), type: 'error', promptExcluded: true });
+  session.messages.push({ ...message('compact', 'ai', 'Summary record'), type: 'compact', promptExcluded: true, compactSummary: 'Saved summary' });
+  const updatedAt = session.updatedAt;
+  const writesBefore = fixture.saved.length;
+  store.pushLocalNote(session.id, '/fixture/agent-io/local-path');
+  const note = session.messages.at(-1);
+  assert.equal(note.localOnly, true);
+  assert.equal(note.promptExcluded, true);
+  assert.equal(note.tokenCount, 0);
+  assert.equal(session.updatedAt, updatedAt);
+  assert.equal(fixture.saved.length, writesBefore);
+  const context = store.buildAgentContext(session);
+  assert.deepEqual(context.recentMessages.map(item => item.content), ['Real user text']);
+  assert.equal(await store.persistSession(session), true);
+  assert.equal(fixture.saved.length, writesBefore + 1);
+  assert.deepEqual(fixture.saved.at(-1).messages.map(item => item.id), ['human', 'error', 'compact']);
+  assert.ok(fixture.saved.at(-1).messages.find(item => item.id === 'error').promptExcluded);
+  assert.equal(fixture.saved.at(-1).messages.find(item => item.id === 'compact').compactSummary, 'Saved summary');
+  assert.ok(session.messages.some(item => item.id === note.id), 'the current renderer retains its local notice');
+});
+
+test('a local notice preserves the real streaming sink, buffered text and later deltas without an extra save', () => {
+  const { store, fixture, turnService } = createHarness(true);
+  store.scheduleStreamFlush = () => {};
+  store.scheduleScrollToBottomIfNear = () => {};
+  store.scrollToBottom = () => {};
+  const session = store.createSession(options);
+  session.turn = {
+    id: 'turn-local', generation: 1, phase: 'accepted', rootText: 'stream please',
+    sealedAssistantSegments: 0, activity: [], thinking: false, startedAt: 1, lastActivityAt: 1
+  };
+  const payload = { sessionId: session.id, turnId: session.turn.id, generation: 1 };
+  turnService.pushStream({ ...payload, delta: 'Before ' });
+  store.flushStreamBuffer(session.id);
+  const sink = turnService.sink(session);
+  turnService.pushStream({ ...payload, delta: 'buffered ' });
+  const updatedAt = session.updatedAt;
+  const writesBefore = fixture.saved.length;
+  store.pushLocalNote(session.id, '/fixture/agent-io/while-streaming');
+  assert.equal(session.turn.assistantMessageId, sink.id);
+  assert.equal(session.turn.sealedAssistantSegments, 0);
+  assert.equal(sink.streaming, true);
+  assert.equal(sink.content, 'Before ', 'the local notice does not flush or seal the sink');
+  assert.equal(session.updatedAt, updatedAt);
+  turnService.pushStream({ ...payload, delta: 'after' });
+  store.flushStreamBuffer(session.id);
+  assert.equal(turnService.sink(session).id, sink.id);
+  assert.equal(sink.content, 'Before buffered after');
+  assert.equal(sink.streaming, true);
+  assert.equal(session.messages.filter(item => item.streaming).length, 1);
+  assert.equal(fixture.saved.length, writesBefore);
 });
 const storedSession = (id, messages) => ({
   id,
@@ -151,6 +594,92 @@ const turnSnapshot = (state = 'reserved') => ({
   rootText: state === 'reserved' ? '' : 'Continue the real request',
   startedAt: 1000,
   state
+});
+
+const restoredReactiveSession = async (store, fixture, id) => {
+  fixture.persisted.set(id, storedSession(id, [
+    message('retained-human', 'human', 'Earlier request', 1000),
+    message('retained-answer', 'ai', 'Earlier reply', 1100)
+  ]));
+  const selected = ref(await store.loadPersistedSession(id));
+  assert.equal(isReactive(store), true);
+  assert.equal(isReactive(selected.value), true);
+  assert.equal(selected.value, store.getSession(id));
+  return selected;
+};
+
+test('reactive restored history sends hi once and final RPC reply releases its proxied Turn without a completion broadcast', async () => {
+  const { store, fixture } = sendHarness();
+  const selected = await restoredReactiveSession(store, fixture, 'reactive-direct-reply');
+  const session = selected.value;
+  fixture.routes.CoachXpcHandler.sendAgentMessage = async () => ({ ok: true, text: 'Reply to hi', ts: 2 });
+  const sending = store.send(session.id, 'hi');
+  assert.notEqual(session.turn, toRaw(session.turn), 'Vue wraps the raw Turn assigned by send');
+  const reply = await sending;
+  assert.equal(reply.ok, true);
+  const dispatches = fixture.calls.filter(call => call.method === 'sendAgentMessage');
+  assert.equal(dispatches.length, 1);
+  assert.equal(dispatches[0].params.intent, 'root');
+  assert.equal(dispatches[0].params.message, 'hi');
+  assert.equal(session.messages.filter(item => item.role === 'human' && item.content === 'hi').length, 1);
+  assert.equal(session.messages.filter(item => item.role === 'ai' && item.content === 'Reply to hi').length, 1);
+  assert.equal(session.turn, undefined);
+  assert.deepEqual(session.messages.slice(0, 2).map(item => item.id), ['retained-human', 'retained-answer']);
+});
+
+test('reactive restored preparation cannot dispatch after Stop even while its abort IPC remains pending', async t => {
+  const { store, fixture } = sendHarness();
+  const selected = await restoredReactiveSession(store, fixture, 'reactive-stop-preparing');
+  const session = selected.value, workspace = deferred(), aborting = deferred();
+  store.refreshWorkspace = () => workspace.promise;
+  fixture.routes.CoachXpcHandler.abortAgent = () => aborting.promise;
+  fixture.routes.CoachXpcHandler.sendAgentMessage = async () => ({ ok: true, text: 'Must not dispatch after Stop', ts: 2 });
+  const sending = store.send(session.id, 'hi');
+  await flush();
+  const turnId = session.turn.id;
+  const stopping = store.stop(session.id);
+  t.after(async () => {
+    workspace.resolve(); aborting.resolve({ ok: true });
+    await Promise.allSettled([sending, stopping]);
+  });
+  assert.equal(session.turn.aborting, true);
+  workspace.resolve();
+  await flush();
+  assert.equal(fixture.calls.filter(call => call.method === 'sendAgentMessage').length, 0, 'Stop admission takes effect before the abort IPC resolves');
+  assert.ok(fixture.calls.filter(call => call.method === 'abortAgent').every(call => call.params.turnId === turnId));
+  aborting.resolve({ ok: true });
+  await stopping;
+  assert.deepEqual(await sending, { ok: false, reason: 'not-sendable' });
+  assert.equal(session.turn, undefined);
+  assert.equal(session.messages.some(item => item.content === 'Must not dispatch after Stop'), false);
+});
+
+test('reactive restored preparation ignores stale callbacks after another Turn takes ownership', async () => {
+  const { store, fixture, turnService } = sendHarness();
+  const selected = await restoredReactiveSession(store, fixture, 'reactive-replaced-preparing');
+  const session = selected.value, workspace = deferred();
+  store.refreshWorkspace = () => workspace.promise;
+  fixture.routes.CoachXpcHandler.sendAgentMessage = async () => ({ ok: true, text: 'Stale reply', ts: 2 });
+  const sending = store.send(session.id, 'hi');
+  await flush();
+  const oldTurnId = session.turn.id;
+  const newer = {
+    ...toRaw(session.turn), id: 'new-owner', generation: 2, rootText: 'New request',
+    rootHumanMessageId: 'new-human', assistantMessageId: 'new-assistant', activity: []
+  };
+  session.turn = newer;
+  session.messages.push(message('new-human', 'human', 'New request'), { ...message('new-assistant', 'ai', 'New partial reply'), streaming: true });
+  store.activeAgentTurnSnapshots = [{ sessionId: session.id, turnId: newer.id, generation: 2, state: 'running' }];
+  workspace.resolve();
+  assert.deepEqual(await sending, { ok: false, reason: 'not-sendable' });
+  await turnService.finishFromMain(session, oldTurnId, { ok: true, text: 'Stale completion', ts: 3 }, 'completed');
+  assert.equal(toRaw(session.turn), newer);
+  assert.equal(session.messages.find(item => item.id === 'new-assistant').content, 'New partial reply');
+  assert.equal(session.messages.find(item => item.id === 'new-assistant').streaming, true);
+  assert.equal(store.activeAgentTurnSnapshots[0].turnId, newer.id);
+  assert.equal(fixture.calls.filter(call => call.method === 'sendAgentMessage').length, 0);
+  assert.ok(fixture.calls.filter(call => call.method === 'abortAgent').every(call => call.params.turnId === oldTurnId));
+  assert.equal(session.messages.some(item => item.content === 'Stale reply' || item.content === 'Stale completion'), false);
 });
 
 test('new chat is genuinely empty, retaining context defaults, attachments and inherited workspace', () => {

@@ -42,8 +42,14 @@ See [running New chat contract](../plan/tasks/browseruse-new-chat-003.md).
 `/view_context` uses a typed Coach XPC request and Main clipboard write. Export current model-side
 history (including tool calls/results), system/preamble context and pending draft/workspace/attachment
 references. Use the actual runtime context, not renderer transcript text masquerading as model history.
-Reuse existing send prompt builders and BL's first-turn memory/preamble semantics; do not change the
-prompt actually sent. Remove only the slash token when deriving the pending draft. Pending references
+History follows the current branch and latest compaction: include its summary, kept tail and later
+entries; omit absorbed originals, earlier summaries and non-model metadata. Use the runtime's readonly
+`contextEntries()` projection; keep raw `entries()` for compaction candidates and graph statistics.
+Branch summaries retain their text. An unavailable effective-read capability fails explicitly.
+Host compaction and supplemental-message appends also synchronize the live pi messages with the native
+session projection. Explicitly reintroduced user-chain/manifest content remains effective and visible.
+Reuse existing send prompt builders and BL's first-turn memory/preamble semantics; export itself does
+not change the prompt actually sent. Remove only the slash token when deriving the pending draft. Pending references
 are included without reading/uploading attachments or executing tools. Clearly distinguish any
 not-yet-resolved media or first-turn runtime state from the available context snapshot; do not label
 an incomplete snapshot an exact future provider wire request.
@@ -63,16 +69,19 @@ do not silently truncate text/tool history or allocate an unbounded serialized c
 - **复制目录，不是单个文件。** 一个会话的 io 按 `part-NNN.jsonl` 分卷（`modelIoLog.append` 到量换卷），
   给单个文件名等于只交出其中一段。
 - **不新建审计子系统** —— `modelIoLog` 本来就在往那儿写，这条命令只是把位置说出来。
-  它是 `modelIoLog.dirForSession()` 的第一个真实调用者：那个函数上的注释一直写着
-  「`/view_context` 用它」，但全仓**没有任何调用者**，那句注释是过时的。
+  宿主启动后将它接到 `<userData>/agent-io`；现有日志记录宿主 prompt 文本和回合诊断，
+  不代表完整 provider 请求/响应。`/view_context` 也会只读附上已保存日志的目录。
 - **不要求 runtime 活着。** `dirForSession()` 活桶优先、拿不到就按目录名后缀在盘上找最近的一个，
   所以**重启后翻旧会话也拿得到路径** —— 这正是它作为取证工具的价值，因此实现里**故意不调**
   `assertAgentRuntimeActive()`（`/view_context` 需要它，因为那条要读活着的 runtime 上下文；
-  这条只问盘上的路径）。没有日志目录时明确报「还没有」，不给空串让人以为复制成功了。
+  这条只问盘上的路径）。查找先等该会话已有的 opening 和写队列，只返回包含非空日志文件的目录。
+  没有留存时明确提示可能是启用日志前的会话或日志已清理，新发一轮后重试；不补写历史，不改剪贴板。
 - **同时进剪贴板与时间线。** 只发 toast 不够：toast 会消失，而这个路径正是要拿去 audit 的东西，
   得留在会话里可选中、可回翻。那条留痕 `promptExcluded: true` ——
   少了它，一句给人看的路径会占进下一轮提示词，还会被 `/view_context` 导出成"模型看过的历史"，那是假的。
   它也不落库、不改 `updatedAt`：一条本地留痕不值得让会话变脏。
+  留痕带 renderer-only 的 `localOnly` 标记，后续正常保存也必须排除；不能只靠“不主动保存”。
+  它不封口正在 streaming 的 assistant。其他 `promptExcluded` 错误卡或压缩记录仍可正常持久化。
 - 名字用下划线（`/copy_session_path`）而不是空格：开菜单的 token 正则是 `\/([\w-]*)`，
   带空格的名字根本不会被识别成命令。与既有的 `/view_context` 同一个写法。
 

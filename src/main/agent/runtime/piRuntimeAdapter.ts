@@ -87,7 +87,7 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
       ...(options.agentDir ? { agentDir: options.agentDir } : {}),
       customTools,
       // pi adds cwd metadata itself; the host text is passed through without trimming.
-      resourceLoader: createPiResourceLoader(pi, prompt.hostText),
+      resourceLoader: createPiResourceLoader(pi, () => prompt.hostText),
       sessionManager: pi.SessionManager.inMemory()
     })
     options.onDebug?.({
@@ -103,7 +103,7 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
     const debug = (event: Omit<CodexDebugEvent, 'ts' | 'scope'>): void =>
       options.onDebug?.({ scope: options.scope, ts: Date.now(), ...event })
     applyPiSessionPolicy(session as PiSession, debug)
-    return new PiRuntimeSession(session as PiSession, debug)
+    return new PiRuntimeSession(session as PiSession, debug, prompt)
   }
 }
 

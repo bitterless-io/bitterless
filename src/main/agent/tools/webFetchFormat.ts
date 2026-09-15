@@ -42,7 +42,7 @@ export const formatFetchResult = (input: FetchRenderInput): string => {
   if (a.siteName) out.push(`- site: ${a.siteName}`)
   if (a.byline) out.push(`- author: ${a.byline}`)
   if (a.publishedTime) out.push(`- published: ${a.publishedTime}`)
-  if (input.via === 'deep_fetch') out.push(`- rendered with JavaScript in a hidden window, using your signed-in session`)
+  if (input.via === 'deep_fetch') out.push(`- rendered with JavaScript in a temporary browser surface using the browser session; this read does not leave a persistent action target`)
   if (input.servedAsText) out.push(`- the site served plain text/markdown directly (no HTML extraction needed)`)
   out.push(
     `- extracted: ${a.text.length.toLocaleString()} of ${a.fullLength.toLocaleString()} chars${a.truncated ? ' (TRUNCATED)' : ''}`
@@ -68,6 +68,7 @@ export const formatFetchResult = (input: FetchRenderInput): string => {
   if (input.via === 'deep_fetch' && input.snapshotYaml) {
     const yaml = clip(input.snapshotYaml, SNAPSHOT_MAX_CHARS)
     out.push(`--- accessibility snapshot (${input.snapshotNodes ?? 0} nodes${yaml.length < input.snapshotYaml.length ? ', clipped' : ''}) ---`)
+    out.push('Snapshot refs belong to the temporary read. Take a fresh page_snapshot of a live session tab before ui_act.')
     out.push('')
     out.push('```yaml')
     out.push(yaml)

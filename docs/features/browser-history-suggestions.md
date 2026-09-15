@@ -24,7 +24,7 @@ Use a dedicated transparent WebContentsView renderer above page/control views, a
                  ( another page                 https://…   x )
                  ( recent history / no matches / retry state )
 
-- Focus/click or typing in the URL input opens matching suggestions; history icon toggles recent history (blank query). Opening history on a non-web tab can display recents but must preserve existing local-path/page-type behavior.
+- Focus/click or typing in the URL input opens matching suggestions only when its value contains non-whitespace text. Empty/whitespace-only input stays closed; clearing the field dismisses and invalidates pending queries. Arrow keys must not open blank automatic suggestions. The explicit history icon still toggles recent history (blank query). Opening history on a non-web tab can display recents but must preserve existing local-path/page-type behavior.
 - Arrow Down/Up changes selection, Enter opens the selected result (or submits the typed URL/search through the existing navigation path), Escape hides, and Tab dismisses without trapping focus. IME composition must not trigger selection or navigation.
 - For every nonempty input, show an explicit localized “Search Google for <input>” candidate alongside matching history; it participates in arrow-key selection and mouse/Enter activation and builds https://www.google.com/search?q= with correctly encoded original input. Plain non-URL text submitted without a history selection also uses Google. History title matching is required, including partial Chinese/Unicode titles, as Ral reaffirmed on 2026-09-14.
 - Clicking a row navigates; clicking its remove icon removes only that row. Provide explicit history toggle and close controls, with accessible labels and loading/empty/error states.
@@ -55,6 +55,19 @@ Verification logs are in `/Users/ral/Documents/projects/overmind/tmp/browser-his
 Human handoff is recorded in Bitterless Preview, domain `agent builid`, Todo `00357809900035809304`: “验收 BL / Cowork 浏览历史、标题匹配与 Google 搜索候选”. Run `yarn dev` from this project’s app directory after stopping any existing development instance; verify restart persistence, title/URL matching, Google query fidelity, focus, native placement and all popup dismissal paths. No Electron/E2E or independent review was run.
 
 ## Attached-checkout handoff
+
+### Empty address focus (2026-09-15)
+
+Status: implemented; code-verified, human testing pending. Ral:「url input 激活时，没有输入字符的时候不应该显示 browser history，输入字符后再显示就行，bl cowork 都改」。
+Automatic suggestions require non-whitespace input, including focus, input, IME completion and keyboard reopening.
+Clearing input closes immediately and late results cannot reopen it. Explicit history-button access to recents remains available.
+Verify with renderer-store tests for blank focus, whitespace, typing, clearing with pending results, IME and the explicit toggle.
+Human check: open a new tab, focus the empty field, type a title/URL fragment, then delete all text; expect hidden → visible → hidden.
+No Electron/E2E or independent review.
+
+Verification: `node --test tests/maestro/maestroBrowserHistoryInput.test.mjs tests/maestro/maestroBrowserHistoryPopup.test.mjs`
+passed 27/27 (13 input-state and 14 native-popup mock tests). Covers empty/whitespace focus and arrows,
+typing, clearing during IME and with pending results, and explicit recent-history access. No build or full typecheck was run for this renderer-store change.
 
 The current test target is `/Users/ral/Documents/projects/overmind/projects/bitterless`: run `yarn dev` there after stopping the existing development instance. The earlier isolated worktree launch instructions are superseded. Integration used the saved pre-feature snapshot, retained both independently added documentation-index entries, and left all dependency/cache symlinks out of the merge.
 

@@ -53,6 +53,8 @@ export interface MaestroCompositeTabSpec {
   title: string
   favicon: string
   displayUrl: string
+  /** Confirmed currently displayed absolute file path; pending/empty content returns null. */
+  getDisplayedFile?(host: MaestroCompositeTabHostApi): string | null
   /**
    * At most one tab of this kind; opening again brings the existing one forward.
    *

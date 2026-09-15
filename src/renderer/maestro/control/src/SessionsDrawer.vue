@@ -56,10 +56,16 @@ function onDrawerKeydown(event: KeyboardEvent): void {
     }
     return
   }
-  if (command && key === 'z' && !isEditableTarget(event.target) && sessionActions.lastArchived) {
-    event.preventDefault()
-    event.stopPropagation()
-    if (!event.repeat) void sessionActions.undoArchive()
+  if (command && key === 'z') {
+    if (isEditableTarget(event.target)) {
+      event.preventDefault()
+      event.stopPropagation()
+      void sessionActions.undoTextEdit()
+    } else if (sessionActions.lastUndo) {
+      event.preventDefault()
+      event.stopPropagation()
+      if (!event.repeat) void sessionActions.undo()
+    }
     return
   }
   if (!historyVisible.value || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
@@ -132,7 +138,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onDrawerKeydown, tru
             name="maestro__history-item"
             :data-history-cursor="index === historyCursor"
             :aria-current="item.id === channelStore.activeSessionId ? 'true' : undefined"
-
+            @contextmenu.prevent.stop="sessionActions.showMenu(item.id)"
           >
             <Button class="chat-panel__history-select" type="text" @click="selectHistory(item.id)">
             <!-- 包裹层照 cowork 的 `session-list__item` 结构(Ral 2026-09-09):行本身是横排

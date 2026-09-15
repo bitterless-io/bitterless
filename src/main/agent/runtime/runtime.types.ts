@@ -45,8 +45,10 @@ export interface AgentRuntimeUsage {
 export type AgentRuntimeContextEntry = unknown
 
 export interface AgentRuntimeContextSurface {
-  /** 会话此刻的全部上下文条目,时间升序。 */
+  /** 原始会话历史条目，供压缩候选和结构统计使用。 */
   entries(): AgentRuntimeContextEntry[]
+  /** 当前分支在压缩后的有效上下文；不支持时明确抛错，不能退回全部历史。 */
+  contextEntries(): AgentRuntimeContextEntry[]
   /**
    * 追加一条**进上下文**的自定义消息条目(pi `appendCustomMessageEntry`)。
    * ② 用户原话链与 ④ 清单就走这条。返回条目 id;不支持时返回 null。

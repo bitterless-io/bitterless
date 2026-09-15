@@ -99,6 +99,10 @@ export interface CoachXpcContract {
    * 不新建任何审计子系统 —— 它只是把 `modelIoLog` 已经在写的那个目录说出来。
    */
   copySessionIoPath(params: { sessionId: string }): Promise<SessionIoPathResult>
+  showSessionMenu(params: { sessionId: string }): Promise<SessionMenuResult>
+  // Editable Cmd/Ctrl+Z reaches Chromium's undo stack in the fixed, focused Control view.
+  editControlText(params: { action: 'undo' }): Promise<{ ok: boolean; error?: string }>;
+  generateSessionTitle(params: SessionTitleRequest): Promise<SessionTitleResult>;
   compactConversation(params: AgentCompactRequest): Promise<AgentCompactReply>
   // Delegate chat: agent acts AS the user toward the user's customer (the message sender).
   delegateMessage(params: { message: string; sessionId?: string }): Promise<AgentReply>
@@ -279,20 +283,23 @@ export interface BrowserRequestReplayResult {
 
 export type TabKind = 'home' | 'browser' | 'onlypreview' | 'trench' | 'zellij'
 
-/**
- * **D3 —— 当前 tab 激活的内容**(Ral 2026-09-11:「D3 是当前 tab 激活的内容,有文件、miniapp、
- * 网页 url 3 种」)。分层见 `overmind:areas/agent-runtime/chat/prompt-structure.html` #2 表 3。
- *
- * 三态与 `TabKind` 的映射:`onlypreview`→file、`browser`→web、其余(`home`/`trench`/`zellij`)→miniapp。
- *
- * **为什么不复用 `currentUrl`**:它是 `displayUrl(tab)` 的结果,而那个函数只特判 `home` 与
- * `onlypreview`,composite tab(trench/zellij)落到 `tab.url` —— 那个字段出生就是空串且永不被写,
- * 于是 `currentUrl` 会变成**空串**。它同时还是技能段 `domain` 的输入,所以不能改它去承载 D3。
- */
-export type ActiveTabContent =
-  | { readonly state: 'file'; readonly fileUrl: string; readonly app: string }
-  | { readonly state: 'miniapp'; readonly app: string }
-  | { readonly state: 'web'; readonly url: string; readonly title: string }
+/** D3: a value snapshot of the foreground when a message arrives, independent of tool targets. */
+export type ActiveTabContent = {
+  /** Actual OperationTab id; null for a foreground surface outside that tab collection. */
+  readonly tab_id: string | null
+  /** Visible tab label, including the user's alias. */
+  readonly title: string
+} & (
+  | { readonly kind: 'file'; readonly path: string }
+  | { readonly kind: 'miniapp'; readonly miniapp: string | null }
+  | { readonly kind: 'web'; readonly url: string }
+)
+
+/** D3 and D4 captured together, before any message-processing await. */
+export interface AgentWindowTabSnapshot {
+  readonly activeTab: ActiveTabContent | null
+  readonly openTabs: readonly ActiveTabContent[]
+}
 
 export interface AgentBrowserTabState {
   id: string
@@ -844,8 +851,22 @@ export interface ContextExportRequest {
   context?: AgentConversationContext
 }
 
-/** `/copy_session_path` 的回包。`path` 是绝对路径,已经写进剪贴板。 */
+/** 会话日志操作的回包。`path` 是已复制或已在系统文件管理器打开的绝对目录。 */
 export type SessionIoPathResult = { ok: true; path: string } | { ok: false; error: string }
+
+export interface SessionTitleRequest {
+  requestId: string;
+  sessionId: string;
+  firstMessageId: string;
+  text: string;
+}
+
+export type SessionTitleResult = { ok: true; title: string } | { ok: false };
+
+export type SessionMenuResult =
+  | { ok: true; action: 'copy' | 'open'; path: string }
+  | { ok: true; action: null }
+  | { ok: false; error: string }
 
 export type ContextExportSummary =
   | { ok: true; chars: number; entries: number }
@@ -905,8 +926,7 @@ export interface ContextGraphView {
    *
    * 窗口:这份投影的单位是**字符**(结构与体量),而窗口的单位是 token —— 写成一个比值
    * (`113k / 210k`)看着精确,实际是两个单位相除。预算账已经有自己的展示位(控制面板那条上下文条)。
-   * jsonl:本仓 `setModelIoRoot()` 没有任何调用点 ⇒ `dirForSession()` 永远回 `null`,给一个永远空的
-   * 页脚就是"读起来像我们有这个信息"(契约 #2.5)。
+   * jsonl:日志目录由 /copy_session_path 与 /view_context 提供，结构图不重复展示(契约 #2.5)。
    */
   systemChars: number
   systemPreview: string
@@ -946,6 +966,7 @@ export interface AgentTurnSnapshot {
 }
 
 export interface AgentTurnClaimRequest {
+  continuationOf?: string
   sessionId: string
   operationTabId?: string
   turnId: string
@@ -959,7 +980,11 @@ export interface AgentTurnClaimResult {
   reason?: 'busy-here' | 'busy-elsewhere'
 }
 
+export interface AgentMessageSnapshot { windowTabs: AgentWindowTabSnapshot; sentAt: string }
+
 export interface AgentMessageRequest {
+  snapshot?: AgentMessageSnapshot
+  messageId?: string
   message: string
   sessionId: string
   turnId: string
@@ -989,6 +1014,8 @@ export interface AgentCompactReply {
 }
 
 export interface AgentReply {
+  /** The addressed owner completed; safely retry this same message as a new root, never steer a different owner. */
+  continueAsRoot?: { turnId: string; reply: AgentReply; snapshot: AgentMessageSnapshot }
   ok: boolean
   text: string
   ts: number

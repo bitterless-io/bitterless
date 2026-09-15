@@ -35,6 +35,15 @@ const innerDeadlineMs = (): number => {
   return Math.max(5_000, Math.min(TOOL_TIMEOUT_MS, effective - 5_000))
 }
 
+const SEARCH_FALLBACK_GUIDANCE =
+  'If verification is still needed, fall back to deep search: actual browser-operated searching with existing tools, not a deep_search tool call. ' +
+  'Reuse a suitable session search tab or open_tab {url,show:false} on a public search/site entry page. ' +
+  'Use page_snapshot, then ui_act to enter and submit the query; inspect results, open primary sources and read their content. ' +
+  'Repeat search/read until verified or blocked. web_fetch/deep_fetch may read discovered URLs; deep_fetch alone is not searching. ' +
+  'Create a session tab first if needed; never switch to the human foreground as a fallback. ' +
+  'Respect user browsing restrictions, tool/access limits and budgets. Try public sources before asking the user to repair this search service. ' +
+  'Cite sources actually read; if no permitted route works, state what remains unverified.'
+
 /**
  * 描述是**逐字**的提示词,不是注释 —— 改一个词就改了模型行为。
  * 每一句都必须与实现对得上。
@@ -74,6 +83,10 @@ const describeWebSearch = (): string =>
     'Reach for deep_fetch as soon as web_fetch comes back as an app shell, a spinner, "enable JavaScript" or a',
     'login wall — that is not an error, it is a client-rendered site, and only a rendering fetch can read it.',
     '',
+    'IF SEARCH FAILS',
+    'Follow the error\'s retry guidance for this search service only; one failed service does not mean all networking is unavailable.',
+    SEARCH_FALLBACK_GUIDANCE,
+    '',
     'CITING',
     'Cite inline, at the claim, as a Markdown link to the specific page you used.',
     'Do not link to search-result or listing pages. Do not paste bare URLs. Do not put links inside code fences.',
@@ -88,26 +101,35 @@ const describeWebSearch = (): string =>
 
 /** 失败 → 模型可读文本。每一类都必须说**下一步做什么**,否则模型只会重试。 */
 const describeFailure = (err: WebSearchError): string => {
+  let nextStep: string
   switch (err.kind) {
     case 'not-signed-in':
-      return `ERROR: ${err.message}. Ask the user to sign in to Bitterless, then retry.`
+      nextStep = 'Do not retry this search service until its sign-in state changes; continue with deep search.'
+      break
     case 'not-deployed':
       // 与「搜索失败」严格区分:重试一个不存在的端点只会烧掉回合。
-      return `ERROR: ${err.message}. Do not retry — answer from what you already know and say you could not verify it online.`
+      nextStep = 'Do not retry this missing search endpoint; continue with deep search.'
+      break
     case 'unavailable':
-      return `ERROR: ${err.message}. Do not retry; tell the user web search is unavailable on this server.`
+      nextStep = 'Do not retry this unavailable search service; continue with deep search.'
+      break
     case 'budget-exhausted':
-      return `ERROR: ${err.message}`
+      nextStep = 'Do not retry this search service while its budget is exhausted or bypass its budget limit; continue with permitted deep search.'
+      break
     case 'rate-limited':
-      return `ERROR: ${err.message}.${err.retryAfterMs ? ` Wait ${Math.ceil(err.retryAfterMs / 1000)}s before` : ' Wait a moment before'} trying once more; if it fails again, continue without searching.`
+      nextStep = `${err.retryAfterMs ? `Wait ${Math.ceil(err.retryAfterMs / 1000)}s before` : 'Wait a moment before'} trying this search service once more, or start deep search now. If it fails again, continue with deep search.`
+      break
     case 'bad-request':
       // 参数错是模型自己能修的 —— 把服务端的约束消息带上,别只说"失败了"。
-      return `ERROR: ${err.message}. Fix the parameter and call again.`
+      nextStep = 'Fix the parameter and call again. If the request cannot be corrected, continue with deep search.'
+      break
     case 'timeout':
-      return `ERROR: ${err.message}. Try once more with a shorter query; if it times out again, continue without searching.`
+      nextStep = 'Try this search service once more with a shorter query, or start deep search now. If it fails again, continue with deep search.'
+      break
     default:
-      return `ERROR: ${err.message}. Try one more time with a different query; if it fails again, continue without searching.`
+      nextStep = 'Try this search service once more, or start deep search now. If it fails again, continue with deep search.'
   }
+  return `ERROR: web_search failed: ${err.message}. ${nextStep} ${SEARCH_FALLBACK_GUIDANCE}`
 }
 
 const hosts = (value: unknown): string[] =>
@@ -150,7 +172,7 @@ export const buildWebSearchTools = (): AgentToolSpec[] => [
         return formatWebSearchResults(response)
       } catch (err) {
         if (err instanceof WebSearchError) return describeFailure(err)
-        return `ERROR: web search failed: ${err instanceof Error ? err.message : String(err)}`
+        return `ERROR: web_search failed: ${err instanceof Error ? err.message : String(err)}. ${SEARCH_FALLBACK_GUIDANCE}`
       }
     }
   }
