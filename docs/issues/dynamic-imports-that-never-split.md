@@ -87,7 +87,30 @@ assert.match(appMainSource, /app\.on\('second-instance',[\s\S]*?mainWindowHelper
 **HEAD 同样不匹配**,即这条红在本次改动之前就存在。后果是该文件那条断言之后的所有判据(包括本次更新的
 顺序标记)当前都跑不到,所以上表那三条是**单独复算**的结果,不是这个守卫跑出来的。这条陈年红另开任务。
 
-## 留下没动的
+## 渲染进程那条:**不要修**(2026-09-15 查证)
 
-`src/renderer/home/src/router/index.ts` 还有一条同类告警(被 `main.ts` 与 `messageSearch.store.ts` 动态引,
-又被两个 xpc subscriber 静态引)。渲染进程的 chunk 切分与首屏加载有关,判断依据和主进程不同,不在本次范围。
+`src/renderer/home/src/router/index.ts` 会打同一句告警,上次留着没动。这次查下来结论是**故意保留**,
+不是遗留 —— 和主进程那两条不是一回事。
+
+它有两个动态引用方,性质不同:
+
+| 引用方 | 性质 |
+| --- | --- |
+| `main.ts` 的 `Promise.all([import('./App.vue'), import('./router')])` | **装饰性**。`main.ts` 顶部静态引了 `./xpc/auth.subscriber` 与 `./xpc/homeShellBridge.handler`,两者都 `import router from '@/router'` —— router 在 `main.ts` 求值时就已建好(`createRouter()` 与两个导航守卫都是模块级语句) |
+| `messageSearch.store.ts` 的 `await import('@/router')` | **承重**。注释写明:Maestro 内置的 local Home 直接挂 Chat、没有 router/login 外壳,这里只在非 Maestro 的点击路径上才加载 router,好让那个入口不会因为渲染 MessageSearch 就把 router/auth 整张图拉进来 |
+
+产物证实这条边界今天是成立的:
+
+```text
+home-*.js              customerNeedsPasswordSetup ×10   restoreCustomerSession ×4
+maestroLocalHome-*.js  customerNeedsPasswordSetup ×0    restoreCustomerSession ×0
+```
+
+所以:**这条告警是那道边界的代价**,Rollup 只是在如实报告「有静态引用方,所以切不出去」。要让它消失只能
+把 `messageSearch.store.ts` 改成静态引 —— 那会把 router/auth 图拉进 maestro-local-home 入口,正是注释要
+防的事。
+
+也试过把 `main.ts` 那半改成静态:**告警照旧**(它只是从「动态引用方」挪进「静态引用方」那一栏),而且顺手
+掐掉了「以后若把那两个 xpc subscriber 改成懒引,router 就能真正切出去」这条路 —— 已回退,`main.ts` 一字未动。
+
+下次再看到这条告警,读到这里就可以停手。
