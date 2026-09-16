@@ -14,8 +14,15 @@ const auditOnlyPreviewAssociations = require('./onlyPreviewAssociations.audit.cj
 const UPDATE_CONFIG_FILE = 'app-update.yml';
 
 const MIB = 1024 * 1024;
-const DEFAULT_MAX_ASAR_BYTES = 220 * MIB;
-const DEFAULT_MAX_APP_BYTES = 650 * MIB;
+// Re-based 2026-09-16 against a measured mac_arm Preview package: app.asar 179.69 MiB,
+// application 544.32 MiB (docs/issues/asar-packs-the-build-toolchain.md). The archive keeps ~8.5%
+// headroom — enough for organic out/renderer growth, tight enough that a single dependency
+// regression of the shape we just removed (9-25 MiB) fails the build the day it lands. The
+// application keeps ~10%, deliberately looser: it is dominated by Electron Framework and
+// maestro-tools, which step 30-50 MiB on an Electron major upgrade, and a gate that fails on a
+// legitimate upgrade gets raised reflexively instead of read.
+const DEFAULT_MAX_ASAR_BYTES = 195 * MIB;
+const DEFAULT_MAX_APP_BYTES = 600 * MIB;
 const BINARY_HEADER_BYTES = 64 * 1024;
 const BETTER_SQLITE3_BINARY_PARTS = Object.freeze([
   'app.asar.unpacked',
