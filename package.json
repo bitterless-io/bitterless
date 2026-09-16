@@ -68,6 +68,7 @@
     "check:maestro": "node scripts/maestro/check-maestro.mjs",
     "test:maestro-external-tools": "node --test scripts/maestro/externalTools.test.mjs",
     "test:zellij": "node --test tests/zellij/*.test.mjs",
+    "test:lan-ip": "node --test tests/lanIp/*.test.mjs",
     "test:maestro-pi-agent-dir": "node --test scripts/maestro/piAgentDir.test.ts",
     "test:maestro-crms-residue": "node --test scripts/maestro/crmsResidueCleanup.test.ts",
     "check:chat-composer": "node scripts/maestro/check-chat-composer.mjs",

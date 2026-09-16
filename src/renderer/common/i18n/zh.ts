@@ -197,6 +197,14 @@ export const zh: typeof en = {
         showChatMenuDescription: '保留从主菜单进入现有 Chat 工作区的入口。',
         showChatMenuSaveFailed: '无法更新 Chat 菜单设置，已恢复之前的设置。'
       },
+      lanAddress: {
+        label: '局域网地址',
+        refresh: '重新获取局域网地址',
+        unavailable: '未检测到局域网地址',
+        failed: '无法读取网络接口',
+        stale: '网络已变化，请刷新以更新地址。',
+        ignored: '已忽略的虚拟网卡'
+      },
       save: '保存',
       saveSuccess: '保存成功',
       saveFailed: '保存失败'

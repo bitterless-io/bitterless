@@ -199,6 +199,16 @@ export const en = {
         showChatMenuSaveFailed:
           'Could not update the Chat menu setting. The previous setting was restored.'
       },
+      lanAddress: {
+        label: 'Local network address',
+        // Dedicated a11y string: the control is icon-only, so a bare 'Refresh' would announce a
+        // verb with no object.
+        refresh: 'Refresh the LAN address',
+        unavailable: 'No local network address',
+        failed: 'Could not read network interfaces',
+        stale: 'The network changed. Refresh to update the address.',
+        ignored: 'Ignored virtual adapters'
+      },
       save: 'Save',
       saveSuccess: 'Saved successfully',
       saveFailed: 'Save failed'

@@ -1,5 +1,10 @@
 # Bitterless Documentation
 
+- [Kimchi workflows and /workflow shortcuts](features/kimchi-workflow.md) — code verified; human model/UI testing pending; [task](plan/tasks/kimchi-workflow-001.md).
+
+- [Workbench LAN address](features/workbench-lan-address.md) — implemented; code-verified, human testing pending;
+  Settings shows this machine LAN IPv4, resolved once in Main and re-resolved only by the Refresh button.
+
 - [Deep fetch tab loading and built-in browser workflow](issues/deep-fetch-tab-workflow.md) — code complete; human acceptance pending;
   repair the tab loader and route explicit deep-fetch requests through ordinary browser controls.
 

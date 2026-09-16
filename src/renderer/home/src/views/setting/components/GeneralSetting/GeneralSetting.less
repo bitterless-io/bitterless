@@ -65,3 +65,20 @@
   font-size: 12px;
   line-height: 1.5;
 }
+
+/* The value carries ONLY this class, never `general-setting__control-label` as well: that rule sets
+   `var(--color-royalblue-800)`, a token this repo defines nowhere, and stacking two single-class
+   selectors would make the colour depend on source order in this file. Arco's `--color-text-*` is
+   available on every surface that renders this pane. Borderless by construction — grouping here is
+   whitespace, not lines. */
+.general-setting__lan-address-value {
+  color: var(--color-text-1);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.general-setting__lan-address-ignored-item {
+  margin-right: 8px;
+  white-space: nowrap;
+}

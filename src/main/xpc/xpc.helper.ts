@@ -19,6 +19,7 @@ import './zellij.handler';
 import './zellijWindow.handler';
 import './omniWindow.handler';
 import './shell.handler';
+import './lanIp.handler';
 import './sqlitePassword.handler';
 import './mainWindow.handler';
 import './auth.handler';
