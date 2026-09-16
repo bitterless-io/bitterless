@@ -1,4 +1,7 @@
-import { reactive } from 'vue'
+import { reactive, unref } from 'vue'
+import { i18n } from '@renderer/common/i18n/i18n.helper'
+import { skillCatalogEn, skillCatalogZh } from './skillCatalog.messages'
+import type { SkillCatalogSnapshot, SkillLayer } from '@maestro-shared/coach.api'
 import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer'
 import { encode } from 'gpt-tokenizer/encoding/o200k_base'
 import { AGENT_TURN_CHANNEL, defaultLlmEffort } from '@maestro-shared/coach.api'
@@ -225,6 +228,47 @@ class WorkbenchStoreState {
   skillScopeError = ''
   private skillRequest = 0
   private skillDetailRequest = 0
+  skillLayer: SkillLayer = (localStorage.getItem('skills.source') as SkillLayer) || 'global'
+  skillSearch = ''
+  skillStatus = 'all'
+  skillLoading = false
+  skillError = ''
+  skillShowMigration = false
+  skillShowDetail = false
+  skillCatalog: SkillCatalogSnapshot | null = null
+  readonly skillLayers: SkillLayer[] = ['global', 'workspace', 'institution']
+  get skillsText() { return String(unref(i18n.global.locale)).startsWith('zh') ? skillCatalogZh : skillCatalogEn }
+  get sourceSkills(): SkillSummary[] {
+    return this.skills.filter(skill => this.skillShowMigration ? skill.scope === 'unassigned' : skill.layer === this.skillLayer && skill.scope !== 'unassigned')
+      .filter(skill => this.skillStatus === 'all' || skill.status === this.skillStatus)
+      .filter(skill => (skill.name + ' ' + (skill.displayName || '') + ' ' + skill.description).toLowerCase().includes(this.skillSearch.toLowerCase()))
+  }
+  get unassignedCount(): number { return this.skills.filter(skill => skill.scope === 'unassigned').length }
+  get skillSourcePath(): string { return this.skillCatalog?.roots[this.skillLayer].join(' · ') || '' }
+  get skillSourceHint(): string { return this.skillsText[(this.skillLayer + 'Hint') as 'globalHint'] }
+  skillCount(layer: SkillLayer): string {
+    const all = this.skills.filter(skill => skill.layer === layer && skill.scope !== 'unassigned')
+    const ready = all.filter(skill => skill.status === 'ready').length
+    return all.length === ready ? String(ready) : ready + '/' + all.length
+  }
+  async selectSkillLayer(layer: SkillLayer): Promise<void> {
+    this.skillLayer = layer; localStorage.setItem('skills.source', layer)
+    this.skillShowMigration = false; this.skillShowDetail = false; this.skillSearch = ''; this.skillStatus = 'all'
+    this.selectedSkillId = this.sourceSkills[0]?.id || ''; await this.loadSkillDetail(this.selectedSkillId)
+  }
+  async moveSkillTab(event: KeyboardEvent, index: number): Promise<void> {
+    const delta = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0
+    if (!delta && event.key !== 'Home' && event.key !== 'End') return
+    event.preventDefault()
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? 2 : (index + delta + 3) % 3
+    await this.selectSkillLayer(this.skillLayers[next])
+    document.getElementById('skill-tab-' + this.skillLayer)?.focus()
+  }
+  async copySkillReference(): Promise<void> { if (this.selectedSkill) await navigator.clipboard.writeText(this.selectedSkill.reference || this.selectedSkill.id) }
+  async openSkillFile(): Promise<void> { if (this.selectedSkill) { const result = await coach.openSkillFile({ skillId: this.selectedSkill.id }); this.skillError = result.error || '' } }
+  async openSkillSource(): Promise<void> { const result = await coach.openSkillSource({ layer: this.skillLayer }); this.skillError = result.error || '' }
+  async assignGlobalSkill(): Promise<void> { this.skillImportScope = 'shared'; await this.assignSelectedSkillScope() }
+  async removeSkill(): Promise<void> { if (confirm(this.skillsText.deleteConfirm)) { const result = await this.deleteSelectedSkill(); if (!result.ok) this.skillError = result.message } }
   skills: SkillSummary[] = []
   llmConfig: LlmConfig | null = null
   llmLoading = false
@@ -421,8 +465,10 @@ class WorkbenchStoreState {
       this.selectedDomain = this.domainExists(domain) ? domain : this.selectedDomain
       void this.refreshSkills()
     })
+    xpcRenderer.subscribe('coach/workspace-changed', () => { this.selectedSkillId = ''; this.skillDetail = null; void this.refreshSkills() })
     xpcRenderer.subscribe('coach/skills-changed', payload => {
       if (payload.params?.contextChanged) this.clearInstitutionSkills()
+      if (payload.params?.workspaceChanged) { this.selectedSkillId = ''; this.skillDetail = null }
       void this.refreshSkills()
     })
     xpcRenderer.subscribe('coach/injected-buttons-changed', () => {
@@ -827,19 +873,18 @@ class WorkbenchStoreState {
     } catch (error) { this.skillScopeError = (error as Error).message }
   }
 
-  async refreshSkills(): Promise<void> {
+  async refreshSkills(checkUpdates = false): Promise<void> {
     const request = ++this.skillRequest
-    const skills = await coach.listSkills()
-    const context = await coach.getSkillScopeContext()
-    if (request !== this.skillRequest) return
-    this.skills = skills
-    this.skillInstitution = context
-    if (!context && this.skillImportScope === 'institution') this.skillImportScope = 'shared'
-    this.ensureSelectedDomain()
-    const selected = this.skills.find((skill) => skill.id === this.selectedSkillId)
-    const selectedInDomain = selected && (!this.selectedDomain || selected.domain === this.selectedDomain)
-    if (!selectedInDomain) this.selectedSkillId = this.domainSkills[0]?.id || ''
-    await this.loadSkillDetail(this.selectedSkillId)
+    this.skillLoading = true; this.skillError = ''
+    try {
+      const catalog = await coach.skillCatalog({ checkUpdates })
+      if (request !== this.skillRequest) return
+      this.skillCatalog = catalog; this.skills = catalog.skills
+      this.skillInstitution = catalog.institution || null
+      if (!this.sourceSkills.some(skill => skill.id === this.selectedSkillId)) this.selectedSkillId = this.sourceSkills[0]?.id || ''
+      await this.loadSkillDetail(this.selectedSkillId)
+    } catch (error) { if (request === this.skillRequest) this.skillError = String(error) }
+    finally { if (request === this.skillRequest) this.skillLoading = false }
   }
 
   async selectDomain(domain: string): Promise<void> {
@@ -853,12 +898,13 @@ class WorkbenchStoreState {
 
   async selectSkill(skillId: string): Promise<void> {
     this.selectedSkillId = skillId
+    this.skillShowDetail = true
     await this.loadSkillDetail(skillId)
   }
 
   async loadSkillDetail(skillId: string): Promise<void> {
     const request = ++this.skillDetailRequest
-    const detail = skillId ? await coach.getSkillDetail({ skillId }) : null
+    const detail = skillId && this.selectedSkill?.status !== 'error' ? await coach.getSkillDetail({ skillId }) : null
     if (request === this.skillDetailRequest && skillId === this.selectedSkillId) this.skillDetail = detail
   }
 
@@ -873,7 +919,7 @@ class WorkbenchStoreState {
   }
 
   async importSkillPackage(): Promise<SkillImportResult> {
-    const result = await coach.importSkillPackage({ sharingScope: this.skillImportScope })
+    const result = await coach.importSkillPackage({ sharingScope: 'shared' })
     if (result.ok && result.skill) {
       await this.refreshSkills()
       this.selectedDomain = result.skill.domain

@@ -1,3 +1,6 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { describeSkillFile, discoverWorkspaceSkills, fingerprint, skillPackageFiles, SkillDirectoryWatcher, workspaceSkillRoots } from './skillDiscovery.service'
+import type { SkillCatalogSnapshot } from '@maestro-shared/coach.api'
 import { SkillScopeStorage, type SkillScope, type SkillScopeContext } from './skillScope.storage'
 import { skillScopeContext } from './skillScope.context'
 import {
@@ -6,6 +9,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   lstatSync,
@@ -35,6 +39,41 @@ const RETIRED_BASELINE_SKILL_DIR = 'baseline'
 const SKILL_AUDIT_FILE = 'skill-audit.json'
 
 export class SkillRegistryService {
+  private readonly workspace = new AsyncLocalStorage<string | undefined>()
+  private readonly watchedWorkspaces = new Map<string, SkillDirectoryWatcher>()
+  private changed?: () => void
+  onChanged(callback: () => void): void { this.changed = callback }
+  withWorkspace<T>(workspace: string | undefined, operation: () => T): T { return this.workspace.run(workspace, operation) }
+  catalog(workspace = this.workspace.getStore()): SkillCatalogSnapshot {
+    const roots = { global: [this.skillsDir, this.legacySkillsDir, this.scopeStorage.shared], workspace: workspaceSkillRoots(workspace), institution: this.scopeStorage.institutionRoot() ? [this.scopeStorage.institutionRoot()!] : [] }
+    const key = workspace || ''
+    let watcher = this.watchedWorkspaces.get(key)
+    if (!watcher) {
+      watcher = new SkillDirectoryWatcher(() => this.changed?.())
+      this.watchedWorkspaces.set(key, watcher)
+      if (this.watchedWorkspaces.size > 16) { const oldest = this.watchedWorkspaces.keys().next().value!; this.watchedWorkspaces.get(oldest)?.dispose(); this.watchedWorkspaces.delete(oldest) }
+    }
+    watcher.update([...roots.global, ...roots.workspace, ...roots.institution])
+    const skills = this.withWorkspace(workspace, () => this.listSkills(true))
+    const revision = fingerprint(JSON.stringify([workspace || '', this.scopeStorage.current()?.generation || '', this.scopeStorage.current()?.institutionId || '', skills.map(skill => [skill.reference, skill.skillRevision, skill.status, skill.error])]))
+    return { revision, workspace: workspace || '', roots, skills, watchError: watcher.error, institution: this.scopeStorage.current(), generation: this.scopeStorage.current()?.generation }
+  }
+  catalogPrompt(workspace = this.workspace.getStore()): string {
+    const catalog = this.catalog(workspace)
+    const available = catalog.skills.filter(skill => skill.status === 'ready' && skill.scope !== 'unassigned')
+    return '[Current complete Skills catalog]\n' + JSON.stringify({ catalogRevision: catalog.revision, workspace: catalog.workspace, institution: this.scopeStorage.current()?.institutionId || null,
+      counts: Object.fromEntries(['global','workspace','institution'].map(layer => [layer, { available: available.filter(skill => skill.layer === layer).length, errors: catalog.skills.filter(skill => skill.layer === layer && skill.status === 'error').length }])),
+      skills: available.map(skill => ({ name: skill.canonicalName || skill.name, displayName: skill.displayName, description: skill.description, source: skill.layer, ref: skill.reference || skill.id, path: skill.path, revision: skill.skillRevision, allowImplicitInvocation: skill.allowImplicitInvocation, ...(skill.domain ? { domain: skill.domain, execution: 'Recorded execution requires matching domain.' } : {}) })) }) + '\nCatalog entries are metadata only, not loaded bodies. Read get_skill_contract or read_file on demand. This current catalog supersedes historical inventories; never treat an old body as the current revision. Same names require a qualified ref.'
+  }
+  dispose(): void { for (const watcher of this.watchedWorkspaces.values()) watcher.dispose(); this.watchedWorkspaces.clear() }
+  resolveSkill(reference: string, includeUnassigned = false): SkillSummary | undefined {
+    const rows = this.listSkills(includeUnassigned)
+    const direct = rows.filter(skill => skill.reference === reference)
+    const exact = direct.length ? direct : rows.filter(skill => skill.id === reference || skill.aliases?.includes(reference))
+    const matches = exact.length ? exact : rows.filter(skill => skill.name.toLowerCase() === reference.toLowerCase() || skill.canonicalName?.toLowerCase() === reference.toLowerCase())
+    if (matches.length > 1) throw new Error('Ambiguous skill: choose a qualified reference: ' + matches.map(skill => skill.reference).join(', '))
+    return matches[0]
+  }
   readonly skillsDir: string
   private readonly legacySkillsDir: string
   private portableDocsBackfilled = false
@@ -54,13 +93,19 @@ export class SkillRegistryService {
 
   listSkills(includeUnassigned = false): SkillSummary[] {
     this.ensureRuntimeStorage()
-    const files = this.skillRoots().flatMap((dir) => walk(dir).filter((file) => file.endsWith('/SKILL.md')))
-    const byId = new Map<string, SkillSummary>()
-    for (const skill of files.map((file) => this.readSkillSummary(file)).filter((item): item is SkillSummary => Boolean(item))) {
-      const existing = byId.get(skill.id)
-      if (!existing || skill.updatedAt > existing.updatedAt) byId.set(skill.id, skill)
-    }
-    return Array.from(byId.values()).filter((skill) => includeUnassigned || skill.scope !== 'unassigned').sort((a, b) => b.updatedAt - a.updatedAt)
+    const files = this.skillRoots().flatMap(dir => walk(dir).filter(file => file.endsWith('/SKILL.md')))
+    const skills = files.map(file => {
+      const skill = this.readSkillSummary(file)
+      if (!skill) return null
+      const oldReference = skill.reference
+      if (!file.includes('/cloud/') && skill.scope !== 'unassigned') skill.reference = (skill.scope === 'institution' ? 'institution:' + this.scopeStorage.current()!.accountScope + ':' + skill.institutionId : 'shared') + ':' + fingerprint(file)
+      return describeSkillFile(file, { ...skill, aliases: oldReference ? [oldReference, skill.id] : [skill.id], layer: skill.scope === 'institution' ? 'institution' : 'global', managed: file.includes('/cloud/'), readonly: skill.scope === 'institution' || file.includes('/cloud/') || skill.source === 'builtin', root: this.skillRoots().find(root => file.startsWith(root + '/')) })
+    }).filter((item): item is SkillSummary => Boolean(item))
+    skills.push(...discoverWorkspaceSkills(this.workspace.getStore()).filter(skill => !skill.realPath || !skill.realPath.startsWith(resolve(realpathSync(this.userDataDir), 'skill-library') + sep)))
+    const ids = new Map<string, number>()
+    for (const skill of skills) ids.set(skill.id, (ids.get(skill.id) || 0) + 1)
+    for (const skill of skills) if ((ids.get(skill.id) || 0) > 1) skill.id = skill.reference!
+    return skills.filter(skill => includeUnassigned || (skill.scope !== 'unassigned' && skill.status !== 'error')).sort((a, b) => (a.reference || a.id).localeCompare(b.reference || b.id))
   }
 
   async assignScope(skillId: string, scope: SkillScope): Promise<SkillImportResult> {
@@ -85,7 +130,7 @@ export class SkillRegistryService {
   }
 
   readRecipe(skillId: string): SkillRecipe | null {
-    const skill = this.listSkills().find((item) => item.id === skillId || item.reference === skillId)
+    const skill = this.resolveSkill(skillId)
     if (!skill?.recipePath || !existsSync(skill.recipePath)) return null
     try {
       return SkillRecipeSchema.parse(JSON.parse(readFileSync(skill.recipePath, 'utf8')))
@@ -95,7 +140,7 @@ export class SkillRegistryService {
   }
 
   readSkillDetail(skillId: string, includeUnassigned = false): SkillDetail | null {
-    const skill = this.listSkills(includeUnassigned).find((item) => item.id === skillId || item.reference === skillId)
+    const skill = this.resolveSkill(skillId, includeUnassigned)
     if (!skill) return null
     let body = ''
     try {
@@ -111,6 +156,7 @@ export class SkillRegistryService {
       name: skill.name,
       description: skill.description,
       body,
+      files: skillPackageFiles(dirname(skill.path)),
       runtime: recipe ? 'coach' : 'external',
       externalOnly: !recipe,
       notes: recipe?.notes,
@@ -128,10 +174,17 @@ export class SkillRegistryService {
     return this.listSkills().find((skill) => skill.source === 'recording') || null
   }
 
+  assertWritableSkill(skillId: string): SkillSummary {
+    const skill = this.resolveSkill(skillId)
+    if (!skill) throw new Error('Skill not found or unavailable')
+    if (skill.source === 'builtin' || skill.readonly || skill.managed || skill.layer === 'workspace' || skill.layer === 'institution' || skill.scope === 'institution') throw new Error('This Skill source is read-only; import a global copy to edit it')
+    return skill
+  }
+
   // Rewrite an existing skill in place (same id/dir) with a refined recipe + body.
   overwriteSkill(skillId: string, params: { recipe: SkillRecipe; body: string }): SkillSummary | null {
-    const summary = this.listSkills().find((item) => item.id === skillId || item.reference === skillId)
-    if (!summary?.recipePath) return null
+    const summary = this.assertWritableSkill(skillId)
+    if (!summary.recipePath) return null
     const dir = dirname(summary.path)
     const recipe = prepareRecipeForStorage(params.recipe)
     const body = sanitizeSkillBodyForStorage(params.body)
@@ -161,8 +214,8 @@ export class SkillRegistryService {
   // first. The invocation agent's catalog is scoped to this so a skill recorded on
   // one site is never offered on another.
   listSkillsForDomain(url: string): SkillSummary[] {
-    const domain = domainOf(url)
-    return this.listSkills().filter((s) => s.source !== 'recording' || s.domain === domain)
+    void url
+    return this.listSkills()
   }
 
   // Find a live RECORDING skill by display name (case-insensitive) for dedup —
@@ -174,7 +227,7 @@ export class SkillRegistryService {
     const domain = domainOf(url)
     return (
       this.listSkills().find(
-        (s) => s.source === 'recording' && s.domain === domain && s.name.trim().toLowerCase() === key && s.path.startsWith(this.scopeStorage.creationRoot() + sep)
+        (s) => s.source === 'recording' && !s.readonly && !s.managed && s.layer !== 'institution' && s.scope !== 'institution' && s.domain === domain && s.name.trim().toLowerCase() === key && s.path.startsWith(this.scopeStorage.creationRoot() + sep)
       ) || null
     )
   }
@@ -182,8 +235,7 @@ export class SkillRegistryService {
   // Snapshot a skill's current files into <skill>/archive/<YYYYMMDD HH-MM-SS>/
   // before it is overwritten with a new version.
   archiveSkill(skillId: string, now = new Date()): boolean {
-    const summary = this.listSkills().find((item) => item.id === skillId || item.reference === skillId)
-    if (!summary) return false
+    const summary = this.assertWritableSkill(skillId)
     const dir = dirname(summary.path)
     const dest = join(dir, 'archive', formatArchiveTs(now))
     mkdirSync(dest, { recursive: true })
@@ -200,13 +252,12 @@ export class SkillRegistryService {
   }
 
   deleteSkill(skillId: string): DeleteSkillResult {
-    const skill = this.listSkills().find((item) => item.id === skillId || item.reference === skillId)
+    const skill = this.resolveSkill(skillId)
     if (!skill) {
       return { ok: false, skillId, message: 'Skill not found.', error: 'not-found' }
     }
-    if (skill.source === 'builtin') {
-      return { ok: false, skillId, message: 'Built-in skills cannot be deleted.', error: 'builtin-skill' }
-    }
+    try { this.assertWritableSkill(skill.reference || skill.id) }
+    catch (error) { return { ok: false, skillId, message: (error as Error).message, error: 'read-only-skill' } }
 
     const targetDir = resolve(dirname(skill.path))
     if (!this.isInsideSkillRoot(targetDir)) {
@@ -218,7 +269,7 @@ export class SkillRegistryService {
   }
 
   exportSkillPackage(skillId: string, destinationRoot: string): SkillExportResult {
-    const skill = this.listSkills().find((item) => item.id === skillId || item.reference === skillId)
+    const skill = this.resolveSkill(skillId)
     if (!skill) {
       return { ok: false, skillId, message: 'Skill not found.', error: 'not-found' }
     }
@@ -479,7 +530,7 @@ export class SkillRegistryService {
   }
 
   private removeRetiredBaselineSkill(): void {
-    for (const root of this.skillRoots()) {
+    for (const root of [this.skillsDir, this.legacySkillsDir]) {
       const dir = join(root, RETIRED_BASELINE_SKILL_DIR)
       if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
     }
@@ -490,6 +541,7 @@ export class SkillRegistryService {
     this.portableDocsBackfilled = true
     const files = this.skillRoots().flatMap((dir) => walk(dir).filter((file) => file.endsWith('/SKILL.md')))
     for (const file of files) {
+      if (file.includes('/cloud/')) continue
       const dir = dirname(file)
       const recipePath = join(dir, 'recipe.json')
       if (!existsSync(recipePath)) continue
@@ -509,7 +561,19 @@ export class SkillRegistryService {
   }
 
   private skillRoots(): string[] {
-    return [this.skillsDir, this.legacySkillsDir, ...this.scopeStorage.roots()]
+    return [this.skillsDir, this.legacySkillsDir, ...this.scopeStorage.roots()].flatMap(root => {
+      if (!existsSync(root)) return [root]
+      const entries = readdirSync(root).filter(name => name !== 'cloud' && !name.startsWith('.')).map(name => join(root, name)).filter(path => !lstatSync(path).isSymbolicLink() && statSync(path).isDirectory())
+      const cloud = join(root, 'cloud')
+      try {
+        const ledger = JSON.parse(readFileSync(join(cloud, 'installed.json'), 'utf8'))
+        for (const row of Object.values(ledger.skills || {}) as { dir: string }[]) {
+          const path = resolve(cloud, row.dir)
+          if (path.startsWith(resolve(cloud) + sep)) entries.push(path)
+        }
+      } catch { /* No managed packages installed. */ }
+      return entries
+    })
   }
 
   private isInsideSkillRoot(targetDir: string): boolean {
@@ -529,7 +593,8 @@ export class SkillRegistryService {
         : undefined
       const source = normalizeSkillSource(frontmatter.coach_source) || (recipe?.source === 'recording' ? 'recording' : 'builtin')
       const stats = statSync(file)
-      const originalId = String(frontmatter.coach_id || xCoach(frontmatter).id || recipe?.id || file)
+      const managed = file.match(/[/\\]cloud[/\\]versions[/\\]([a-f0-9]+)[/\\](\d+)[/\\][a-f0-9]+[/\\]/)
+      const originalId = managed ? `cloud:${managed[1]}:${managed[2]}` : String(frontmatter.coach_id || xCoach(frontmatter).id || recipe?.id || file)
       const scopeFields = this.scopeStorage.fields(file, originalId, source, false)
       if (!scopeFields) return null
       return {
@@ -550,8 +615,10 @@ export class SkillRegistryService {
           ...asStringList(frontmatter.keywords)
         ])
       }
-    } catch {
-      return null
+    } catch (error) {
+      const scope = this.scopeStorage.fields(file, file, 'builtin')
+      if (!scope) return null
+      return { ...scope, id: scope.reference, name: dirname(file).split(sep).pop() || 'Invalid Skill', description: '', source: 'external', domain: '', path: file, updatedAt: 0, inputs: [], triggers: [], status: 'error', error: (error as Error).message }
     }
   }
 

@@ -1,3 +1,4 @@
+import { skillCloud } from '@maestro-main/skills/skillCloud.runtime'
 import { onSkillContextChanged, skillScopeContext, assertSkillContext } from '@maestro-main/skills/skillScope.context'
 import { workflowCompletionId, workflowCompletionContext } from './workflowEngine/completion'
 import { SessionIoInitialization } from './sessionIoInitialization'
@@ -1068,6 +1069,9 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         throw new Error('A chat session and draft are required for context export.')
       }
       const sessionKey = this.agentSessionKey(params.sessionId)
+      this._state.syncWorkspaceFromContext(sessionKey, params.context?.workspace)
+      await skillScopeContext.authorize().catch(() => null)
+      await skillCloud.ensureCatalog()
       assertContextTextSize(params.draft)
       const agent = sessionKey === 'default' ? this.pi : this.maestroAgents.get(sessionKey)
       const context = params.context
@@ -1084,7 +1088,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       if (!registry) throw new Error('The skill catalog is not ready for context export. Retry after initialization.')
       const browserSession = this._state.agentBrowserSession(sessionKey)
       const currentUrl = browserSession.tabs.find((tab) => tab.id === browserSession.selectedTabId)?.url || browserSession.initiatingTab?.url || this._state.currentUrl
-      const recordings = registry.listSkillsForDomain(currentUrl)
+      const recordings = registry.withWorkspace(this._state.projectRootForSession(sessionKey), () => registry.listSkills())
       const pending = buildAgentTurnPrompt({
         message,
         context,
@@ -1094,6 +1098,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         openTabs: windowTabs.openTabs,
         userChainPath: chainFilePath(maestroUserChainDir(), sessionKey),
         currentUrl,
+        catalog: registry.catalogPrompt(this._state.projectRootForSession(sessionKey)),
         briefs: this.agentSkillBriefs(message, recordings, registry)
       })
       // 组装走 SDK 的 entry 级实现(`@main/agent/contextExport.service`),与 cowork 同一份:
@@ -1180,7 +1185,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       if (!registry) throw new Error('The skill catalog is not ready for the context graph. Retry after initialization.')
       const browserSession = this._state.agentBrowserSession(sessionKey)
       const currentUrl = browserSession.tabs.find((tab) => tab.id === browserSession.selectedTabId)?.url || browserSession.initiatingTab?.url || this._state.currentUrl
-      const recordings = registry.listSkillsForDomain(currentUrl)
+      const recordings = registry.withWorkspace(this._state.projectRootForSession(sessionKey), () => registry.listSkills())
       const pending = buildAgentTurnPrompt({
         message,
         context,
@@ -1190,6 +1195,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         openTabs: windowTabs.openTabs,
         userChainPath: chainFilePath(maestroUserChainDir(), sessionKey),
         currentUrl,
+        catalog: registry.catalogPrompt(this._state.projectRootForSession(sessionKey)),
         briefs: this.agentSkillBriefs(message, recordings, registry)
       })
       const graph = buildContextGraph({
@@ -1798,12 +1804,13 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       DRILL_BUILTIN_SKILL,
       DEEP_FETCH_BUILTIN_SKILL,
       ...recordings.map((skill) => {
-      const recipe = registry.readRecipe(skill.id)
+      const recipe = skill.recipePath ? registry.readRecipe(skill.id) : null
       const seed = recipe ? extractVariablesFromMessage(message, recipe) : {}
       const missing = recipe ? requiredInputNames(recipe).filter((name) => !seed[name]) : []
       return {
         id: skill.reference || skill.id,
         scope: skill.scope === 'institution' ? 'institution' as const : 'shared' as const, institutionId: skill.institutionId, reference: skill.reference, path: skill.path,
+        layer: skill.layer, skillRevision: skill.skillRevision,
         name: skill.name,
         triggers: skill.triggers,
         description: skill.description,
@@ -1818,12 +1825,13 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
   private buildMessagePrompt(message: string, context: AgentConversationContext | undefined, windowTabs: AgentWindowTabSnapshot, sessionKey: string, includeConversationMemory: boolean, sentAt = localNow()): string {
     const currentUrl = windowTabs.activeTab?.kind === 'web' ? windowTabs.activeTab.url : ''
     const registry = this._state.existingSkillRegistry() || this._state.ensureServices().registry
-    const recordings = registry.listSkillsForDomain(currentUrl)
+    const recordings = registry.withWorkspace(this._state.projectRootForSession(sessionKey), () => registry.listSkills())
     return buildAgentTurnPrompt({
       message, context, includeConversationMemory, nowLocal: sentAt,
       activeTab: windowTabs.activeTab, openTabs: windowTabs.openTabs,
       userChainPath: chainFilePath(maestroUserChainDir(), sessionKey), currentUrl,
-      briefs: this.agentSkillBriefs(message, recordings, registry)
+      catalog: registry.catalogPrompt(this._state.projectRootForSession(sessionKey)),
+        briefs: this.agentSkillBriefs(message, recordings, registry)
     })
   }
 
@@ -1851,7 +1859,9 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       sessionKey?: string
     }
   ): Promise<AgentReply> {
+    const sessionKey = this.agentSessionKey(options?.sessionKey)
     const authorizedSkillContext = await skillScopeContext.authorize().catch(() => null)
+    await skillCloud.ensureCatalog()
     const cancelledReply = (): AgentReply => ({
       ok: false,
       text: 'Stopped.',
@@ -1865,7 +1875,12 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     const currentUrl = browserSession.tabs.find((tab) => tab.id === browserSession.selectedTabId)?.url || browserSession.initiatingTab?.url || this._state.currentUrl
     const windowTabs = options?.windowTabs ?? this._state.describeWindowTabs()
     const registry = this._state.existingSkillRegistry() || this._state.ensureServices().registry
-    const recordings = registry.listSkillsForDomain(currentUrl).filter(skill => skill.scope !== 'institution' || Boolean(authorizedSkillContext))
+    const recordings = registry.withWorkspace(this._state.projectRootForSession(sessionKey), () => registry.listSkills()).filter(skill => skill.scope !== 'institution' || Boolean(authorizedSkillContext))
+    agent.setSkillCatalogProvider(async () => {
+      await skillScopeContext.authorize().catch(() => null)
+      await skillCloud.ensureCatalog()
+      return registry.catalogPrompt(this._state.projectRootForSession(sessionKey))
+    })
     const skillBriefs = this.agentSkillBriefs(message, recordings, registry)
     const nowLocal = options?.messageSentAt || localNow()
     const buildTurnPrompt = (includeConversationMemory: boolean): string => buildAgentTurnPrompt({
@@ -1877,6 +1892,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       openTabs: windowTabs.openTabs,
       userChainPath: chainFilePath(maestroUserChainDir(), this.agentSessionKey(options?.sessionKey)),
       currentUrl,
+      catalog: registry.catalogPrompt(this._state.projectRootForSession(sessionKey)),
       briefs: skillBriefs
     })
     if (!options?.steeringInbox) {
@@ -1890,6 +1906,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     }
 
     for (const candidate of recordings) {
+      if (candidate.domain && candidate.domain !== (() => { try { return new URL(currentUrl).hostname } catch { return '' } })()) continue
       const recipe = registry.readRecipe(candidate.id)
       if (!recipe) continue
       const seed = extractVariablesFromMessage(message, recipe)

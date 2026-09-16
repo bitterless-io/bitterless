@@ -1,3 +1,4 @@
+import { defaultWorkspaceRoot } from '@maestro-main/files/defaultWorkspace'
 import type { SkillSharingScope, SkillScopeContextInfo } from '@maestro-shared/coach.api'
 import { MaestroHistoryViewService } from './maestroHistoryView.service';
 import { showMaestroSessionMenu } from './maestroSessionMenu.service';
@@ -874,9 +875,11 @@ class MaestroWindowController
     return this.captureService.captureRecordsForAgent()
   }
 
-  async listSkills(): Promise<SkillSummary[]> {
-    return await this.skillService.listSkills()
-  }
+  async listSkills(params?: { sessionId?: string }): Promise<SkillSummary[]> { return this.skillService.listSkills(params) }
+  async skillCatalog(params?: { sessionId?: string; checkUpdates?: boolean }) { return this.skillService.skillCatalog(params) }
+  async setSkillViewContext(params: { sessionId: string; workspace?: { path: string; name: string; exists: boolean; updatedAt: number } }) { return this.skillService.setSkillViewContext(params) }
+  async openSkillFile(params: { skillId: string; sessionId?: string }) { return this.skillService.openSkillFile(params) }
+  async openSkillSource(params: { layer: 'global' | 'workspace' | 'institution'; sessionId?: string }) { return this.skillService.openSkillSource(params) }
 
   async deleteSkill(params: { skillId: string }): Promise<DeleteSkillResult> {
     return await this.skillService.deleteSkill(params)
@@ -970,7 +973,7 @@ class MaestroWindowController
   }
 
   projectRootForSession(sessionKey: string): string | undefined {
-    return this.workspaceFile.projectRootForSession(sessionKey)
+    return this.workspaceFile.projectRootForSession(sessionKey) || defaultWorkspaceRoot()
   }
 
   syncWorkspaceFromContext(sessionKey: string, workspace?: WorkspaceRef): void {
@@ -1401,8 +1404,8 @@ class MaestroWindowController
         name: 'get_skill_contract',
         description:
           "Load a skill's contract: required inputs, field_rules, the recorded UI flow (ui_flow — drive via page_snapshot + ui_act), and the recorded api (option_reads + write_templates + a value-free auth hint). PREFER the api path when a write_template exists (reuses the page's live session); otherwise drive the UI. Call this before executing a skill.",
-        params: [{ name: 'skill_id', required: true, description: 'Skill id from the catalog in the prompt.' }],
-        execute: async (args) => this.toolSkillContract(String(args.skill_id ?? ''))
+        params: [{ name: 'skill_id', required: true, description: 'Qualified Skill reference from the complete catalog.' }, { name: 'offset', required: false, description: 'Continue reading a long body at next_offset; default zero.' }],
+        execute: async (args) => this.requestExec.toolSkillContract(String(args.skill_id ?? ''), Number(args.offset || 0))
       },
       {
         name: 'browser_exec',
@@ -1568,7 +1571,7 @@ class MaestroWindowController
             } as PiToolSpec
           ]
         : [])
-    ].map((tool): PiToolSpec => {
+    ].map(tool => ({ ...tool, execute: (args: Parameters<PiToolSpec['execute']>[0]) => this.ensureServices().registry.withWorkspace(this.projectRootForSession(sessionKey), () => tool.execute(args)) })).map((tool): PiToolSpec => {
       if (['stop_recording', 'ingest_recording'].includes(tool.name)) return { ...tool, execute: async (args) => {
         const drill = this.drillTrio
         if (drill?.run.isDrilling && drill.run.ownerSessionId !== sessionKey) return 'ERROR: another chat owns the active drill recording. Wait for that drill to finish, or stop it in its own chat.'
@@ -1911,6 +1914,7 @@ class MaestroWindowController
   }
 
   async shutdown(): Promise<void> {
+    this.skillRegistry?.dispose()
     await this.agentService.shutdown()
 
     this.demo?.stop()

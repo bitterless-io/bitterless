@@ -63,6 +63,7 @@ export interface AgentRuntimePrompt {
 }
 
 export interface AgentRuntimeSessionOptions {
+  beforeModelRequest?: () => Promise<string | undefined> | undefined
   target: AgentRuntimeTarget
   authPath: string
   modelsPath?: string

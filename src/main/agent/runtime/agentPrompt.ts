@@ -16,18 +16,15 @@ import type {
 /**
  * Pure prompt and payload shaping for Maestro agent turns.
  *
- * This intentionally keeps Bitterless' rich, relevance-ranked skill briefs. Cowork's newer slim
- * catalog is not behavior-compatible with the current Maestro prompt contract.
+ * Skills retain the complete three-source inventory; relevance never removes an entry.
  */
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 export const MAX_AGENT_IMAGE_BYTES = 8 * 1024 * 1024
 export const MAX_AGENT_IMAGES = 8
 export const MAX_AGENT_MEDIA_REFS = 16
 
-const MAX_AGENT_SKILL_BRIEFS = 40
 const MAX_AGENT_SKILL_INPUTS = 32
 const MAX_AGENT_SKILL_TRIGGERS = 16
-const MAX_AGENT_SKILL_DESCRIPTION_CHARS = 420
 const MAX_AGENT_SKILL_INLINE_CHARS = 600
 
 export const safeUrlForDebug = (value: string): string => {
@@ -173,6 +170,8 @@ export const normalizeCompactSummary = (text: string, maxChars: number): string 
 
 export interface AgentSkillBrief {
   scope?: 'shared' | 'institution'
+  layer?: 'global' | 'workspace' | 'institution'
+  skillRevision?: string
   institutionId?: string
   reference?: string
   path?: string
@@ -237,6 +236,7 @@ export const buildAgentTurnPrompt = (params: {
    */
   userChainPath?: string
   currentUrl: string
+  catalog?: string
   briefs: AgentSkillBrief[]
 }): string => {
   let domain = params.currentUrl
@@ -245,8 +245,7 @@ export const buildAgentTurnPrompt = (params: {
   } catch {
     /* keep raw */
   }
-  const selectedBriefs = selectAgentSkillBriefs(params.briefs, params.message)
-  const omittedSkillCount = Math.max(0, params.briefs.length - selectedBriefs.length)
+  const selectedBriefs = params.briefs
   const list = selectedBriefs.length
     ? selectedBriefs
         .map((brief) => {
@@ -285,21 +284,14 @@ export const buildAgentTurnPrompt = (params: {
           return [
             `- id: ${clipInline(brief.id, 160)}`,
             `  name: ${clipInline(brief.name, 160)}`,
-            `  scope: ${brief.scope || 'shared'}; institution: ${brief.institutionId || 'none'}; reference: ${brief.reference || brief.id}; path: ${brief.path || 'builtin'}`,
+            `  source: ${brief.layer || 'global'}; revision: ${brief.skillRevision || 'builtin'}; scope: ${brief.scope || 'shared'}; institution: ${brief.institutionId || 'none'}; reference: ${brief.reference || brief.id}; path: ${brief.path || 'builtin'}`,
             `  triggers: ${triggers}${brief.triggers.length > MAX_AGENT_SKILL_TRIGGERS ? `, ... +${brief.triggers.length - MAX_AGENT_SKILL_TRIGGERS} more` : ''}`,
             `  inputs: ${inputs}`,
             `  message_seed: ${seed}`,
             `  missing_after_seed: ${missing}`,
-            `  description: ${clipInline(brief.description, MAX_AGENT_SKILL_DESCRIPTION_CHARS)}`
+            `  description: ${brief.description.replace(/\n/g, ' ')}`
           ].join('\n')
         })
-        .concat(
-          omittedSkillCount
-            ? [
-                `- ${omittedSkillCount} lower-relevance skills omitted from this turn's compact index. If no listed skill fits, use browser_use or ask the user to narrow the task.`
-              ]
-            : []
-        )
         .join('\n')
     : `(none recorded for ${domain})`
   const recentMessages = params.context?.recentMessages || []
@@ -365,7 +357,7 @@ export const buildAgentTurnPrompt = (params: {
   return [
     dynamicPrefix,
     '',
-    `Built-in text skills and recorded skills for THIS site (${domain}) — recorded skills from other domains are not available here:`,
+    `Complete Skills inventory (current execution domain: ${domain}). Recorded Skills remain listed across domains but execute only on their original site:`,
     list,
     '',
     'If the user explicitly asks for a chat-only answer, a model-token test, or says not to use browser tools,',
@@ -376,7 +368,7 @@ export const buildAgentTurnPrompt = (params: {
     'Follow retry guidance for that service only, then use the built-in browser workflow below. Try public sources before asking the user to repair search.',
     DEEP_FETCH_BROWSER_WORKFLOW,
     '',
-    'For builtin: text skills, follow their supplied steps directly; they have no recorded recipe. get_skill_contract is for recorded skills only.',
+    'For builtin: text skills, follow their supplied steps directly; they have no recorded recipe. get_skill_contract reads both Markdown Skills and recording contracts; follow next_offset for long bodies.',
     'If a recorded skill above fits the request, load and run it (the fast path). If NONE fit — or none',
     'are recorded — do NOT refuse: fall back to browser_use, i.e. page_snapshot to observe the page then',
     'ui_act to operate it, looping observe→act until the goal is reached.',
@@ -449,68 +441,16 @@ export const buildAgentTurnPrompt = (params: {
     '',
     ...memoryBlock,
     '',
+    params.catalog || '',
     'User message:',
     params.message
   ].join('\n')
 }
 
-const selectAgentSkillBriefs = (briefs: AgentSkillBrief[], message: string): AgentSkillBrief[] => {
-  if (briefs.length <= MAX_AGENT_SKILL_BRIEFS) return briefs
-  const scored = briefs.map((brief, index) => ({
-    brief,
-    index,
-    score: scoreAgentSkillBrief(brief, message)
-  }))
-  return scored
-    .sort((left, right) => right.score - left.score || left.index - right.index)
-    .slice(0, MAX_AGENT_SKILL_BRIEFS)
-    .map((item) => item.brief)
-}
-
-const scoreAgentSkillBrief = (brief: AgentSkillBrief, message: string): number => {
-  let score = 0
-  const seedCount = Object.keys(brief.seed).length
-  if (seedCount) score += 80 + seedCount * 8
-  if (brief.inputs.some((input) => input.required) && !brief.missing.length && seedCount) {
-    score += 80
-  }
-  const queryTokens = tokenizeSkillCatalogText(message)
-  const haystack = tokenizeSkillCatalogText(
-    [
-      brief.name,
-      brief.description,
-      brief.triggers.join(' '),
-      brief.inputs.map((input) => `${input.name} ${input.label || ''}`).join(' ')
-    ].join(' ')
-  )
-  for (const token of queryTokens) {
-    if (haystack.has(token)) score += 6
-  }
-  const lowerMessage = message.toLowerCase()
-  for (const trigger of brief.triggers) {
-    const text = String(trigger || '')
-      .trim()
-      .toLowerCase()
-    if (text && (lowerMessage.includes(text) || text.includes(lowerMessage))) score += 30
-  }
-  return score
-}
-
-const tokenizeSkillCatalogText = (text: string): Set<string> =>
-  new Set(
-    String(text || '')
-      .toLowerCase()
-      .split(/[^a-z0-9_\u4e00-\u9fff]+/i)
-      .map((item) => item.trim())
-      .filter((item) => item.length >= 2)
-  )
 
 const clipInline = (value: unknown, max: number): string => {
-  const text = String(value || '')
-    .replace(/\s+/g, ' ')
-    .trim()
-  if (text.length <= max) return text
-  return text.slice(0, Math.max(0, max - 3)) + '...'
+  const text = String(value || '').replace(/\s+/g, ' ').trim()
+  return text.length <= max ? text : text.slice(0, Math.max(0, max - 3)) + '...'
 }
 
 export const summarizeApprovalArgs = (value: unknown): string => {

@@ -1,5 +1,7 @@
 # Bitterless Documentation
 
+- [Skills 三层来源与实时上下文设计](features/skills-three-sources.md) — approved 2026-09-16; [page mockup](design/skills-three-sources.html); implemented; [independent acceptance](plan/reviews/skills-three-sources-001-3.md) passed with documented verification limits.
+
 - [OnlyPreview background index corruption](issues/onlypreview-corrupt-project-index.md) — recovery extended; code verified, owner testing pending;
   SQLite corruption first reached during warm reconciliation gets one clean rebuild with the suspect database preserved.
 

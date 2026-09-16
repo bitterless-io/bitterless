@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.node.json",
+  "compilerOptions": { "composite": false, "noEmit": true, "strict": true, "noUnusedLocals": false, "noUnusedParameters": false },
+  "include": [
+    "../../src/main/maestro/skills/skillRegistry.service.ts",
+    "../../src/main/maestro/skills/skillCloud.service.ts",
+    "../../src/main/maestro/skills/skillDiscovery.service.ts",
+    "../../src/main/agent/runtime/skillCatalogRequest.ts",
+    "../../src/main/agent/runtime/agentPrompt.ts",
+    "../../src/main/agent/runtime/piRuntimeAdapter.ts"
+  ]
+}

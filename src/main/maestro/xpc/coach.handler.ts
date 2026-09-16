@@ -299,9 +299,11 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
     return await maestroWindowHelper.summarizeSkill(params)
   }
 
-  async listSkills(): Promise<SkillSummary[]> {
-    return await maestroWindowHelper.listSkills()
-  }
+  async listSkills(params?: { sessionId?: string }): Promise<SkillSummary[]> { return maestroWindowHelper.listSkills(params) }
+  async skillCatalog(params?: { sessionId?: string; checkUpdates?: boolean }) { return maestroWindowHelper.skillCatalog(params) }
+  async setSkillViewContext(params: { sessionId: string; workspace?: { path: string; name: string; exists: boolean; updatedAt: number } }) { return maestroWindowHelper.setSkillViewContext(params) }
+  async openSkillFile(params: { skillId: string; sessionId?: string }) { return maestroWindowHelper.openSkillFile(params) }
+  async openSkillSource(params: { layer: 'global' | 'workspace' | 'institution'; sessionId?: string }) { return maestroWindowHelper.openSkillSource(params) }
 
   async getSkillDetail(params: { skillId: string }): Promise<SkillDetail | null> {
     return await maestroWindowHelper.getSkillDetail(params)

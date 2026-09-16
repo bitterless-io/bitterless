@@ -151,6 +151,8 @@ export class BaseAgent {
   private activeSteeringInbox?: TurnSteeringInbox
   private readonly backgroundContext = new BackgroundContextInbox()
   private steeringSequence = 0
+  private skillCatalogProvider?: () => Promise<string>
+  setSkillCatalogProvider(provider: () => Promise<string>): void { this.skillCatalogProvider = provider }
   private projectInstructions = ''
   // Runtime overrides set by the UI provider switch; take precedence over env/opts.
   private providerOverride?: string
@@ -355,6 +357,7 @@ export class BaseAgent {
     const modelId = this.resolveModel(providerId)
     const specs = withTools ? this.opts.buildTools().map((spec) => this.withToolTimeout(spec)) : []
     return await this.runtime.createSession({
+      beforeModelRequest: () => this.skillCatalogProvider?.(),
       target: { providerId, modelId, thinkingLevel: this.resolveThinkingLevel() },
       authPath,
       modelsPath: this.opts.modelsPath,

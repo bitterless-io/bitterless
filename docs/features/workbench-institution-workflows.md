@@ -1,5 +1,7 @@
 # Workbench institution Kimchi workflows
 
+Skills revision (2026-09-16): Ral requested global / workspace / institution sources with three tabs and fresh complete Chat loading. The [new Skills design](skills-three-sources.md) is awaiting approval before development; upon approval it replaces the Skills-only two-scope UI/discovery contract below. Workflow requirements and historical verification remain unchanged.
+
 Status: implemented and independently verified on merged dev/next (2026-09-16). See [acceptance review](../plan/reviews/workbench-institution-workflows-001-01.md).
 
 ## Scope
