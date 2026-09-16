@@ -118,13 +118,15 @@ export interface CoachXpcContract {
   // Ingest the CURRENT, non-deleted records (each carrying its source event + the
   // operator `spec`) plus the overall workflow description into a skill. The renderer
   // is the source of truth here — NOT the main process's raw trace buffer.
-  summarizeSkill(params: { workflow?: string; records: IngestRecord[] }): Promise<SkillCreateResult>
+  summarizeSkill(params: { workflow?: string; records: IngestRecord[]; sharingScope?: SkillSharingScope }): Promise<SkillCreateResult>
   trainSkill(params: { skillId: string; guidance: string }): Promise<SkillCreateResult>
   listSkills(): Promise<SkillSummary[]>
   getSkillDetail(params: { skillId: string }): Promise<SkillDetail | null>
   openSkillDirectory(params: { skillId: string }): Promise<{ ok: boolean; path?: string; error?: string }>
   exportSkillPackage(params: { skillId: string }): Promise<SkillExportResult>
-  importSkillPackage(): Promise<SkillImportResult>
+  importSkillPackage(params?: { sharingScope?: SkillSharingScope }): Promise<SkillImportResult>
+  assignSkillScope(params: { skillId: string; sharingScope: SkillSharingScope }): Promise<SkillImportResult>
+  getSkillScopeContext(): Promise<SkillScopeContextInfo | null>
   // Reveal the folder holding ALL skills for a domain ('' → the skills root).
   openDomainDirectory(params: { domain: string }): Promise<{ ok: boolean; path?: string; error?: string }>
   // Register user-attached files (by ABSOLUTE PATH — never bytes) into the chat session's
@@ -664,7 +666,14 @@ export interface SkillInput {
 
 export type SkillSource = 'builtin' | 'recording' | 'external'
 
+export type SkillSharingScope = 'shared' | 'institution'
+export interface SkillScopeContextInfo { institutionId: string; institutionName?: string }
+
 export interface SkillSummary {
+  scope?: SkillSharingScope | 'unassigned'
+  institutionId?: string
+  institutionName?: string
+  reference?: string
   id: string
   name: string
   description: string

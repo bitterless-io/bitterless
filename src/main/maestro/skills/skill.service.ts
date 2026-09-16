@@ -1,3 +1,5 @@
+import type { SkillSharingScope, SkillScopeContextInfo } from '@maestro-shared/coach.api'
+import { skillScopeContext, onSkillContextChanged, authorizeSkillReference, assertSkillContext, skillExecutionGuard } from './skillScope.context'
 import { dialog, shell } from 'electron'
 import type { BrowserWindow, OpenDialogOptions } from 'electron'
 import { xpcMain } from 'electron-xpc/main'
@@ -37,7 +39,7 @@ export interface SkillServiceState {
   broadcastActivity(phase: AgentActivityStep['phase'], label: string, ok?: boolean): void
   emitTrace(event: TraceEvent): void
   captureRecordsForAgent(): CaptureRecordSource
-  replayRecipe(recipe: SkillRecipe, variables: Record<string, string>): Promise<ReplayResult>
+  replayRecipe(recipe: SkillRecipe, variables: Record<string, string>, guard?: () => Promise<void>): Promise<ReplayResult>
 }
 
 const formatDebugDuration = (detail: unknown): string => {
@@ -60,17 +62,27 @@ const appendActivityDuration = (label: string, startedAt: number): string => {
  * bootstrap is preserved. This service owns only the skill operations and their turn-result
  * effects.
  */
+onSkillContextChanged(() => { xpcMain.broadcast('coach/skills-changed', { ts: Date.now(), contextChanged: true }) })
+
 @injectable()
 export class SkillService extends CommonService<SkillServiceState> {
   async listSkills(): Promise<SkillSummary[]> {
-    return this._state.ensureServices().registry.listSkills()
+    await skillScopeContext.authorize().catch(() => null)
+    return this._state.ensureServices().registry.listSkills(true)
   }
 
   async deleteSkill(params: { skillId: string }): Promise<DeleteSkillResult> {
+    await authorizeSkillReference(params.skillId)
     return this._state.ensureServices().registry.deleteSkill(params.skillId)
   }
 
-  async summarizeSkill(params: { workflow?: string; records: IngestRecord[] }): Promise<SkillCreateResult> {
+  async summarizeSkill(params: { workflow?: string; records: IngestRecord[]; sharingScope?: SkillSharingScope }): Promise<SkillCreateResult> {
+    const registry = this._state.ensureServices().registry
+    try { return await registry.scopeStorage.withCreation(params.sharingScope ?? 'shared', () => this.summarizeSkillInScope(params)) }
+    catch (error) { return { ok: false, message: 'Skill creation failed.', error: (error as Error).message } }
+  }
+
+  private async summarizeSkillInScope(params: { workflow?: string; records: IngestRecord[]; sharingScope?: SkillSharingScope }): Promise<SkillCreateResult> {
     const startedAt = Date.now()
     const services = this._state.ensureServices()
     // Ingest from the renderer's CURRENT, non-deleted records (NOT the raw trace buffer):
@@ -166,7 +178,8 @@ export class SkillService extends CommonService<SkillServiceState> {
   }
 
   async getSkillDetail(params: { skillId: string }): Promise<SkillDetail | null> {
-    return this._state.ensureServices().registry.readSkillDetail(params.skillId)
+    if (!params.skillId.startsWith('unassigned:')) await authorizeSkillReference(params.skillId)
+    return this._state.ensureServices().registry.readSkillDetail(params.skillId, true)
   }
 
   async openSkillDirectory(params: {
@@ -175,7 +188,7 @@ export class SkillService extends CommonService<SkillServiceState> {
     const skill = this._state
       .ensureServices()
       .registry.listSkills()
-      .find((item) => item.id === params.skillId)
+      .find((item) => (item.id === params.skillId || item.reference === params.skillId))
     if (!skill) return { ok: false, error: 'skill-not-found' }
     const dir = dirname(skill.path)
     const error = await shell.openPath(dir)
@@ -183,8 +196,9 @@ export class SkillService extends CommonService<SkillServiceState> {
   }
 
   async exportSkillPackage(params: { skillId: string }): Promise<SkillExportResult> {
+    const context = await authorizeSkillReference(params.skillId)
     const registry = this._state.ensureServices().registry
-    const skill = registry.listSkills().find((item) => item.id === params.skillId)
+    const skill = registry.listSkills().find((item) => (item.id === params.skillId || item.reference === params.skillId))
     if (!skill) {
       return {
         ok: false,
@@ -208,12 +222,31 @@ export class SkillService extends CommonService<SkillServiceState> {
         canceled: true
       }
     }
+    assertSkillContext(context)
+    await authorizeSkillReference(params.skillId)
     const exported = registry.exportSkillPackage(params.skillId, result.filePaths[0])
     if (exported.ok && exported.path) shell.showItemInFolder(exported.path)
     return exported
   }
 
-  async importSkillPackage(): Promise<SkillImportResult> {
+  async getSkillScopeContext(): Promise<SkillScopeContextInfo | null> {
+    const context = await skillScopeContext.authorize().catch(() => null)
+    return context ? { institutionId: context.institutionId, institutionName: context.institutionName } : null
+  }
+
+  async assignSkillScope(params: { skillId: string; sharingScope: SkillSharingScope }): Promise<SkillImportResult> {
+    const result = await this._state.ensureServices().registry.assignScope(params.skillId, params.sharingScope)
+    if (result.ok) xpcMain.broadcast('coach/skills-changed', { ts: Date.now() })
+    return result
+  }
+
+  async importSkillPackage(params?: { sharingScope?: SkillSharingScope }): Promise<SkillImportResult> {
+    try {
+      return await this._state.ensureServices().registry.scopeStorage.withCreation(params?.sharingScope ?? 'shared', () => this.importSkillPackageInScope())
+    } catch (error) { return { ok: false, message: 'Skill import failed.', error: (error as Error).message } }
+  }
+
+  private async importSkillPackageInScope(): Promise<SkillImportResult> {
     const options: OpenDialogOptions = {
       title: 'Import Coach skill package',
       properties: ['openDirectory']
@@ -224,6 +257,7 @@ export class SkillService extends CommonService<SkillServiceState> {
     if (result.canceled || !result.filePaths[0]) {
       return { ok: false, message: 'Import cancelled.', canceled: true }
     }
+    await this._state.ensureServices().registry.scopeStorage.authorizeCreation()
     const imported = this._state
       .ensureServices()
       .registry.importSkillPackage(result.filePaths[0])
@@ -242,6 +276,7 @@ export class SkillService extends CommonService<SkillServiceState> {
   }
 
   async trainSkill(params: { skillId: string; guidance: string }): Promise<SkillCreateResult> {
+    await authorizeSkillReference(params.skillId)
     return await this._state.ensureServices().generator.train(params.skillId, params.guidance)
   }
 
@@ -249,6 +284,7 @@ export class SkillService extends CommonService<SkillServiceState> {
     skillId: string
     variables: Record<string, string>
   }): Promise<ReplayResult> {
+    const guard = await skillExecutionGuard(params.skillId)
     const recipe = this._state.ensureServices().registry.readRecipe(params.skillId)
     if (!recipe) {
       return {
@@ -266,7 +302,7 @@ export class SkillService extends CommonService<SkillServiceState> {
         errors: ['Browser view is not ready.']
       }
     }
-    const result = await this._state.replayRecipe(recipe, params.variables || {})
+    const result = await this._state.replayRecipe(recipe, params.variables || {}, guard)
     this._state.emitTrace({
       kind: result.ok ? 'info' : 'error',
       msg: result.ok

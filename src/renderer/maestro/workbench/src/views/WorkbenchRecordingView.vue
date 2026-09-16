@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SkillScopeControl from '../components/SkillScopeControl.vue'
 import { computed, ref, watch } from 'vue'
 import { Button, Dropdown, Empty, Message, Modal, Switch } from '@arco-design/web-vue'
 import { IconDownload, IconFilter, IconSearch, IconX } from '@tabler/icons-vue'
@@ -784,6 +785,7 @@ const addCaptureRule = async (row: Row, type: 'whitelist' | 'blacklist'): Promis
     </div>
 
     <div class="workbench-recording__footer">
+      <SkillScopeControl />
       <textarea
         v-model="store.workflowDesc"
         placeholder="Workflow description"

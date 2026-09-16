@@ -180,7 +180,9 @@
     "prepare:native": "node scripts/ensure-native.cjs",
     "test:native-abi": "node --test scripts/ensure-native.test.cjs",
     "test:workflow-library": "node --test tests/workflowLibrary/*.test.mjs",
-    "typecheck:workflow-library": "tsc -p tests/workflowLibrary/tsconfig.json && vue-tsc -p tests/workflowLibrary/tsconfig.web.json"
+    "typecheck:workflow-library": "tsc -p tests/workflowLibrary/tsconfig.json && vue-tsc -p tests/workflowLibrary/tsconfig.web.json",
+    "test:skill-scopes": "node --test tests/skillScopes/*.test.mjs",
+    "typecheck:skill-scopes": "tsc --noEmit -p tests/skillScopes/tsconfig.node.json && vue-tsc --noEmit -p tests/skillScopes/tsconfig.web.json"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.85.1",
@@ -311,5 +313,5 @@
   ],
   "name": "Bitterless_PREVIEW",
   "version": "0.0.116",
-  "version_code": "260916163539"
+  "version_code": "260916170618"
 }

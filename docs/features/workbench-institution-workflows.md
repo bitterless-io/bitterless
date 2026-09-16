@@ -4,13 +4,13 @@ Status: approved by Ral, implementation in progress (2026-09-16).
 
 ## Scope
 
-Ral requested a Kimchi-compatible sample archive published to each selected institution and a Workflow tab in both desktop Workbenches: workflow list, details and a polished flowchart. Complete the earlier institution sharing contract by downloading, checking for updates and replacing managed local installations. Use the existing Kimchi 0.0.9 runtime. Editing graphs and automatically executing downloaded code are outside this request.
+Ral requested a Kimchi-compatible sample archive and a Workflow tab in both desktop Workbenches: workflow list, details and a polished flowchart. Under the final shared/institution scope requirement, deliver the canonical sample in the shared library of both clients so it remains available across accounts. Complete the earlier institution sharing contract by downloading, checking for updates and replacing managed local installations. Use the existing Kimchi 0.0.9 runtime. Editing graphs and automatically executing downloaded code are outside this request.
 
 ## Package contract v1
 
 ZIP root contains workflow.json, an entry .ts/.mts file and optional supporting files/README.md. No dependency installation. workflow.json has format=kimchi-workflow-package, version=1, engine=kimchi-0.0.9, entry (normalized relative .ts/.mts), name, description and graph. Graph nodes have unique safe id, label, kind and optional description; kind is function|agent|parallel|branch|foreach|loop|workflow. Edges have from/to referring to existing nodes and optional label. Bound manifest/graph sizes and reject malformed or unsupported data with an actionable error. A graph is authored preview metadata, not proof of executable behavior. Listing, detail, download and visualization MUST NOT import or execute workflow TS. Explicit chat workflow execution retains the existing worker/supervisor permissions.
 
-The sample is authored from the installed public Kimchi flow API and TypeBox. It accepts a string and performs prepare (trim) -> count (words) -> summarize, returning a deterministic message without model, file, process or network operations. Same archive bytes can be independently registered on the two backends. The publishing institution must be confirmed; no assumed institution 1 or exposure to other institutions.
+The sample is authored from the installed public Kimchi flow API and TypeBox. It accepts a string and performs prepare (trim) -> count (words) -> summarize, returning a deterministic message without model, file, process or network operations. The same sample files are bundled into both clients and are also delivered as a ZIP. The sample is shared locally; no arbitrary institution is selected for a persistent cloud seed. The archive can also be registered through either institution upload API for an explicitly selected authorized institution.
 
 ## Data, auth and synchronization
 
@@ -70,3 +70,9 @@ Verification adds: shared content survives logout/account switch; both Skills an
 Preserve existing known shared/builtin skill directories and references. Preserve existing cloud Skill sync where the app already has it, partitioning institutional downloads using authoritative cloud provenance; this request does not require adding a new BL cloud Skill service where none exists. New local Skill imports/recordings must choose Shared or the currently authorized institution explicitly; default selection must be shown before import/create. Known shared presets stay shared.
 
 Do not guess an institution for legacy recorded/imported skills that were presented as institutional but have no stored owner/provenance. Keep their bytes untouched, exclude them from Agent discovery until assigned, and expose an explicit Workbench migration/assignment action explaining that a scope is needed. This is a migration state, not a third final sharing scope. The user can assign Shared or current authorized institution; copy/activate safely before archiving an owned old reference, never destroy source files on failure. Do not demand a chat-level decision to implement this action.
+
+### Skill implementation boundaries
+
+New local skills use `skill-library/shared` or `skill-library/<backend-account-scope>/<institution_id>`. Existing known shared presets keep their stable IDs. Legacy recordings/imports and old cloud entries without scope provenance remain untouched and appear under Needs scope until the user assigns them. Assignment copies first and atomically records the replacement; source bytes remain intact.
+
+Scope-qualified Skill references drive the actual Agent catalog, recipe/detail resolution, execution and training. UI/Agent replay reauthorizes each step, training reauthorizes before saving, and generation changes cancel queued turns. General read/list/search access to managed Skill resources uses the same live context, resolves aliases, filters inaccessible entries, and rejects aggregate results after context changes. Shared files and unrelated local files remain accessible.

@@ -107,7 +107,8 @@ export class ReplayEngine {
 
   constructor(private readonly wc: WebContents) {}
 
-  async replay(recipe: SkillRecipe, variables: Record<string, string>): Promise<ReplayResult> {
+  async replay(recipe: SkillRecipe, variables: Record<string, string>, guard?: () => Promise<void>): Promise<ReplayResult> {
+    await guard?.()
     const missing = recipe.inputs
       .filter((input) => input.required && !variables[input.name])
       .map((input) => input.name)
@@ -122,7 +123,16 @@ export class ReplayEngine {
 
     const apiPlan = buildApiReplayPlan(recipe, variables)
     if (apiPlan.length > 0) {
-      const apiResult = await this.runApiPlan(apiPlan)
+      const apiResult = { ok: true, callsRun: 0, errors: [] as string[], responseText: '' }
+      for (const call of apiPlan) {
+        await guard?.()
+        const result = await this.runApiPlan([call])
+        await guard?.()
+        apiResult.ok &&= result.ok
+        apiResult.callsRun += result.callsRun
+        apiResult.errors.push(...result.errors)
+        apiResult.responseText = result.responseText || ''
+      }
       return {
         ok: apiResult.ok,
         skillId: recipe.id,
@@ -137,7 +147,9 @@ export class ReplayEngine {
     const errors: string[] = []
     let stepsRun = 0
     for (const step of recipe.steps) {
+      await guard?.()
       const result = await this.runStep(applyVariables(step, variables))
+      await guard?.()
       if (!result.ok) errors.push(result.error || `Step failed: ${step.action} ${step.target.selector}`)
       else stepsRun += 1
       await wait(220)

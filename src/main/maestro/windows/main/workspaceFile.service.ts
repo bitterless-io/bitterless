@@ -1,3 +1,4 @@
+import { assertSkillFilePath, canReadSkillPath, withSkillFileAccess } from '@maestro-main/skills/skillFileAccess.service'
 import type { BrowserWindow } from 'electron'
 import { dialog, shell } from 'electron'
 import type { OpenDialogOptions } from 'electron'
@@ -362,6 +363,7 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
     }
     const cleaned = pathArg.trim().replace(/^@/, '')
     const target = cleaned ? (isAbsolute(cleaned) ? resolve(cleaned) : resolve(root, cleaned)) : root
+    if (!canReadSkillPath(maestroDataRoot(), target)) return { ok: false, root, error: 'skill-scope-unavailable' }
     if (!isInsideRoot(root, target)) return { ok: false, root, error: 'outside-workspace' }
     try {
       const existing = nearestExistingAncestor(target)
@@ -377,7 +379,8 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
 
   private resolveReadPath(
     sessionKey: string,
-    pathArg: string
+    pathArg: string,
+    skipSkillGate = false
   ): { path: string; root: string; insideWorkspace: boolean } {
     let cleaned = String(pathArg || '').trim().replace(/^@/, '')
     if (cleaned === '~') cleaned = homedir()
@@ -391,6 +394,7 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
     const path = !cleaned ? base : isAbsolute(cleaned) ? resolve(cleaned) : resolve(base, cleaned)
     const insideWorkspace = isInsideRoot(base, path)
     const root = insideWorkspace ? base : path
+    if (!skipSkillGate) assertSkillFilePath(maestroDataRoot(), path)
     return { path, root, insideWorkspace }
   }
 
@@ -414,7 +418,12 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
     this.broadcastWorkspaceChanged(sessionId)
   }
 
-  async toolReadFile(
+  async toolReadFile(sessionKey: string, pathArg: string, options: { offset?: number; limit?: number }): Promise<string> {
+    const target = this.resolveReadPath(sessionKey, pathArg || '', true).path
+    return await withSkillFileAccess(maestroDataRoot(), target, () => this.toolReadFileInScope(sessionKey, pathArg, options))
+  }
+
+  private async toolReadFileInScope(
     sessionKey: string,
     pathArg: string,
     options: { offset?: number; limit?: number }
@@ -430,7 +439,9 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
         return `ERROR: "${pathArg}" is a folder, not a file. Use list_workspace_files with path "${target}" to see what is inside (or search_files to find something in it), then read_file the individual files it reports.`
       }
       if (!stats.isFile()) return `ERROR: "${pathArg}" is not a file.`
-      return await readFileForAgent(target, options)
+      const result = await readFileForAgent(target, options)
+      assertSkillFilePath(maestroDataRoot(), target)
+      return result
     } catch (err) {
       if (err instanceof FileReadError) return `ERROR: ${err.message}`
       if (isPermissionError(err)) {
@@ -476,7 +487,12 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
     )
   }
 
-  async toolListWorkspaceFiles(
+  async toolListWorkspaceFiles(sessionKey: string, pathArg?: string, maxEntriesArg?: number): Promise<string> {
+    const target = this.resolveReadPath(sessionKey, pathArg || '', true).path
+    return await withSkillFileAccess(maestroDataRoot(), target, () => this.toolListWorkspaceFilesInScope(sessionKey, pathArg, maxEntriesArg))
+  }
+
+  private async toolListWorkspaceFilesInScope(
     sessionKey: string,
     pathArg?: string,
     maxEntriesArg?: number
@@ -487,6 +503,7 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
       if (!stats.isDirectory()) return `ERROR: "${resolved.path}" is not a directory.`
       const maxEntries = Math.max(1, Math.min(300, Math.round(maxEntriesArg || 120)))
       const entries = (await readdir(resolved.path, { withFileTypes: true }))
+        .filter((entry) => canReadSkillPath(maestroDataRoot(), join(resolved.path, entry.name)))
         .filter((entry) => !entry.isDirectory() || !WORKSPACE_SKIP_DIRS.has(entry.name))
         .slice(0, maxEntries)
         .map((entry) => ({
@@ -503,7 +520,12 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
     }
   }
 
-  async toolSearchWorkspaceFiles(
+  async toolSearchWorkspaceFiles(sessionKey: string, queryArg: string, pathArg?: string, maxResultsArg?: number): Promise<string> {
+    const target = this.resolveReadPath(sessionKey, pathArg || '', true).path
+    return await withSkillFileAccess(maestroDataRoot(), target, () => this.toolSearchWorkspaceFilesInScope(sessionKey, queryArg, pathArg, maxResultsArg))
+  }
+
+  private async toolSearchWorkspaceFilesInScope(
     sessionKey: string,
     queryArg: string,
     pathArg?: string,
@@ -545,6 +567,7 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
       hits.push({ ...hit, matches: terms })
     }
     const visit = async (dir: string, depth: number): Promise<void> => {
+      if (!canReadSkillPath(maestroDataRoot(), dir)) return
       if (hits.length >= maxResults || dirsVisited >= READ_SEARCH_MAX_DIRS || timedOut) return
       if (Date.now() > deadline) {
         timedOut = true
@@ -565,6 +588,7 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
           break
         }
         const abs = join(dir, entry.name)
+        if (!canReadSkillPath(maestroDataRoot(), abs)) continue
         const rel = relative(resolved.root, abs)
         const agentPath = this.agentEntryPath(resolved, abs)
         if (entry.isDirectory()) {
@@ -584,6 +608,7 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
           const stats = await statAsync(abs)
           if (stats.size > WORKSPACE_TEXT_SCAN_BYTES) continue
           const lines = (await readFileAsync(abs, 'utf8')).split(/\r?\n/)
+          if (!canReadSkillPath(maestroDataRoot(), abs)) continue
           const index = lines.findIndex((line) => workspaceTextMatches(line, terms))
           if (index >= 0) {
             pushHit({
