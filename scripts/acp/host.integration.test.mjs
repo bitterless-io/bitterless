@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createRequire } from 'node:module'
-import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync, copyFileSync } from 'node:fs'
 import { join, dirname, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { DatabaseSync } from 'node:sqlite'
+import { spawn } from 'node:child_process'
 import vm from 'node:vm'
 import ts from 'typescript'
 
@@ -90,6 +91,9 @@ const { MaestroChatDao } = load(join(root, 'src/preload/maestro/sqlite/maestroCh
 const { MaestroAgentService } = load(join(root, 'src/main/maestro/agent/maestroAgent.service.ts'))
 const { MaestroAcpHost } = load(join(root, 'src/main/acp/maestroAcp.host.ts'))
 const { cancelExternalTurns } = load(join(root, 'src/main/acp/maestroAcp.lifecycle.ts'))
+const { startAcpServer } = load(join(root, 'src/main/acp/core/acpServer.ts'))
+const { createAcpEndpoint } = load(join(root, 'src/main/acp/core/acpEndpoint.ts'))
+const { JsonRpcPeer } = load(join(root, 'src/main/acp/core/jsonRpcPeer.ts'))
 const { HOST_TOOL_POLICY_KEY } = load(join(root, 'src/shared/maestro/config.api.ts'))
 settings.set(HOST_TOOL_POLICY_KEY, { options: { test_write: { mode: 'confirm' } } })
 const store = new MaestroChatDao()
@@ -191,6 +195,60 @@ test('real host, native MaestroAgentService, BaseAgent and SQLite DAO work end t
     assert(!runtimeSessions.at(-1).prompts[0].includes('hello'))
     await host.closeSession(session.sessionId)
     await host.closeSession(other.sessionId)
+    // Copy shipping bundles away from the repository: no node_modules, tsx or ASAR loader.
+    const endpoint = createAcpEndpoint({ appId: 'bitterless-test', userData: directory, environment: 'test', socketPath: join(directory, 'built.sock') })
+    const server = await startAcpServer({ host, endpoint })
+    const launch = (name) => {
+      const binary = join(directory, name + '.cjs')
+      copyFileSync(join(root, 'build/acp', name + '.cjs'), binary)
+      const child = spawn(process.execPath, [binary, '--descriptor', endpoint.descriptorPath], { cwd: directory, stdio: ['pipe', 'pipe', 'pipe'] })
+      let errors = ''
+      child.stderr.on('data', (bytes) => { errors += bytes })
+      const exited = new Promise((resolve) => child.once('exit', resolve))
+      const peer = new JsonRpcPeer(child.stdout, child.stdin, { requestTimeoutMs: 5000 })
+      peer.onMessage(async () => ({}))
+      return {
+        peer,
+        stop: async () => {
+          child.stdin.end()
+          const timer = setTimeout(() => child.kill('SIGKILL'), 5000)
+          try { await exited; assert.equal(child.exitCode, 0); assert.equal(errors, '') } finally { clearTimeout(timer); peer.close() }
+        }
+      }
+    }
+    try {
+      const stdio = launch('acpStdio')
+      try {
+        await stdio.peer.request('initialize', { protocolVersion: 1, clientCapabilities: {} })
+        const connected = await stdio.peer.request('session/new', { cwd: directory, mcpServers: [] })
+        const reply = await stdio.peer.request('session/prompt', { sessionId: connected.sessionId, prompt: [{ type: 'text', text: 'built stdio hello' }] })
+        assert.equal(reply.stopReason, 'end_turn')
+        assert.equal((await store.getExternalSession({ id: connected.sessionId })).messages.at(-1).content, 'Native runtime reply')
+      } finally { await stdio.stop() }
+      const mcp = launch('acpMcp')
+      const call = async (name, args) => {
+        const result = await mcp.peer.request('tools/call', { name, arguments: args })
+        assert(!result.isError, result.content[0].text)
+        return JSON.parse(result.content[0].text)
+      }
+      try {
+        await mcp.peer.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'built-smoke', version: '1' } })
+        await mcp.peer.notify('notifications/initialized')
+        const connected = await call('acp_session_new', { cwd: directory })
+        const run = await call('acp_prompt_start', { sessionId: connected.sessionId, text: 'built MCP hello' })
+        let result
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          result = await call('acp_prompt_poll', { runId: run.runId, waitMs: 1000 })
+          if (result.status !== 'running') break
+        }
+        assert.equal(result.result.stopReason, 'end_turn')
+        assert(result.events.some((event) => event.update?.sessionUpdate === 'agent_message_chunk' || event.sessionUpdate === 'agent_message_chunk'))
+        await call('acp_session_close', { sessionId: connected.sessionId })
+        const replay = await call('acp_session_load', { sessionId: connected.sessionId, cwd: directory })
+        assert(replay.history.some((entry) => entry.content?.text?.includes('built MCP hello') || entry.update?.content?.text?.includes('built MCP hello')))
+        assert.equal((await store.getExternalSession({ id: connected.sessionId })).messages.at(-1).content, 'Native runtime reply')
+      } finally { await mcp.stop() }
+    } finally { await server.close() }
     await service.shutdown()
   } finally {
     db.close()

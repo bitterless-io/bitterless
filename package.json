@@ -116,7 +116,7 @@
     "deliver:win": "node scripts/deliver_win.js",
     "fast_publish_win:win": "node scripts/fast_publish_win.js",
     "typecheck:acp": "tsc -p scripts/acp/tsconfig.strict.json && tsc -p scripts/acp/core/tsconfig.strict.json",
-    "test:acp": "node --import tsx --test scripts/acp/core/core.test.ts && node --test scripts/acp/host.integration.test.mjs",
+    "test:acp": "yarn build:acp-helpers && node --import tsx --test scripts/acp/core/core.test.ts && node --test scripts/acp/host.integration.test.mjs",
     "build:acp-helpers": "node scripts/acp/build-helpers.mjs"
   },
   "dependencies": {
