@@ -5,6 +5,7 @@ import IconBtn from '@renderer/common/components/IconBtn/IconBtn.vue'
 import { isWorkflowAgentLive, type WorkflowAgentTask, type WorkflowRunSnapshot } from '@shared/agentWorkflow.api'
 import { workflowStore } from './store/workflow.store'
 import { workflowText } from './workflow.text'
+import { groupWorkflowTasks, newestWorkflowRuns } from './workflow.presentation'
 import './WorkflowTaskBar.less'
 
 const props = defineProps<{ sessionId: string }>()
@@ -22,8 +23,9 @@ const actionError = ref('')
 const runs = computed(() => workflowStore.runs.filter(run => run.sessionId === props.sessionId))
 const tasks = computed(() => runs.value.flatMap(run => run.agents))
 const active = computed(() => tasks.value.filter(task => isWorkflowAgentLive(task.status)))
-const finished = computed(() => tasks.value.filter(task => !isWorkflowAgentLive(task.status)))
-const ordered = computed(() => [...active.value, ...finished.value])
+const groups = computed(() => groupWorkflowTasks(runs.value))
+const latestRun = computed(() => newestWorkflowRuns(runs.value)[0])
+const historyOpen = ref({ failed: false, stopped: false })
 const liveRuns = computed(() => runs.value.filter(run => run.status === 'running' || run.status === 'stopping'))
 const cleanupFailed = computed(() => liveRuns.value.some(run => Boolean(run.error)))
 const canRetry = (task: WorkflowAgentTask): boolean => Boolean(actionError.value || runs.value.find(run => run.id === task.runId)?.error)
@@ -36,11 +38,13 @@ const summary = computed(() => {
   const confirmations = active.value.filter(task => task.status === 'approval').length
   if (confirmations) return text.value.waiting.replace('{count}', String(confirmations))
   if (liveRuns.value.some(run => run.status === 'running')) return text.value.working
-  const failures = finished.value.filter(task => task.status === 'failed').length
+  const latest = latestRun.value
+  if (!latest) return ''
+  const failures = latest.agents.filter(task => task.status === 'failed').length
   if (failures) return text.value.failures.replace('{count}', String(failures))
-  const failedRun = runs.value.find(run => run.status === 'failed')
-  if (failedRun) return failedRun.error || text.value.failures.replace('{count}', '1')
-  return liveRuns.value.length ? text.value.working : runs.value.length ? text.value.complete : ''
+  if (latest.status === 'failed') return latest.error || text.value.failures.replace('{count}', '1')
+  if (latest.status === 'stopped') return text.value.states.stopped
+  return liveRuns.value.length ? text.value.working : text.value.complete
 })
 const identity = (task: WorkflowAgentTask) => `${task.runId}:${task.id}`
 const duration = (milliseconds: number): string => {
@@ -50,7 +54,7 @@ const duration = (milliseconds: number): string => {
 const elapsed = (task: WorkflowAgentTask): string => duration((task.endedAt ?? tick.value) - (task.startedAt ?? task.queuedAt))
 const runElapsed = computed(() => {
   const current = runs.value.filter(run => run.status === 'running' || run.status === 'stopping')
-  const latest = [...runs.value].sort((a, b) => b.createdAt - a.createdAt)[0]
+  const latest = latestRun.value
   return current.length ? duration(tick.value - Math.min(...current.map(run => run.createdAt))) : latest ? duration((latest.endedAt ?? tick.value) - latest.createdAt) : ''
 })
 const statusIcon = (task: WorkflowAgentTask) => task.status === 'completed' ? IconCheck : task.status === 'failed' ? IconAlertTriangle : task.status === 'stopped' ? IconPlayerStop : task.status === 'running' || task.status === 'stopping' ? IconLoader2 : IconClock
@@ -96,6 +100,13 @@ const pointer = (event: PointerEvent): void => { if (open.value && event.target 
 const keydown = (event: KeyboardEvent): void => { if (open.value && event.key === 'Escape') { event.preventDefault(); close(true) } }
 watch(() => props.sessionId, () => { close(); expanded.value = null; scrollTop = 0; actionError.value = '' })
 watch(() => tasks.value.length, count => { if (!count) close() })
+watch(() => latestRun.value?.id, () => {
+  historyOpen.value = { failed: false, stopped: false }
+  expanded.value = null
+  scrollTop = 0
+  if (list.value) list.value.scrollTop = 0
+  void nextTick(() => { if (list.value) list.value.scrollTop = 0 })
+})
 let observer: ResizeObserver | undefined
 let timer: ReturnType<typeof setInterval> | undefined
 onMounted(() => {
@@ -124,9 +135,13 @@ onUnmounted(() => { observer?.disconnect(); clearInterval(timer); document.remov
         </div>
       </header>
       <div ref="list" class="workflow-taskbar__list" name="workflow-taskbar__list" tabindex="0" :aria-label="text.current">
-        <template v-for="(task, index) in ordered" :key="identity(task)">
-          <div v-if="index === active.length" class="workflow-taskbar__history">{{ text.ended }} {{ finished.length }}</div>
-          <article class="workflow-taskbar__row" name="workflow-taskbar__row" :data-agent-id="task.id" :data-status="task.status" :class="{ 'workflow-taskbar__row--expanded': expanded === identity(task) }">
+        <section v-for="group in groups" :key="group.category" class="workflow-taskbar__category" name="workflow-taskbar__category" :data-category="group.category">
+          <button v-if="group.category === 'failed' || group.category === 'stopped'" type="button" class="workflow-taskbar__category-toggle" :aria-expanded="historyOpen[group.category]" @click="historyOpen[group.category] = !historyOpen[group.category]">
+            <IconChevronDown :size="12" :class="{ 'workflow-taskbar__category-chevron--closed': !historyOpen[group.category] }" /><strong>{{ text.categories[group.category] }}</strong><span v-if="group.tasks.length">{{ group.tasks.length }}</span>
+          </button>
+          <h3 v-else class="workflow-taskbar__category-title">{{ text.categories[group.category] }}<span v-if="group.tasks.length">{{ group.tasks.length }}</span></h3>
+          <template v-if="(group.category !== 'failed' && group.category !== 'stopped') || historyOpen[group.category]">
+          <article v-for="task in group.tasks" :key="identity(task)" class="workflow-taskbar__row" name="workflow-taskbar__row" :data-agent-id="task.id" :data-status="task.status" :class="{ 'workflow-taskbar__row--expanded': expanded === identity(task) }">
             <div class="workflow-taskbar__row-line">
               <button type="button" class="workflow-taskbar__task" :aria-expanded="expanded === identity(task)" @click="expanded = expanded === identity(task) ? null : identity(task)">
                 <component :is="statusIcon(task)" :size="15" class="workflow-taskbar__state-icon" />
@@ -149,9 +164,8 @@ onUnmounted(() => { observer?.disconnect(); clearInterval(timer); document.remov
               <template v-if="task.output"><strong>{{ text.result }}</strong><pre>{{ task.output }}</pre></template>
             </div>
           </article>
-        </template>
-        <details v-for="run in runs" :key="run.id" class="workflow-taskbar__detail" name="workflow-taskbar__run-result" :open="!run.agents.length || run.status === 'failed'">
-          <summary>{{ run.name }} · {{ text.states[run.status] }}</summary>
+        <details v-for="run in group.runs" :key="run.id" class="workflow-taskbar__detail" name="workflow-taskbar__run-result" :open="!run.agents.length || run.status === 'failed'">
+          <summary>{{ run.name }} · {{ run.status === 'completed' && run.agents.some(agent => agent.status === 'failed') ? text.partialFailure : text.states[run.status] }}</summary>
           <p>{{ run.input }}</p>
           <div v-if="run.status === 'failed' || (run.status === 'completed' && run.agents.some(agent => agent.status === 'failed'))" class="workflow-taskbar__actions" name="workflow-taskbar__retry">
             <span>{{ run.entry ? text.rerun : text.retryUnavailable }}</span>
@@ -160,7 +174,9 @@ onUnmounted(() => { observer?.disconnect(); clearInterval(timer); document.remov
           <pre v-if="run.error" class="workflow-taskbar__error">{{ run.error }}</pre>
           <template v-if="run.result"><strong>{{ text.result }}</strong><pre>{{ run.result }}</pre></template>
         </details>
-        <div v-if="!runs.length && !ordered.length" class="workflow-taskbar__empty"><IconSquares :size="23" /><strong>{{ text.empty }}</strong><p>{{ text.emptyHint }}</p></div>
+          </template>
+        </section>
+        <div v-if="!runs.length && !tasks.length" class="workflow-taskbar__empty"><IconSquares :size="23" /><strong>{{ text.empty }}</strong><p>{{ text.emptyHint }}</p></div>
       </div>
       <footer v-if="overflowing" class="workflow-taskbar__footer">{{ text.scroll }}</footer>
     </section>

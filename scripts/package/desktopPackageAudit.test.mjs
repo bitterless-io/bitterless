@@ -703,9 +703,18 @@ test('synthetic package subpath imports pass when their package root is present'
 
 test('dependency classification keeps external runtime roots and bundles selected pure JavaScript packages', () => {
   const packageJson = JSON.parse(readProjectFile('package.json'));
+  // This exact list is the tripwire for the failure in docs/issues/asar-packs-the-build-toolchain.md:
+  // a build-time package landing under "dependencies" drags its own toolchain into the production
+  // closure, and electron-builder packs all of it. Adding a runtime dependency must therefore be a
+  // deliberate edit here, with the reason it cannot be bundled or moved to devDependencies.
   const externalRuntimeDependencies = [
     '@earendil-works/pi-coding-agent',
     '@electron-toolkit/utils',
+    // Its ./flow and ./engine exports are imported as bare specifiers by the unbundled
+    // out/main/workflow-*.mjs workers and require.resolve()d by workflowEngine/loader.ts, so it
+    // cannot move to devDependencies. Its own typescript/vitest dependencies are excluded from the
+    // package instead — electron-builder.tmp.yml, "build toolchain" block.
+    '@kimchi-dev/kimchi-workflows',
     '@sapphire/snowflake',
     '@seald-io/nedb',
     'better-sqlite3-multiple-ciphers',

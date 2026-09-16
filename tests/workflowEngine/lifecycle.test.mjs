@@ -285,3 +285,55 @@ test('native Kimchi cancellation becomes stopped only after worker cleanup',asyn
   assert.equal(worker.exited,true);assert.equal(engine.exited,true)
  }finally{await h.close()}
 })
+
+for(const prior of ['failed-agent','stopped-chat'])test(`a fresh workflow isolates reused Agent IDs after ${prior}`,{timeout:5000},async()=>{
+ const h=await harness()
+ try {
+  const oldEngine=h.children[0];oldEngine.message({type:'ready'})
+  const oldWorker=h.addAgent();oldWorker.message({type:'ready'})
+  let request
+  if(prior==='failed-agent') {
+   oldEngine.message({type:'agent.update',agent:{...h.agent,status:'failed',error:'old submission failed',endedAt:Date.now()}})
+   oldEngine.message({type:'engine.done',result:'partial result'})
+   const old=await h.supervisor.waitForRun(h.run.id)
+   assert.equal(old.status,'completed');assert.equal(old.agents[0].status,'failed')
+   request=await h.supervisor.retryRequest('chat',h.run.id)
+   assert.deepEqual(request.entry,h.run.entry);assert.equal(request.input,h.run.input)
+  } else {
+   // Exercise both the per-Agent stopped set and the whole-chat stop flag.
+   await h.supervisor.stopAgent('chat',h.run.id,'1')
+   await h.supervisor.stopSession('chat')
+   const old=await h.supervisor.waitForRun(h.run.id)
+   assert.equal(old.status,'stopped');assert.equal(old.agents[0].status,'stopped')
+   request={sessionId:'chat',entry:{kind:'builtin',name:'mini-demo'},input:'fresh command',origin:'shortcut'}
+  }
+  assert.equal(oldEngine.exited,true);assert.equal(oldWorker.exited,true)
+  const next=await h.supervisor.start(request,{tools:[]})
+  assert.notEqual(next.id,h.run.id);assert.equal(next.status,'running');assert.deepEqual(next.agents,[])
+  const engine=h.children[2];engine.message({type:'ready'})
+  const agent={...h.agent,runId:next.id,queuedAt:Date.now()}
+  engine.message({type:'agent.update',agent})
+  engine.message({type:'attempt.start',attempt:{id:'1:1',rowId:1,turnId:'turn1',prompt:'fresh work',opts:{}}})
+  const worker=h.children[3];assert.ok(worker,'reused Agent and attempt IDs must launch a new worker')
+  worker.message({type:'ready'})
+  assert.equal(worker.commands.find(command=>command.type==='agent.start').runId,next.id)
+  assert.equal(engine.commands.some(command=>command.type==='abort'||command.type==='agent.stop'),false)
+  assert.equal(worker.commands.some(command=>command.type==='abort'),false)
+  const live=(await h.supervisor.list()).runs.find(run=>run.id===next.id)
+  assert.equal(live.agents[0].status,'running');assert.equal(live.agents[0].error,undefined)
+  // Late events from the cleaned-up attempt cannot close or overwrite the new run.
+  oldEngine.message({type:'agent.update',agent:{...h.agent,status:'stopped',error:'stale'}})
+  oldWorker.message({type:'agent.turn.done',turnId:'turn1',result:{text:'stale',cancelled:true}})
+  worker.message({type:'agent.turn.done',turnId:'turn1',result:{text:'new result'}})
+  const forwarded=engine.commands.filter(command=>command.type==='attempt.turn.result')
+  assert.equal(forwarded.length,1);assert.equal(forwarded[0].result.text,'new result');assert.equal(forwarded[0].error,undefined)
+  engine.message({type:'agent.update',agent:{...agent,status:'completed',output:'new result',endedAt:Date.now()}})
+  engine.message({type:'engine.done',result:'new result'})
+  const complete=await h.supervisor.waitForRun(next.id)
+  assert.equal(complete.status,'completed');assert.equal(complete.error,undefined)
+  assert.equal(complete.agents[0].status,'completed');assert.equal(complete.agents[0].output,'new result')
+  assert.equal(complete.agents[0].error,undefined);assert.equal(engine.exited,true);assert.equal(worker.exited,true)
+  const retained=(await h.supervisor.list()).runs.find(run=>run.id===h.run.id)
+  assert.equal(retained.agents[0].status,prior==='failed-agent'?'failed':'stopped')
+ }finally{await h.close()}
+})

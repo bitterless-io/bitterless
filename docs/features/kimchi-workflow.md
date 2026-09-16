@@ -70,3 +70,7 @@ Running / Stopping 图标增加旋转并尊重 reduced-motion。复制会话路�
 结构化提交兼容一次 JSON 字符串解码，随后严格校验原 schema；每次 submit 结束当前工具循环，无效结果交回 Kimchi 有界 repair，保留真实错误。workflow 失败或包含失败 Agent 时可人工重新运行整个流程；Main 保存 entry 和完整 input，验证会话归属、清理完成和忙碌状态，再按当前模型/工作区创建新 run，保留旧证据。旧记录无 entry 时要求重新输入 /workflow。
 
 人工验收指南：/Users/ral/Documents/projects/overmind/areas/agent-runtime/workflow/workflow-context-and-retry-testing.md。
+
+## Task history categories and rerun visibility (2026-09-16)
+
+Show categories in this order: In progress, Completed, Failed, Stopped. Failed and Stopped start collapsed; retained failed Agents and workflow results remain inspectable. A completed workflow containing failed Agents is labelled Finished with failed Agents and appears with failure history. Starting a new run collapses those histories and scrolls to current work. The bar summary reflects live work or the latest run, so older failures do not overwrite a newer success. One Agent remains one task; zero tasks reserve no height and the existing ResponseStatus remains separate. Re-entering /workflow after failed/stopped work starts a fresh run after cleanup; no old stop/failure state is inherited.

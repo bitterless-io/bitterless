@@ -85,6 +85,52 @@ const BANNED_PACKAGES = Object.freeze([
   'xterm',
 ]);
 
+// Build-time payloads excluded by electron-builder.tmp.yml. Those exclusions live in a TEMPLATE whose
+// generated output (electron-builder.yml) is gitignored and rewritten by scripts/before.js on every
+// build, so an exclusion that quietly stops applying leaves no trace in the repository. This asserts
+// the ARTIFACT instead. Per-entry rationale: docs/issues/asar-packs-the-build-toolchain.md
+//
+// Checked against the archive listing AND app.asar.unpacked: electron-builder auto-unpacks any module
+// carrying a .node, so better-sqlite3's C sources and the toolchain's native bindings only ever appear
+// in the unpacked tree, where an archive-only check would never see them come back.
+const FORBIDDEN_PACKED_PATHS = Object.freeze([
+  {
+    label: 'llama.cpp source bundle',
+    pattern: /^node_modules\/node-llama-cpp\/llama\/gitRelease\.bundle$/,
+  },
+  {
+    label: 'TypeScript declaration file',
+    pattern: /^node_modules\/.+\.d\.(?:ts|mts|cts)$/,
+  },
+  {
+    label: 'pi-coding-agent README artwork',
+    pattern: /^node_modules\/@earendil-works\/pi-coding-agent\/docs\//,
+  },
+  {
+    label: 'better-sqlite3 C build input',
+    pattern: /^node_modules\/better-sqlite3-multiple-ciphers\/(?:deps\/|src\/|binding\.gyp$)/,
+  },
+  {
+    label: 'build toolchain',
+    pattern: /(?:^|\/)node_modules\/(?:@rolldown|@typescript|@vitest|chai|lightningcss|lightningcss-darwin-arm64|rolldown|typescript|vite|vitest)\//,
+  },
+  {
+    label: 'incremental build state',
+    pattern: /\.tsbuildinfo$/,
+  },
+  {
+    label: 'repository-only directory',
+    pattern: /^(?:\.claude|docs|out\/tests|skills)(?:\/|$)/,
+  },
+]);
+
+// The largest exclusion above rests on node-llama-cpp never attempting a source build inside a packed
+// app. Pin that premise to the SHIPPED file: getLlama.js forces build "never" when running in Electron,
+// and canBuild additionally requires !runningInsideAsar. If an upgrade flips either, the build fails
+// here instead of shipping an app that tries to git clone llama.cpp into a signed bundle.
+const LLAMA_BUILD_GUARD_ENTRY = 'node_modules/node-llama-cpp/dist/bindings/getLlama.js';
+const LLAMA_BUILD_GUARD_MARKERS = Object.freeze(['runningInElectron', '"never"']);
+
 const formatMiB = (bytes) => (bytes / MIB).toFixed(2);
 
 const getPathSize = (targetPath) => {
@@ -546,6 +592,45 @@ const packageIsPresent = (entries, packageName) => {
   return entries.some((entry) => entry === root || entry.startsWith(`${root}/`));
 };
 
+const collectForbiddenPackedPaths = (archiveEntries, resourcesPath) => {
+  const unpackedRoot = path.join(resourcesPath, 'app.asar.unpacked');
+  const candidates = [
+    ...archiveEntries.map((entry) => ['app.asar', entry.replace(/^\//, '')]),
+    ...(fs.existsSync(unpackedRoot)
+      ? listFilesRecursively(unpackedRoot).map((relativePath) => ['app.asar.unpacked', relativePath])
+      : []),
+  ];
+
+  const found = new Map();
+  for (const [location, relativePath] of candidates) {
+    for (const { label, pattern } of FORBIDDEN_PACKED_PATHS) {
+      if (!pattern.test(relativePath)) continue;
+      const key = `${location}::${label}`;
+      const entry = found.get(key) ?? { label, location, count: 0, sample: relativePath };
+      entry.count += 1;
+      found.set(key, entry);
+      break;
+    }
+  }
+  return [...found.values()];
+};
+
+const assertLlamaNeverBuildsInPlace = (asarPath, archiveEntries) => {
+  if (!packageIsPresent(archiveEntries, 'node-llama-cpp')) return null;
+  if (!archiveEntries.includes(`/${LLAMA_BUILD_GUARD_ENTRY}`)) {
+    throw new Error(`${LLAMA_BUILD_GUARD_ENTRY} is missing from app.asar`);
+  }
+  const source = extractFile(asarPath, LLAMA_BUILD_GUARD_ENTRY).toString('utf8');
+  const missingMarkers = LLAMA_BUILD_GUARD_MARKERS.filter((marker) => !source.includes(marker));
+  if (missingMarkers.length > 0) {
+    throw new Error(
+      `${LLAMA_BUILD_GUARD_ENTRY} no longer contains ${missingMarkers.join(' and ')};`
+      + ' node-llama-cpp may now attempt a source build, so llama/gitRelease.bundle can no longer be excluded',
+    );
+  }
+  return LLAMA_BUILD_GUARD_ENTRY;
+};
+
 const getLiteralString = (node) => {
   if (node?.type === 'Literal' && typeof node.value === 'string') return node.value;
   if (node?.type === 'TemplateLiteral' && node.expressions.length === 0) {
@@ -736,9 +821,15 @@ const auditDesktopPackage = (inputPath, options = {}) => {
   }
 
   const asarBytes = asarStats.size;
+  const unpackedPath = path.join(resourcesPath, 'app.asar.unpacked');
+  const unpackedBytes = fs.existsSync(unpackedPath) ? getPathSize(unpackedPath) : 0;
   const appBytes = getPathSize(applicationPath);
+  // Packed and unpacked are reported apart on purpose: only app.asar's own bytes count against
+  // maxAsarBytes, and reading one combined number as "the archive" has already sent one investigation
+  // after 88 MiB of native binaries that the archive limit cannot move.
   console.log(
-    `[desktop-package-audit] app.asar ${formatMiB(asarBytes)} MiB (${asarBytes} bytes; limit ${formatMiB(maxAsarBytes)} MiB)`,
+    `[desktop-package-audit] app.asar ${formatMiB(asarBytes)} MiB (${asarBytes} bytes; limit ${formatMiB(maxAsarBytes)} MiB)`
+    + `; app.asar.unpacked ${formatMiB(unpackedBytes)} MiB, outside that limit`,
   );
   console.log(
     `[desktop-package-audit] application ${formatMiB(appBytes)} MiB (${appBytes} bytes; limit ${formatMiB(maxAppBytes)} MiB)`,
@@ -828,6 +919,18 @@ const auditDesktopPackage = (inputPath, options = {}) => {
   } catch (error) {
     failures.push(`Trench agent skill gate failed: ${error.message}`);
   }
+  const forbiddenPackedPaths = collectForbiddenPackedPaths(archiveEntries, resourcesPath);
+  if (forbiddenPackedPaths.length === 0) {
+    console.log('[desktop-package-audit] no build-time payloads packed');
+  }
+  try {
+    const llamaBuildGuardEntry = assertLlamaNeverBuildsInPlace(asarPath, archiveEntries);
+    if (llamaBuildGuardEntry) {
+      console.log('[desktop-package-audit] node-llama-cpp still refuses to build in place');
+    }
+  } catch (error) {
+    failures.push(`llama build premise gate failed: ${error.message}`);
+  }
   let externalPackageReferences;
   try {
     externalPackageReferences = collectExternalPackageReferences(asarPath, archiveEntries);
@@ -866,6 +969,16 @@ const auditDesktopPackage = (inputPath, options = {}) => {
   if (presentBannedPackages.length > 0) {
     failures.push(`app.asar contains banned package roots: ${presentBannedPackages.join(', ')}`);
   }
+  if (forbiddenPackedPaths.length > 0) {
+    const details = forbiddenPackedPaths
+      .map(({ label, location, count, sample }) => `${label} in ${location} (${count}, e.g. ${sample})`)
+      .sort()
+      .join('; ');
+    failures.push(
+      `the package ships build-time payloads: ${details}`
+      + ' — exclude them in electron-builder.tmp.yml; electron-builder.yml is generated from it and edits there are discarded',
+    );
+  }
   if (failures.length > 0) {
     throw new Error(`[desktop-package-audit] FAILED\n- ${failures.join('\n- ')}`);
   }
@@ -875,6 +988,7 @@ const auditDesktopPackage = (inputPath, options = {}) => {
     applicationPath,
     asarPath,
     asarBytes,
+    unpackedBytes,
     appBytes,
     targetPlatform: applicationTarget.platform,
     targetArch: applicationTarget.arch,
@@ -925,6 +1039,10 @@ if (require.main === module) {
 
 module.exports = afterPack;
 module.exports.BANNED_PACKAGES = BANNED_PACKAGES;
+module.exports.FORBIDDEN_PACKED_PATHS = FORBIDDEN_PACKED_PATHS;
+module.exports.LLAMA_BUILD_GUARD_ENTRY = LLAMA_BUILD_GUARD_ENTRY;
+module.exports.assertLlamaNeverBuildsInPlace = assertLlamaNeverBuildsInPlace;
+module.exports.collectForbiddenPackedPaths = collectForbiddenPackedPaths;
 module.exports.DEFAULT_MAX_APP_BYTES = DEFAULT_MAX_APP_BYTES;
 module.exports.DEFAULT_MAX_ASAR_BYTES = DEFAULT_MAX_ASAR_BYTES;
 module.exports.auditDesktopPackage = auditDesktopPackage;

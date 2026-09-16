@@ -44,6 +44,53 @@ files:
   - '!{package.rig.json5,env.rig.json5}'
   - '!bitterless-bot.memory-card.json'
   - '!**/*.md'
+  # Build-time payloads that no packaged code path can reach. Every line here is asserted against
+  # the BUILT artifact by scripts/package/desktopPackage.audit.cjs — see
+  # docs/issues/asar-packs-the-build-toolchain.md. electron-builder.yml is GENERATED from this
+  # file by scripts/before.js, so an edit to that copy is discarded at the next pack.
+  #
+  # App-owned junk no earlier rule covers ('!**/*.md' only drops the prose, not the assets).
+  - '!**/*.tsbuildinfo'
+  - '!docs/**'
+  - '!out/tests/**'
+  - '!skills/**'
+  - '!.claude/**'
+  # A git bundle of the llama.cpp sources, read only by cloneLlamaCppRepo() and the
+  # `node-llama-cpp source download` CLI. Unreachable twice over in a packaged app: getLlama.js
+  # defaults build to "never" under Electron, and canBuild also requires !runningInsideAsar.
+  # NEVER widen this to llama/** — dist/config.js reads binariesGithubRelease.json in a top-level
+  # await and getGrammarsFolder() resolves llama/grammars/.
+  - '!**/node_modules/node-llama-cpp/llama/gitRelease.bundle'
+  # README screenshots whose prose was already dropped by '!**/*.md'.
+  - '!**/node_modules/@earendil-works/pi-coding-agent/docs/**'
+  # No Node resolution path loads a declaration file; jiti strips types without them.
+  # Scoped to node_modules on purpose so nothing under out/ or the app root is touched.
+  - '!**/node_modules/**/*.d.ts'
+  - '!**/node_modules/**/*.d.mts'
+  - '!**/node_modules/**/*.d.cts'
+  # C build inputs. The whole module is auto-unpacked (it carries a .node), so this is worth
+  # nothing against the asar limit and 13.57 MiB against the application limit. The addon is
+  # resolved by require('bindings')('better_sqlite3.node'), whose candidate table has no deps segment.
+  - '!**/node_modules/better-sqlite3-multiple-ciphers/deps/**'
+  - '!**/node_modules/better-sqlite3-multiple-ciphers/src/**'
+  - '!**/node_modules/better-sqlite3-multiple-ciphers/binding.gyp'
+  # The toolchain @kimchi-dev/kimchi-workflows drags in through its OWN dependencies
+  # (typescript@^7, vitest@4). We import only its ./flow and ./engine exports; typescript and
+  # vitest are reachable solely from its ./host, ./extension and ./testing exports, which no
+  # source or built bundle references. A devDependency move is impossible — the worker imports
+  # kimchi as a bare specifier at runtime. The '**/' prefix covers both the hoisted and the
+  # nested node_modules shape, because yarn can flip that on any install.
+  # esbuild is deliberately NOT here: @earendil-works/pi-coding-agent can reach it.
+  - '!**/node_modules/typescript/**'
+  - '!**/node_modules/@typescript/**'
+  - '!**/node_modules/vite/**'
+  - '!**/node_modules/vitest/**'
+  - '!**/node_modules/@vitest/**'
+  - '!**/node_modules/rolldown/**'
+  - '!**/node_modules/@rolldown/**'
+  - '!**/node_modules/lightningcss/**'
+  - '!**/node_modules/lightningcss-darwin-arm64/**'
+  - '!**/node_modules/chai/**'
 extraResources:
   - from: asar_unpacked
     to: app.asar.unpacked
