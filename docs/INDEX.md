@@ -1,6 +1,6 @@
 # Bitterless Documentation
 
-- [Background workflows and active tasks](features/background-workflow-tasks.md) — implementing; concurrent chat, pause/resume, Tasks history modal, completion delivery.
+- [Background workflows and active tasks](features/background-workflow-tasks.md) — implemented and code-verified; concurrent chat, pause/resume, Tasks history modal, completion delivery.
 
 - [Windows locale pruning drops Chinese and English](issues/windows-locale-pruning-drops-chinese-and-english.md) — **open, not fixed**;
   the electronLanguages allowlist uses macOS `.lproj` naming, which cannot match Windows/Linux `.pak` basenames; needs one real Windows pack to settle.
