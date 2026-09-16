@@ -55,3 +55,20 @@ test('graph layout remains finite for joins, cycles and escaped authored labels'
   const graph = structuredClone(manifest.graph); graph.edges.push({ from: 'summarize', to: 'prepare', label: '<script>fixture</script>' })
   const layout = layoutWorkflowGraph(graph); assert(layout.width > 0); assert(layout.height > 0); assert(layout.nodes.every(node => Number.isFinite(node.x) && Number.isFinite(node.y))); assert.equal(layout.edges.at(-1).label, '<script>fixture</script>')
 })
+
+test('branch alternatives stay parallel before their join when the graph has a retry loop', async () => {
+  const { layoutWorkflowGraph } = await createJiti(import.meta.url, { fsCache: false }).import('../../src/renderer/maestro/workbench/src/workflowGraph.ts')
+  const graph = { nodes: ['prepare', 'choose', 'process', 'review', 'join', 'repeat'].map(id => ({ id, label: id, kind: 'function' })), edges: [['prepare', 'choose'], ['choose', 'process'], ['choose', 'review'], ['process', 'join'], ['review', 'join'], ['join', 'repeat'], ['repeat', 'choose']].map(([from, to]) => ({ from, to })) }
+  const layout = layoutWorkflowGraph(graph)
+  const nodes = new Map(layout.nodes.map(node => [node.id, node]))
+  assert.equal(nodes.get('process').x, nodes.get('review').x)
+  assert.notEqual(nodes.get('process').y, nodes.get('review').y)
+  assert(nodes.get('choose').x < nodes.get('process').x)
+  assert(nodes.get('join').x > nodes.get('process').x)
+  assert(nodes.get('repeat').x > nodes.get('join').x)
+  assert.deepEqual(layout.edges.map(({ from, to }) => ({ from, to })), graph.edges)
+  assert.equal(layout.edges.filter(edge => edge.from === 'repeat' && edge.to === 'choose').length, 1)
+  const loop = layout.edges.find(edge => edge.from === 'repeat')
+  assert(loop.labelY > Math.max(...layout.nodes.map(node => node.y + node.height)), 'retry connector passes below every branch card')
+  assert(loop.labelY < layout.height, 'retry connector remains inside the canvas')
+})
