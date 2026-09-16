@@ -6,6 +6,7 @@ import { join, dirname, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { DatabaseSync } from 'node:sqlite'
 import { spawn } from 'node:child_process'
+import { createConnection } from 'node:net'
 import vm from 'node:vm'
 import ts from 'typescript'
 
@@ -266,6 +267,55 @@ test('real host, native MaestroAgentService, BaseAgent and SQLite DAO work end t
     assert.equal((await host.prompt(cancelledSession.sessionId, [{ type: 'text', text: 'already cancelled' }], cancelledBeforeStart)).stopReason, 'cancelled')
     assert.equal(modelCalls, beforeCancelled)
     assert.equal((await store.getExternalSession({ id: cancelledSession.sessionId })).messages.length, 0)
+
+    // Socket admission must not read storage before the host registers logout cancellation.
+    const socketReadEntered = deferred(), releaseSocketRead = deferred()
+    let gateSocketRead = false
+    const socketHost = new MaestroAcpHost({
+      listExternalSessions: () => store.listExternalSessions(),
+      getExternalSession: async (params) => {
+        if (gateSocketRead) {
+          gateSocketRead = false
+          socketReadEntered.resolve()
+          await releaseSocketRead.promise
+        }
+        return await store.getExternalSession(params)
+      },
+      saveExternalSession: (params) => store.saveExternalSession(params)
+    }, runtime)
+    const raceEndpoint = createAcpEndpoint({ appId: 'bitterless-auth-race', userData: directory, environment: 'test', socketPath: join(directory, 'race.sock') })
+    const raceServer = await startAcpServer({ host: socketHost, endpoint: raceEndpoint })
+    const raceSocket = createConnection(raceEndpoint.socketPath)
+    const racePeer = new JsonRpcPeer(raceSocket, raceSocket, { requestTimeoutMs: 5000 })
+    racePeer.onMessage(async () => ({}))
+    let socketTurn, socketLogout
+    try {
+      await racePeer.request('initialize', { protocolVersion: 1, clientCapabilities: {} })
+      const { sessionId } = await racePeer.request('session/new', { cwd: directory, mcpServers: [] })
+      const beforeSocketCalls = modelCalls
+      gateSocketRead = true
+      socketTurn = racePeer.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'socket request accepted before logout' }] })
+      await socketReadEntered.promise
+      authenticated = false
+      let socketLogoutFinished = false
+      socketLogout = cancelExternalTurns().then(() => { socketLogoutFinished = true })
+      authenticated = true
+      await new Promise((resolve) => setImmediate(resolve))
+      const logoutWaitedForRead = !socketLogoutFinished
+      releaseSocketRead.resolve()
+      const result = await socketTurn
+      await socketLogout
+      assert.equal(logoutWaitedForRead, true, 'logout drains the first socket prompt DAO read')
+      assert.equal(result.stopReason, 'cancelled')
+      assert.equal(modelCalls, beforeSocketCalls, 're-login cannot revive an accepted old-generation socket prompt')
+      assert.equal((await store.getExternalSession({ id: sessionId })).messages.length, 0)
+    } finally {
+      releaseSocketRead.resolve()
+      await Promise.allSettled([socketTurn, socketLogout])
+      await racePeer.close()
+      await raceServer.close()
+      authenticated = true
+    }
 
     // Copy shipping bundles away from the repository: no node_modules, tsx or ASAR loader.
     const endpoint = createAcpEndpoint({ appId: 'bitterless-test', userData: directory, environment: 'test', socketPath: join(directory, 'built.sock') })
