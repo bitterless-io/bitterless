@@ -11,7 +11,8 @@ import {
   MAX_INDEX_DEPTH,
   MAX_WATCH_CHANGE_PATHS,
   ONE_GIB_BYTES,
-  TWO_GIB_BYTES
+  TWO_GIB_BYTES,
+  WATCH_TRAILING_MS
 } from '../../src/preload/onlypreview/search/core/constants.mjs';
 import {
   assessOnlyPreviewSearchMemory,
@@ -446,4 +447,74 @@ test('a watch commit leaves a session that began inside the commit window alive'
     assert.equal((await previewToken(engine, 'inside-commit', subject.resultToken)).kind, 'text');
     await engine.shutdown();
   });
+});
+
+// Ral 2026-09-16:「巨卡,导致别的程序都受到影响」。全量 reconcile 的代价随工作区大小走,而触发它的
+// 两条路都是固定节奏(无 watcher 的 30s 兜底轮询、macOS FSEvents 队列溢出送来的 `filename === null`
+// 升级只隔 400ms 尾抖动)。一棵 97,914 文件的树上一轮全量约 60s,于是上一轮刚落地下一轮就开跑 ——
+// 26 小时跑了 238 轮,两个 renderer 长期占 30–120% CPU。退避按**上次实际耗时**算,小工作区行为不变。
+test('a full reconcile cannot restart until the previous one has been idle for a multiple of its own cost', async () => {
+  const emitter = new EventEmitter();
+  emitter.close = () => undefined;
+  let watchListener;
+  const fullReconciles = [];
+  const controller = createWorkspaceWatchController({
+    rootPath: '/workspace',
+    watchFactory: (_rootPath, _options, listener) => {
+      watchListener = listener;
+      return emitter;
+    },
+    onReconcile: async ({ full }) => {
+      if (!full) return;
+      fullReconciles.push(Date.now());
+      await delay(600); // 这一轮全量的代价 → 冷却 600 × 4 = 2400ms
+    }
+  });
+  assert.equal(controller.mode(), 'watch');
+
+  // FSEvents 队列溢出:Node 送来没有文件名的事件,本控制器据此升级成全量。
+  watchListener('change', null);
+  await delay(WATCH_TRAILING_MS + 900);
+  assert.equal(fullReconciles.length, 1);
+
+  // 冷却窗口内再来一次溢出 —— 不许开跑,但待办要留着。
+  watchListener('change', null);
+  await delay(WATCH_TRAILING_MS + 600);
+  assert.equal(fullReconciles.length, 1);
+
+  // 冷却结束后它自己补跑,不需要新的事件来推。
+  await delay(2_000);
+  assert.equal(fullReconciles.length, 2);
+
+  await controller.close();
+});
+
+// 退避只挡全量。增量 reconcile 的代价与改动数成正比,不是自激源头,挡它只会让索引无谓地陈旧。
+test('the full-reconcile cooldown does not delay incremental reconciles', async () => {
+  const emitter = new EventEmitter();
+  emitter.close = () => undefined;
+  let watchListener;
+  const changes = [];
+  const controller = createWorkspaceWatchController({
+    rootPath: '/workspace',
+    watchFactory: (_rootPath, _options, listener) => {
+      watchListener = listener;
+      return emitter;
+    },
+    onReconcile: async (change) => {
+      changes.push(change);
+      if (change.full) await delay(600);
+    }
+  });
+
+  watchListener('change', null);
+  await delay(WATCH_TRAILING_MS + 900);
+  assert.deepEqual(changes.map((change) => change.full), [true]);
+
+  watchListener('change', 'note.md');
+  await delay(WATCH_TRAILING_MS + 300);
+  assert.deepEqual(changes.map((change) => change.full), [true, false]);
+  assert.deepEqual(changes[1].paths, ['note.md']);
+
+  await controller.close();
 });

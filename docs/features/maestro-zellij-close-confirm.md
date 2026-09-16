@@ -92,6 +92,7 @@ type MaestroShellDialog =
 | 右键 `Close` | `closeTabByUser` | |
 | 右键 `Close other tabs` → `closeTabsExcept` | 闸在方法内,批量算完再问一次 | G4 |
 | 右键 `Close tabs to the right` → `closeTabsToRight` | 同上 | G4 |
+| Workbench chip 的两项批量关闭 → `closeClosableTabs` | 同上 | 它也是人点的 |
 | `closeActiveTab`(`Cmd+W`) | `closeTabByUser` | |
 | `openControlledBlankTab` 的 `done()` / 失败回滚 | `closeTab` | 取页收尾,不是人点的 |
 | `exploreSession` 分支回收(`drillHost`) | `closeTab` | |
@@ -99,8 +100,17 @@ type MaestroShellDialog =
 | `setAsHomepage` 关掉旧 Home tab | `closeTab` | 内置 Home,无状态 |
 | composite host 自己的 `close()` seam | `closeTab` | mini app 自己请求下台 |
 
-pinned tab 不在任何范围里(`closeTab` 第一条就 `if (tab.pinned) return`,两个批量方法也都
-`.filter((tab) => !tab.pinned)`),所以「Zellij 当自定义主页」这一支不需要额外判断。
+### #3.1 先滤,后问
+
+`closeTabsAsUser()` 在问之前把 id 集合滤成**真的会被关掉的那些**(非 pinned、且条上不止一个)。
+
+`closeTab` 自己也拒这两种,但那是在**问完之后**。少了这一步,`Cmd+W` 停在一个 Zellij 自定义主页
+上会弹出确认、人按下「关闭」、然后什么都不发生 —— 一个答案不改变任何事情的问题。右键菜单的
+`Close` 与条上的 `×` 在这两种情况下本来就不出现(`canClose` / `v-if`),快捷键没有那道 UI 闸,所以
+闸要落在这里。
+
+两个批量方法自己也 `.filter((tab) => !tab.pinned)`,这一步对它们是冗余的 —— 但它保护的是
+`closeTabByUser` 的每一个调用方,而不是某一条路径。
 
 ## #4 这一层起不来时:**放行**,不是拦住
 

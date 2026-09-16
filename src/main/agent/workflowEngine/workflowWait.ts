@@ -63,6 +63,12 @@ export class WorkflowWaitRegistry {
 
   pending(sessionId: string): WorkflowWaitIntent | undefined { return this.intents.get(sessionId) }
 
+  /** Every pending wait, for the snapshot the status bar renders from. */
+  list(sessionId?: string): WorkflowWaitIntent[] {
+    const all = [...this.intents.values()].map(intent => ({ ...intent, runIds: [...intent.runIds] }))
+    return sessionId ? all.filter(intent => intent.sessionId === sessionId) : all
+  }
+
   /** The user outranks a wait: anything they do cancels it rather than queueing behind it. */
   cancel(sessionId: string): boolean { return this.intents.delete(sessionId) }
 
@@ -85,16 +91,25 @@ export class WorkflowWaitRegistry {
   }
 }
 
-/** What the model is told when its wait is accepted. It must say this out loud before its turn ends. */
-export function workflowWaitReceipt(intent: WorkflowWaitIntent, runs: readonly WorkflowRunSnapshot[]): string {
+/**
+ * What the model is told when its wait is accepted.
+ *
+ * `resumes` is whether this host can actually start the continuation turn itself. It changes what
+ * the model may promise the user: a host that cannot resume must not let the agent say it will.
+ */
+export function workflowWaitReceipt(intent: WorkflowWaitIntent, runs: readonly WorkflowRunSnapshot[], resumes: boolean): string {
   const named = intent.runIds.map(id => runs.find(run => run.id === id)).filter(Boolean) as WorkflowRunSnapshot[]
   return JSON.stringify({
     waiting: true,
+    resumesAutomatically: resumes,
     runs: named.map(run => ({ runId: run.id, name: run.name, agents: run.agents.length })),
     instruction: [
       'Your wait is registered. Do NOT call this tool again and do not poll.',
-      'End your turn now with a short reply that names which workflows you are waiting for.',
-      'When they all settle this chat continues on its own with their real outcomes.',
+      'The status bar already tells the user this chat is waiting, so do not repeat the count —',
+      'end your turn now with a short reply about what you will do once they finish.',
+      resumes
+        ? 'When they all settle this chat continues on its own with their real outcomes, so tell the user you will pick it up yourself.'
+        : 'This host does NOT resume the conversation by itself: when they settle their results land in your context and the user speaks next. Do not tell the user you will continue unprompted.',
       'The user can keep talking; if they do, the wait is cancelled and they are answered first.'
     ].join(' ')
   })

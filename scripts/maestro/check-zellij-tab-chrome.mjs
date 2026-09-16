@@ -1,3 +1,6 @@
+/* eslint-disable @typescript-eslint/explicit-function-return-type, no-regex-spaces --
+   守卫脚本是 `.mjs`(没有类型标注),而这里的正则逐字匹配源码缩进,`  \}` 里那两个空格是**判据本身**
+   ——写成 ` {2}\}` 只会让「我在匹配两级缩进的闭合花括号」这件事更难读。 */
 // ══ 行为守卫 ══ Cowork 条上 Zellij tab 的两件事:关闭确认,与双击就地改名
 //
 // 契约:`docs/features/maestro-zellij-close-confirm.md`、`docs/features/zellij-tab-inline-rename.md`。
@@ -47,9 +50,9 @@ const closeTabsAsUser = slice(
   `${BROWSER_VIEW}: expected to find closeTabsAsUser()`
 )
 assert(
-  /await this\.confirmCloseScope\(ids\)/.test(closeTabsAsUser),
-  `${BROWSER_VIEW}: closeTabsAsUser must run the confirmation over the WHOLE id set before closing anything ` +
-    '(maestro-zellij-close-confirm.md #1).'
+  /await this\.confirmCloseScope\(closable\)/.test(closeTabsAsUser),
+  `${BROWSER_VIEW}: closeTabsAsUser must run the confirmation over the WHOLE set it is about to close before ` +
+    'closing anything (maestro-zellij-close-confirm.md #1).'
 )
 assert(
   (closeTabsAsUser.match(/confirmCloseScope\(/g) || []).length === 1,
@@ -57,9 +60,17 @@ assert(
     'G4 exists to prevent — three Zellij tabs in range must still ask once.'
 )
 assert(
-  closeTabsAsUser.indexOf('confirmCloseScope') < closeTabsAsUser.indexOf('for (const id of ids)'),
+  closeTabsAsUser.indexOf('confirmCloseScope') < closeTabsAsUser.indexOf('for (const id of closable)'),
   `${BROWSER_VIEW}: the confirmation must precede the close loop — cancelling after the first tab is already gone ` +
     'is not a cancellation.'
+)
+// 先滤后问:`closeTab` 自己也拒 pinned 与「只剩一个」,但那是在**问完之后** —— 少了这一步,
+// `Cmd+W` 停在一个 Zellij 主页上会弹确认,按了「关闭」却什么都不发生。
+assert(
+  /const closable = this\.tabs\.length > 1 \? ids\.filter\(/.test(closeTabsAsUser) &&
+    closeTabsAsUser.indexOf('const closable') < closeTabsAsUser.indexOf('confirmCloseScope'),
+  `${BROWSER_VIEW}: narrow the id set to what will ACTUALLY close (not pinned, not the last tab) BEFORE asking — ` +
+    'otherwise Cmd+W on a pinned Zellij homepage asks a question whose answer changes nothing.'
 )
 for (const [method, pattern] of [
   ['closeTab', /async closeTab\(params: \{ id: string \}\): Promise<void> \{[\s\S]*?\n  \}/],
@@ -98,16 +109,18 @@ assert(
 )
 for (const [method, pattern] of [
   ['closeTabsExcept', /private async closeTabsExcept\([\s\S]*?\n  \}/],
-  ['closeTabsToRight', /private async closeTabsToRight\([\s\S]*?\n  \}/]
+  ['closeTabsToRight', /private async closeTabsToRight\([\s\S]*?\n  \}/],
+  // Workbench chip 的两项批量关闭共用这一个范围。它也是人点的,所以同一道闸。
+  ['closeClosableTabs', /private async closeClosableTabs\([\s\S]*?\n  \}/]
 ]) {
   const body = slice(browserView, pattern, `${BROWSER_VIEW}: expected to find ${method}()`)
   assert(
-    /await this\.closeTabsAsUser\(ids\)/.test(body),
+    /await this\.closeTabsAsUser\(/.test(body),
     `${BROWSER_VIEW}: ${method} must hand its id set to closeTabsAsUser — a bare close loop here is G2/G3 broken ` +
       '(the range, not the right-clicked tab, is the criterion).'
   )
   assert(
-    !/for \(const id of ids\) await this\.closeTab/.test(body),
+    !/await this\.closeTab\(/.test(body),
     `${BROWSER_VIEW}: ${method} must not close tabs itself — that path skips the confirmation entirely.`
   )
 }

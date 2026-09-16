@@ -1,11 +1,13 @@
 import { reactive } from 'vue'
 import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer'
-import type { WorkflowActivitySummary, WorkflowIpcApi, WorkflowDescriptor, WorkflowRunSnapshot, WorkflowSnapshot, WorkflowStartRequest } from '@shared/agentWorkflow.api'
+import type { WorkflowActivitySummary, WorkflowWaitState, WorkflowIpcApi, WorkflowDescriptor, WorkflowRunSnapshot, WorkflowSnapshot, WorkflowStartRequest } from '@shared/agentWorkflow.api'
 const api = createXpcRendererEmitter<WorkflowIpcApi>('WorkflowHandler')
 class WorkflowStore {
   runs: WorkflowRunSnapshot[] = []
   /** Model-written status sentences; absent entries leave the renderer's own line in place. */
   activity: WorkflowActivitySummary[] = []
+  /** Pending waits, straight from the host registry — the status bar renders these, not model prose. */
+  waiting: WorkflowWaitState[] = []
   revision = -1
   loading = false
   loadFailed = false
@@ -37,10 +39,14 @@ class WorkflowStore {
     if (!snapshot || !Array.isArray(snapshot.runs) || !Number.isFinite(snapshot.revision) || snapshot.revision < this.revision) return
     this.runs = snapshot.runs
     this.activity = Array.isArray(snapshot.activity) ? snapshot.activity : []
+    this.waiting = Array.isArray(snapshot.waiting) ? snapshot.waiting : []
     this.revision = snapshot.revision
     this.loadFailed = false
   }
 
+  waitFor(sessionId: string): WorkflowWaitState | undefined {
+    return this.waiting.find(entry => entry.sessionId === sessionId)
+  }
   activityFor(sessionId: string): WorkflowActivitySummary | undefined {
     return this.activity.find(entry => entry.sessionId === sessionId)
   }

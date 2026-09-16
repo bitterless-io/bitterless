@@ -1,5 +1,13 @@
 # Bitterless Documentation
 
+- [关闭 Zellij tab 需要确认](features/maestro-zellij-close-confirm.md) — implemented; owner testing pending;
+  关闭**范围**里有 Zellij 就先弹一次覆盖层确认(`×` / 右键 Close / Close others / Close right / `Cmd+W`),
+  范围里 N 个也只问一次;程序发起的关闭不问;覆盖层起不来时放行而不是把 tab 锁死。
+
+- [双击 Zellij tab 就地改名](features/zellij-tab-inline-rename.md) — implemented; owner testing pending;
+  chip 里就地编辑,宽度跟着字走、20 字截断,回车/失焦保存、Escape 放弃,清空即退回 `Zellij`;
+  落盘复用既有 alias 那条路,跨重启存活。
+
 - [Workbench chip 右边多一条分隔线,右键什么都不弹](issues/maestro-workbench-chip-divider-and-menu.md) — implemented; owner verification pending;
   开着的 Workbench chip 占掉「收尾 pinned 组」那个槽位(只留左分隔),右击它弹出和 mini-app tab 逐项对齐的原生菜单,不适用的五项置灰。
 

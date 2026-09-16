@@ -141,8 +141,22 @@ const status = computed<StatusView | null>(() => {
  * the user could not tell what the chat was waiting on.
  */
 const activityFacts = computed(() => workflowActivityFacts(workflowStore.runs, props.session.id))
+const pendingWait = computed(() => workflowStore.waitFor(props.session.id))
 const backgroundAgents = computed<{ tone: 'wait' | 'run'; text: string; meta: string } | null>(() => {
   const facts = activityFacts.value
+  const wait = pendingWait.value
+  // The chat having declared a wait is the more specific fact, and it is the host's own registry
+  // state — so this line cannot outlive a cancelled wait, and no agent can claim one it never made.
+  if (wait) {
+    return {
+      tone: 'wait',
+      text: i18nHelper.workflow.activityWaiting.replace('{count}', String(wait.runIds.length)),
+      meta: [
+        facts.agents ? i18nHelper.workflow.activityWorking.replace('{count}', String(facts.agents)) : '',
+        facts.startedAt ? elapsed(facts.startedAt) : ''
+      ].filter(Boolean).join(' · ')
+    }
+  }
   if (!facts.agents) return null
   const counts = facts.awaitingUser
     ? i18nHelper.workflow.activityApproval.replace('{count}', String(facts.awaitingUser))

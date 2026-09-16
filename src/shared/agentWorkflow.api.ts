@@ -50,7 +50,20 @@ export interface WorkflowActivitySummary {
   startedAt: number
   generatedAt: number
 }
-export interface WorkflowSnapshot { runs: WorkflowRunSnapshot[]; revision: number; activity?: WorkflowActivitySummary[] }
+/**
+ * A chat's pending declaration that it is waiting for background runs.
+ *
+ * This is what the status bar renders. It is the host's own registry state, not something the model
+ * said — so the user cannot be told "I'll wait" by an agent that never actually registered a wait,
+ * and the indicator cannot be left behind after the wait is cancelled.
+ */
+export interface WorkflowWaitState {
+  sessionId: string
+  runIds: string[]
+  declaredAt: number
+}
+
+export interface WorkflowSnapshot { runs: WorkflowRunSnapshot[]; revision: number; activity?: WorkflowActivitySummary[]; waiting?: WorkflowWaitState[] }
 export interface WorkflowStartRequest { sessionId: string; entry: WorkflowEntry; input: string; cwd?: string; origin?: 'shortcut' }
 export interface WorkflowDescriptor { name: string; description: string; displayName?: string; scope?: 'shared' | 'institution'; institution_id?: number; ref?: string; entry?: WorkflowEntry }
 export interface WorkflowApi {

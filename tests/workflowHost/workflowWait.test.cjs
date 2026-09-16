@@ -101,16 +101,25 @@ test('the receipt tells the model to end its turn and never to poll', () => {
   const registry = new WorkflowWaitRegistry()
   const runs = [run('a', 'chat', 'running', 3)]
   const outcome = registry.declare('chat', [], runs, 1)
-  const receipt = JSON.parse(workflowWaitReceipt(outcome.intent, runs))
+  const receipt = JSON.parse(workflowWaitReceipt(outcome.intent, runs, true))
   assert.equal(receipt.waiting, true)
   assert.deepEqual(receipt.runs, [{ runId: 'a', name: 'code-review', agents: 3 }])
   assert.match(receipt.instruction, /Do NOT call this tool again and do not poll/)
-  assert.match(receipt.instruction, /End your turn now/)
-  assert.match(receipt.instruction, /names which workflows you are waiting for/)
+  assert.match(receipt.instruction, /end your turn now/)
+  assert.match(receipt.instruction, /status bar already tells the user/, 'the wait is a UI state, not prose the model must remember to say')
   assert.match(receipt.instruction, /wait is cancelled and they are answered first/)
+  assert.equal(receipt.resumesAutomatically, true)
+  assert.match(receipt.instruction, /pick it up yourself/)
+
+  // A host that cannot resume must not let the agent promise that it will.
+  const cannot = JSON.parse(workflowWaitReceipt(outcome.intent, runs, false))
+  assert.equal(cannot.resumesAutomatically, false)
+  assert.match(cannot.instruction, /does NOT resume the conversation by itself/)
+  assert.match(cannot.instruction, /Do not tell the user you will continue unprompted/)
+  assert.doesNotMatch(cannot.instruction, /continues on its own/)
 })
 
-test('the tool is non-blocking, fires from settle, and is only offered where a chat can actually resume', () => {
+test('the tool is non-blocking, fires from settle, and never promises more than its host can do', () => {
   const cowork = path.resolve(root, '../micromeet-cowork/apps/cowork')
   const others = fs.existsSync(cowork) ? [cowork] : []
   for (const app of [root, ...others]) {
@@ -118,8 +127,10 @@ test('the tool is non-blocking, fires from settle, and is only offered where a c
     assert.match(host, /name: 'workflow_wait'/, `workflow_wait is missing in ${app}`)
     assert.match(host, /Returns IMMEDIATELY — it does not block and must not be polled/)
     assert.match(host, /this\.waits\.settle\(runs\)/, 'the continuation must fire from the settle path')
-    // The tool must not exist in an app whose host cannot resume the conversation.
-    assert.match(host, /\.\.\.\(this\.options\.onWaitSatisfied \? \[\{/, 'workflow_wait must be gated on a wired continuation')
+    // The tool exists in both apps; what it PROMISES is what varies by host.
+    assert.match(host, /workflowWaitReceipt\(outcome\.intent, snapshot\.runs, Boolean\(this\.options\.onWaitSatisfied\)\)/,
+      'the receipt must be told whether this host can actually resume')
+    assert.match(host, /do not promise more than it says/)
     const wait = fs.readFileSync(path.join(app, 'src/main/agent/workflowEngine/workflowWait.ts'), 'utf8')
     assert.match(wait, /Deliberately NOT a blocking tool/)
     assert.match(wait, /A pointer, not a restatement/, 'the continuation prompt must not repeat results already in context')

@@ -31,6 +31,24 @@ test('the status row survives a settled turn and keeps a localized line without 
   assert.match(source, /Boolean\(status\.value\) \|\| Boolean\(backgroundAgents\.value\)/, 'the clock must tick for a background-only row')
 })
 
+test('the wait is a status-bar state driven by the host registry, not prose the model must remember', () => {
+  const store = readFileSync(new URL(`${renderer}store/workflow.store.ts`, root), 'utf8')
+  assert.match(store, /waiting: WorkflowWaitState\[\] = \[\]/)
+  assert.match(store, /this\.waiting = Array\.isArray\(snapshot\.waiting\) \? snapshot\.waiting : \[\]/)
+  assert.match(store, /waitFor\(sessionId: string\)/)
+
+  const status = readFileSync(new URL(`${renderer}ResponseStatus.vue`, root), 'utf8')
+  assert.match(status, /const pendingWait = computed\(\(\) => workflowStore\.waitFor\(props\.session\.id\)\)/)
+  // The declared wait outranks the plain Agent count: it is the more specific fact.
+  assert.match(status, /if \(wait\) \{[\s\S]*?activityWaiting/)
+  assert.match(status, /if \(wait\)[\s\S]{0,400}?if \(!facts\.agents\) return null/, 'the wait branch must come first')
+
+  for (const messages of [workflowEn, workflowZh]) {
+    assert.equal(typeof messages.activityWaiting, 'string')
+    assert.match(messages.activityWaiting, /\{count\}/)
+  }
+})
+
 test('the store keeps only the newest activity list and resolves it per chat', () => {
   assert.match(store, /activity: WorkflowActivitySummary\[\] = \[\]/)
   assert.match(store, /this\.activity = Array\.isArray\(snapshot\.activity\) \? snapshot\.activity : \[\]/)

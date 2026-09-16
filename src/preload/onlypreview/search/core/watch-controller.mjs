@@ -5,6 +5,22 @@ import { isWorkspaceConfigWatchPath } from './workspace-config.mjs';
 
 const MAX_RECONCILE_RETRY_MS = 30_000;
 
+// 一次全量 reconcile 结束后,至少静置 `上次全量耗时 × 这个倍数`,才允许下一次全量开始。
+//
+// 为什么需要它(Ral 2026-09-16,「巨卡,导致别的程序都受到影响」):全量 reconcile 的代价随工作区
+// 大小走,而触发它的两条路都是**固定节奏**的 ——
+//   · 无 watcher 时的兜底轮询固定 30s(`fallbackIntervalMs`);
+//   · macOS 上 `fs.watch(recursive)` 事件队列溢出时,Node 送来 `filename === null`,本文件据此
+//     直接升级成全量,而升级只隔一个 400ms 的尾抖动(`WATCH_TRAILING_MS`)。
+// 于是在一棵大树上必然自激:实测 97,914 个文件的工作区,一轮 = 备份 10–16s + 遍历 42s + 提交 1.4s
+// ≈ 60s,而排程只等 30s/0.4s → 上一轮刚落地下一轮就开跑。26 小时里跑了 238 轮全量,两个 renderer
+// 进程长期占 30–120% CPU,整机被拖慢。
+//
+// 按**上次实际耗时**退避而不是调大固定间隔:小工作区一轮几百毫秒,冷却被 0 下限吃掉,行为不变;
+// 只有大到会自激的工作区才会被拉开。索引是搜索的便利,不是正确性要求,晚几分钟新鲜是可接受的代价。
+const FULL_RECONCILE_COOLDOWN_FACTOR = 4;
+const MAX_FULL_RECONCILE_COOLDOWN_MS = 5 * 60_000;
+
 export const createWorkspaceWatchController = ({
   rootPath,
   onReconcile,
@@ -15,7 +31,9 @@ export const createWorkspaceWatchController = ({
   watchFactory = watch,
   fallbackIntervalMs = 30_000,
   retryBaseMs = 1_000,
-  retryMaxMs = 30_000
+  retryMaxMs = 30_000,
+  fullReconcileCooldownFactor = FULL_RECONCILE_COOLDOWN_FACTOR,
+  fullReconcileCooldownMaxMs = MAX_FULL_RECONCILE_COOLDOWN_MS
 }) => {
   const normalizedFallbackIntervalMs = Number.isFinite(fallbackIntervalMs)
     ? Math.max(1, fallbackIntervalMs)
@@ -30,6 +48,12 @@ export const createWorkspaceWatchController = ({
       ? Math.max(normalizedRetryBaseMs, retryMaxMs)
       : MAX_RECONCILE_RETRY_MS
   );
+  const normalizedCooldownFactor = Number.isFinite(fullReconcileCooldownFactor)
+    ? Math.max(0, fullReconcileCooldownFactor)
+    : FULL_RECONCILE_COOLDOWN_FACTOR;
+  const normalizedCooldownMaxMs = Number.isFinite(fullReconcileCooldownMaxMs)
+    ? Math.max(0, fullReconcileCooldownMaxMs)
+    : MAX_FULL_RECONCILE_COOLDOWN_MS;
   const pendingPaths = new Set();
   const pendingRenamePaths = new Set();
   const pendingBrowsePaths = new Set();
@@ -50,6 +74,24 @@ export const createWorkspaceWatchController = ({
   let running = Promise.resolve();
   let reconcileRunning = false;
   let watcher;
+  let lastFullReconcileEndedAt = 0;
+  let lastFullReconcileMs = 0;
+  let cooldownTimer;
+
+  const clearCooldownTimer = () => {
+    clearTimeout(cooldownTimer);
+    cooldownTimer = undefined;
+  };
+
+  /** 距离「下一次全量可以开始」还差多少毫秒;0 = 现在就可以。 */
+  const fullReconcileCooldownRemainingMs = () => {
+    if (!lastFullReconcileEndedAt) return 0;
+    const cooldownMs = Math.min(
+      normalizedCooldownMaxMs,
+      lastFullReconcileMs * normalizedCooldownFactor
+    );
+    return Math.max(0, lastFullReconcileEndedAt + cooldownMs - Date.now());
+  };
 
   const clearTrailingTimer = () => {
     clearTimeout(trailingTimer);
@@ -152,6 +194,23 @@ export const createWorkspaceWatchController = ({
     const renamePaths = [...pendingRenamePaths].filter((path) => pendingPaths.has(path));
     const full = fullReconcile || retryFullReconcile;
     if (!full && paths.length === 0) return;
+    // 全量退避。`force`(flushNow)与失败重试不受限:前者是调用方明确要求"现在就跑完",
+    // 后者本来就带指数退避。增量 reconcile 也不受限 —— 贵的是全量遍历,不是它。
+    if (full && !force && !retryFullReconcile) {
+      const remainingMs = fullReconcileCooldownRemainingMs();
+      if (remainingMs > 0) {
+        if (!cooldownTimer) {
+          cooldownTimer = setTimeout(() => {
+            cooldownTimer = undefined;
+            flush();
+          }, remainingMs);
+          cooldownTimer.unref?.();
+        }
+        return; // 待办不清空:fullReconcile / pendingPaths 原样留到冷却结束。
+      }
+    }
+    clearCooldownTimer();
+    const startedAt = Date.now();
     pendingPaths.clear();
     pendingRenamePaths.clear();
     fullReconcile = false;
@@ -176,6 +235,10 @@ export const createWorkspaceWatchController = ({
       )
       .finally(() => {
         reconcileRunning = false;
+        if (full) {
+          lastFullReconcileEndedAt = Date.now();
+          lastFullReconcileMs = Math.max(0, lastFullReconcileEndedAt - startedAt);
+        }
         if (closed) return;
         if (retryFullReconcile) {
           scheduleReconcileRetry();
@@ -284,6 +347,7 @@ export const createWorkspaceWatchController = ({
       clearReconcileRetryTimer();
       clearWatcherRetryTimer();
       clearFallbackTimer();
+      clearCooldownTimer();
       const activeWatcher = watcher;
       watcher = undefined;
       activeWatcher?.close?.();

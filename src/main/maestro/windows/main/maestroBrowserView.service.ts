@@ -2003,9 +2003,13 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
    * 任何人点它时想要的结果。
    */
   private async closeTabsAsUser(ids: string[]): Promise<void> {
-    if (!ids.length) return
-    if (!(await this.confirmCloseScope(ids))) return
-    for (const id of ids) await this.closeTab({ id })
+    // 先滤成**真的会被关掉的那些**,再问。`closeTab` 自己也拒 pinned 与「只剩一个」,但那是在
+    // 问完之后 —— 不先滤的话,`Cmd+W` 停在一个 Zellij 主页上会弹一次确认,按了「关闭」却什么都
+    // 不发生。菜单项和 `×` 在这两种情况下本来就不出现,快捷键没有那道 UI 闸。
+    const closable = this.tabs.length > 1 ? ids.filter((id) => this.tabs.some((tab) => tab.id === id && !tab.pinned)) : []
+    if (!closable.length) return
+    if (!(await this.confirmCloseScope(closable))) return
+    for (const id of closable) await this.closeTab({ id })
   }
 
   /**

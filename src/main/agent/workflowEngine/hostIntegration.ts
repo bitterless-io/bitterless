@@ -155,17 +155,31 @@ export class WorkflowHostIntegration implements WorkflowApi {
 
   /** Every published snapshot carries the current per-chat activity, including an empty list. */
   private withActivity(snapshot: WorkflowSnapshot, sessionId?: string): WorkflowSnapshot {
-    if (!this.activity) return snapshot
+    // The status bar renders the wait from the host's own registry, so it can never claim a chat is
+    // waiting when no wait was registered, nor keep showing one that has fired or been cancelled.
+    const waiting = this.waits.list(sessionId)
+    if (!this.activity) return { ...snapshot, waiting }
     this.activity.update(snapshot.runs)
-    return { ...snapshot, activity: this.activity.list(sessionId) }
+    return { ...snapshot, activity: this.activity.list(sessionId), waiting }
   }
 
   /** A sentence lands after its snapshot was already published; republish that same state. */
   private republishActivity(): void {
-    if (this.closed || !this.activity) return
+    if (this.closed) return
     void this.supervisor.list()
       .then(snapshot => { if (!this.closed) this.options.broadcast(this.withActivity(snapshot)) })
-      .catch(error => console.warn('[workflow] activity summary not published', String(error)))
+      .catch(error => console.warn('[workflow] snapshot not republished', String(error)))
+  }
+
+  /**
+   * The user outranks a pending wait.
+   *
+   * Called when this chat starts a turn of its own, so the status bar stops showing a wait the user
+   * has already overtaken, and no continuation fires behind their back.
+   */
+  cancelWait(sessionId: string): void {
+    if (!this.waits.cancel(sessionId)) return
+    this.republishActivity()
   }
 
   private deliverSettled(runs: WorkflowRunSnapshot[]): void {
@@ -301,20 +315,19 @@ export class WorkflowHostIntegration implements WorkflowApi {
           return JSON.stringify({ runId: run.id, name: run.name, status: run.status, background: true })
         }
       },
-      // Only offered where a settled wait can actually continue the chat. A tool that promises the
-      // conversation will resume on its own, in an app that cannot resume it, is worse than absent.
-      ...(this.options.onWaitSatisfied ? [{
+      {
         name: 'workflow_wait',
-        description: 'Declare that this chat should continue once named background runs finish. Returns IMMEDIATELY — it does not block and must not be polled. End your turn right after calling it, saying which workflows you are waiting for; when they all settle this chat continues on its own with their real outcomes. A new user message cancels the wait and is answered first.',
+        description: 'Declare that this chat is waiting for named background runs to finish. Returns IMMEDIATELY — it does not block and must not be polled. The status bar shows the user that this chat is waiting. End your turn right after calling it. The receipt says whether this host resumes the conversation by itself once they settle; do not promise more than it says. A new user message cancels the wait and is answered first.',
         params: [{ name: 'runIds', description: 'Comma-separated exact run IDs from workflow_tasks. Omit to wait for every running workflow in this chat.' }],
         execute: async args => {
           const requested = String(args.runIds ?? '').split(',').map(value => value.trim()).filter(Boolean)
           const snapshot = await this.supervisor.list()
           const outcome = this.waits.declare(sessionId, requested, snapshot.runs, Date.now())
           if (!outcome.ok) throw new Error(workflowWaitRejectionMessage(outcome))
-          return workflowWaitReceipt(outcome.intent, snapshot.runs)
+          this.republishActivity()
+          return workflowWaitReceipt(outcome.intent, snapshot.runs, Boolean(this.options.onWaitSatisfied))
         }
-      }] : [])
+      }
     ]
   }
 }

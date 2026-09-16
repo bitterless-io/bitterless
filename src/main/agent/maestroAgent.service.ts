@@ -940,6 +940,9 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       this.finishAgentTurn(turn, 'reservation-expired')
     }, AGENT_TURN_RESERVATION_TIMEOUT_MS)
     this.activeAgentTurns.set(sessionId, turn)
+    // The user outranks a pending wait: their own turn cancels it, so the status bar stops showing a
+    // wait they have already overtaken and no continuation fires behind them.
+    if (!params.hostAuthored) this.workflowHost?.cancelWait(sessionId)
     this._state.beginBrowserTurn(sessionId, turn.operationTabId)
     this.broadcastAgentTurn({ turn: this.agentTurnSnapshot(turn) })
     return { ok: true, turn: this.agentTurnSnapshot(turn) }
