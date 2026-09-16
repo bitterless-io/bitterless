@@ -22,12 +22,16 @@ const { parse: parseYaml } = require('yaml');
 const afterPack = require('./desktopPackage.audit.cjs');
 const {
   BANNED_PACKAGES,
+  LLAMA_BUILD_GUARD_ENTRY,
   auditDesktopPackage,
   getPathSize,
   packageIsPresent,
   setUpdateFeedUrlLine,
   writePackagedUpdateFeed,
 } = afterPack;
+// The shape node-llama-cpp ships today: build is forced to "never" when running in Electron, which is
+// what makes llama/gitRelease.bundle unreachable and therefore excludable.
+const LLAMA_BUILD_GUARD_SOURCE = 'const build = runningInElectron ? "never" : options.build;\n';
 const {
   resolveUpdateDirectory,
   resolveUpdatePlatform,
@@ -701,6 +705,140 @@ test('synthetic package subpath imports pass when their package root is present'
   assert.deepEqual(result.externalPackageRoots, ['protobufjs']);
 });
 
+test('build-time payloads packed into app.asar fail, naming the template that excludes them', async () => {
+  const fixture = await createSyntheticApplication({
+    archiveFiles: {
+      'node_modules/node-llama-cpp/llama/gitRelease.bundle': 'git bundle\n',
+      'node_modules/node-llama-cpp/llama/binariesGithubRelease.json': '"b4589"\n',
+      'node_modules/node-llama-cpp/dist/bindings/getLlama.js': LLAMA_BUILD_GUARD_SOURCE,
+      'node_modules/@kimchi-dev/kimchi-workflows/node_modules/typescript/lib/tsc.js': 'module.exports = {};\n',
+      'node_modules/example/index.d.ts': 'export {};\n',
+      'tsconfig.web.tsbuildinfo': '{}\n',
+      'docs/design.html': '<p>design</p>\n',
+    },
+  });
+
+  assert.throws(
+    () => auditDesktopPackage(fixture.applicationPath),
+    (error) => {
+      assert.match(error.message, /the package ships build-time payloads/);
+      for (const label of [
+        'llama\\.cpp source bundle',
+        'build toolchain',
+        'TypeScript declaration file',
+        'incremental build state',
+        'repository-only directory',
+      ]) {
+        assert.match(error.message, new RegExp(`${label} in app\\.asar`));
+      }
+      assert.match(error.message, /electron-builder\.tmp\.yml; electron-builder\.yml is generated/);
+      // The sibling files the exclusion must never take with it.
+      assert.doesNotMatch(error.message, /binariesGithubRelease\.json/);
+      assert.doesNotMatch(error.message, /getLlama\.js/);
+      return true;
+    },
+  );
+});
+
+test('build-time payloads reachable only in app.asar.unpacked still fail', async () => {
+  // electron-builder auto-unpacks any module carrying a .node, so better-sqlite3's C sources never
+  // appear in the archive listing at all; an asar-only gate would never see them return.
+  const fixture = await createSyntheticApplication({
+    appFiles: {
+      'Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3-multiple-ciphers/deps/sqlite3/sqlite3.c':
+        'int main(void) { return 0; }\n',
+      'Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3-multiple-ciphers/binding.gyp':
+        '{}\n',
+    },
+  });
+
+  assert.throws(
+    () => auditDesktopPackage(fixture.applicationPath),
+    /better-sqlite3 C build input in app\.asar\.unpacked \(2, e\.g\. /,
+  );
+});
+
+test('a package free of build-time payloads reports the packed and unpacked split', async () => {
+  const fixture = await createSyntheticApplication({
+    archiveFiles: {
+      'node_modules/node-llama-cpp/llama/binariesGithubRelease.json': '"b4589"\n',
+      'node_modules/node-llama-cpp/dist/bindings/getLlama.js': LLAMA_BUILD_GUARD_SOURCE,
+    },
+  });
+
+  const result = auditDesktopPackage(fixture.applicationPath);
+  assert.equal(typeof result.unpackedBytes, 'number');
+  assert(
+    result.unpackedBytes > 0 && result.unpackedBytes < result.appBytes,
+    'the unpacked tree must be measured apart from the application total',
+  );
+});
+
+test('the llama build premise is pinned to the shipped getLlama.js', async () => {
+  const flipped = await createSyntheticApplication({
+    archiveFiles: {
+      'node_modules/node-llama-cpp/dist/bindings/getLlama.js':
+        'const build = options.build ?? "auto";\n',
+    },
+  });
+
+  assert.throws(
+    () => auditDesktopPackage(flipped.applicationPath),
+    /llama build premise gate failed: .*getLlama\.js no longer contains runningInElectron and "never"/,
+  );
+
+  const excluded = await createSyntheticApplication({
+    archiveFiles: { 'node_modules/node-llama-cpp/dist/config.js': 'module.exports = {};\n' },
+  });
+
+  assert.throws(
+    () => auditDesktopPackage(excluded.applicationPath),
+    new RegExp(`${LLAMA_BUILD_GUARD_ENTRY.replace(/[/.]/g, '\\$&')} is missing from app\\.asar`),
+  );
+});
+
+test('Electron Builder template carries every build-time exclusion the audit enforces', () => {
+  const config = parseYaml(readProjectFile('electron-builder.tmp.yml'));
+  for (const pattern of [
+    '!**/*.tsbuildinfo',
+    '!docs/**',
+    '!out/tests/**',
+    '!skills/**',
+    '!.claude/**',
+    '!**/node_modules/node-llama-cpp/llama/gitRelease.bundle',
+    '!**/node_modules/@earendil-works/pi-coding-agent/docs/**',
+    '!**/node_modules/**/*.d.ts',
+    '!**/node_modules/**/*.d.mts',
+    '!**/node_modules/**/*.d.cts',
+    '!**/node_modules/better-sqlite3-multiple-ciphers/deps/**',
+    '!**/node_modules/better-sqlite3-multiple-ciphers/src/**',
+    '!**/node_modules/better-sqlite3-multiple-ciphers/binding.gyp',
+    '!**/node_modules/typescript/**',
+    '!**/node_modules/@typescript/**',
+    '!**/node_modules/vite/**',
+    '!**/node_modules/vitest/**',
+    '!**/node_modules/@vitest/**',
+    '!**/node_modules/rolldown/**',
+    '!**/node_modules/@rolldown/**',
+    '!**/node_modules/lightningcss/**',
+    '!**/node_modules/lightningcss-darwin-arm64/**',
+    '!**/node_modules/chai/**',
+  ]) {
+    assert(config.files?.includes(pattern), `Electron Builder template must exclude ${pattern}`);
+  }
+  // Widening this one takes binariesGithubRelease.json and llama/grammars/ with it, and
+  // `import('node-llama-cpp')` then throws on its first embedding or rerank call.
+  assert(
+    !config.files?.some((pattern) => /node-llama-cpp\/llama\/\*\*/.test(pattern)),
+    'the llama exclusion must name the single bundle file, never the whole llama directory',
+  );
+  // Reachable from @earendil-works/pi-coding-agent, so it is deliberately kept.
+  assert(
+    !config.files?.some((pattern) => /node_modules\/(?:@esbuild|esbuild)\//.test(pattern)),
+    'esbuild is reachable from a production dependency and must stay in the package',
+  );
+});
+
 test('dependency classification keeps external runtime roots and bundles selected pure JavaScript packages', () => {
   const packageJson = JSON.parse(readProjectFile('package.json'));
   // This exact list is the tripwire for the failure in docs/issues/asar-packs-the-build-toolchain.md:
@@ -728,6 +866,8 @@ test('dependency classification keeps external runtime roots and bundles selecte
     'fs-extra',
     'https-proxy-agent',
     'inversify',
+    // workflowEngine/loader.ts transpiles user-authored .ts workflows through it at runtime.
+    'jiti',
     'marked',
     'moment',
     'node-fetch',
@@ -736,6 +876,9 @@ test('dependency classification keeps external runtime roots and bundles selecte
     'postman-request',
     'protobufjs',
     'reflect-metadata',
+    // Bundled into out/main for our own code AND kept resolvable in node_modules: kimchi's dist
+    // imports the bare specifier `typebox` without declaring it, so the package must ship.
+    'typebox',
     'undici',
     'yaml',
     'zod',
@@ -753,7 +896,6 @@ test('dependency classification keeps external runtime roots and bundles selecte
     'exceljs',
     'linkedom',
     'mammoth',
-    'typebox',
     'unpdf',
   ];
   const movedToDev = [

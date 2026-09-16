@@ -1,5 +1,8 @@
 # Bitterless Documentation
 
+- [app.asar packs the build toolchain](issues/asar-packs-the-build-toolchain.md) — fixed; packaged build verified;
+  exclude the build-time payloads, assert them against the artifact, and re-base both size gates off real headroom.
+
 - [Kimchi workflows and /workflow shortcuts](features/kimchi-workflow.md) — code verified; human model/UI testing pending; [task](plan/tasks/kimchi-workflow-001.md).
 
 - [Workbench LAN address](features/workbench-lan-address.md) — implemented; code-verified, human testing pending;
