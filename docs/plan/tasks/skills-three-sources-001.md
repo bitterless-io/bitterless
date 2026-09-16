@@ -88,3 +88,17 @@ Independent-review follow-up: fixed workspace Skills whose directory basename, Y
 ## Delivery closure (2026-09-16)
 
 Independent [review 3](../reviews/skills-three-sources-001-3.md) passed after all blocking findings were fixed and retested. The complete three-source implementation and actual component evidence are delivered on dev/next. The corresponding authorized backend release passed 23 real HTTP checks and cleaned every fixture; code and release evidence are synchronized separately in the backend repository. Whole-project baseline type/native/i18n limitations remain explicitly recorded above and in the independent report. No Electron app was started or provider called.
+
+### Post-merge verification — `683a0cb8` (2026-09-16)
+
+After merging remote `dev/next` (`37f76ab6`), the Skills implementation was revalidated without changing application source:
+
+| Check | Result |
+|---|---|
+| `node --test tests/skillScopes/scope.test.mjs tests/skillScopes/execution.test.mjs tests/skillsThreeSources/*.test.mjs` | **46/46 passed**, `/tmp/bl-skills-merged-tests.log` |
+| `yarn tsc --noEmit -p tests/skillsThreeSources/tsconfig.node.json --composite false` | Passed, `/tmp/bl-skills-merged-node.log` |
+| `yarn vue-tsc --noEmit -p tests/skillScopes/tsconfig.web.json --composite false` | Passed, `/tmp/bl-skills-merged-web.log` |
+| `node scripts/environment/runWithRuntimeProfile.cjs debug_dev -- yarn electron-vite build` | Main/Preload/renderers passed in 33.23 seconds, `/tmp/bl-skills-merged-bundle.log` |
+| `yarn check:renderer-i18n` | Still fails the existing `maestroTabAlias must start language initialization before evaluating product UI` assertion, `/tmp/bl-skills-merged-i18n.log` |
+
+The i18n failure is an existing checker/entrypoint mismatch: the checker requires a dynamic `import('./…')`, while `src/renderer/maestro/tabAlias/src/tabAlias.ts` intentionally uses a static component import to avoid the documented `file://` CSS-preload/CSP failure. Its bootstrap still awaits language initialization before Vue mounting. Both this entrypoint and `scripts/renderer-i18n/check-renderer-i18n.mjs` are unchanged between remote `37f76ab6` and merged `683a0cb8`; this is not a Skills or merge regression. The earlier full-Main diagnostic comparison is historical evidence and was not relabeled as a fresh post-merge comparison. No Electron app or E2E was run; no application code was changed during this verification.
