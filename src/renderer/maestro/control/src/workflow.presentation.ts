@@ -1,10 +1,9 @@
-import { isWorkflowAgentLive, workflowActivityFacts, type WorkflowAgentTask, type WorkflowRunSnapshot } from '@shared/agentWorkflow.api'
+import { isWorkflowAgentActive, workflowActivityFacts, type WorkflowAgentTask, type WorkflowRunSnapshot } from '@shared/agentWorkflow.api'
 
 /** Re-exported so a view reads its own module's presentation layer, not the wire contract. */
 export { workflowActivityFacts }
 
 export type WorkflowTaskCategory = 'active' | 'paused' | 'completed' | 'failed' | 'stopped'
-export interface WorkflowTaskGroup { category: WorkflowTaskCategory; tasks: WorkflowAgentTask[]; runs: WorkflowRunSnapshot[] }
 
 export const newestWorkflowRuns = (runs: readonly WorkflowRunSnapshot[]): WorkflowRunSnapshot[] =>
   [...runs].reverse().sort((a, b) => b.createdAt - a.createdAt)
@@ -15,16 +14,47 @@ export const workflowRunCategory = (run: WorkflowRunSnapshot): WorkflowTaskCateg
   return run.status === 'stopped' ? 'stopped' : 'completed'
 }
 
-/** Successful work stays visible; failed and stopped history can be collapsed independently. */
-export function groupWorkflowTasks(runs: readonly WorkflowRunSnapshot[]): WorkflowTaskGroup[] {
-  const categories: WorkflowTaskCategory[] = ['active', 'completed', 'paused', 'failed', 'stopped']
-  const groups = categories.map(category => ({ category, tasks: [] as WorkflowAgentTask[], runs: [] as WorkflowRunSnapshot[] }))
-  const byCategory = Object.fromEntries(groups.map(group => [group.category, group])) as Record<WorkflowTaskCategory, WorkflowTaskGroup>
-  for (const run of newestWorkflowRuns(runs)) {
-    byCategory[workflowRunCategory(run)].runs.push(run)
-    for (const task of run.agents) byCategory[task.status === 'paused' ? 'paused' : isWorkflowAgentLive(task.status) ? 'active' : task.status as 'completed' | 'failed' | 'stopped'].tasks.push(task)
-  }
-  return groups.filter(group => group.tasks.length || group.runs.length)
+/**
+ * One workflow and its own Agents.
+ *
+ * The roster used to group by status, which is unreadable once two workflows run at once: one
+ * workflow's finder sat beside another's next to no indication of which run it belonged to.
+ */
+export interface WorkflowRunGroup {
+  run: WorkflowRunSnapshot
+  category: WorkflowTaskCategory
+  /** This run's Agents, work needing attention first. */
+  agents: WorkflowAgentTask[]
+  activeCount: number
+  awaitingUser: number
+  failedCount: number
+  /** A settled run collapses to its header by default; its records are kept, not dropped. */
+  ended: boolean
+}
+
+/** Whatever is asking for the user comes first; finished work sinks. Ties keep snapshot order. */
+const AGENT_RANK: Record<WorkflowAgentTask['status'], number> = {
+  approval: 0,
+  running: 1, waiting: 1, retrying: 1, stopping: 1,
+  queued: 2,
+  pausing: 3, paused: 3,
+  completed: 4, failed: 5, stopped: 6
+}
+
+/** Primary grouping for the task roster: one group per run, newest run first. */
+export function groupWorkflowRuns(runs: readonly WorkflowRunSnapshot[]): WorkflowRunGroup[] {
+  return newestWorkflowRuns(runs).map(run => {
+    const category = workflowRunCategory(run)
+    return {
+      run,
+      category,
+      agents: [...run.agents].sort((left, right) => AGENT_RANK[left.status] - AGENT_RANK[right.status]),
+      activeCount: run.agents.filter(agent => isWorkflowAgentActive(agent.status)).length,
+      awaitingUser: run.agents.filter(agent => agent.status === 'approval').length,
+      failedCount: run.agents.filter(agent => agent.status === 'failed').length,
+      ended: category !== 'active'
+    }
+  })
 }
 
 export interface WorkflowCompletionStrings {

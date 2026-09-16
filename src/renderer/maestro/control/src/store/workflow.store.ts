@@ -77,6 +77,11 @@ class WorkflowStore {
     const reply = await api.stopAgent({ sessionId, runId, agentId })
     if (reply?.ok !== true) throw new Error('Workflow stop was not acknowledged')
   }
+  /** Stops one whole workflow, leaving other runs in this chat and the main chat untouched. */
+  async stopWorkflow(sessionId: string, runId: string): Promise<void> {
+    const reply = await api.stopWorkflow({ sessionId, runId })
+    if (reply?.ok !== true) throw new Error('Workflow stop was not acknowledged')
+  }
   async stopSession(sessionId: string): Promise<void> {
     const reply = await api.stopSession({ sessionId })
     if (reply?.ok !== true) throw new Error('Workflow stop was not acknowledged')

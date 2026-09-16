@@ -5,7 +5,7 @@ import IconBtn from '@renderer/common/components/IconBtn/IconBtn.vue'
 import { isWorkflowAgentActive, isWorkflowAgentLive, type WorkflowAgentTask, type WorkflowRunSnapshot } from '@shared/agentWorkflow.api'
 import { workflowStore } from './store/workflow.store'
 import { workflowText } from './workflow.text'
-import { groupWorkflowTasks, newestWorkflowRuns } from './workflow.presentation'
+import { groupWorkflowRuns, newestWorkflowRuns, workflowActivityFacts, type WorkflowRunGroup } from './workflow.presentation'
 import './WorkflowTaskBar.less'
 
 const props = defineProps<{ sessionId: string; history?: boolean }>()
@@ -23,15 +23,40 @@ const actionError = ref('')
 const runs = computed(() => workflowStore.runs.filter(run => run.sessionId === props.sessionId))
 const tasks = computed(() => runs.value.flatMap(run => run.agents))
 const active = computed(() => tasks.value.filter(task => isWorkflowAgentActive(task.status)))
-const groups = computed(() => groupWorkflowTasks(runs.value).map(group => ({ ...group, tasks: props.history ? group.tasks : group.tasks.filter(task => isWorkflowAgentActive(task.status)) })).filter(group => group.tasks.length))
+// The roster groups by workflow: with two runs live, a flat status list cannot say which is which.
+const groups = computed(() => groupWorkflowRuns(runs.value)
+  .map(group => ({ ...group, agents: props.history ? group.agents : group.agents.filter(task => isWorkflowAgentActive(task.status)) }))
+  .filter(group => props.history || group.agents.length))
 const latestRun = computed(() => newestWorkflowRuns(runs.value)[0])
-const historyOpen = ref({ failed: false, stopped: false })
+/** Only an explicit user choice is stored; the default follows whether the run is still going. */
+const runOpen = ref(new Map<string, boolean>())
+const isRunOpen = (group: WorkflowRunGroup): boolean => runOpen.value.get(group.run.id) ?? !group.ended
+const toggleRun = (group: WorkflowRunGroup): void => { runOpen.value.set(group.run.id, !isRunOpen(group)) }
 const liveRuns = computed(() => runs.value.filter(run => run.status === 'running' || run.status === 'stopping'))
 const cleanupFailed = computed(() => liveRuns.value.some(run => Boolean(run.error)))
 const canRetry = (task: WorkflowAgentTask): boolean => Boolean(actionError.value || runs.value.find(run => run.id === task.runId)?.error)
 const cancellable = computed(() => liveRuns.value.some(run => run.status === 'running') || cleanupFailed.value || Boolean(actionError.value))
 const busyAll = computed(() => pending.value.has(props.sessionId))
-const count = computed(() => text.value.count.replace('{count}', String(active.value.length)))
+// Same shared computation the status row uses, so the bar and that row can never disagree.
+const facts = computed(() => workflowActivityFacts(workflowStore.runs, props.sessionId))
+const count = computed(() => text.value.counts.replace('{workflows}', String(facts.value.runs)).replace('{agents}', String(facts.value.agents)))
+const groupSubtitle = (group: WorkflowRunGroup): string => {
+  const copy = text.value
+  if (group.awaitingUser) return copy.runApproval.replace('{count}', String(group.awaitingUser))
+  if (group.failedCount) return copy.runFailed.replace('{count}', String(group.failedCount))
+  if (group.activeCount) return copy.runWorking.replace('{count}', String(group.activeCount))
+  return group.run.result?.trim() || group.run.error?.trim() || copy.categories[group.category]
+}
+const groupElapsed = (group: WorkflowRunGroup): string => duration((group.run.endedAt ?? tick.value) - group.run.createdAt)
+const stopRun = async (group: WorkflowRunGroup): Promise<void> => {
+  const key = `run:${group.run.id}`
+  if (pending.value.has(key)) return
+  pending.value.add(key)
+  actionError.value = ''
+  try { await workflowStore.stopWorkflow(props.sessionId, group.run.id) }
+  catch (error) { actionError.value = error instanceof Error ? error.message : text.value.stopError }
+  finally { pending.value.delete(key) }
+}
 const summary = computed(() => {
   if (cleanupFailed.value) return text.value.stopError
   if (active.value.length && active.value.every(task => task.status === 'stopping')) return text.value.stoppingAll
@@ -105,13 +130,13 @@ const pauseOrResume = async (task: WorkflowAgentTask): Promise<void> => {
   } catch (error) { actionError.value = error instanceof Error ? error.message : text.value.stopError }
   finally { pending.value.delete(key) }
 }
-const taskRun = (task: WorkflowAgentTask) => runs.value.find(run => run.id === task.runId)
 const pointer = (event: PointerEvent): void => { if (!props.history && open.value && event.target instanceof Node && !root.value?.contains(event.target)) close() }
 const keydown = (event: KeyboardEvent): void => { if (open.value && event.key === 'Escape') { event.preventDefault(); close(true) } }
 watch(() => props.sessionId, () => { close(); expanded.value = null; scrollTop = 0; actionError.value = '' })
 watch(() => active.value.length, count => { if (!count && !props.history) close() })
 watch(() => latestRun.value?.id, () => {
-  historyOpen.value = { failed: false, stopped: false }
+  // A new run resets explicit collapse choices, so older runs fall back to "ended ⇒ collapsed".
+  runOpen.value = new Map()
   expanded.value = null
   scrollTop = 0
   if (list.value) list.value.scrollTop = 0
@@ -145,13 +170,21 @@ onUnmounted(() => { observer?.disconnect(); clearInterval(timer); document.remov
         </div>
       </header>
       <div ref="list" class="workflow-taskbar__list" name="workflow-taskbar__list" tabindex="0" :aria-label="text.current">
-        <section v-for="group in groups" :key="group.category" class="workflow-taskbar__category" name="workflow-taskbar__category" :data-category="group.category">
-          <button v-if="group.category === 'failed' || group.category === 'stopped'" type="button" class="workflow-taskbar__category-toggle" :aria-expanded="historyOpen[group.category]" @click="historyOpen[group.category] = !historyOpen[group.category]">
-            <IconChevronDown :size="12" :class="{ 'workflow-taskbar__category-chevron--closed': !historyOpen[group.category] }" /><strong>{{ text.categories[group.category] }}</strong><span v-if="group.tasks.length">{{ group.tasks.length }}</span>
-          </button>
-          <h3 v-else class="workflow-taskbar__category-title">{{ text.categories[group.category] }}<span v-if="group.tasks.length">{{ group.tasks.length }}</span></h3>
-          <template v-if="(group.category !== 'failed' && group.category !== 'stopped') || historyOpen[group.category]">
-          <article v-for="task in group.tasks" :key="identity(task)" class="workflow-taskbar__row" name="workflow-taskbar__row" :data-agent-id="task.id" :data-status="task.status" :class="{ 'workflow-taskbar__row--expanded': expanded === identity(task) }">
+        <section v-for="group in groups" :key="group.run.id" class="workflow-taskbar__run" name="workflow-taskbar__run" :data-run-id="group.run.id" :data-category="group.category" :class="{ 'workflow-taskbar__run--ended': group.ended }">
+          <div class="workflow-taskbar__run-head" name="workflow-taskbar__run-head">
+            <button type="button" class="workflow-taskbar__run-toggle" :aria-expanded="isRunOpen(group)" :aria-label="`${isRunOpen(group) ? text.runCollapse : text.runExpand}: ${group.run.name}`" @click="toggleRun(group)">
+              <IconChevronDown :size="12" :class="{ 'workflow-taskbar__run-chevron--closed': !isRunOpen(group) }" />
+              <span class="workflow-taskbar__run-copy">
+                <strong :title="group.run.name">{{ group.run.name }}</strong>
+                <span class="workflow-taskbar__run-sub" :title="groupSubtitle(group)">{{ groupSubtitle(group) }}</span>
+              </span>
+              <time>{{ groupElapsed(group) }}</time>
+            </button>
+            <IconBtn v-if="!group.ended" class="workflow-taskbar__icon-button" :disabled="busyAll || pending.has(`run:${group.run.id}`)" :aria-label="`${text.runStop}: ${group.run.name}`" :title="`${text.runStop}: ${group.run.name}`" @click="stopRun(group)"><IconPlayerStop :size="14" /></IconBtn>
+            <IconBtn v-else-if="group.run.entry" class="workflow-taskbar__icon-button" :disabled="pending.has(`retry:${group.run.id}`)" :aria-label="`${text.rerun}: ${group.run.name}`" :title="`${text.rerun}: ${group.run.name}`" @click="retry(group.run)"><IconRefresh :size="14" /></IconBtn>
+          </div>
+          <template v-if="isRunOpen(group)">
+          <article v-for="task in group.agents" :key="identity(task)" class="workflow-taskbar__row" name="workflow-taskbar__row" :data-agent-id="task.id" :data-status="task.status" :class="{ 'workflow-taskbar__row--expanded': expanded === identity(task) }">
             <div class="workflow-taskbar__row-line">
               <button type="button" class="workflow-taskbar__task" :aria-expanded="expanded === identity(task)" @click="expanded = expanded === identity(task) ? null : identity(task)">
                 <component :is="statusIcon(task)" :size="15" class="workflow-taskbar__state-icon" />
@@ -167,9 +200,8 @@ onUnmounted(() => { observer?.disconnect(); clearInterval(timer); document.remov
               </div>
             </div>
             <div v-if="expanded === identity(task)" class="workflow-taskbar__detail" name="workflow-taskbar__detail">
-              <p class="workflow-taskbar__phase">{{ taskRun(task)?.name }} · {{ task.runId.slice(0, 8) }}</p>
+              <p class="workflow-taskbar__phase">{{ task.runId.slice(0, 8) }} · {{ task.id }}</p>
               <p>{{ task.prompt }}</p>
-              <button v-if="task.status === 'failed' && taskRun(task)?.entry" type="button" class="workflow-taskbar__stop-all" :disabled="pending.has(`retry:${task.runId}`)" @click="retry(taskRun(task)!)"><IconRefresh :size="12" /> {{ text.rerun }}</button>
               <p v-if="task.phase" class="workflow-taskbar__phase">{{ task.phase }}</p>
               <strong v-if="task.logs.length">{{ text.logs }}</strong>
               <ol><li v-for="(log, logIndex) in task.logs" :key="`${log.ts}:${logIndex}`">{{ log.text }}</li></ol>

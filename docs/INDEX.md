@@ -15,6 +15,7 @@
   the menu handler called the controller seam unbound, so it threw synchronously and died as an unhandled rejection; the whole path now logs under scope `tab-alias`.
 
 - [Background workflows and active tasks](features/background-workflow-tasks.md) — implemented and code-verified; concurrent chat, pause/resume, Tasks history modal, completion delivery.
+- [Workflow grouping, waiting, and planning](features/workflow-grouping-and-wait.md) — in progress; task bar counts workflows and Agents, roster groups by workflow, main chat can wait for runs, non-interactive planner.
 
 - [Windows locale pruning drops Chinese and English](issues/windows-locale-pruning-drops-chinese-and-english.md) — **open, not fixed**;
   the electronLanguages allowlist uses macOS `.lproj` naming, which cannot match Windows/Linux `.pak` basenames; needs one real Windows pack to settle.
