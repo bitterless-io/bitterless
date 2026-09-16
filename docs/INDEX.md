@@ -1,5 +1,9 @@
 # Bitterless Documentation
 
+- [OnlyPreview 后台索引全量 reconcile 自激,整机被拖慢](issues/onlypreview-index-full-reconcile-runaway.md) — fixed; 源码 + 回归测试已验证,打包重启后由 Ral 实机确认;
+  全量 reconcile 的代价随工作区大小走,触发它的兜底轮询(30s)与 FSEvents 溢出升级(400ms)却是固定节奏 ——
+  97,914 文件的树上一轮 ≈ 60s,26 小时跑了 238 轮全量;现在按上次实际耗时 × 4 退避,只挡全量不挡增量。
+
 - [关闭 Zellij tab 需要确认](features/maestro-zellij-close-confirm.md) — implemented; owner testing pending;
   关闭**范围**里有 Zellij 就先弹一次覆盖层确认(`×` / 右键 Close / Close others / Close right / `Cmd+W`),
   范围里 N 个也只问一次;程序发起的关闭不问;覆盖层起不来时放行而不是把 tab 锁死。
