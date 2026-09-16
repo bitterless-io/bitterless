@@ -134,8 +134,8 @@ export class WorkflowHostIntegration implements WorkflowApi {
     if (request.origin === 'shortcut') await this.assertShortcutAvailable(sessionId)
     const { cwd, ...runtime } = await this.options.runtime(sessionId, request.origin === 'shortcut' ? undefined : request.cwd)
     if (request.origin === 'shortcut') await this.assertShortcutAvailable(sessionId)
-    if (this.closed || this.stopping.has(sessionId)) throw new DOMException('Workflow stopped before startup completed.', 'AbortError')
     if (request.entry.kind === 'file') await workflowLibraryRuntime.assertPath(request.entry.path)
+    if (this.closed || this.stopping.has(sessionId)) throw new DOMException('Workflow stopped before startup completed.', 'AbortError')
     const tools = this.options.tools().map(({ name, description, params, timeoutMs }) => ({ name, description, params, timeoutMs }))
     return this.supervisor.start({ ...request, sessionId, cwd }, { ...runtime, tools })
   }

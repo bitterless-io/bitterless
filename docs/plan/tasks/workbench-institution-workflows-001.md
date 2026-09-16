@@ -48,3 +48,9 @@ Verification:
 - `yarn node tests/workflowLibrary/visual.mjs`: real Workbench view, store and flow component rendered with explicitly labelled fixture data. Keyboard node selection, zoom/fit and Details passed. Desktop 1260×780 and constrained 660×860 screenshots in `tmp/workflow-visual/{desktop,narrow}-{light,dark}.png`; inspected visually and corrected constrained-width institution selector visibility.
 
 The host's existing explicit execution permissions remain unchanged. Immutable old revisions are retained so active runs keep their files; removing a cloud item removes only its active catalog mapping. Shared installation is explicit and never inferred from institutional downloads.
+
+## Independent review follow-up (2026-09-16)
+
+Cowork's implementation author independently identified two bounded Workflow corrections: repeat the host stop/disposal fence after the final asynchronous managed-path authorization, and omit installations whose entry file is missing so Retry can download the same revision again. Add regressions for stopping during final authorization and repairing a missing entry while preserving unrelated installs. Skills changes remain owned by their separate implementation worker.
+
+Both corrections are implemented. `yarn test:workflow-library` now passes 17/17; focused host integration passes 17/17, including the delayed final authorization stop regression. Scoped Node/Vue types and workflow-engine types pass. Final combined build follows the Skills implementation checkpoint.

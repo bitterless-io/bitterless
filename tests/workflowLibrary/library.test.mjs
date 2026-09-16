@@ -86,6 +86,17 @@ const fixture = t => {
   t.after(() => service.dispose())
   return { service, root, bytes, set rows(value) { rows = value }, set mode(value) { mode = value }, set hold(value) { hold = value }, set detailDelay(value) { detailDelay = value }, set memberships(value) { memberships = value }, logout() { session = null; service.reset() }, get downloadedHeaders() { return downloadedHeaders } }
 }
+test('retry repairs a missing entry at the same cloud revision without changing shared installations', async t => {
+  const f = fixture(t), state = await f.service.snapshot()
+  const original = await f.service.preview({ id: 1, context: state.context })
+  const sharedBefore = f.service.libraryItems().filter(row => row.scope === 'shared')
+  rmSync(original.entry)
+  const repaired = await f.service.preview({ id: 1, context: state.context })
+  assert.equal(repaired.installedRevision, original.installedRevision)
+  assert.notEqual(repaired.entry, original.entry)
+  assert(existsSync(repaired.entry))
+  assert.deepEqual(f.service.libraryItems().filter(row => row.scope === 'shared'), sharedBefore)
+})
 test('real service envelope -> install; download gets no customer credentials; failed poll preserves old revision', async t => {
   const f = fixture(t), state = await f.service.snapshot()
   assert.equal(state.status, 'ready'); assert.equal(state.institutionId, 7)

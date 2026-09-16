@@ -341,3 +341,18 @@ test('library references resolve through live scope and managed file permission 
   const revoked = integration(() => [], async () => { throw Error('fixture context changed') }, undefined, library)
   await assert.rejects(revoked.host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'library', ref: 'institution:7:1' }, input: 'Fixture' }), /context changed/)
 })
+
+test('stop during final managed-path authorization rejects startup before supervisor launch', async () => {
+  let release, checks = 0
+  const library = { assertPath: async () => { if (++checks === 2) await new Promise(done => { release = done }) } }
+  const { host, supervisor } = integration(() => [], undefined, undefined, library)
+  const pending = host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'file', path: '/managed/7/workflow.ts' }, input: 'Fixture' })
+  const rejected = assert.rejects(pending, { name: 'AbortError' })
+  await tick()
+  assert.equal(checks, 2)
+  const stopping = host.stopSession({ sessionId: 'chat-a' })
+  release()
+  await rejected
+  await stopping
+  assert.equal(supervisor.request, undefined)
+})

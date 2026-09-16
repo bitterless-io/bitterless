@@ -34,7 +34,7 @@ export class WorkflowPackageStorage {
       if (!row || !Number.isSafeInteger(row.id) || row.id < 1 || !Number.isSafeInteger(row.revision) || row.revision < 1 || !/^[a-f0-9]{64}$/.test(row.hash) || typeof row.directory !== 'string' || !/^\d+-[a-f0-9-]+$/.test(row.directory)) throw new Error('Workflow catalog is invalid.')
       const manifest = parseWorkflowManifest(row.manifest)
       return { ...row, manifest, entry: join(this.root, row.directory, manifest.entry) } as InstalledWorkflow
-    })
+    }).filter(row => existsSync(row.entry))
   }
 
   read(id: number): InstalledWorkflow | undefined { return this.list().find(row => row.id === id) }
