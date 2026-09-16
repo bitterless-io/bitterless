@@ -1,197 +1,72 @@
-<script setup lang="ts">
-import { Button, Empty, Message, Tag, Select, Option } from '@arco-design/web-vue'
-import { IconFolderOpen } from '@tabler/icons-vue'
-import { renderMarkdown } from '@maestro-renderer/control/src/markdown'
-import { workbenchStore as store } from '../workbench.store'
-import SkillScopeControl from '../components/SkillScopeControl.vue'
-import { computed, unref } from 'vue'
-import { i18n } from '@renderer/common/i18n/i18n.helper'
-import { skillScopeEn, skillScopeZh } from '../skillScope.messages'
-const scopeText = computed(() => String(unref(i18n.global.locale)).startsWith('zh') ? skillScopeZh : skillScopeEn)
-import './WorkbenchSkillsView.less'
-
-const openSelectedSkillDirectory = async (): Promise<void> => {
-  const result = await store.openSelectedSkillDirectory()
-  if (!result.ok) Message.error(result.error || 'Could not open skill folder')
-}
-
-const exportSelectedSkillPackage = async (): Promise<void> => {
-  const result = await store.exportSelectedSkillPackage()
-  if (result.canceled) return
-  if (result.ok) Message.success(result.message)
-  else Message.error(result.error || result.message || 'Could not export skill')
-}
-
-const importSkillPackage = async (): Promise<void> => {
-  const result = await store.importSkillPackage()
-  if (result.canceled) return
-  if (result.ok) Message.success(result.message)
-  else Message.error(result.error || result.message || 'Could not import skill')
-}
-
-const openDomainDirectory = async (): Promise<void> => {
-  const result = await store.openDomainDirectory()
-  if (!result.ok) Message.error(result.error || 'Could not open skills folder')
-}
-
-const deleteSelectedSkill = async (): Promise<void> => {
-  const skill = store.selectedSkill
-  if (!skill || skill.source === 'builtin') return
-  if (!confirm(`Delete skill "${skill.name}"?`)) return
-  const result = await store.deleteSelectedSkill()
-  if (result.ok) Message.success(result.message)
-  else Message.error(result.message)
-}
-
-const skillSourceLabel = (source: string): string => {
-  if (source === 'recording') return 'capture'
-  if (source === 'external') return 'external'
-  return source
-}
-</script>
-
 <template>
-  <section class="workbench-skills">
-    <div class="workbench-skills__domains">
-      <div class="workbench-skills__domains__title">Domains</div>
-      <button
-        v-for="domain in store.domains"
-        :key="domain.domain"
-        type="button"
-        class="workbench-skills__domain"
-        :class="{ 'workbench-skills__domain--active': store.selectedDomain === domain.domain || (!store.selectedDomain && domain.domain === 'all domains') }"
-        @click="store.selectDomain(domain.domain)"
-      >
-        <span class="workbench-skills__domain__name" :title="domain.domain">{{ domain.domain }}</span>
-        <span class="workbench-skills__domain__meta" :class="{ 'workbench-skills__domain__meta--active': domain.active }">
-          {{ domain.count }} skills{{ domain.active ? ' · active' : '' }}
-        </span>
+  <section name="workbench-skills" class="workbench-skills" :class="{ 'workbench-skills--detail': store.skillShowDetail }" @keydown.esc="store.skillShowDetail = false">
+    <header name="workbench-skills__context" class="workbench-skills__context">
+      <span>{{ store.skillCatalog?.workspace || store.skillsText.defaultWorkspace }}</span>
+      <span>{{ store.skillInstitution?.institutionName || store.skillInstitution?.institutionId || store.skillsText.noInstitution }}</span>
+    </header>
+    <div name="workbench-skills__tabs" class="workbench-skills__tabs" role="tablist" :aria-label="store.skillsText.source">
+      <button v-for="(layer, index) in store.skillLayers" :id="'skill-tab-' + layer" :key="layer" name="workbench-skills__tab" type="button" role="tab" class="workbench-skills__tab" :class="{ 'workbench-skills__tab--active': store.skillLayer === layer }" :aria-selected="store.skillLayer === layer" aria-controls="skills-panel" :tabindex="store.skillLayer === layer ? 0 : -1" @click="store.selectSkillLayer(layer)" @keydown="store.moveSkillTab($event, index)">
+        {{ store.skillsText[layer] }} <span>{{ store.skillCount(layer) }}</span>
       </button>
-      <Empty v-if="!store.domains.length" class="workbench-skills__empty" description="No domains" />
     </div>
-
-    <div class="workbench-skills__catalog">
-      <SkillScopeControl />
-      <div name="skills__scope-filter" class="skills__scope-filter">
-        <Select v-model="store.skillFilterScope" size="mini" :aria-label="scopeText.scope">
-          <Option value="all">{{ scopeText.all }}</Option><Option value="shared">{{ scopeText.shared }}</Option>
-          <Option value="institution">{{ scopeText.institution }}</Option><Option value="unassigned">{{ scopeText.unassigned }}</Option>
-        </Select>
-      </div>
-      <div class="workbench-skills__catalog__header">
-        <span class="workbench-skills__catalog__title" :title="store.selectedDomain || store.currentDomain">
-          {{ store.selectedDomain || 'all domains' }}
-        </span>
-        <div class="workbench-skills__catalog__actions">
-          <Button type="text" size="mini" @click="importSkillPackage">Import</Button>
-          <button
-            type="button"
-            :title="store.selectedDomain ? `Open ${store.selectedDomain} skills folder` : 'Open skills folder'"
-            aria-label="Open skills folder"
-            class="workbench-skills__icon-action workbench-skills__icon-action--small"
-            :disabled="!store.domainSkills.length"
-            @click="openDomainDirectory"
-          >
-            <IconFolderOpen :size="15" stroke="1.8" />
+    <div name="workbench-skills__source" class="workbench-skills__source">
+      <div><p>{{ store.skillSourceHint }}</p><code :title="store.skillSourcePath">{{ store.skillSourcePath }}</code></div>
+      <Button type="text" size="mini" :title="store.skillsText.open" :aria-label="store.skillsText.open" @click="store.openSkillSource()"><IconFolderOpen :size="17" /></Button>
+      <Button v-if="store.skillLayer === 'institution'" type="text" size="mini" :loading="store.skillLoading" @click="store.refreshSkills(true)">{{ store.skillsText.refresh }}</Button>
+      <Button v-if="store.skillLayer === 'global'" type="text" size="mini" @click="store.importSkillPackage()">{{ store.skillsText.import }}</Button>
+    </div>
+    <div v-if="store.skillError || store.skillCatalog?.watchError || store.skillCatalog?.cloudError" class="workbench-skills__error" role="alert">{{ store.skillError || store.skillCatalog?.watchError || store.skillCatalog?.cloudError }}</div>
+    <div v-if="store.unassignedCount" class="workbench-skills__migration">
+      <Button type="text" size="mini" @click="store.skillShowMigration = !store.skillShowMigration">{{ store.skillsText.migration }} {{ store.unassignedCount }}</Button>
+    </div>
+    <div id="skills-panel" class="workbench-skills__browser" role="tabpanel" :aria-labelledby="'skill-tab-' + store.skillLayer">
+      <aside name="workbench-skills__catalog" class="workbench-skills__catalog">
+        <div class="workbench-skills__filters">
+          <Input v-model="store.skillSearch" size="mini" allow-clear :placeholder="store.skillsText.search" :aria-label="store.skillsText.search" />
+          <Select v-model="store.skillStatus" size="mini" :aria-label="store.skillsText.all"><Option value="all">{{ store.skillsText.all }}</Option><Option value="ready">{{ store.skillsText.ready }}</Option><Option value="error">{{ store.skillsText.error }}</Option></Select>
+        </div>
+        <div class="workbench-skills__sync" role="status"><IconRefresh :size="13" />{{ (store.skillLoading || store.skillCatalog?.cloudStatus === 'syncing') ? store.skillsText.loading : store.skillsText.synced }}</div>
+        <div class="workbench-skills__list">
+          <button v-for="skill in store.sourceSkills" :key="skill.reference || skill.id" name="workbench-skills__row" class="workbench-skills__row" :class="{ 'workbench-skills__row--selected': store.selectedSkillId === skill.id }" type="button" :aria-current="store.selectedSkillId === skill.id" @click="store.selectSkill(skill.id)">
+            <span class="workbench-skills__row__title"><b>{{ skill.displayName || skill.name }}</b><span :class="{ 'workbench-skills__error': skill.status === 'error' }">{{ skill.status === 'error' ? store.skillsText.error : store.skillsText.ready }}</span></span>
+            <span class="workbench-skills__row__description">{{ skill.description || skill.error }}</span>
+            <small>{{ skill.path }}</small>
           </button>
+          <Empty v-if="!store.sourceSkills.length && !store.skillLoading" :description="store.skillSearch ? store.skillsText.noResults : store.skillsText.empty" />
         </div>
-      </div>
-      <button
-        v-for="skill in store.domainSkills"
-        :key="skill.id"
-        type="button"
-        class="workbench-skills__skill"
-        :class="{ 'workbench-skills__skill--active': store.selectedSkillId === skill.id }"
-        @click="store.selectSkill(skill.id)"
-      >
-        <b class="workbench-skills__skill__name">{{ skill.name }}</b>
-        <span class="skills__scope-label">{{ skill.scope === 'institution' ? scopeText.institution + ' · ' + skill.institutionId : skill.scope === 'unassigned' ? scopeText.unassigned : scopeText.shared }}</span>
-        <span class="workbench-skills__skill__meta">{{ skillSourceLabel(skill.source) }} · {{ skill.inputs.length }} inputs</span>
-      </button>
-      <Empty
-        v-if="!store.domainSkills.length"
-        class="workbench-skills__empty"
-        :description="store.selectedDomain ? `No skills for ${store.selectedDomain}` : 'No skills yet'"
-      />
-    </div>
-
-    <div class="workbench-skills__detail">
-      <Empty v-if="!store.selectedSkill" class="workbench-skills__detail__empty" description="Select a skill" />
-      <template v-else>
-        <div v-if="store.selectedSkill?.scope === 'unassigned'" name="skills__assignment" class="skills__assignment" role="status">
-          <p>{{ scopeText.legacy }}</p><SkillScopeControl /><Button size="mini" type="primary" @click="store.assignSelectedSkillScope()">{{ scopeText.assign }}</Button>
-          <p v-if="store.skillScopeError" role="alert">{{ store.skillScopeError }}</p>
-        </div>
-        <p v-if="store.selectedSkill" class="skills__reference">{{ scopeText.reference }}: <code>{{ store.selectedSkill.reference || store.selectedSkill.id }}</code></p>
-
-        <div class="workbench-skills__detail__header">
-          <h2 class="workbench-skills__detail__title">{{ store.selectedSkill.name }}</h2>
-          <div class="workbench-skills__detail__actions">
-            <Button type="text" size="mini" :disabled="!store.selectedSkillId" @click="exportSelectedSkillPackage">Export</Button>
-            <button
-              type="button"
-              title="Open skill folder"
-              aria-label="Open skill folder"
-              class="workbench-skills__icon-action"
-              :disabled="!store.selectedSkillId"
-              @click="openSelectedSkillDirectory"
-            >
-              <IconFolderOpen :size="16" stroke="1.8" />
-            </button>
-            <Button
-              type="text"
-              status="danger"
-              size="mini"
-              :disabled="!store.selectedSkill || store.selectedSkill.source === 'builtin'"
-              @click="deleteSelectedSkill"
-            >
-              Delete
-            </Button>
+        <p class="workbench-skills__footer">{{ store.skillsText.notice }}</p>
+      </aside>
+      <article name="workbench-skills__detail" class="workbench-skills__detail">
+        <Button class="workbench-skills__back" type="text" size="mini" @click="store.skillShowDetail = false">{{ store.skillsText.back }}</Button>
+        <Empty v-if="!store.selectedSkill" :description="store.skillsText.select" />
+        <template v-else>
+          <header class="workbench-skills__heading"><h2>{{ store.selectedSkill.displayName || store.selectedSkill.name }}</h2><span class="workbench-skills__badge">{{ store.selectedSkill.status === 'error' ? store.skillsText.error : store.skillsText.ready }}</span></header>
+          <p class="workbench-skills__description">{{ store.selectedSkill.description }}</p>
+          <p v-if="store.selectedSkill.scope === 'unassigned'" class="workbench-skills__notice">{{ store.skillsText.migrationHint }}<Button type="text" size="mini" @click="store.assignGlobalSkill()">{{ store.skillsText.assign }}</Button></p>
+          <dl class="workbench-skills__metadata"><div><dt>{{ store.skillsText.source }}</dt><dd>{{ store.skillsText[store.selectedSkill.layer || 'global'] }} <span v-if="store.selectedSkill.readonly"> · {{ store.skillsText.readonly }}</span></dd></div><div><dt>{{ store.skillsText.path }}</dt><dd><code>{{ store.selectedSkill.path }}</code></dd></div><div><dt>{{ store.skillsText.updated }}</dt><dd>{{ new Date(store.selectedSkill.updatedAt).toLocaleString() }}</dd></div></dl>
+          <div class="workbench-skills__actions">
+            <Button type="text" size="mini" :disabled="store.selectedSkill.status === 'error'" @click="store.copySkillReference()"><IconCopy :size="15" /> {{ store.skillsText.copy }}</Button>
+            <Button type="text" size="mini" @click="store.openSkillFile()">{{ store.skillsText.openFile }}</Button>
+            <Button type="text" size="mini" :title="store.skillsText.open" :aria-label="store.skillsText.open" @click="store.openSelectedSkillDirectory()"><IconFolderOpen :size="16" /></Button>
+            <template v-if="store.selectedSkill.layer === 'global' && !store.selectedSkill.readonly"><Button type="text" size="mini" @click="store.exportSelectedSkillPackage()">{{ store.skillsText.export }}</Button><Button type="text" status="danger" size="mini" @click="store.removeSkill()">{{ store.skillsText.delete }}</Button></template>
           </div>
-        </div>
-        <p class="workbench-skills__description">{{ store.selectedSkill.description }}</p>
-        <div
-          v-if="store.skillDetail?.externalOnly"
-          class="workbench-skills__notice workbench-skills__notice--external"
-        >
-          External markdown skill. Coach can read and edit it, but it has no runtime recipe yet.
-        </div>
-        <div v-if="store.selectedSkill.triggers.length" class="workbench-skills__tags workbench-skills__tags--triggers">
-          <Tag v-for="trigger in store.selectedSkill.triggers" :key="trigger" size="small">{{ trigger }}</Tag>
-        </div>
-        <div v-if="store.selectedSkill.inputs.length" class="workbench-skills__tags workbench-skills__tags--inputs">
-          <Tag v-for="input in store.selectedSkill.inputs" :key="input.name" color="arcoblue" size="small">{{ input.name }}</Tag>
-        </div>
-        <div v-if="store.skillDetail?.fieldRules" class="workbench-skills__rules">
-          <div class="workbench-skills__rules__title">Field rules</div>
-          <pre class="workbench-skills__rules__content">{{ store.skillDetail.fieldRules }}</pre>
-        </div>
-        <div
-          v-if="store.skillDetail?.audit?.issues.length"
-          class="workbench-skills__audit"
-        >
-          <div class="workbench-skills__audit__header">
-            <span>Skill audit</span>
-            <Tag size="small" :color="store.skillDetail.audit.ok ? 'orange' : 'red'">{{ store.skillDetail.audit.ok ? 'warnings' : 'errors' }}</Tag>
-          </div>
-          <div class="workbench-skills__audit__list">
-            <div
-              v-for="issue in store.skillDetail.audit.issues"
-              :key="`${issue.code}:${issue.path || ''}:${issue.message}`"
-              class="workbench-skills__audit__issue"
-            >
-              <b class="workbench-skills__audit__severity">{{ issue.severity }}</b>
-              <span>{{ issue.message }}</span>
-              <code v-if="issue.path" class="workbench-skills__audit__path">{{ issue.path }}</code>
-            </div>
-          </div>
-        </div>
-        <div
-          v-if="store.skillDetail?.body"
-          class="workbench-skills__markdown"
-          v-html="renderMarkdown(store.skillDetail.body)"
-        ></div>
-      </template>
+          <div v-if="store.selectedSkill.error" class="workbench-skills__error" role="alert">{{ store.selectedSkill.error }}<p>{{ store.skillsText.noBody }}</p></div>
+          <section v-if="store.skillDetail?.body" class="workbench-skills__body"><h3>{{ store.skillsText.body }}</h3><div v-html="renderMarkdown(store.skillDetail.body)"></div></section>
+          <details v-if="store.skillDetail?.files?.length" class="workbench-skills__diagnostic"><summary>{{ store.skillsText.files }} {{ store.skillDetail.files.length }}</summary><ul><li v-for="file in store.skillDetail.files" :key="file"><code>{{ file }}</code></li></ul></details>
+          <details class="workbench-skills__diagnostic"><summary>{{ store.skillsText.diagnostics }}</summary><dl><dt>Reference</dt><dd><code>{{ store.selectedSkill.reference }}</code></dd><dt>catalogRevision</dt><dd><code>{{ store.skillCatalog?.revision }}</code></dd><dt>skillRevision</dt><dd><code>{{ store.selectedSkill.skillRevision }}</code></dd><dt>Real path</dt><dd><code>{{ store.selectedSkill.realPath }}</code></dd></dl></details>
+        </template>
+      </article>
     </div>
   </section>
 </template>
+
+<script setup lang="ts">
+import { Button, Empty, Input, Select, Option } from '@arco-design/web-vue'
+import { IconCopy, IconFolderOpen, IconRefresh } from '@tabler/icons-vue'
+import { renderMarkdown } from '@maestro-renderer/control/src/markdown'
+import { workbenchStore as store } from '../workbench.store'
+</script>
+
+<style lang="less">
+@import './WorkbenchSkillsView.less';
+</style>

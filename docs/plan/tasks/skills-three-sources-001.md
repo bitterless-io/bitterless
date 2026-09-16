@@ -1,6 +1,12 @@
+---
+status: done
+depends-on: []
+verify: independent focused regression and actual Vue component checks passed; see review 001-3
+---
+
 # Skills three sources — design gate and delivery
 
-Status: design prepared; waiting for Ral approval. Implementation not started.
+Status: implemented and independently verified within the documented boundaries (2026-09-16).
 
 Feature: [Skills 三层来源与实时上下文设计](../../features/skills-three-sources.md)
 Visual: [Static design mockup](../../design/skills-three-sources.html)
@@ -15,9 +21,9 @@ Ral, 2026-09-16: BL and Cowork must expose userData global, workspace .agents Sk
 - [x] Complete and inspect the static mockup in both projects.
 - [x] Validate design links, source rules, update states and acceptance matrix.
 - [x] Commit design on existing dev/next and notify BotAndI with review artifacts.
-- [ ] Ral approves the design. This blocks every implementation item below.
+- [x] Ral approves the design: 2026-09-16, “按此设计开发”.
 
-## Approved-development sequence (not started)
+## Approved-development sequence
 
 | Step | Scope | Completion evidence |
 |---|---|---|
@@ -36,8 +42,49 @@ Design-only review: [review 1](../reviews/skills-three-sources-001-1.md).
 
 2026-09-16: The review ZIP (both page designs, light/dark screenshots, contracts and tasks) was sent to BotAndI before the Chinese Markdown approval notice. Delivery was verified as a file message and a native Markdown post. Both design changes are committed locally on dev/next; remote sync and the parent gitlink update were not performed because the root repository submodule-alignment preflight found uninitialized registered submodules. Exact notification receipts remain in the private parent workspace temporary delivery folder.
 
-The production Bitterless Todo MCP bridge was unavailable, so no approval Todo was created. Approval remains pending in this task and in the delivered notice.
+The production Bitterless Todo MCP bridge was unavailable, so no approval Todo was created. The design notice requested approval at that time; the approval record below supersedes that pending state.
 
 ## Approval record
 
-Pending. Notification delivery does not count as approval. Record Ral's exact confirmation and any design amendments here before implementation.
+Ral confirmed on 2026-09-16: “按此设计开发”. This authorizes the submitted design and necessary backend compatibility work. Implementation and verification are now required; approval does not imply completion.
+
+## Implementation handoff (2026-09-16)
+
+The first implementation is ready for independent review; it is not yet a release acceptance claim.
+
+- Three fixed source tabs replace Domains/scope navigation. The current selected Chat sends its workspace identity to the Workbench; source tabs only filter UI. The view retains local import/export/delete and a separate legacy-assignment entry, with source paths, status, revisions, Markdown preview and package file listing.
+- Read-only workspace discovery walks from the Chat's effective CWD to the nearest Git root and supports linked package deduplication. App-owned maintenance never runs against workspace roots or immutable cloud packages. Local source IDs are path-qualified with unambiguous legacy aliases. Workspace links into the app's institution cache cannot become workspace/global entries, and owned roots do not follow package directory links.
+- A directory watcher with a 300 ms debounce plus one-second metadata fallback notices missing-root creation, renames and auxiliary changes. Snapshots include content hashes and current context generation. More than forty Skills remain in the catalog; invalid packages are diagnosed and excluded from available instructions. Chat request boundaries append fresh catalogs without rewriting history. `/view_context` uses the same catalog formatter; body reads are paged with actual revision/offset metadata.
+- BL now uses the Customer Skills catalog and private download endpoints for GLOBAL/current INSTITUTION. Complete paginated catalogs are checked every 60 seconds; source changes fence old responses. ZIP bytes, SHA-256, local ZIP headers, decompression bounds, CRCs, path collisions and package frontmatter are validated before immutable installation and atomic activation. Same-version content changes update; failed downloads keep the previous package; withdrawal removes only the active mapping. Global packages remain across account changes. Existing `check-updates` is not required by this client because each poll exhausts the complete catalog and compares reliable content revisions directly.
+
+Implementation validation:
+
+| Check | Result |
+|---|---|
+| `node --test tests/skillScopes/scope.test.mjs tests/skillScopes/execution.test.mjs tests/skillsThreeSources/*.test.mjs` | 27 passed (17 existing scope/execution, 10 new catalog/watch/cloud/request cases) |
+| `yarn tsc --noEmit -p tests/skillsThreeSources/tsconfig.node.json --composite false` | Passed, strict focused Node check |
+| `yarn vue-tsc --noEmit -p tests/skillScopes/tsconfig.web.json --composite false` | Passed, actual Skills/Workbench Vue dependency graph |
+| Full Main TypeScript against the unchanged HEAD via read-only compiler-host source substitution | 64 existing diagnostics before and after, no added diagnostic; full Main is not a clean baseline |
+| `node scripts/environment/runWithRuntimeProfile.cjs debug_dev -- yarn electron-vite build` | Main/preload/renderers bundled successfully |
+| `yarn build` | Blocked before compilation by the dependency tree's missing Electron binary (`ensure-native`); no app launched |
+| `yarn check:renderer-i18n` | Existing failure: `maestroTabAlias must start language initialization before evaluating product UI`; this change does not edit that entrypoint |
+| `git diff --check` | Passed |
+| Electron E2E / packaged app smoke | Not run: Ral has not requested Electron E2E |
+
+The existing `scripts/typecheck/surfaces.mjs` prints a false green when its internal tool executable cannot run; that output was discarded. Only the actual compiler exit codes and HEAD diagnostic comparison above count. Dependencies were reused from an existing local installation after checking that its packages contained no links to workspace/source repositories; all source entries and aliases resolve this checkout.
+
+Independent source review and actual component visual/keyboard verification remain pending at this handoff. No cloud release, Git commit or push was performed by the implementation worker.
+
+Independent-review follow-up: fixed workspace Skills whose directory basename, YAML `name` and sidecar `display_name` differ. Canonical names now drive standard Skill lookup/catalog identity; sidecar labels are separate UI presentation. Existing recording business names remain compatible and also accept their canonical YAML name. Two added regression cases pass; the focused suite is now 29/29, and strict Node plus Vue typechecks remain passing.
+
+### Independent-review fixes: authorization aliases and read-only writes (2026-09-16)
+
+- Every Skill read/run/manage entrypoint now resolves bare names and legacy aliases to one qualified reference before authorization. `resolveAuthorizedSkill` pins that reference, scope generation and revision; recipe/body reads use the pinned reference. Script/replay guards continue across API approval, UI actions and replay's final delay. A later account/institution change cannot reinterpret the original alias.
+- Registry archive, overwrite and delete reject managed, workspace, institutional and other read-only sources. Training checks writability before its model call and again after that await; global local recordings retain archive/overwrite behavior. Institutional summaries expose the same read-only status to the UI.
+- Regression: **46/46** Node tests pass (`node --test tests/skillScopes/scope.test.mjs tests/skillScopes/execution.test.mjs tests/skillsThreeSources/*.test.mjs`). New coverage checks bare-name and legacy-alias authorization across ten public entrypoints, actual script/replay cancellation on logout/institution switch/same-account generation changes, post-model writability recheck, all read-only source classes leaving files unchanged, and local recording writes remaining available. Log: `/tmp/bl-skills-alltests.log`.
+- Focused strict Node (`yarn tsc --noEmit -p tests/skillsThreeSources/tsconfig.node.json --composite false`) and Vue (`yarn vue-tsc --noEmit -p tests/skillScopes/tsconfig.web.json --composite false`) pass. Full Main compiler comparison against HEAD remains **64 baseline / 64 current diagnostics, zero new**; no pre-existing diagnostics were suppressed. Independent verification remains owned by the reviewer.
+- Final source-freeze bundle: `node scripts/environment/runWithRuntimeProfile.cjs debug_dev -- yarn electron-vite build` passes (Main, Preload and renderer bundles), log `/tmp/bl-skills-bundle.log`. This does not launch Electron. The standard `yarn build` native precheck limitation and pre-existing i18n failure recorded above remain unchanged; Electron E2E was not run.
+
+## Delivery closure (2026-09-16)
+
+Independent [review 3](../reviews/skills-three-sources-001-3.md) passed after all blocking findings were fixed and retested. The complete three-source implementation and actual component evidence are delivered on dev/next. The corresponding authorized backend release passed 23 real HTTP checks and cleaned every fixture; code and release evidence are synchronized separately in the backend repository. Whole-project baseline type/native/i18n limitations remain explicitly recorded above and in the independent report. No Electron app was started or provider called.

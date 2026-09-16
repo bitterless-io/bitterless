@@ -1,4 +1,4 @@
-import { authorizeSkillReference, assertSkillContext, onSkillContextChanged, skillExecutionGuard } from '@maestro-main/skills/skillScope.context'
+import { assertSkillContext, onSkillContextChanged, resolveAuthorizedSkill } from '@maestro-main/skills/skillScope.context'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { navigateAgentBrowser, type BrowserNavigationAction } from './browserNavigation'
 import type { BrowserWindow } from 'electron'
@@ -395,42 +395,22 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     return clipText(JSON.stringify(run, null, 1)) + this._state.drainNewTabsNote(this.browserTarget.getStore()?.sessionId)
   }
 
-  async toolSkillContract(skillId: string): Promise<string> {
-    await authorizeSkillReference(skillId)
-    const services = this._state.ensureServices()
-    const recipe = services.registry.readRecipe(skillId)
-    const skill = services.registry
-      .listSkills()
-      .find((item) => (item.id === skillId || item.reference === skillId))
-    if (!recipe) {
-      if (!skill) return `ERROR: unknown skill_id "${skillId}".`
-      const detail = services.registry.readSkillDetail(skillId)
-      this._state.lastAgentRun = { skill, skills: [skill] }
-      this._state.broadcastActivity('skill', `reading ${skill.name}`)
-      return clipText(
-        JSON.stringify(
-          {
-            id: skill.id,
-            name: skill.name,
-            description: skill.description,
-            source: skill.source,
-            runtime: 'external_markdown',
-            executable_by_coach: false,
-            note: 'This skill has SKILL.md but no Coach recipe.json. Read markdown_body as guidance only; do not call run_skill_script or replay_skill_ui for it.',
-            triggers: skill.triggers,
-            inputs: skill.inputs,
-            markdown_body: detail?.body || ''
-          },
-          null,
-          1
-        )
-      )
-    }
-    if (skill) {
-      this._state.lastAgentRun = { skill, skills: [skill] }
-      this._state.broadcastActivity('skill', `using ${skill.name}`)
-    }
-    return buildSkillContractText(recipe)
+  async toolSkillContract(skillId: string, offset = 0): Promise<string> {
+    const registry = this._state.ensureServices().registry
+    const { skill } = await resolveAuthorizedSkill(registry, skillId)
+    const recipe = registry.readRecipe(skill.reference || skill.id)
+    const detail = registry.readSkillDetail(skill.reference || skill.id)
+    if (!detail || registry.resolveSkill(skill.reference || skill.id)?.skillRevision !== skill.skillRevision) return 'ERROR: skill changed while reading; retry the current catalog.'
+    this._state.lastAgentRun = { skill, skills: [skill] }
+    this._state.broadcastActivity('skill', 'read ' + skill.name + ' [' + skill.skillRevision + ']')
+    const body = recipe ? buildSkillContractText(recipe) : detail.body
+    const start = Number.isSafeInteger(offset) && offset >= 0 ? offset : 0
+    const page = body.slice(start, start + 16000)
+    return JSON.stringify({ ref: skill.reference, revision: skill.skillRevision, source: skill.layer, name: skill.name,
+      runtime: recipe ? 'coach' : 'external_markdown', executable_by_coach: Boolean(recipe),
+      note: recipe ? 'Recorded execution requires its original domain.' : 'Read markdown_body as guidance. No Coach recipe is available.',
+      path: skill.path, offset: start, total_chars: body.length, next_offset: start + page.length < body.length ? start + page.length : null,
+      complete: start === 0 && page.length === body.length, markdown_body: page })
   }
 
   async toolBrowserExec(commandsJson: string): Promise<string> {
@@ -496,17 +476,14 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     skillId: string,
     variablesJson: string
   ): Promise<string> {
-    const skillContext = await authorizeSkillReference(skillId)
     if (!this.targetReplay) return 'ERROR: browser view is not ready.'
     const services = this._state.ensureServices()
-    const recipe = services.registry.readRecipe(skillId)
+    const { skill, reference, context: skillContext, guard } = await resolveAuthorizedSkill(services.registry, skillId)
+    const recipe = services.registry.readRecipe(reference)
     if (!recipe) {
-      const skill = services.registry
-        .listSkills()
-        .find((item) => (item.id === skillId || item.reference === skillId))
-      if (!skill) return `ERROR: unknown skill_id "${skillId}".`
       return `ERROR: skill "${skill.name}" is an external markdown skill with no Coach recipe.json — read get_skill_contract and use normal browser tools if needed.`
     }
+    if (recipe.source === 'recording' && recipe.sourceUrl && new URL(recipe.sourceUrl).hostname !== new URL(this.targetUrl).hostname) return 'ERROR: this recorded Skill requires its original website.'
     if (!recipe.script) {
       return `ERROR: skill "${recipe.name}" has no automation script — drive it via the page_snapshot → ui_act loop or browser_exec instead.`
     }
@@ -522,9 +499,6 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     const check = validateSkillVars(recipe.inputs, variables)
     if (check.ok === false) return 'ERROR: invalid inputs — ' + check.errors.join('; ')
     variables = check.data as Record<string, string>
-    const skill = services.registry
-      .listSkills()
-      .find((item) => (item.id === skillId || item.reference === skillId))
     if (skill) {
       this._state.lastAgentRun = { skill, skills: [skill] }
       this._state.broadcastActivity('skill', `running ${skill.name}`)
@@ -551,7 +525,7 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
       result: ApiCallResult
     }[] = []
     try {
-      assertSkillContext(skillContext)
+      await guard()
       const run = await runSkillScript({
         script: recipe.script,
         replay: this.targetReplay,
@@ -566,17 +540,17 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
           this.broadcastApiActivity(call.method, call.url, result.ok, result.auth)
         },
         onApiBeforeFetch: async (call) => {
-          assertSkillContext(skillContext)
+          await guard()
           const decision = classifySkillApiCall(recipe, call)
           await this.handleSkillApiSafety(decision, call.url, {
             query: call.query,
             body: call.body
           })
-          assertSkillContext(skillContext)
+          await guard()
           return decision
         }
       })
-      assertSkillContext(skillContext)
+      await guard()
       const lastApi = apiResults[apiResults.length - 1]
       const replay: ReplayResult = {
         ok: run.ok,
@@ -617,12 +591,8 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
   }
 
   async toolReplayUi(skillId: string, variablesJson: string): Promise<string> {
-    const skillContext = await authorizeSkillReference(skillId)
     const services = this._state.ensureServices()
-    const skill = services.registry
-      .listSkills()
-      .find((item) => (item.id === skillId || item.reference === skillId))
-    if (!skill) return `ERROR: unknown skill_id "${skillId}".`
+    const { skill, reference, guard } = await resolveAuthorizedSkill(services.registry, skillId)
     const variables: Record<string, string> = {}
     if (variablesJson.trim()) {
       try {
@@ -639,12 +609,14 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
         return 'ERROR: variables_json is not valid JSON.'
       }
     }
-    const recipe = services.registry.readRecipe(skillId)
+    const recipe = services.registry.readRecipe(reference)
     if (!recipe) return 'ERROR: skill recipe was not found.'
-    const replay = await this.replayRecipe(recipe, variables, await skillExecutionGuard(skillId))
-    assertSkillContext(skillContext)
-    this._state.lastAgentRun = { skill, skills: [skill], replay }
+    if (recipe.source === 'recording' && recipe.sourceUrl && new URL(recipe.sourceUrl).hostname !== new URL(this.targetUrl).hostname) return 'ERROR: this recorded Skill requires its original website.'
+    const replay = await this.replayRecipe(recipe, variables, guard)
+    await guard()
     await new Promise((resolve) => setTimeout(resolve, 700))
+    await guard()
+    this._state.lastAgentRun = { skill, skills: [skill], replay }
     return (
       JSON.stringify({
         ok: replay.ok,

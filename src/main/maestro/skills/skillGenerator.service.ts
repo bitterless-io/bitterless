@@ -1,4 +1,4 @@
-import { skillExecutionGuard } from '@maestro-main/skills/skillScope.context'
+import { resolveAuthorizedSkill } from '@maestro-main/skills/skillScope.context'
 import type { CodexDebugEvent, SkillCreateResult, SkillInput, SkillSummary } from '@maestro-shared/coach.api'
 import type { TraceEvent } from '@maestro-shared/trace.types'
 import type { BaseAgent } from '@main/agent/BaseAgent'
@@ -151,9 +151,9 @@ export class SkillGeneratorService {
     await this.registry.scopeStorage.authorizeCreation()
     const existing = this.registry.findRecordingByName(name, currentUrl)
     if (existing) {
-      this.registry.archiveSkill(existing.id)
+      this.registry.archiveSkill(existing.reference || existing.id)
       const updatedRecipe: SkillRecipe = { ...recipe, id: existing.id, source: 'recording', updatedAt: Date.now() }
-      const skill = this.registry.overwriteSkill(existing.id, { recipe: updatedRecipe, body })
+      const skill = this.registry.overwriteSkill(existing.reference || existing.id, { recipe: updatedRecipe, body })
       if (!skill) {
         this.debug({
           phase: 'failed',
@@ -476,8 +476,9 @@ export class SkillGeneratorService {
   // Optimize an EXISTING skill: refine name/description/triggers/notes via Codex
   // (keeping the recorded steps + API workflow) and rewrite the skill in place.
   async train(skillId: string, guidance: string): Promise<SkillCreateResult> {
-    const guard = await skillExecutionGuard(skillId)
-    const recipe = this.registry.readRecipe(skillId)
+    const { reference, guard } = await resolveAuthorizedSkill(this.registry, skillId)
+    this.registry.assertWritableSkill(reference)
+    const recipe = this.registry.readRecipe(reference)
     if (!recipe) return { ok: false, message: 'Skill not found.', error: 'no-skill' }
     this.debug({ phase: 'train-start', level: 'info', message: `Optimizing skill ${recipe.name}.`, detail: { skillId } })
 
@@ -500,8 +501,9 @@ export class SkillGeneratorService {
     const body = buildSkillBody(updatedRecipe, draft)
 
     await guard()
-    this.registry.archiveSkill(skillId) // version the prior state before replacing
-    const skill = this.registry.overwriteSkill(skillId, { recipe: updatedRecipe, body })
+    this.registry.assertWritableSkill(reference)
+    this.registry.archiveSkill(reference) // version the prior state before replacing
+    const skill = this.registry.overwriteSkill(reference, { recipe: updatedRecipe, body })
     if (!skill) return { ok: false, message: 'Failed to update skill.', error: 'update-failed' }
     this.debug({ phase: 'trained', level: 'info', message: `Optimized ${skill.name}.`, detail: { skillId } })
     return { ok: true, skill, message: `Optimized ${skill.name}` }

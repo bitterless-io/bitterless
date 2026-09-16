@@ -1,5 +1,6 @@
 import { assetScope } from '@main/workflowLibrary/assetScope.service'
 import type { SkillInstitutionContext, SkillScopeContext } from './skillScope.storage'
+import type { SkillSummary } from '@maestro-shared/coach.api'
 
 const current = (): SkillInstitutionContext | null => {
   const value = assetScope.current
@@ -34,4 +35,25 @@ export const skillExecutionGuard = async (reference: string): Promise<() => Prom
     if (expected) await authorizeSkillReference(reference)
     assertSkillContext(expected)
   }
+}
+
+/** Pin an alias to its qualified source before any authorization or asynchronous work. */
+export const resolveAuthorizedSkill = async (
+  registry: { resolveSkill(reference: string, includeUnassigned?: boolean): SkillSummary | undefined },
+  input: string,
+  allowUnassigned = false
+) => {
+  const candidate = registry.resolveSkill(input, allowUnassigned)
+  if (!candidate) throw new Error('Skill not found or unavailable in this workspace')
+  const reference = candidate.reference || candidate.id
+  const context = allowUnassigned && candidate.scope === 'unassigned' ? null : await authorizeSkillReference(reference)
+  assertSkillContext(context)
+  const skill = registry.resolveSkill(reference, allowUnassigned)
+  if (!skill || skill.skillRevision !== candidate.skillRevision) throw new Error('Skill changed during authorization; retry the current catalog')
+  const guard = async (): Promise<void> => {
+    assertSkillContext(context)
+    if (context) await authorizeSkillReference(reference)
+    assertSkillContext(context)
+  }
+  return { skill, reference, context, guard }
 }

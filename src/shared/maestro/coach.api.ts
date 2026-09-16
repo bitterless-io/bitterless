@@ -120,7 +120,11 @@ export interface CoachXpcContract {
   // is the source of truth here — NOT the main process's raw trace buffer.
   summarizeSkill(params: { workflow?: string; records: IngestRecord[]; sharingScope?: SkillSharingScope }): Promise<SkillCreateResult>
   trainSkill(params: { skillId: string; guidance: string }): Promise<SkillCreateResult>
-  listSkills(): Promise<SkillSummary[]>
+  listSkills(params?: { sessionId?: string }): Promise<SkillSummary[]>
+  skillCatalog(params?: { sessionId?: string; checkUpdates?: boolean }): Promise<SkillCatalogSnapshot>
+  setSkillViewContext(params: { sessionId: string; workspace?: { path: string; name: string; exists: boolean; updatedAt: number } }): Promise<void>
+  openSkillFile(params: { skillId: string; sessionId?: string }): Promise<{ ok: boolean; error?: string }>
+  openSkillSource(params: { layer: SkillLayer; sessionId?: string }): Promise<{ ok: boolean; error?: string }>
   getSkillDetail(params: { skillId: string }): Promise<SkillDetail | null>
   openSkillDirectory(params: { skillId: string }): Promise<{ ok: boolean; path?: string; error?: string }>
   exportSkillPackage(params: { skillId: string }): Promise<SkillExportResult>
@@ -669,7 +673,21 @@ export type SkillSource = 'builtin' | 'recording' | 'external'
 export type SkillSharingScope = 'shared' | 'institution'
 export interface SkillScopeContextInfo { institutionId: string; institutionName?: string }
 
+export type SkillLayer = 'global' | 'workspace' | 'institution'
+export interface SkillCatalogSnapshot { institution?: SkillScopeContextInfo | null; generation?: string | number; revision: string; workspace: string; roots: Record<SkillLayer, string[]>; skills: SkillSummary[]; watchError?: string; cloudStatus?: string; cloudError?: string }
 export interface SkillSummary {
+  canonicalName?: string
+  displayName?: string
+  aliases?: string[]
+  layer?: SkillLayer
+  status?: 'ready' | 'error'
+  error?: string
+  skillRevision?: string
+  realPath?: string
+  root?: string
+  readonly?: boolean
+  managed?: boolean
+  allowImplicitInvocation?: boolean
   scope?: SkillSharingScope | 'unassigned'
   institutionId?: string
   institutionName?: string
@@ -690,6 +708,7 @@ export interface SkillSummary {
 }
 
 export interface SkillDetail {
+  files?: string[]
   id: string
   name: string
   description: string

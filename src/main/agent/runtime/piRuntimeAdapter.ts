@@ -1,3 +1,4 @@
+import { appendCurrentSkillCatalog } from './skillCatalogRequest'
 import { describeAuthFile } from './authDiagnostic'
 import type { AgentRuntimeAdapter, AgentRuntimeSession, AgentRuntimeSessionOptions } from './agentRuntime.types'
 import type { CodexDebugEvent } from './runtime.types'
@@ -102,6 +103,17 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
     })
     const debug = (event: Omit<CodexDebugEvent, 'ts' | 'scope'>): void =>
       options.onDebug?.({ scope: options.scope, ts: Date.now(), ...event })
+    if (options.beforeModelRequest) {
+      const native = session.agent.transformContext
+      session.agent.transformContext = async (messages, signal) => {
+        const current = native ? await native(messages, signal) : messages
+        const catalog = await options.beforeModelRequest?.()
+        if (!catalog) return current
+        const latest = appendCurrentSkillCatalog({ messages: current, catalog, contextWindow: model.contextWindow, maxTokens: model.maxTokens, systemPrompt: options.systemPrompt })
+        options.onDebug?.({ scope: options.scope, phase: 'skills-catalog-request', level: 'info', message: 'Complete current Skills catalog attached to model request.', detail: { catalog }, ts: Date.now() })
+        return latest
+      }
+    }
     applyPiSessionPolicy(session as PiSession, debug)
     return new PiRuntimeSession(session as PiSession, debug, prompt)
   }

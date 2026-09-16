@@ -1,3 +1,6 @@
+import { createXpcRendererEmitter } from 'electron-xpc/renderer'
+import type { CoachXpcContract } from '@maestro-shared/coach.api'
+const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
 import { reactive } from 'vue'
 import type { TabInfo } from '@maestro-shared/coach.api'
 import { messageStore } from './message.store'
@@ -47,6 +50,7 @@ export class ChannelStoreState {
     const sessionId = this.activeSession?.id || ''
     messageStore.activeSessionId = sessionId
     writeActiveId(this.activeSessionId)
+    void coach.setSkillViewContext({ sessionId, workspace: this.activeSession?.detail.workspace })
     if (sessionId) messageStore.markRead(sessionId)
   }
 
