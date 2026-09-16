@@ -1,7 +1,7 @@
 ---
 id: drill-stop-escape-001
 scope: Maestro chat Escape stop parity
-status: in-progress
+status: done
 depends-on: []
 verify: behavioral regressions, focused types, build, independent review
 ---
@@ -56,3 +56,9 @@ Verify and fix the same early normal Stop receipt in Maestro BaseAgent under the
 - `yarn test:chat-escape` — PASS, 13 mounted SFC/store tests. Added cases cover waits beyond 900 ms, native rejection and retry, both real `send()`/Stop-receipt settlement orders, late `send()` completion after failed Stop, original-session identity and retained partial replies. `yarn typecheck:chat` and `yarn check:chat-composer` — PASS.
 - ACP strict types, 13 protocol/helper tests and the native Maestro/SQLite/helper integration pass. Verification still substitutes the model/network and Electron boundaries; independent review and merge/sync remain pending.
 - Final follow-up `yarn build` — PASS on the final executable source (19.48 s); the native Maestro/SQLite/helper integration was rerun after the final managed-tool ownership change and passed.
+
+## Final delivery
+
+Independent review PASS at `37b8c09b`, including 13 actual native Stop and 13 mounted chat tests, focused strict types, composer guard and real Maestro/SQLite/socket/helper integration. The final Electron build passed (19.48 s); strict ACP types and 13 protocol/helper tests also passed. Accepted Stop holds shared GUI/ACP admission through actual cleanup, including model-finished/tool-pending turns. Failed cleanup retains its concrete runtime session for a real retry.
+
+Fast-forwarded the original attached `release/2608` branch to the reviewed source on 2026-09-16; Git synchronization follows. No live provider or native Electron UI validation was performed. Existing unrelated baseline checks were not represented as passing.

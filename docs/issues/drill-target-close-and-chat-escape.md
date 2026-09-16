@@ -1,6 +1,6 @@
 # Chat Escape uses the enabled Stop action
 
-Status: Escape behavior verified; shared native Stop drain repair in progress. Requested by Ral on 2026-09-16.
+Status: Implemented, independently verified and merged into release/2608. Requested by Ral on 2026-09-16.
 
 ## Triage
 
@@ -21,4 +21,4 @@ Run behavioral regressions against the actual affected implementation, meaningfu
 
 The Cowork actual-model-boundary regression found the shared BaseAgent Stop pattern returns after a 500 ms startup/1500 ms abort cap, resets busy, and can admit a replacement while the old normal prompt still delivers events. Bitterless uses the same pattern in Maestro BaseAgent.abort and its ordinary Stop service directly awaits that method. Apply the bounded parity fix here: synchronously invalidate the accepted turn, suppress its late events/results, hold admission until actual startup/prompt/abort cleanup settles, propagate cleanup failure, and keep idle/repeated Stop safe. Reuse the existing prompt/tool drain and auth generation protections; do not port Cowork steering or drilling features. Add an actual-runtime regression showing the original failure before repair, preserve ACP behavior, and independently reverify before syncing.
 
-Implementation and local verification are complete; independent review and follow-up merge/sync remain pending. Evidence is recorded in [the delivery task](../plan/tasks/drill-stop-escape-001.md). Stop waits for already-started effects to finish and rejects later dispatch; it does not undo completed effects.
+Implementation, local verification and independent review are complete; the reviewed source is merged into the original attached release/2608 branch. Evidence is recorded in [the delivery task](../plan/tasks/drill-stop-escape-001.md). Stop waits for already-started effects to finish and rejects later dispatch; it does not undo completed effects.
