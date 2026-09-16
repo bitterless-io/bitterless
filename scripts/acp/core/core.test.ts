@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile, mkdir, lstat, unlink, symlink, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, readFile, writeFile, mkdir, lstat, unlink, symlink, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createConnection, createServer } from 'node:net';
@@ -324,4 +324,74 @@ test('pagination uses a stable last-key cursor and streams only to the session o
     await a.peer.request('session/prompt', { sessionId: page.sessions[0].sessionId, prompt: [{ type: 'text', text: 'isolated' }] });
     assert.equal(receivedByB, 0);
   } finally { await a.peer.close(); await b.peer.close(); await f.cleanup(); }
+});
+
+test('MCP subprocess pages >4 MiB replay and reconstructs a heavily escaped oversized live event', async () => {
+  const f = await fixture();
+  const session = await f.host.createSession({ cwd: await realpath(f.directory), mcpServers: [] });
+  const history: SessionUpdate[] = Array.from({ length: 6 }, (_, index) => ({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `${index}:` + 'a'.repeat(800_000) } }));
+  f.host.loadSession = async () => ({ session, history });
+  const escaped = '\\"\n\t'.repeat(350_000);
+  const largeEvent: SessionUpdate = { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: escaped } };
+  assert.ok(Buffer.byteLength(JSON.stringify(largeEvent)) < 4 * 1024 * 1024);
+  f.host.prompt = async (_id, _blocks, context) => { await context.emit(largeEvent); return { stopReason: 'end_turn' }; };
+  const h = await helper('mcp', f.endpoint.socketPath);
+  const call = async (name: string, args: unknown = {}): Promise<Record<string, any>> => {
+    const result = await h.peer.request<{ isError?: boolean; content: Array<{ text: string }> }>('tools/call', { name, arguments: args });
+    if (result.isError) throw new Error(result.content[0].text);
+    return JSON.parse(result.content[0].text);
+  };
+  try {
+    await h.peer.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'size-regression', version: '1' } });
+    let page = await call('acp_session_load', { sessionId: session.sessionId, cwd: f.directory });
+    const replayId = page.replayId;
+    const restored: SessionUpdate[] = [];
+    let pages = 0;
+    for (;;) {
+      assert.equal(page.eventReferences.length, 0);
+      for (let index = 0; index < page.history.length; index += 1) restored[page.historyIndices[index]] = page.history[index];
+      pages += 1;
+      if (!page.hasMore) break;
+      page = await call('acp_session_history', { replayId, cursor: page.cursor });
+    }
+    assert.ok(pages > 1); assert.deepEqual(restored, history);
+    const started = await call('acp_prompt_start', { sessionId: session.sessionId, text: 'oversized' });
+    let poll = await call('acp_prompt_poll', { runId: started.runId, waitMs: 1000 });
+    if (!poll.eventReferences.length) poll = await call('acp_prompt_poll', { runId: started.runId, cursor: poll.cursor, waitMs: 1000 });
+    assert.equal(poll.events.length, 0); assert.equal(poll.eventReferences.length, 1); assert.equal(poll.eventReferences[0].index, 0); assert.equal(poll.cursor, 1);
+    const bytes: Buffer[] = [];
+    let offset = 0;
+    for (;;) {
+      const fragment = await call('acp_event_read', { eventId: poll.eventReferences[0].eventId, offset });
+      assert.equal(fragment.encoding, 'base64'); bytes.push(Buffer.from(fragment.data, 'base64'));
+      if (!fragment.hasMore) break;
+      assert.ok(fragment.nextOffset > offset); offset = fragment.nextOffset;
+    }
+    assert.deepEqual(JSON.parse(Buffer.concat(bytes).toString('utf8')), largeEvent);
+    assert.deepEqual(await h.peer.request('ping'), {});
+  } finally { await h.stop(); await f.cleanup(); }
+});
+
+test('MCP replay event-count and byte overflow fail explicitly after draining without killing the helper', async () => {
+  const f = await fixture();
+  const session = await f.host.createSession({ cwd: await realpath(f.directory), mcpServers: [] });
+  let mode: 'count' | 'bytes' | 'small' = 'count';
+  f.host.loadSession = async () => ({ session, history: mode === 'count'
+    ? Array.from({ length: 20_001 }, () => ({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'small' } }))
+    : mode === 'bytes' ? Array.from({ length: 10 }, () => ({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'a'.repeat(900_000) } }))
+    : [{ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'recovered' } }] });
+  const h = await helper('mcp', f.endpoint.socketPath);
+  const call = (name: string, args: unknown = {}) => h.peer.request<{ isError?: boolean; content: Array<{ text: string }> }>('tools/call', { name, arguments: args });
+  try {
+    await h.peer.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'overflow-regression', version: '1' } });
+    for (const current of ['count', 'bytes'] as const) {
+      mode = current;
+      const result = await call('acp_session_load', { sessionId: session.sessionId, cwd: f.directory });
+      assert.equal(result.isError, true); assert.match(result.content[0].text, /No partial history/);
+      assert.deepEqual(await h.peer.request('ping'), {});
+    }
+    mode = 'small';
+    const recovered = await call('acp_session_load', { sessionId: session.sessionId, cwd: f.directory });
+    assert.equal(recovered.isError, undefined); assert.equal(JSON.parse(recovered.content[0].text).history[0].content.text, 'recovered');
+  } finally { await h.stop(); await f.cleanup(); }
 });

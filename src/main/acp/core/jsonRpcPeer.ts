@@ -18,7 +18,7 @@ export interface RpcOptions {
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 const isId = (value: unknown): value is RpcId =>
-  typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value));
+  (typeof value === 'string' && value.length <= 1024) || (typeof value === 'number' && Number.isFinite(value));
 
 /** Bounded full-duplex newline JSON-RPC. Handlers run concurrently so cancel/permissions cannot deadlock prompts. */
 export class JsonRpcPeer {

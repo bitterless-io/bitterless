@@ -4,6 +4,7 @@ import { AcpError } from '../core/acpHost.type';
 import { isRecord, JsonRpcPeer } from '../core/jsonRpcPeer';
 import { connectBridgeSocket } from './bridgeOptions';
 import type { AcpBridgeOptions } from './bridgeOptions';
+import { eventPage, readEventFragment, toolWireBytes, MCP_EVENT_BYTES, MCP_EVENT_COUNT, MCP_TOOL_BYTES } from './mcpEventPage';
 
 interface PendingPermission { request: RequestPermissionRequest; resolve(value: RequestPermissionResponse): void }
 interface Run {
@@ -11,6 +12,7 @@ interface Run {
   events: SessionUpdate[]; eventBytes: number; permissions: Map<string, PendingPermission>;
   result?: PromptResponse; error?: string; waiters: Set<() => void>;
 }
+interface Replay { replayId: string; sessionId: string; events: SessionUpdate[]; bytes: number; error?: string }
 const propertyString = { type: 'string', minLength: 1 };
 const tool = (name: string, options: { description: string; properties: Record<string, unknown>; required?: string[] }): Record<string, unknown> => ({
   name, description: options.description, inputSchema: { type: 'object', properties: options.properties, required: options.required ?? [], additionalProperties: false }
@@ -19,9 +21,11 @@ const sessionProperty = { sessionId: propertyString };
 const tools = [
   tool('acp_session_new', { description: 'Create a durable agent session in an absolute existing working directory.', properties: { cwd: propertyString }, required: ['cwd'] }),
   tool('acp_session_list', { description: 'List saved external sessions. Follow nextCursor for another page.', properties: { cwd: propertyString, cursor: propertyString } }),
-  tool('acp_session_load', { description: 'Load an existing session and return the persisted transcript before continuing.', properties: { ...sessionProperty, cwd: propertyString }, required: ['sessionId', 'cwd'] }),
+  tool('acp_session_load', { description: 'Load a saved session. Returns a bounded first history page, replayId and cursor; read all remaining pages with acp_session_history. Large events use acp_event_read references.', properties: { ...sessionProperty, cwd: propertyString }, required: ['sessionId', 'cwd'] }),
+  tool('acp_session_history', { description: 'Page a loaded transcript by replayId/cursor. historyIndices and eventReferences.index are absolute positions; merge them in order. Follow hasMore/cursor.', properties: { replayId: propertyString, cursor: { type: 'integer', minimum: 0 } }, required: ['replayId'] }),
+  tool('acp_event_read', { description: 'Read a referenced event as base64 JSON UTF-8 bytes. Concatenate decoded bytes in offset order until hasMore=false, then JSON.parse the complete UTF-8 document.', properties: { eventId: propertyString, offset: { type: 'integer', minimum: 0 } }, required: ['eventId'] }),
   tool('acp_prompt_start', { description: 'Start an asynchronous prompt; then poll its runId. Never wait for completion in this call.', properties: { ...sessionProperty, text: propertyString }, required: ['sessionId', 'text'] }),
-  tool('acp_prompt_poll', { description: 'Read streamed updates and pending permission requests. Permission requests require an explicit decision via acp_permission_respond. Cursor is the next event offset.', properties: { runId: propertyString, cursor: { type: 'integer', minimum: 0 }, waitMs: { type: 'integer', minimum: 0, maximum: 25000 } }, required: ['runId'] }),
+  tool('acp_prompt_poll', { description: 'Read streamed updates and pending permission requests. Permission requests require an explicit decision via acp_permission_respond. Cursor is the next event offset. Follow hasMore even after completion; large eventReferences are read with acp_event_read.', properties: { runId: propertyString, cursor: { type: 'integer', minimum: 0 }, waitMs: { type: 'integer', minimum: 0, maximum: 25000 } }, required: ['runId'] }),
   tool('acp_permission_respond', { description: 'Resolve one pending tool permission using an advertised optionId, or cancel it. Choose only an option authorized by the user.', properties: { runId: propertyString, requestId: propertyString, optionId: propertyString, cancelled: { type: 'boolean' } }, required: ['runId', 'requestId'] }),
   tool('acp_session_cancel', { description: 'Cancel current work and pending permissions; poll the run for its cancelled stopReason.', properties: sessionProperty, required: ['sessionId'] }),
   tool('acp_session_close', { description: 'Cancel current work and release this connection while retaining saved history.', properties: sessionProperty, required: ['sessionId'] }),
@@ -47,7 +51,8 @@ export const runAcpMcpBridge = async (options: AcpBridgeOptions = {}): Promise<v
 
   const runs = new Map<string, Run>();
   const active = new Map<string, Run>();
-  const replay = new Map<string, SessionUpdate[]>();
+  const replay = new Map<string, Replay>();
+  const savedReplays = new Map<string, Replay>();
   const loaded = new Map<string, Record<string, unknown>>();
   let initialized = false;
   acp.onMessage(async (method, raw, notification) => {
@@ -58,13 +63,18 @@ export const runAcpMcpBridge = async (options: AcpBridgeOptions = {}): Promise<v
       const update = raw.update as SessionUpdate;
       const history = replay.get(sessionId);
       if (history) {
-        if (history.length >= 20_000) throw new AcpError(-32603, 'History exceeds bridge limit');
-        history.push(update);
+        if (!history.error) {
+          const bytes = Buffer.byteLength(JSON.stringify(update));
+          if (history.events.length >= MCP_EVENT_COUNT || history.bytes + bytes > MCP_EVENT_BYTES) {
+            history.error = 'Session loaded, but replay exceeds the bridge limit (8 MiB / 20,000 events). No partial history is returned. Use the ACP stdio bridge to stream the complete transcript.';
+            history.events = [];
+          } else { history.events.push(update); history.bytes += bytes; }
+        }
       }
       const run = active.get(sessionId);
       if (run) {
         run.eventBytes += Buffer.byteLength(JSON.stringify(update));
-        if (run.eventBytes > 8 * 1024 * 1024 || run.events.length >= 20_000) {
+        if (run.eventBytes > MCP_EVENT_BYTES || run.events.length >= MCP_EVENT_COUNT) {
           run.error = 'Run output exceeded bridge limit; turn was cancelled';
           await acp.notify('session/cancel', { sessionId });
         } else run.events.push(update);
@@ -98,14 +108,40 @@ export const runAcpMcpBridge = async (options: AcpBridgeOptions = {}): Promise<v
     if (name === 'acp_session_load') {
       const sessionId = required(args, 'sessionId');
       if (replay.has(sessionId) || active.has(sessionId)) throw new AcpError(-32600, 'Session is busy');
-      const history: SessionUpdate[] = [];
+      const history: Replay = { replayId: randomUUID(), sessionId, events: [], bytes: 0 };
       replay.set(sessionId, history);
       try {
         const session = await acp.request<Record<string, unknown>>('session/load', { sessionId, cwd: required(args, 'cwd'), mcpServers: [] });
         await remember(sessionId, session);
-        return { ...session, history };
+        if (history.error) throw new AcpError(-32603, history.error);
+        if (savedReplays.size >= 8) savedReplays.delete(savedReplays.keys().next().value!);
+        savedReplays.set(history.replayId, history);
+        const page = eventPage(history.events, { cursor: 0, sourceId: `replay:${history.replayId}` });
+        const { events, eventIndices, ...metadata } = page;
+        return { ...session, replayId: history.replayId, history: events, historyIndices: eventIndices, ...metadata };
       }
       finally { replay.delete(sessionId); }
+    }
+    if (name === 'acp_session_history') {
+      const history = savedReplays.get(required(args, 'replayId'));
+      if (!history) throw new AcpError(-32002, 'Replay not found or expired');
+      const page = eventPage(history.events, { cursor: (args.cursor ?? 0) as number, sourceId: `replay:${history.replayId}` });
+      const { events, eventIndices, ...metadata } = page;
+      return { replayId: history.replayId, history: events, historyIndices: eventIndices, ...metadata };
+    }
+    if (name === 'acp_event_read') {
+      const eventId = required(args, 'eventId');
+      const [kind, sourceId, index, extra] = eventId.split(':');
+      if (extra !== undefined) throw new AcpError(-32602, 'Invalid event reference');
+      let event: unknown;
+      if (kind === 'permission') event = runs.get(sourceId)?.permissions.get(index)?.request;
+      else if (kind === 'run' || kind === 'replay') {
+        if (!/^(0|[1-9][0-9]*)$/.test(index)) throw new AcpError(-32602, 'Invalid event reference');
+        const source = kind === 'run' ? runs.get(sourceId)?.events : savedReplays.get(sourceId)?.events;
+        event = source?.[Number(index)];
+      }
+      if (event === undefined) throw new AcpError(-32002, 'Event not found or expired');
+      return { eventId, ...readEventFragment(event, args.offset) };
     }
     if (name === 'acp_prompt_start') {
       const sessionId = required(args, 'sessionId');
@@ -157,15 +193,12 @@ export const runAcpMcpBridge = async (options: AcpBridgeOptions = {}): Promise<v
           run.waiters.add(ready);
         });
       }
-      const events: SessionUpdate[] = [];
-      let bytes = 0;
-      for (let index = cursor as number; index < run.events.length && events.length < 200; index += 1) {
-        const event = run.events[index];
-        bytes += Buffer.byteLength(JSON.stringify(event));
-        if (bytes > 1024 * 1024 && events.length) break;
-        events.push(event);
-      }
-      return { runId: run.runId, sessionId: run.sessionId, status: run.status, events, cursor: (cursor as number) + events.length, pendingPermissions: [...run.permissions].map(([requestId, pending]) => ({ requestId, ...pending.request })), ...(run.result ? { result: run.result } : {}), ...(run.error ? { error: run.error } : {}) };
+      const page = eventPage(run.events, { cursor: cursor as number, sourceId: `run:${run.runId}` });
+      const pendingPermissions = [...run.permissions].map(([requestId, pending]) => {
+        const request = { requestId, ...pending.request };
+        return toolWireBytes(request) <= 16 * 1024 ? request : { requestId, sessionId: run.sessionId, requestReference: { eventId: `permission:${run.runId}:${requestId}`, byteLength: Buffer.byteLength(JSON.stringify(pending.request)) } };
+      });
+      return { runId: run.runId, sessionId: run.sessionId, status: run.status, ...page, pendingPermissions, ...(run.result ? { result: run.result } : {}), ...(run.error ? { error: run.error } : {}) };
     }
     if (name === 'acp_session_cancel') {
       const sessionId = required(args, 'sessionId');
@@ -193,7 +226,7 @@ export const runAcpMcpBridge = async (options: AcpBridgeOptions = {}): Promise<v
       if (initialized) throw new AcpError(-32600, 'MCP is already initialized');
       if (typeof params.protocolVersion !== 'string' || !isRecord(params.capabilities) || !isRecord(params.clientInfo)) throw new AcpError(-32602, 'Invalid MCP initialization');
       initialized = true;
-      return { protocolVersion: ['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25'].includes(params.protocolVersion) ? params.protocolVersion : '2025-06-18', serverInfo: { name: 'local-acp-bridge', version: '1.0.0' }, capabilities: { tools: { listChanged: true } }, instructions: 'Create or load a session, start prompts with acp_prompt_start, then poll runId until completed/failed. Streamed updates and pending permission requests appear in poll. Resolve permissions explicitly with acp_permission_respond only when authorized. Never infer user approval. Cancellation is acp_session_cancel, followed by polling its final stop reason.' };
+      return { protocolVersion: ['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25'].includes(params.protocolVersion) ? params.protocolVersion : '2025-06-18', serverInfo: { name: 'local-acp-bridge', version: '1.0.0' }, capabilities: { tools: { listChanged: true } }, instructions: 'After session_load, consume history pages using replayId/cursor while hasMore. Reconstruct eventReferences with acp_event_read (base64 JSON UTF-8 fragments). Start prompts with acp_prompt_start, then poll runId until completed/failed. Streamed updates and pending permission requests appear in poll. Resolve permissions explicitly with acp_permission_respond only when authorized. Never infer user approval. Cancellation is acp_session_cancel, followed by polling its final stop reason.' };
     }
     if (!initialized) throw new AcpError(-32600, 'MCP initialize must be called first');
     if (method === 'ping') return {};
@@ -212,8 +245,9 @@ export const runAcpMcpBridge = async (options: AcpBridgeOptions = {}): Promise<v
           if (!property || (property.type === 'integer' ? !Number.isSafeInteger(value) : typeof value !== property.type) || (typeof value === 'string' && property.minLength && value.length < property.minLength) || (typeof value === 'number' && ((property.minimum !== undefined && value < property.minimum) || (property.maximum !== undefined && value > property.maximum)))) throw new AcpError(-32602, `Invalid argument: ${key}`);
         }
         const result = await invoke(name, args);
+        if (toolWireBytes(result) > MCP_TOOL_BYTES) throw new AcpError(-32603, 'Tool result exceeds the bounded MCP response limit. Use event/history paging or the ACP stdio bridge.');
         return { content: [{ type: 'text', text: JSON.stringify(result) }] };
-      } catch (error) { return { isError: true, content: [{ type: 'text', text: error instanceof Error ? error.message : 'Tool failed' }] }; }
+      } catch (error) { return { isError: true, content: [{ type: 'text', text: error instanceof Error ? error.message.slice(0, 8192) : 'Tool failed' }] }; }
     }
     throw new AcpError(-32601, `Unsupported MCP method: ${method}`);
   });
