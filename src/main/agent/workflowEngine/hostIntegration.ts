@@ -1,9 +1,10 @@
 import { app } from 'electron'
 import { isAbsolute, join } from 'node:path'
-import type { WorkflowApi, WorkflowDescriptor, WorkflowRunSnapshot, WorkflowStartRequest } from '../../../shared/agentWorkflow.api'
+import type { WorkflowApi, WorkflowDescriptor, WorkflowRunSnapshot, WorkflowSnapshot, WorkflowStartRequest } from '../../../shared/agentWorkflow.api'
 import type { AgentToolSpec } from '../runtime/agentRuntime.types'
 import { runInAgentSession } from '../runtime/agentSessionContext'
 import { modelIoLog } from '../runtime/modelIoLog'
+import { WorkflowActivitySummaryService, type WorkflowActivityDeps } from './activitySummary'
 import { WorkflowSupervisor } from './supervisor'
 import type { WorkflowRuntimeConfig, WorkflowHostToolRequest } from './protocol'
 
@@ -23,6 +24,8 @@ export interface WorkflowHostOptions {
   assertCanStartShortcut?(sessionId: string, otherWorkflowSessions: string[]): void
   runtime(sessionId: string, cwd?: string): Promise<Omit<WorkflowRuntimeConfig, 'tools'> & { cwd: string }>
   tools(signal?: AbortSignal, onApproval?: (waiting: boolean) => void, sessionId?: string): AgentToolSpec[]
+  /** Optional one-sentence status summarizer; without it the snapshot carries counts only. */
+  activity?: Pick<WorkflowActivityDeps, 'runtime' | 'target' | 'debounceMs' | 'minIntervalMs' | 'deadlineMs'>
 }
 
 /** Each tool has a separate ALS owner. A subagent must never cancel its parent chat's resources. */
@@ -38,18 +41,22 @@ export const assertWorkflowSession = (sessionId: string): string => {
 
 export class WorkflowHostIntegration implements WorkflowApi {
   private readonly supervisor: WorkflowSupervisor
+  private readonly activity: WorkflowActivitySummaryService | null
   private closed = false
   private readonly retrying = new Map<string, Promise<WorkflowRunSnapshot>>()
   private readonly stopping = new Set<string>()
   private readonly starting = new Map<string, Set<Promise<WorkflowRunSnapshot>>>()
 
   constructor(private readonly options: WorkflowHostOptions) {
+    this.activity = options.activity
+      ? new WorkflowActivitySummaryService({ ...options.activity, onUpdated: () => this.republishActivity() })
+      : null
     this.supervisor = new WorkflowSupervisor({
       workflowWorkerPath: join(__dirname, 'workflow-engine.worker.mjs'),
       agentWorkerPath: join(__dirname, 'workflow-agent.worker.mjs'),
       storageDir: join(app.getPath('userData'), 'workflow-runs'),
       broadcast: snapshot => {
-        options.broadcast(snapshot)
+        options.broadcast(this.withActivity(snapshot))
         this.deliverSettled(snapshot.runs)
       },
       recordIo: (sessionId, line) => {
@@ -137,6 +144,21 @@ export class WorkflowHostIntegration implements WorkflowApi {
     this.options.assertCanStartShortcut(sessionId, others)
   }
 
+  /** Every published snapshot carries the current per-chat activity, including an empty list. */
+  private withActivity(snapshot: WorkflowSnapshot, sessionId?: string): WorkflowSnapshot {
+    if (!this.activity) return snapshot
+    this.activity.update(snapshot.runs)
+    return { ...snapshot, activity: this.activity.list(sessionId) }
+  }
+
+  /** A sentence lands after its snapshot was already published; republish that same state. */
+  private republishActivity(): void {
+    if (this.closed || !this.activity) return
+    void this.supervisor.list()
+      .then(snapshot => { if (!this.closed) this.options.broadcast(this.withActivity(snapshot)) })
+      .catch(error => console.warn('[workflow] activity summary not published', String(error)))
+  }
+
   private deliverSettled(runs: WorkflowRunSnapshot[]): void {
     for (const run of runs) if (run.status !== 'running' && run.status !== 'stopping') {
       // Persisted terminal snapshots are the durable outbox. The consumer deduplicates by run ID.
@@ -146,7 +168,11 @@ export class WorkflowHostIntegration implements WorkflowApi {
   async listRuns(params?: { sessionId?: string }) {
     const snapshot = await this.supervisor.list(params?.sessionId)
     this.deliverSettled(snapshot.runs)
-    return snapshot
+    // A filtered listing must not retire other chats' activity, so update from the full snapshot.
+    if (!this.activity || !params?.sessionId) return this.withActivity(snapshot)
+    const full = await this.supervisor.list()
+    this.activity.update(full.runs)
+    return { ...snapshot, activity: this.activity.list(params.sessionId) }
   }
   private async requireAgent(params: { sessionId: string; runId: string; agentId: string }): Promise<void> {
     assertWorkflowSession(params.sessionId)
@@ -195,6 +221,7 @@ export class WorkflowHostIntegration implements WorkflowApi {
   }
   async dispose() {
     this.closed = true
+    this.activity?.dispose()
     await Promise.all([this.supervisor.dispose(), ...[...this.starting.values()].flatMap((starts) => [...starts].map((pending) => pending.catch(() => undefined)))])
   }
 

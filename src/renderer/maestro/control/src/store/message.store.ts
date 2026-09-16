@@ -1,4 +1,6 @@
-import { workflowCompletionId, workflowCompletionText } from '@shared/workflowCompletion'
+import { workflowCompletionId } from '@shared/workflowCompletion'
+import { workflowCompletionChatText } from '../workflow.presentation'
+import { workflowText } from '../workflow.text'
 import type { WorkflowIpcApi, WorkflowSnapshot, WorkflowRunSnapshot } from '@shared/agentWorkflow.api'
 import { markRaw, nextTick, reactive } from 'vue'
 import { inject, injectable } from 'inversify'
@@ -328,7 +330,7 @@ export class MessageStoreState {
       return
     }
     this.workflowUnsaved.add(id)
-    session.messages.push(this.withTokenCount({ id, source: 'cowork', role: 'ai', content: workflowCompletionText(run), streaming: false,
+    session.messages.push(this.withTokenCount({ id, source: 'cowork', role: 'ai', content: workflowCompletionChatText(run, workflowText()), streaming: false,
       // Main inserts this result into its own context, independently of the renderer's hydration.
       promptExcluded: true, ts: run.endedAt ?? run.createdAt }))
     if (await this.persistSession(session)) this.workflowUnsaved.delete(id)

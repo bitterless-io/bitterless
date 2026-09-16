@@ -20,6 +20,8 @@ import { createBoundsApplier } from './viewBounds'
 export interface MaestroTabAliasViewServiceState {
   browserWindow: BrowserWindow | null
   opBounds: ViewRect | null
+  /** 首帧兜底:一次矩形都还没量出来时催 controller 重跑一遍摆位(同 composite tab 那条路)。 */
+  layout(): void
   emitTrace(event: TraceEvent): void
 }
 
@@ -43,9 +45,29 @@ export class MaestroTabAliasViewService extends CommonService<MaestroTabAliasVie
    */
   private ready = false
   private attached = false
+  /**
+   * 这一层**这扇窗内**已经起不来了(加载失败 / 渲染进程没了)。
+   *
+   * 没有这个闩,一次失败就把功能永久毒死:`ready` 停在 `false` 而 view 还活着,于是
+   * `ensureView()` 复用它、永远不再加载,下一次 `requestAlias` 存下 `settle` 后**谁也结不掉** ——
+   * `promptTabAlias` 永远 await 在那儿,而此后每一次点 `Alias…` 都因为 `this.dialog` 还占着直接
+   * 返回 `null`:菜单项照样可点,点了什么也不发生,一行日志都没有
+   * (docs/issues/maestro-tab-alias-does-nothing.md;cowork 的 `ShellAlertViewService` 同款闩)。
+   */
+  private unavailable = false
   private revision = 0
   private dialog: MaestroTabAliasDialog | null = null
   private settle: ((value: string | null) => void) | null = null
+
+  /**
+   * 开窗时预建预载,把渲染进程的启动成本从「点开菜单那一刻」挪走。
+   *
+   * 也把第一次弹窗的链路缩短一节:`ready` 早就为真,`requestAlias` 一次 `present()` 就挂上,
+   * 不必再依赖加载完成后的那次补挂。失败照样走 `unavailable` 闩。
+   */
+  preload(): void {
+    this.ensureView()
+  }
 
   /**
    * 弹出别名表单,`null` = 取消(Escape / 取消按钮 / 表单被拆掉)。
@@ -56,6 +78,12 @@ export class MaestroTabAliasViewService extends CommonService<MaestroTabAliasVie
   requestAlias(params: { tabLabel: string; alias: string }): Promise<string | null> {
     if (this.dialog) {
       this._state.emitTrace({ kind: 'info', msg: 'tab alias: a dialog is already open', ts: Date.now() })
+      return Promise.resolve(null)
+    }
+    // 起不来就**当场认**,而不是存下 settle 去等一个永远不会到的 ready。每次都记一行:
+    // 否则「点了没反应」在 trace 里是一片空白。
+    if (this.unavailable) {
+      this._state.emitTrace({ kind: 'error', msg: 'tab alias: the dialog layer is unavailable in this window', ts: Date.now() })
       return Promise.resolve(null)
     }
     const dialog: MaestroTabAliasDialog = {
@@ -101,15 +129,15 @@ export class MaestroTabAliasViewService extends CommonService<MaestroTabAliasVie
 
   reset(): void {
     const view = this.view
-    this.dialog = null
     this.detach()
     this.view = null
     this.ready = false
     this.bounds = null
     this.revision = 0
-    const settle = this.settle
-    this.settle = null
-    settle?.(null)
+    // 新窗口 = 一次全新的加载尝试。闩住的是**这一个 view 的加载结果**,不是「这台机器上这个
+    // 功能永久坏了」。
+    this.unavailable = false
+    this.failOpen()
     if (!view || view.webContents.isDestroyed()) return
     try {
       view.webContents.close()
@@ -123,6 +151,9 @@ export class MaestroTabAliasViewService extends CommonService<MaestroTabAliasVie
       this.detach()
       return
     }
+    // 一次矩形都没有就先催一次布局 —— 不催的话这一发只会卡在 `gate=bounds` 上,而调用方还
+    // await 着那个永远不会被结掉的 Promise(约束 3)。
+    if (!this.bounds && !this._state.opBounds) this._state.layout()
     const view = this.ensureView()
     this.attach()
     if (view && this.attached && !view.webContents.isDestroyed()) view.webContents.focus()
@@ -143,8 +174,19 @@ export class MaestroTabAliasViewService extends CommonService<MaestroTabAliasVie
     })
     // 透明:表单自己画一层 scrim,底下的操作区要透出来 —— 这是「对话框」而不是「另一个页面」。
     view.setBackgroundColor('#00000000')
+    // 没有对话框的时候它既不在子节点列表里、也不可见 —— 两道都要,和 cowork 那份一致。
+    view.setVisible(false)
     this.view = view
     this.ready = false
+    // 渲染进程死在半路:`.catch` 管加载失败、`reset()` 管关窗,这一条谁都不走 —— `settle` 还存着,
+    // 而能调它的那个页面已经没了。不收场就和加载失败一模一样地把功能毒死。
+    view.webContents.on('render-process-gone', (_event, details) => {
+      if (this.view !== view) return
+      this._state.emitTrace({ kind: 'error', msg: `tab alias renderer gone (${details.reason}) — resolving as cancelled`, ts: Date.now() })
+      this.unavailable = true
+      this.detach()
+      this.failOpen()
+    })
     const entryFile = join(__dirname, '../renderer/maestro/tabAlias/index.html')
     const load =
       is.dev && process.env['ELECTRON_RENDERER_URL']
@@ -160,10 +202,21 @@ export class MaestroTabAliasViewService extends CommonService<MaestroTabAliasVie
       .catch((err) => {
         if (this.view !== view) return
         this._state.emitTrace({ kind: 'error', msg: 'tab alias load: ' + (err as Error).message, ts: Date.now() })
-        // 表单起不来就没有答案可取,按取消收场 —— 用户的 alias 一个字都不会被改掉。
-        this.resolveDialog({ dialogId: this.dialog?.dialogId ?? '', outcome: 'cancel' })
+        // **先闩后结**:闩管的是这之后的每一次请求,少了它 `ready` 停在 false、view 却还活着,
+        // 下一次请求就挂在一个没人能 resolve 的 Promise 上。
+        this.unavailable = true
+        this.failOpen()
       })
     return view
+  }
+
+  /** 这一层不可用时的收场:等着的那个 Promise 按「什么都不改」结掉,而不是把调用方永远吊住。 */
+  private failOpen(): void {
+    const settle = this.settle
+    this.dialog = null
+    this.settle = null
+    this.revision += 1
+    settle?.(null)
   }
 
   /**
@@ -190,14 +243,21 @@ export class MaestroTabAliasViewService extends CommonService<MaestroTabAliasVie
               ? 'bounds'
               : null
     if (gate) {
-      // 「对话框在 PDF 后面」和「对话框根本没挂上」是两件完全不同的事,不点名就要靠猜。
+      // 「对话框在页面底下」和「对话框根本没挂上」是两件完全不同的事,不点名就要靠猜。
+      // 走 `emitTrace` 而不是只打 `console.info`:主进程的 console 不进 electron-log,
+      // 打包版里那一行谁也看不到,于是「点了没反应」在日志里是一片空白。
       console.info(`[maestro] event=tab-alias-blocked gate=${gate}`)
+      if (gate !== 'closed') {
+        this._state.emitTrace({ kind: 'info', msg: `tab alias: dialog not attached (gate=${gate})`, ts: Date.now() })
+      }
       return
     }
     if (!win || !view || !bounds) return
     this.applyBounds(view, bounds)
     win.contentView.addChildView(view)
     this.attached = true
+    // 挂上之后才显 —— 建的时候是 `setVisible(false)`。成对,和 cowork 那份一致。
+    view.setVisible(true)
   }
 
   private detach(): void {
@@ -205,6 +265,7 @@ export class MaestroTabAliasViewService extends CommonService<MaestroTabAliasVie
     const view = this.view
     this.attached = false
     if (!win || win.isDestroyed() || !view) return
+    if (!view.webContents.isDestroyed()) view.setVisible(false)
     try {
       // 摘掉而不是销毁:渲染进程留着,下一次弹窗是即时的。
       win.contentView.removeChildView(view)

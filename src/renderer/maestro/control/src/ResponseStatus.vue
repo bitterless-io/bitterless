@@ -4,14 +4,17 @@ import {
   IconAlertTriangle,
   IconChevronDown,
   IconClock,
-  IconCornerDownRight
+  IconCornerDownRight,
+  IconSquares
 } from '@tabler/icons-vue'
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
 import { isTaskLive, type MaestroTask } from '@maestro-shared/task.api'
+import { workflowActivityFacts } from './workflow.presentation'
 import type { MessageSession } from './store/message.type'
 import { isRejection } from './store/turn.service'
 import { messageStore } from './store/message.store'
 import { taskStore } from './store/task.store'
+import { workflowStore } from './store/workflow.store'
 import './ResponseStatus.less'
 
 const props = defineProps<{ session: MessageSession }>()
@@ -130,6 +133,29 @@ const status = computed<StatusView | null>(() => {
   }
 })
 
+/**
+ * Background Agents get their own row instead of a phase in `status`.
+ *
+ * They are not this turn's work, so they must neither replace "Thinking…" nor vanish when the
+ * turn settles — a finished turn with Agents still running previously left the bar empty, and
+ * the user could not tell what the chat was waiting on.
+ */
+const activityFacts = computed(() => workflowActivityFacts(workflowStore.runs, props.session.id))
+const backgroundAgents = computed<{ tone: 'wait' | 'run'; text: string; meta: string } | null>(() => {
+  const facts = activityFacts.value
+  if (!facts.agents) return null
+  const counts = facts.awaitingUser
+    ? i18nHelper.workflow.activityApproval.replace('{count}', String(facts.awaitingUser))
+    : i18nHelper.workflow.activityWorking.replace('{count}', String(facts.agents))
+  // The model sentence says what the work is; the localized counts stay as the always-true meta.
+  const sentence = workflowStore.activityFor(props.session.id)?.text?.trim() || ''
+  return {
+    tone: facts.awaitingUser ? 'wait' : 'run',
+    text: sentence || counts,
+    meta: [sentence ? counts : '', facts.startedAt ? elapsed(facts.startedAt) : ''].filter(Boolean).join(' · ')
+  }
+})
+
 const canRetry = computed(() =>
   Boolean(props.session.retryable && !props.session.turn && !messageStore.turnService.busyElsewhere(props.session.id))
 )
@@ -186,7 +212,7 @@ const stopClock = (): void => {
 }
 
 watch(
-  () => Boolean(status.value),
+  () => Boolean(status.value) || Boolean(backgroundAgents.value),
   (active) => {
     if (!active) return stopClock()
     if (!clock) clock = setInterval(() => (tick.value = Date.now()), 1_000)
@@ -213,7 +239,7 @@ onUnmounted(() => {
 
 <template>
   <div
-    v-if="status || canRetry || steeringLabel"
+    v-if="status || canRetry || steeringLabel || backgroundAgents"
     ref="rootEl"
     name="maestro__response_status"
     class="response-status"
@@ -232,6 +258,17 @@ onUnmounted(() => {
       <button type="button" class="response-status__retry-button" @click="retryAgain">
         {{ i18nHelper.maestroControl.responseStatus.tryAgain }}
       </button>
+    </div>
+
+    <div
+      v-if="backgroundAgents"
+      name="maestro__response_status__agents"
+      class="response-status__agents"
+      :class="`response-status__agents--${backgroundAgents.tone}`"
+    >
+      <IconSquares :size="13" stroke="1.9" />
+      <span class="response-status__agents-text" :title="backgroundAgents.text">{{ backgroundAgents.text }}</span>
+      <span v-if="backgroundAgents.meta" class="response-status__agents-meta">{{ backgroundAgents.meta }}</span>
     </div>
 
     <div v-if="steeringLabel" class="response-status__steering">

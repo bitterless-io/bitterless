@@ -22,7 +22,8 @@ const deferred = () => { let resolve, reject; const promise = new Promise((a, b)
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve() }
 const Browser = actualMembers('src/main/maestro/windows/main/maestroBrowserView.service.ts', [
   'initializeViewSlot', 'startTabNavigation', 'isLiveTabView', 'ensureWarm', 'warmAndLoad', 'activateTab', 'claimSpareTab', 'openControlledBlankTab',
-  'navigate', 'reload', 'goBack', 'goForward', 'attachViewListeners', 'schedulePrewarmSpare', 'prewarmSpare'
+  'navigate', 'reload', 'goBack', 'goForward', 'attachViewListeners', 'schedulePrewarmSpare', 'prewarmSpare',
+  'showsPreparedBlank', 'revealTabContent'
 ], {
   prepareBrowserDocument, localHomeEntry: () => ({ url: 'file:///home.html' }), xpcMain: { broadcast() {} },
   bindBrowserHistoryRecorder() {}, browserHistory: {}, isWorkbenchInternalUrl: () => false,
@@ -91,12 +92,15 @@ test('cold restored activation displays immediately and first request waits only
   const { service, tab } = fixture(context, { ready, fullAttach, recording: recording.promise })
   const a = tab('a')
   await service.activateTab({ id: a.id })
-  assert.equal(a.view.visible, true)
+  // 活动 tab 立刻换成它,但**预备空白页不许显出来** —— 那是内部引导,显出来就是一块盖住宿主
+  // 底图的不透明矩形(深色外观下即黑屏,见 docs/issues/maestro-blank-new-tab-paints-black.md)。
+  assert.equal(a.view.visible, false)
   assert.equal(a.navigationStarted, true)
   assert.deepEqual(a.view.webContents.loads, ['about:blank'])
   ready.resolve()
   await flush()
   assert.deepEqual(a.view.webContents.loads, ['about:blank', a.url])
+  assert.equal(a.view.visible, true, '真实文档一提交就显出来')
   await service.activateTab({ id: a.id })
   await service.warmAndLoad(a)
   assert.equal(a.view.webContents.loads.length, 2)

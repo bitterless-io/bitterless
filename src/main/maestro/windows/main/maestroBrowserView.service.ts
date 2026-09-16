@@ -1015,6 +1015,32 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     return view
   }
 
+  /**
+   * 这个 tab 的 view 现在画的是不是那张**预备空白页**。
+   *
+   * `prepareBrowserDocument` 给每个 slot 装一张 `about:blank`(restored-browser-tab-navigation-delay.md
+   * 的批准契约,为的是首次导航不再被完整 CDP attach 卡三秒)。那是内部引导,**不是内容** ——
+   * 显出来就会把宿主页 `Layout.vue` 那张居中的 Bitterless 底图整块盖掉,而深色外观下 Chromium
+   * 给没有作者背景的文档取的基色是近黑,于是空白新标签页是一整块黑
+   * (docs/issues/maestro-blank-new-tab-paints-black.md)。
+   *
+   * 判据取「view 现在停在哪张文档」而不是 `tab.url`:加载中的 tab 有 URL 但页面还没提交,
+   * 那段时间该看见的仍然是底图,不是黑块 —— cowork 的空白 view 从不导航,表现正是如此。
+   */
+  private showsPreparedBlank(tab: OperationTab): boolean {
+    const view = tab.view
+    if (!view || tab.kind !== 'browser' || view.webContents.isDestroyed()) return false
+    return this.initializingViews.has(view) || view.webContents.getURL() === 'about:blank'
+  }
+
+  /** 真实文档提交了:如果它是当前 tab,把 view 显出来。只升不降,隐藏归 `hideTabContent`。 */
+  private revealTabContent(tab: OperationTab): void {
+    if (this.activeTabId !== tab.id) return
+    const view = tab.view
+    if (!view || view.webContents.isDestroyed()) return
+    view.setVisible(true)
+  }
+
   /** Hide a tab's content, whichever kind of content it has. */
   private hideTabContent(tab: OperationTab): void {
     const composite = this.compositeTabs.get(tab.id)
@@ -1285,6 +1311,8 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       const tab = this.ownerOf(view)
       if (!tab || url === 'about:blank') return
       if (tab.kind !== 'home') tab.url = url
+      // 真实文档提交了 —— 在此之前这个 view 还停在预备空白页,是隐藏的(`showsPreparedBlank`)。
+      this.revealTabContent(tab)
       if (this.activeTabId === tab.id || this._state.captureTargetTabId === tab.id) this.sendTabNav(tab, true)
       this.broadcastTabs()
     })
@@ -1332,6 +1360,9 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       const tab = this.ownerOf(view)
       if (tab && errorCode !== -3) tab.browserError = { status: 'load-failed', error: `${errorDescription} (${errorCode})` }
       if (tab) this.setTabLoading(tab, false)
+      // 失败也要现身:没有这一行,一个提交不了任何文档的 tab 会永远停在宿主底图上,
+      // 看起来像「点了没反应」而不是「这一页打不开」。
+      if (tab) this.revealTabContent(tab)
       this.broadcastTabs()
     })
     wc.on('render-process-gone', (_event, details) => {
@@ -2172,7 +2203,9 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     this._state.replayEngine = tab.kind === 'browser' ? tab.replay : null
     this._state.currentUrl = this.displayUrl(tab) || this._state.currentUrl
     if (tab.view && !tab.view.webContents.isDestroyed()) {
-      tab.view.setVisible(true)
+      // 还停在预备空白页的 view 不显出来 —— 显出来就是一块盖住宿主底图的不透明矩形
+      // (深色外观下就是黑屏)。文档一提交由 `revealTabContent` 接手。
+      tab.view.setVisible(!this.showsPreparedBlank(tab))
       if (this.isPinnedHomeTab(tab)) this.openPinnedHomeDevTools(tab, tab.view)
       if (this._state.opBounds) this.applyBounds(tab.view, this._state.opBounds)
       else this._state.layout()

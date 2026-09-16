@@ -1,9 +1,11 @@
 import { reactive } from 'vue'
 import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer'
-import type { WorkflowIpcApi, WorkflowDescriptor, WorkflowRunSnapshot, WorkflowSnapshot, WorkflowStartRequest } from '@shared/agentWorkflow.api'
+import type { WorkflowActivitySummary, WorkflowIpcApi, WorkflowDescriptor, WorkflowRunSnapshot, WorkflowSnapshot, WorkflowStartRequest } from '@shared/agentWorkflow.api'
 const api = createXpcRendererEmitter<WorkflowIpcApi>('WorkflowHandler')
 class WorkflowStore {
   runs: WorkflowRunSnapshot[] = []
+  /** Model-written status sentences; absent entries leave the renderer's own line in place. */
+  activity: WorkflowActivitySummary[] = []
   revision = -1
   loading = false
   loadFailed = false
@@ -34,8 +36,13 @@ class WorkflowStore {
   private apply(snapshot: WorkflowSnapshot): void {
     if (!snapshot || !Array.isArray(snapshot.runs) || !Number.isFinite(snapshot.revision) || snapshot.revision < this.revision) return
     this.runs = snapshot.runs
+    this.activity = Array.isArray(snapshot.activity) ? snapshot.activity : []
     this.revision = snapshot.revision
     this.loadFailed = false
+  }
+
+  activityFor(sessionId: string): WorkflowActivitySummary | undefined {
+    return this.activity.find(entry => entry.sessionId === sessionId)
   }
   async init(): Promise<void> {
     if (!this.subscribed) {

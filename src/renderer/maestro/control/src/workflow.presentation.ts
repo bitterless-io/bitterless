@@ -1,4 +1,7 @@
-import { isWorkflowAgentLive, type WorkflowAgentTask, type WorkflowRunSnapshot } from '@shared/agentWorkflow.api'
+import { isWorkflowAgentLive, workflowActivityFacts, type WorkflowAgentTask, type WorkflowRunSnapshot } from '@shared/agentWorkflow.api'
+
+/** Re-exported so a view reads its own module's presentation layer, not the wire contract. */
+export { workflowActivityFacts }
 
 export type WorkflowTaskCategory = 'active' | 'paused' | 'completed' | 'failed' | 'stopped'
 export interface WorkflowTaskGroup { category: WorkflowTaskCategory; tasks: WorkflowAgentTask[]; runs: WorkflowRunSnapshot[] }
@@ -22,4 +25,37 @@ export function groupWorkflowTasks(runs: readonly WorkflowRunSnapshot[]): Workfl
     for (const task of run.agents) byCategory[task.status === 'paused' ? 'paused' : isWorkflowAgentLive(task.status) ? 'active' : task.status as 'completed' | 'failed' | 'stopped'].tasks.push(task)
   }
   return groups.filter(group => group.tasks.length || group.runs.length)
+}
+
+export interface WorkflowCompletionStrings {
+  finishedTitle: string
+  finishedFailedTitle: string
+  finishedPartialTitle: string
+  finishedStoppedTitle: string
+  finishedNoResult: string
+  finishedAgents: string
+  states: Record<WorkflowAgentTask['status'], string>
+}
+
+/**
+ * The chat projection of a settled run, in the user's language.
+ *
+ * Main keeps its own English context string for the model; this one exists because the user has
+ * to notice the outcome in the conversation itself, not only in the task history.
+ */
+export function workflowCompletionChatText(run: WorkflowRunSnapshot, text: WorkflowCompletionStrings): string {
+  const failed = run.agents.filter(agent => agent.status === 'failed').length
+  const template = run.status === 'failed'
+    ? text.finishedFailedTitle
+    : run.status === 'stopped'
+      ? text.finishedStoppedTitle
+      : failed
+        ? text.finishedPartialTitle.replace('{count}', String(failed))
+        : text.finishedTitle
+  const roster = run.agents.map(agent => `- ${agent.label}: ${text.states[agent.status] ?? agent.status}`).join('\n')
+  return [
+    `**${template.replace('{name}', run.name)}**`,
+    run.result?.trim() || run.error?.trim() || text.finishedNoResult,
+    roster ? `${text.finishedAgents}\n${roster}` : ''
+  ].filter(Boolean).join('\n\n')
 }

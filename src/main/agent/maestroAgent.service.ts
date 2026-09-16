@@ -304,6 +304,14 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
             .filter(Boolean).join('\n\n')
         }
       },
+      // A cheap, tool-free sentence for the chat status bar; the same short-job model as titles.
+      activity: {
+        runtime: new PiRuntimeAdapter(),
+        target: () => ({
+          providerId: 'openai-codex', modelId: 'gpt-5.6-luna', thinkingLevel: 'low',
+          authPath: maestroAuthPath(), modelsPath: maestroModelsPath(), agentDir: maestroAgentDir()
+        })
+      },
       tools: (signal, onApproval, sessionId) => {
         const registry = new HostToolRegistry({
           scope: 'cowork', policies: this.hostToolPolicies,

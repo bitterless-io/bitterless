@@ -643,6 +643,10 @@ class MaestroWindowController
       )
     })
     const spareReady = homeReady.then(() => this.browserView.prewarmSpare())
+    // 别名表单的覆盖层预建预载 —— 把渲染进程的启动成本从「点开 `Alias…` 那一刻」挪到开窗时,
+    // 第一次弹窗才是一次 `present()` 就挂上(tab-alias.md #2.1)。**刻意不进 `backgroundReady`
+    // 的 allSettled**:一个改名表单起不来不该判整扇窗启动失败,它自己有 `unavailable` 闩收场。
+    void homeReady.then(() => this.tabAliasView.preload()).catch(() => undefined)
 
     // The BrowserWindow Shell plus its Home host is the first-visible contract. Pinned Home,
     // Control, hidden Workbench, startup navigation, and spare-view prewarming are useful

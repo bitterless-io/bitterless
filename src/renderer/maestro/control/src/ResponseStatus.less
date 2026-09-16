@@ -7,6 +7,7 @@
 
 .response-status__bar,
 .response-status__retry,
+.response-status__agents,
 .response-status__steering {
   display: flex;
   min-height: 26px;
@@ -28,6 +29,11 @@
   font-weight: 650;
 }
 .response-status__retry-button:hover { background: #323955; }
+
+.response-status__agents { min-height: 22px; color: #4e5882; }
+.response-status__agents--wait { color: #b25e09; }
+.response-status__agents-text { min-width: 0; flex: 1; overflow: hidden; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.response-status__agents-meta { flex-shrink: 0; color: var(--color-text-4); font-size: 10.5px; font-variant-numeric: tabular-nums; }
 
 .response-status__steering { min-height: 22px; color: #4e5882; font-weight: 650; }
 .response-status__steering span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

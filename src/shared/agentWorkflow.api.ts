@@ -34,7 +34,23 @@ export interface WorkflowRunSnapshot {
   result?: string
   error?: string
 }
-export interface WorkflowSnapshot { runs: WorkflowRunSnapshot[]; revision: number }
+/**
+ * One-sentence account of a chat's background Agent work, for the chat status bar.
+ *
+ * `text` is written by a model in the task's own language and may be absent; the deterministic
+ * counts always travel with it so the renderer can localize its own line without a model.
+ */
+export interface WorkflowActivitySummary {
+  sessionId: string
+  text: string
+  runs: number
+  agents: number
+  awaitingUser: number
+  /** Earliest active Agent start, for elapsed time. 0 when unknown. */
+  startedAt: number
+  generatedAt: number
+}
+export interface WorkflowSnapshot { runs: WorkflowRunSnapshot[]; revision: number; activity?: WorkflowActivitySummary[] }
 export interface WorkflowStartRequest { sessionId: string; entry: WorkflowEntry; input: string; cwd?: string; origin?: 'shortcut' }
 export interface WorkflowDescriptor { name: WorkflowBuiltinName; description: string }
 export interface WorkflowApi {
@@ -60,6 +76,52 @@ export const isWorkflowAgentLive = (status: WorkflowAgentStatus): boolean =>
 
 /** A paused Agent stays live and stoppable, but does not occupy the active task bar. */
 export const isWorkflowAgentActive = (status: WorkflowAgentStatus): boolean => isWorkflowAgentLive(status) && status !== 'paused'
+
+/** Deterministic view of one chat's active Agents; main and renderer must agree on these counts. */
+export interface WorkflowActivityFacts {
+  runs: number
+  agents: number
+  awaitingUser: number
+  startedAt: number
+  /** Changes only when the described work changes, so an unchanged snapshot costs no model call. */
+  signature: string
+  /**
+   * The Agents themselves, without their momentary step.
+   *
+   * A sentence describes this set, so it survives a tool step changing underneath it; when the set
+   * changes the old sentence no longer describes the work and must not be shown.
+   */
+  scope: string
+  /** Bounded JSON handed to the summarizing model. Never includes credentials or full outputs. */
+  brief: string
+}
+
+export function workflowActivityFacts(runs: readonly WorkflowRunSnapshot[], sessionId: string): WorkflowActivityFacts {
+  const active = runs
+    .filter(run => run.sessionId === sessionId)
+    .flatMap(run => run.agents.filter(agent => isWorkflowAgentActive(agent.status)).map(agent => ({ run, agent })))
+  const started = active.map(({ agent }) => agent.startedAt ?? agent.queuedAt).filter(value => Number.isFinite(value) && value > 0)
+  return {
+    runs: new Set(active.map(({ run }) => run.id)).size,
+    agents: active.length,
+    awaitingUser: active.filter(({ agent }) => agent.status === 'approval').length,
+    startedAt: started.length ? Math.min(...started) : 0,
+    signature: active
+      .map(({ run, agent }) => [run.id, agent.id, agent.status, (agent.currentAction || '').slice(0, 80)].join(''))
+      .sort()
+      .join('\n'),
+    scope: active.map(({ run, agent }) => [run.id, agent.id, agent.label].join('|')).sort().join('\n'),
+    brief: JSON.stringify({
+      tasks: active.slice(0, 8).map(({ run, agent }) => ({
+        workflow: run.name,
+        goal: run.input.slice(0, 200),
+        agent: agent.label,
+        status: agent.status,
+        doing: (agent.currentAction || '').slice(0, 120)
+      }))
+    })
+  }
+}
 
 export type WorkflowCommand =
   | { kind: 'list' }

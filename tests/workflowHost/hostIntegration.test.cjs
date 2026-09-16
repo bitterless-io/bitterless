@@ -18,6 +18,7 @@ function load(relative, modules = {}) {
   return module.exports
 }
 const context = load('src/main/agent/runtime/agentSessionContext.ts')
+const activityModule = load('src/main/agent/workflowEngine/activitySummary.ts', { '../../../shared/agentWorkflow.api': load('src/shared/agentWorkflow.api.ts') })
 function integration(tools = () => [], runtime, assertCanStartShortcut) {
   let supervisor
   class Supervisor {
@@ -33,7 +34,7 @@ function integration(tools = () => [], runtime, assertCanStartShortcut) {
   }
   const { WorkflowHostIntegration } = load('src/main/agent/workflowEngine/hostIntegration.ts', {
     electron: { app: { getPath: () => '/test-user-data' } },
-    './supervisor': { WorkflowSupervisor: Supervisor }, '../runtime/agentSessionContext': context,
+    './supervisor': { WorkflowSupervisor: Supervisor }, './activitySummary': activityModule, '../runtime/agentSessionContext': context,
     '../runtime/modelIoLog': { modelIoLog: { append() {} } }
   })
   const host = new WorkflowHostIntegration({

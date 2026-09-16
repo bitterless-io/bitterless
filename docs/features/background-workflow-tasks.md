@@ -42,3 +42,46 @@ Use current typography/theme tokens and Tabler icons, borderless controls, backg
 - Additional tasks use read-only `agent-task`; they do not rewrite another workflow graph. Per-task detail keeps the workflow name and short run ID. Task history remains accessible from the vertical-dots menu when the bottom active count reaches zero.
 - Verification: 117 workflow engine/host/UI tests; 37 actual message store/SQLite fixture tests; focused Vue and strict engine/inbox typechecks passed. Root also verified compiled Vue + Less in an isolated headless browser. No Electron E2E or live-model calls.
 - Broader main-surface check currently has 64 diagnostics outside the newly added implementation, including an existing SessionIoPathResult narrowing error in MaestroAgentService. Focused changed engine/inbox and renderer checks pass.
+
+## Status bar and completion visibility (2026-09-16)
+
+The task bar counts Agents; it does not say what the chat is waiting on, and a settled turn with
+Agents still running left the status bar empty. Two additions close that gap.
+
+### Status row
+
+- The existing ResponseStatus gains one dedicated background-Agents row. It is not a phase in the
+  turn status chain: it must neither replace `Thinking…` during a live turn nor disappear when the
+  turn settles. With zero active Agents the row is absent and the bar reserves no height.
+- The row always carries deterministic, snapshot-derived facts: active Agent count, workflow count,
+  Agents awaiting a decision, and elapsed time from the earliest active Agent. Paused, completed,
+  failed and stopped Agents are not active. These counts are computed by one shared function so
+  main and renderer cannot disagree.
+- `WorkflowSnapshot` additionally carries a per-chat `activity` entry whose `text` is a single
+  sentence written by a short, tool-free model call describing the work in progress, in the task's
+  own language. The renderer shows that sentence as the line and keeps the localized counts as
+  meta. An absent, invalid, slow or failed sentence degrades to the localized counted line — never
+  to a fabricated status, progress claim or completion claim.
+- Summaries are per chat, generated only when the described work changes, debounced, rate limited
+  and deadline bounded. A sentence whose work has already changed is discarded rather than shown.
+  The summarizer never blocks a workflow, a turn or a broadcast, and its brief carries no
+  credentials or full Agent output.
+- A sentence describes the *set of Agents*, not their momentary tool step. The next tool step
+  refreshes it in place and must not blank the row — blanking on every step made the row flicker
+  between sentence and counts. A changed Agent set does blank it at once: a sentence about one
+  Agent must not stand in for two. The counts stay correct throughout.
+- An unusable model costs a bounded number of attempts (3 consecutive), not one call per interval
+  forever. A changed Agent set is new work and restores the budget.
+
+### Completion in the conversation
+
+- A settled run already reaches the main Agent's context and the task history. It must also reach
+  the conversation as one durable, deduplicated, prompt-excluded message, written in the user's
+  language: outcome title (finished / failed / stopped / finished with N failed Agents), the result
+  or error, and the per-Agent roster. An empty outcome says so explicitly.
+
+### Verification
+
+Shared fact computation, summary scheduling and degradation, host snapshot/activity wiring,
+renderer row conditions, localized bundles and the completion projection are covered by targeted
+tests in both apps. No Electron E2E or live model call is part of this verification.

@@ -3,8 +3,10 @@ export interface WorkflowUiMessages {
  commandHint: string; commandUsage: string; commandAttachments: string; commandUnknown: string; commandInput: string; commandWorkspace: string; commandStarted: string; commandBusy: string; demoInput: string;
  categories: Record<'active' | 'paused' | 'completed' | 'failed' | 'stopped', string>; partialFailure: string;
  pause: string; resume: string; tasks: string; count: string; current: string; stopAll: string; stoppingAll: string; stop: string; collapse: string; expand: string; empty: string; emptyHint: string; ended: string; logs: string; result: string; scroll: string; loadError: string; stopError: string; retry: string; rerun: string; retryError: string; retryUnavailable: string; loading: string; waiting: string; failures: string; complete: string; working: string; states: Record<WorkflowAgentStatus,string>
+ activityWorking: string; activityApproval: string; activitySub: string; finishedTitle: string; finishedFailedTitle: string; finishedPartialTitle: string; finishedStoppedTitle: string; finishedNoResult: string; finishedAgents: string
 }
 export const workflowEn: WorkflowUiMessages = {
+ activityWorking: 'Waiting for {count} background Agents to finish', activityApproval: '{count} background Agents need your decision', activitySub: '{count} Agents · {runs} workflows', finishedTitle: 'Workflow {name} finished', finishedFailedTitle: 'Workflow {name} failed', finishedPartialTitle: 'Workflow {name} finished with {count} failed Agents', finishedStoppedTitle: 'Workflow {name} was stopped', finishedNoResult: 'No result was produced.', finishedAgents: 'Agent tasks',
  pause: 'Pause Agent', resume: 'Resume Agent', tasks: 'Tasks',
  categories: { paused: 'Paused', active: 'In progress', completed: 'Completed', failed: 'Failed', stopped: 'Stopped' }, partialFailure: 'Finished with failed Agents',
  commandHint: "List workflows or run /workflow <name> <task>",
@@ -19,6 +21,7 @@ export const workflowEn: WorkflowUiMessages = {
  count: '{count} tasks', current:'Current chat',stopAll:'Stop all',stoppingAll:'Stopping…',stop:'Stop Agent',collapse:'Collapse task list',expand:'Expand task list',empty:'No Agent tasks in this chat',emptyHint:'Tasks appear here when a workflow starts.',ended:'Finished',logs:'Work log',result:'Result',scroll:'Scroll to see more',loadError:'Could not load workflow tasks.',stopError:'Could not stop the selected work.',retry:'Retry',rerun:'Rerun entire workflow',retryError:'Could not restart the workflow.',retryUnavailable:'Start this older workflow again with /workflow.',loading:'Loading tasks…',waiting:'{count} waiting for confirmation',failures:'{count} failed',complete:'All tasks finished',working:'Agents are working',states:{pausing:'Pausing',paused:'Paused',queued:'Queued',running:'Running',waiting:'Waiting for tool',approval:'Waiting for you',retrying:'Retrying',stopping:'Stopping',completed:'Completed',failed:'Failed',stopped:'Stopped'}
 }
 export const workflowZh: WorkflowUiMessages = {
+ activityWorking: '正在等待 {count} 个后台 Agent 完成', activityApproval: '{count} 个后台 Agent 等待你确认', activitySub: '{count} 个 Agent · {runs} 个 workflow', finishedTitle: 'Workflow {name} 已完成', finishedFailedTitle: 'Workflow {name} 执行失败', finishedPartialTitle: 'Workflow {name} 已结束，其中 {count} 个 Agent 失败', finishedStoppedTitle: 'Workflow {name} 已停止', finishedNoResult: '没有产出结果。', finishedAgents: 'Agent 任务',
  pause: '暂停 Agent', resume: '继续 Agent', tasks: '任务',
  categories: { paused: '已暂停', active: '进行中', completed: '已完成', failed: '失败', stopped: '已停止' }, partialFailure: '已结束，含失败 Agent',
  commandHint: "查看 workflow，或用 /workflow <名称> <任务> 启动",
@@ -33,6 +36,7 @@ export const workflowZh: WorkflowUiMessages = {
  count:'{count} 个 task',current:'当前会话',stopAll:'全部停止',stoppingAll:'停止中…',stop:'停止 Agent',collapse:'收起 task 清单',expand:'展开 task 清单',empty:'当前会话还没有 Agent task',emptyHint:'运行 workflow 后，任务会显示在这里。',ended:'已结束',logs:'工作记录',result:'结果',scroll:'滚动查看更多',loadError:'无法加载 workflow 任务。',stopError:'未能停止所选任务。',retry:'重试',rerun:'重新运行整个 workflow',retryError:'未能重新运行 workflow。',retryUnavailable:'此旧记录请用 /workflow 重新启动。',loading:'正在加载任务…',waiting:'{count} 个等待你确认',failures:'{count} 个失败',complete:'任务已结束',working:'Agent 正在工作',states:{pausing:'暂停中',paused:'已暂停',queued:'排队中',running:'执行中',waiting:'等待工具',approval:'等待你确认',retrying:'重试中',stopping:'停止中',completed:'已完成',failed:'失败',stopped:'已停止'}
 }
 export const workflowZhTw: WorkflowUiMessages = {
+ activityWorking: '正在等待 {count} 個背景 Agent 完成', activityApproval: '{count} 個背景 Agent 等待你確認', activitySub: '{count} 個 Agent · {runs} 個 workflow', finishedTitle: 'Workflow {name} 已完成', finishedFailedTitle: 'Workflow {name} 執行失敗', finishedPartialTitle: 'Workflow {name} 已結束，其中 {count} 個 Agent 失敗', finishedStoppedTitle: 'Workflow {name} 已停止', finishedNoResult: '沒有產出結果。', finishedAgents: 'Agent 任務',
  pause: '暫停 Agent', resume: '繼續 Agent', tasks: '任務',
  categories: { paused: '已暫停', active: '進行中', completed: '已完成', failed: '失敗', stopped: '已停止' }, partialFailure: '已結束，含失敗 Agent',
  commandHint: "查看 workflow，或用 /workflow <名稱> <任務> 啟動",
@@ -47,6 +51,7 @@ export const workflowZhTw: WorkflowUiMessages = {
  count:'{count} 個 task',current:'目前會話',stopAll:'全部停止',stoppingAll:'停止中…',stop:'停止 Agent',collapse:'收起 task 清單',expand:'展開 task 清單',empty:'目前會話還沒有 Agent task',emptyHint:'執行 workflow 後，任務會顯示在這裡。',ended:'已結束',logs:'工作紀錄',result:'結果',scroll:'捲動查看更多',loadError:'無法載入 workflow 任務。',stopError:'未能停止所選任務。',retry:'重試',rerun:'重新執行整個 workflow',retryError:'未能重新執行 workflow。',retryUnavailable:'此舊紀錄請用 /workflow 重新啟動。',loading:'正在載入任務…',waiting:'{count} 個等待你確認',failures:'{count} 個失敗',complete:'任務已結束',working:'Agent 正在工作',states:{pausing:'暫停中',paused:'已暫停',queued:'排隊中',running:'執行中',waiting:'等待工具',approval:'等待你確認',retrying:'重試中',stopping:'停止中',completed:'已完成',failed:'失敗',stopped:'已停止'}
 }
 export const workflowId: WorkflowUiMessages = {
+ activityWorking: 'Menunggu {count} Agent latar selesai', activityApproval: '{count} Agent latar menunggu keputusan Anda', activitySub: '{count} Agent · {runs} workflow', finishedTitle: 'Workflow {name} selesai', finishedFailedTitle: 'Workflow {name} gagal', finishedPartialTitle: 'Workflow {name} selesai dengan {count} Agent gagal', finishedStoppedTitle: 'Workflow {name} dihentikan', finishedNoResult: 'Tidak ada hasil yang dihasilkan.', finishedAgents: 'Tugas Agent',
  pause: 'Jeda Agent', resume: 'Lanjutkan Agent', tasks: 'Task',
  categories: { paused: 'Dijeda', active: 'Sedang berjalan', completed: 'Selesai', failed: 'Gagal', stopped: 'Dihentikan' }, partialFailure: 'Selesai dengan Agent gagal',
  commandHint: "Lihat workflow atau jalankan /workflow <nama> <tugas>",
