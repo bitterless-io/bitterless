@@ -18,6 +18,10 @@ try {
   const errors = []; page.on('pageerror', error => errors.push(error.message))
   await page.goto(`http://127.0.0.1:${address.port}/`)
   await page.locator('[name="workbench-workflows__item-institution-1"]').click()
+  const assertFits = async () => {
+    await page.waitForFunction(() => { const view = document.querySelector('[name="workflow-flow__viewport"]'); return view && view.scrollWidth <= view.clientWidth + 1 && view.scrollHeight <= view.clientHeight + 1 })
+  }
+  await assertFits()
   await page.locator('[name="workflow-flow__node-count"]').click()
   await page.locator('[name="workflow-flow__node-summarize"]').focus(); await page.keyboard.press('Enter')
   assert.equal(await page.locator('[name="workflow-flow__node-summarize"]').getAttribute('aria-pressed'), 'true')
@@ -29,12 +33,28 @@ try {
   await page.evaluate(() => document.body.setAttribute('arco-theme','dark'))
   await page.screenshot({ path: resolve(output,'desktop-dark.png') })
   await page.setViewportSize({ width: 660, height: 860 })
-  await page.getByRole('button', { name: 'Fit', exact: true }).click()
+  await assertFits()
   await page.screenshot({ path: resolve(output,'narrow-dark.png') })
   await page.evaluate(() => document.body.setAttribute('arco-theme','light'))
   await page.screenshot({ path: resolve(output,'narrow-light.png') })
   await page.getByRole('tab', { name: 'Details', exact: true }).click()
   await page.getByText('SHA-256', { exact: true }).waitFor()
+  await page.getByRole('tab', { name: 'Flow', exact: true }).click()
+  const branch = { nodes: ['Prepare', 'Choose', 'Process', 'Review', 'Join', 'Repeat'].map((label, index) => ({ id: `step-${index}`, label, kind: ['function', 'branch', 'function', 'agent', 'parallel', 'loop'][index] })), edges: [[0,1],[1,2],[1,3],[2,4],[3,4],[4,5],[5,1]].map(([from,to]) => ({ from: `step-${from}`, to: `step-${to}` })) }
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.evaluate(graph => { window.workflowVisualStore.detail.manifest.graph = graph }, branch)
+  await assertFits()
+  await page.screenshot({ path: resolve(output,'branch-loop.png') })
+  await page.getByRole('button', { name: 'Zoom in', exact: true }).click()
+  const manualZoom = await page.locator('[name="workflow-flow__controls"] > span').innerText()
+  await page.setViewportSize({ width: 1200, height: 850 })
+  await page.waitForTimeout(150)
+  assert.equal(await page.locator('[name="workflow-flow__controls"] > span').innerText(), manualZoom)
+  const nodes = Array.from({ length: 200 }, (_, index) => ({ id: `node-${index}`, label: `Step ${index}`, kind: 'function' }))
+  for (const graph of [{ nodes, edges: nodes.slice(1).map((node, index) => ({ from: nodes[index].id, to: node.id })) }, { nodes, edges: [] }]) {
+    await page.evaluate(graph => { window.workflowVisualStore.detail.manifest.graph = graph }, graph)
+    await assertFits()
+  }
   assert.deepEqual(errors, [])
-  console.log('Visual behavior passed: selection, keyboard, zoom/fit, details; desktop/narrow light/dark screenshots:', output)
+  console.log('Visual behavior passed: selection, keyboard, zoom/fit, details, resize/manual zoom, branch/loop and 200-node horizontal/vertical fit; desktop/narrow light/dark screenshots:', output)
 } finally { await browser.close(); await server.close() }
