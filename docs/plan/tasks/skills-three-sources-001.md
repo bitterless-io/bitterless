@@ -14,7 +14,7 @@ Ral, 2026-09-16: BL and Cowork must expose userData global, workspace .agents Sk
 - [x] Read-only source and official format audit; current gaps recorded in feature.
 - [x] Complete and inspect the static mockup in both projects.
 - [x] Validate design links, source rules, update states and acceptance matrix.
-- [ ] Commit design on existing dev/next and notify BotAndI with review artifacts.
+- [x] Commit design on existing dev/next and notify BotAndI with review artifacts.
 - [ ] Ral approves the design. This blocks every implementation item below.
 
 ## Approved-development sequence (not started)
@@ -31,6 +31,12 @@ Ral, 2026-09-16: BL and Cowork must expose userData global, workspace .agents Sk
 Do not modify Workflow behavior as a side effect. Preserve source files and conversation history. Source tests/builds apply after implementation; design-only artifact checks are not runtime acceptance.
 
 Design-only review: [review 1](../reviews/skills-three-sources-001-1.md).
+
+## Design delivery
+
+2026-09-16: The review ZIP (both page designs, light/dark screenshots, contracts and tasks) was sent to BotAndI before the Chinese Markdown approval notice. Delivery was verified as a file message and a native Markdown post. Both design changes are committed locally on dev/next; remote sync and the parent gitlink update were not performed because the root repository submodule-alignment preflight found uninitialized registered submodules. Exact notification receipts remain in the private parent workspace temporary delivery folder.
+
+The production Bitterless Todo MCP bridge was unavailable, so no approval Todo was created. Approval remains pending in this task and in the delivered notice.
 
 ## Approval record
 
