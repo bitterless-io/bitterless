@@ -305,11 +305,24 @@ assertOrder(
 )
 const promptAlias = browserView.match(/private async promptTabAlias\([\s\S]*?\n  \}/)?.[0] ?? ''
 assert(promptAlias, `${BROWSER_VIEW}: expected to find promptTabAlias()`)
+// alias 现在有**两个**入口(覆盖层表单 ＋ tab 条里的就地改名),写回收敛在 `applyTabAlias()` 上,
+// 所以这一条钉的是那个共用写回口 —— 钉在 `promptTabAlias` 上会在第二个入口出现时失败开:
+// 表单那一路照样绿,而就地改名把 pinned 主页的名字丢在下次启动
+// (docs/features/zellij-tab-inline-rename.md #3)。
+const applyAlias = browserView.match(/private applyTabAlias\([\s\S]*?\n  \}/)?.[0] ?? ''
+assert(applyAlias, `${BROWSER_VIEW}: expected to find applyTabAlias() — the single alias write-back path`)
 assert(
-  /current\.pinned\) this\._state\.saveMaestroSettings\?\.\(\{ homeAlias/.test(promptAlias),
+  /current\.pinned\) this\._state\.saveMaestroSettings\?\.\(\{ homeAlias/.test(applyAlias),
   `${BROWSER_VIEW}: renaming the tab that is ALREADY the homepage must write homeAlias too — persisting only at ` +
     'promotion loses every rename done afterwards, silently, at the next launch.'
 )
+for (const [entry, body] of [['promptTabAlias', promptAlias], ['setTabAlias', browserView.match(/async setTabAlias\([\s\S]*?\n  \}/)?.[0] ?? '']]) {
+  assert(
+    /this\.applyTabAlias\(/.test(body),
+    `${BROWSER_VIEW}: ${entry} must write the alias through applyTabAlias() — a second hand-written copy of that ` +
+      'block is exactly how the pinned-homepage homeAlias write gets lost on one path and not the other.'
+  )
+}
 
 // ── ⑧ 装不起来的自定义主页要有兜底,缺一列不能丢整条 tab 条 ────────────────────────────────────
 const loadPinnedHome = browserView.match(/async loadPinnedHomeTab\(\): Promise<void> \{[\s\S]*?\n  \}/)?.[0] ?? ''

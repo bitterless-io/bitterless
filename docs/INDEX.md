@@ -1,5 +1,8 @@
 # Bitterless Documentation
 
+- [Workbench chip 右边多一条分隔线,右键什么都不弹](issues/maestro-workbench-chip-divider-and-menu.md) — implemented; owner verification pending;
+  开着的 Workbench chip 占掉「收尾 pinned 组」那个槽位(只留左分隔),右击它弹出和 mini-app tab 逐项对齐的原生菜单,不适用的五项置灰。
+
 - [Skills 三层来源与实时上下文设计](features/skills-three-sources.md) — approved 2026-09-16; [page mockup](design/skills-three-sources.html); implemented; [independent acceptance](plan/reviews/skills-three-sources-001-3.md) passed with documented verification limits.
 
 - [OnlyPreview background index corruption](issues/onlypreview-corrupt-project-index.md) — recovery extended; code verified, owner testing pending;

@@ -73,6 +73,8 @@
     "test:maestro-crms-residue": "node --test scripts/maestro/crmsResidueCleanup.test.ts",
     "check:chat-composer": "node scripts/maestro/check-chat-composer.mjs",
     "check:new-tab-focus": "node scripts/maestro/check-new-tab-focus.mjs",
+    "check:tab-alias": "node scripts/maestro/check-tab-alias.mjs",
+    "check:zellij-tab-chrome": "node scripts/maestro/check-zellij-tab-chrome.mjs",
     "mcp:todo:smoke": "node scripts/mcp/todo-smoke.mjs",
     "mcp:todo:smoke:debug": "node scripts/mcp/todo-smoke.mjs --profile debug",
     "mcp:todo:skill:export": "node scripts/mcp/export-todo-skill.mjs",
