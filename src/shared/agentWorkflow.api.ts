@@ -1,6 +1,6 @@
 /** Shared workflow presentation contract. No Electron, Pi, or credentials cross this boundary. */
 export type WorkflowBuiltinName = 'mini-demo' | 'code-review' | 'refactor-scout' | 'diagnose' | 'perf-review' | 'research' | 'agent-task'
-export type WorkflowEntry = { kind: 'builtin'; name: WorkflowBuiltinName } | { kind: 'file'; path: string }
+export type WorkflowEntry = { kind: 'builtin'; name: WorkflowBuiltinName } | { kind: 'file'; path: string } | { kind: 'library'; ref: string }
 export type WorkflowAgentStatus = 'queued' | 'running' | 'waiting' | 'approval' | 'retrying' | 'pausing' | 'paused' | 'stopping' | 'completed' | 'failed' | 'stopped'
 export type WorkflowRunStatus = 'running' | 'stopping' | 'completed' | 'failed' | 'stopped'
 export interface WorkflowLogEntry { ts: number; text: string }
@@ -52,7 +52,7 @@ export interface WorkflowActivitySummary {
 }
 export interface WorkflowSnapshot { runs: WorkflowRunSnapshot[]; revision: number; activity?: WorkflowActivitySummary[] }
 export interface WorkflowStartRequest { sessionId: string; entry: WorkflowEntry; input: string; cwd?: string; origin?: 'shortcut' }
-export interface WorkflowDescriptor { name: WorkflowBuiltinName; description: string }
+export interface WorkflowDescriptor { name: string; description: string; displayName?: string; scope?: 'shared' | 'institution'; institution_id?: number; ref?: string; entry?: WorkflowEntry }
 export interface WorkflowApi {
   listRuns(params?: { sessionId?: string }): Promise<WorkflowSnapshot>
   listWorkflows(): Promise<WorkflowDescriptor[]>

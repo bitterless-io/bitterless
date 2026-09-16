@@ -9,6 +9,7 @@ import { initUpdateHandler } from './update.handler';
 // 路径引用它(runtime.types / compactionRun / piRuntimeAdapter),挪走会当场让那三处注释变成谎。
 import './compaction.handler';
 import './workflow.handler';
+import './workflowLibrary.handler';
 import './pluginTest.handler';
 import './todoWindow.handler';
 import './eyesOnAgentsWindow.handler';

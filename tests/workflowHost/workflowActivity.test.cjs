@@ -12,6 +12,7 @@ function load(relative, modules = {}) {
   const module = { exports: {} }
   new Function('require', 'module', 'exports', '__dirname', code)((name) => {
     if (name in modules) return modules[name]
+    if (name === '../../workflowLibrary/workflowLibraryRuntime') return { workflowLibraryRuntime: { list: async () => [], resolve: async () => { throw new Error('Fixture library unavailable') }, assertPath: async () => undefined } }
     if (name.startsWith('node:')) return require(name)
     throw Error('Unexpected test dependency: ' + name)
   }, module, module.exports, path.dirname(filename))

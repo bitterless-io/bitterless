@@ -172,6 +172,10 @@ export const normalizeCompactSummary = (text: string, maxChars: number): string 
 }
 
 export interface AgentSkillBrief {
+  scope?: 'shared' | 'institution'
+  institutionId?: string
+  reference?: string
+  path?: string
   id: string
   name: string
   triggers: string[]
@@ -281,6 +285,7 @@ export const buildAgentTurnPrompt = (params: {
           return [
             `- id: ${clipInline(brief.id, 160)}`,
             `  name: ${clipInline(brief.name, 160)}`,
+            `  scope: ${brief.scope || 'shared'}; institution: ${brief.institutionId || 'none'}; reference: ${brief.reference || brief.id}; path: ${brief.path || 'builtin'}`,
             `  triggers: ${triggers}${brief.triggers.length > MAX_AGENT_SKILL_TRIGGERS ? `, ... +${brief.triggers.length - MAX_AGENT_SKILL_TRIGGERS} more` : ''}`,
             `  inputs: ${inputs}`,
             `  message_seed: ${seed}`,

@@ -6,6 +6,8 @@
 - [Development CSP blocks Maestro dialog hot reload](issues/dev-csp-blocks-maestro-dialog-hmr.md) — implemented; code verified, owner testing pending;
   Tab Alias and History need the existing serve-only localhost WebSocket CSP allowance.
 
+- [Workbench institution workflows](features/workbench-institution-workflows.md) — list, detail, Kimchi diagram and safe cloud update synchronization; independently verified.
+
 - [A blank New tab paints black instead of the Bitterless splash](issues/maestro-blank-new-tab-paints-black.md) — fixed; owner verification pending;
   the prewarmed `about:blank` document covered the host splash (near-black in macOS dark mode), so a blank tab keeps its view hidden until a real document commits.
 

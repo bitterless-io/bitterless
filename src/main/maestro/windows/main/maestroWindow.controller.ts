@@ -1,3 +1,4 @@
+import type { SkillSharingScope, SkillScopeContextInfo } from '@maestro-shared/coach.api'
 import { MaestroHistoryViewService } from './maestroHistoryView.service';
 import { showMaestroSessionMenu } from './maestroSessionMenu.service';
 import type { SessionMenuResult } from '@maestro-shared/coach.api';
@@ -881,7 +882,7 @@ class MaestroWindowController
     return await this.skillService.deleteSkill(params)
   }
 
-  async summarizeSkill(params: { workflow?: string; records: IngestRecord[] }): Promise<SkillCreateResult> {
+  async summarizeSkill(params: { workflow?: string; records: IngestRecord[]; sharingScope?: SkillSharingScope }): Promise<SkillCreateResult> {
     return await this.skillService.summarizeSkill(params)
   }
 
@@ -913,8 +914,16 @@ class MaestroWindowController
     return await this.skillService.exportSkillPackage(params)
   }
 
-  async importSkillPackage(): Promise<SkillImportResult> {
-    return await this.skillService.importSkillPackage()
+  async assignSkillScope(params: { skillId: string; sharingScope: SkillSharingScope }): Promise<SkillImportResult> {
+    return await this.skillService.assignSkillScope(params)
+  }
+
+  async getSkillScopeContext(): Promise<SkillScopeContextInfo | null> {
+    return await this.skillService.getSkillScopeContext()
+  }
+
+  async importSkillPackage(params?: { sharingScope?: SkillSharingScope }): Promise<SkillImportResult> {
+    return await this.skillService.importSkillPackage(params)
   }
 
   async openDomainDirectory(params: { domain: string }): Promise<{ ok: boolean; path?: string; error?: string }> {
@@ -1024,9 +1033,7 @@ class MaestroWindowController
 
   async replayAgentSkill(sessionId: string, params: { skillId: string; variables: Record<string, string> }): Promise<ReplayResult> {
     const result = await this.withAgentBrowserTarget(sessionId, undefined, async () => {
-      const recipe = this.ensureServices().registry.readRecipe(params.skillId)
-      if (!recipe) throw new Error('Skill recipe not found.')
-      return JSON.stringify(await this.requestExec.replayRecipe(recipe, params.variables))
+      return JSON.stringify(await this.skillService.replaySkill(params))
     })
     if (result.startsWith('ERROR:')) return { ok: false, skillId: params.skillId, stepsRun: 0, errors: [result] }
     return JSON.parse(result) as ReplayResult
@@ -1700,7 +1707,7 @@ class MaestroWindowController
     return await this.requestExec.toolUiAct(actionsJson)
   }
 
-  private toolSkillContract(skillId: string): string {
+  private async toolSkillContract(skillId: string): Promise<string> {
     return this.requestExec.toolSkillContract(skillId)
   }
 
@@ -1920,8 +1927,8 @@ class MaestroWindowController
     this.llmApplied = false
   }
 
-  async replayRecipe(recipe: SkillRecipe, variables: Record<string, string>): Promise<ReplayResult> {
-    return await this.requestExec.replayRecipe(recipe, variables)
+  async replayRecipe(recipe: SkillRecipe, variables: Record<string, string>, guard?: () => Promise<void>): Promise<ReplayResult> {
+    return await this.requestExec.replayRecipe(recipe, variables, guard)
   }
 
   debugCodex = broadcastCodexDebug

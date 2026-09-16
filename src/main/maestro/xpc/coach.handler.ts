@@ -1,3 +1,4 @@
+import type { SkillSharingScope, SkillScopeContextInfo } from '@maestro-shared/coach.api'
 import { XpcMainHandler } from 'electron-xpc/main'
 import { maestroWindowHelper } from '@maestro-main/windows/main/maestroWindow.controller'
 import { getMaestroPreviewOpener } from '@maestro-main/windows/main/previewOpener.registry'
@@ -294,7 +295,7 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
     await maestroWindowHelper.abortDelegate(params)
   }
 
-  async summarizeSkill(params: { workflow?: string; records: IngestRecord[] }): Promise<SkillCreateResult> {
+  async summarizeSkill(params: { workflow?: string; records: IngestRecord[]; sharingScope?: SkillSharingScope }): Promise<SkillCreateResult> {
     return await maestroWindowHelper.summarizeSkill(params)
   }
 
@@ -314,8 +315,16 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
     return await maestroWindowHelper.exportSkillPackage(params)
   }
 
-  async importSkillPackage(): Promise<SkillImportResult> {
-    return await maestroWindowHelper.importSkillPackage()
+  async assignSkillScope(params: { skillId: string; sharingScope: SkillSharingScope }): Promise<SkillImportResult> {
+    return await maestroWindowHelper.assignSkillScope(params)
+  }
+
+  async getSkillScopeContext(): Promise<SkillScopeContextInfo | null> {
+    return await maestroWindowHelper.getSkillScopeContext()
+  }
+
+  async importSkillPackage(params?: { sharingScope?: SkillSharingScope }): Promise<SkillImportResult> {
+    return await maestroWindowHelper.importSkillPackage(params)
   }
 
   async openDomainDirectory(params: { domain: string }): Promise<{ ok: boolean; path?: string; error?: string }> {

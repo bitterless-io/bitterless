@@ -12,6 +12,7 @@ function load(relative, modules = {}) {
   const module = { exports: {} }
   new Function('require', 'module', 'exports', '__dirname', code)((name) => {
     if (name in modules) return modules[name]
+    if (name === '../../workflowLibrary/workflowLibraryRuntime') return { workflowLibraryRuntime: { list: async () => [], resolve: async () => { throw new Error('Fixture library unavailable') }, assertPath: async () => undefined } }
     if (name.startsWith('node:')) return require(name)
     throw Error('Unexpected test dependency: ' + name)
   }, module, module.exports, path.dirname(filename))
@@ -19,7 +20,7 @@ function load(relative, modules = {}) {
 }
 const context = load('src/main/agent/runtime/agentSessionContext.ts')
 const activityModule = load('src/main/agent/workflowEngine/activitySummary.ts', { '../../../shared/agentWorkflow.api': load('src/shared/agentWorkflow.api.ts') })
-function integration(tools = () => [], runtime, assertCanStartShortcut) {
+function integration(tools = () => [], runtime, assertCanStartShortcut, library) {
   let supervisor
   class Supervisor {
     constructor(deps) { this.deps = deps; this.stops = []; supervisor = this }
@@ -35,7 +36,8 @@ function integration(tools = () => [], runtime, assertCanStartShortcut) {
   const { WorkflowHostIntegration } = load('src/main/agent/workflowEngine/hostIntegration.ts', {
     electron: { app: { getPath: () => '/test-user-data' } },
     './supervisor': { WorkflowSupervisor: Supervisor }, './activitySummary': activityModule, '../runtime/agentSessionContext': context,
-    '../runtime/modelIoLog': { modelIoLog: { append() {} } }
+    '../runtime/modelIoLog': { modelIoLog: { append() {} } },
+    ...(library ? { '../../workflowLibrary/workflowLibraryRuntime': { workflowLibraryRuntime: library } } : {})
   })
   const host = new WorkflowHostIntegration({
     broadcast() {}, tools, assertCanStartShortcut,
@@ -325,4 +327,32 @@ test('structured task controls require exact chat-owned identifiers and addition
   assert.match(supervisor.request.input, /Related workflow \(context only\)/)
   assert.equal(row.agents.length, 1, 'adding work does not mutate the existing graph')
   await assert.rejects(host.pauseWorkflowAgent({sessionId:'chat-b',runId:'parent',agentId:'1'}), /does not belong/)
+})
+
+test('library references resolve through live scope and managed file permission is rechecked after runtime preparation', async () => {
+  const checks = []
+  const library = { list: async () => [{ name: 'institution:7:1', ref: 'institution:7:1', scope: 'institution', institution_id: 7, description: 'Fixture' }], resolve: async ref => { assert.equal(ref, 'institution:7:1'); return { kind: 'file', path: '/managed/7/workflow.ts' } }, assertPath: async path => { checks.push(path) } }
+  const { host, supervisor } = integration(() => [], undefined, undefined, library)
+  assert((await host.listWorkflows()).some(row => row.scope === 'institution' && row.institution_id === 7))
+  assert((await host.listWorkflows()).some(row => row.scope === 'shared' && row.ref === 'shared:builtin:mini-demo'))
+  const tool = host.chatTools('chat-a').find(tool => tool.name === 'workflow_run')
+  await tool.execute({ name: 'institution:7:1', input: 'Fixture input' })
+  assert.equal(supervisor.request.entry.kind, 'file'); assert.deepEqual(checks, ['/managed/7/workflow.ts', '/managed/7/workflow.ts'])
+  const revoked = integration(() => [], async () => { throw Error('fixture context changed') }, undefined, library)
+  await assert.rejects(revoked.host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'library', ref: 'institution:7:1' }, input: 'Fixture' }), /context changed/)
+})
+
+test('stop during final managed-path authorization rejects startup before supervisor launch', async () => {
+  let release, checks = 0
+  const library = { assertPath: async () => { if (++checks === 2) await new Promise(done => { release = done }) } }
+  const { host, supervisor } = integration(() => [], undefined, undefined, library)
+  const pending = host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'file', path: '/managed/7/workflow.ts' }, input: 'Fixture' })
+  const rejected = assert.rejects(pending, { name: 'AbortError' })
+  await tick()
+  assert.equal(checks, 2)
+  const stopping = host.stopSession({ sessionId: 'chat-a' })
+  release()
+  await rejected
+  await stopping
+  assert.equal(supervisor.request, undefined)
 })

@@ -212,3 +212,7 @@ Non-blocking review findings are recorded here after task verification.
   wiring `.gitignore` in so the two lists cannot drift. Owner deprioritized this on 2026-09-07
   (typecheck runs, which is enough for now), so the fix is **diagnosed but unverified** — nobody has
   confirmed that ignoring `tmp/` alone brings the run under the heap limit.
+
+## Workflow/Skill review inherited file-size debt (2026-09-16)
+
+The independent [Workflow/Skill review](reviews/workbench-institution-workflows-001-01.md) records eleven TS-1 file-size findings that already exceeded 800 lines before this task. They are non-blocking baseline debt; split them only in separately scoped maintenance, preserving the verified behavior.
