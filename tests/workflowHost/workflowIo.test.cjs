@@ -69,7 +69,7 @@ test('parallel worker I/O retains full contents under its parent chat and captur
   const h = await fixture(t)
   const a = await h.start('chat-a'), b = await h.start('chat-b')
   const engineA = h.children[0], engineB = h.children[1]
-  const attempt = { id: '1:1', rowId: 1, turnId: 'first', prompt: 'inspect', opts: { label: 'Inspector' } }
+  const attempt = { id: '1:1', rowId: 1, turnId: 'first', prompt: 'inspect', opts: { label: 'Inspector', phase: 'analysis' }, providerId: 'fixture', modelId: 'model' }
   engineA.message({ type: 'attempt.start', attempt }); engineB.message({ type: 'attempt.start', attempt })
   const workerA = h.children[2], workerB = h.children[3]
   const fullText = 'raw tool result '.repeat(8000)
@@ -84,6 +84,8 @@ test('parallel worker I/O retains full contents under its parent chat and captur
   const tool = A.lines.find(line => line.kind === 'tool_result')
   assert.equal(tool.text, fullText); assert.equal(tool.detail.sessionId, 'chat-a')
   assert.equal(tool.detail.runId, a.id); assert.equal(tool.detail.agentId, '1'); assert.equal(tool.detail.attemptId, '1:1')
+  assert.equal(tool.detail.label, 'Inspector'); assert.equal(tool.detail.phase, 'analysis')
+  assert.equal(tool.detail.providerId, 'fixture'); assert.equal(tool.detail.modelId, 'model')
   assert.ok(A.lines.some(line => line.text === 'provider abort acknowledged'))
   assert.ok(A.lines.some(line => line.name === 'workflow-end' && line.detail.data.status === 'stopped'))
   assert.equal(A.lines.some(line => line.text === 'only B'), false)
@@ -97,4 +99,36 @@ test('worker launch failure still has saved evidence instead of reporting a miss
   assert.equal(run.status, 'failed')
   const { lines } = await h.rows('chat-a')
   assert.ok(lines.some(line => line.name === 'workflow-end' && line.text === 'fixture worker cannot launch'))
+})
+
+
+test('manual retry retains exact file entry and full input across restart, creates a new run, and rejects cross-chat/old/running/stopped records', async t => {
+  const h = await fixture(t, { failFork: true })
+  const request = { sessionId: 'chat-a', entry: { kind: 'file', path: '/test/project with spaces/retry.ts' }, input: 'task '.repeat(15000) }
+  const first = await h.supervisor.start(request, { tools: [] })
+  assert.equal(first.status, 'failed')
+  assert.deepEqual(await h.supervisor.retryRequest('chat-a', first.id), { ...request, origin: 'shortcut' })
+  await assert.rejects(h.supervisor.retryRequest('chat-b', first.id), /Only a failed/)
+  const persisted = JSON.parse(await fs.readFile(join(h.dir, 'workflow-runs/runs.json'), 'utf8'))
+  persisted.runs.push({ ...first, id: 'old', entry: undefined })
+  persisted.runs.push({ ...first, id: 'partial', status: 'completed', agents: [{ status: 'failed' }] })
+  persisted.runs.push({ ...first, id: 'success', status: 'completed' })
+  await fs.writeFile(join(h.dir, 'workflow-runs/runs.json'), JSON.stringify(persisted))
+  const { WorkflowSupervisor } = h.load('src/main/agent/workflowEngine/supervisor.ts')
+  const restarted = new WorkflowSupervisor({ storageDir: join(h.dir, 'workflow-runs'), broadcast() {} }, { fork() { throw Error('fixture failed'); }, signal() {} })
+  t.after(() => restarted.dispose())
+  assert.deepEqual(await restarted.retryRequest('chat-a', 'partial'), { ...request, origin: 'shortcut' })
+  await assert.rejects(restarted.retryRequest('chat-a', 'success'), /Only a failed/)
+  const retryRequest = await restarted.retryRequest('chat-a', first.id)
+  const second = await restarted.start(retryRequest, { tools: [] })
+  assert.notEqual(second.id, first.id)
+  assert.equal(second.input, request.input)
+  assert.deepEqual(second.entry, request.entry)
+  assert.equal((await restarted.list()).runs.find(run => run.id === first.id).error, first.error)
+  await assert.rejects(restarted.retryRequest('chat-a', 'old'), /older workflow/)
+  const live = await fixture(t)
+  const running = await live.start('chat-a')
+  await assert.rejects(live.supervisor.retryRequest('chat-a', running.id), /Only a failed/)
+  await live.supervisor.stopRun('chat-a', running.id)
+  await assert.rejects(live.supervisor.retryRequest('chat-a', running.id), /Only a failed/)
 })

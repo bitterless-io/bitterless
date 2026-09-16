@@ -65,6 +65,8 @@ export interface AgentTurnResult {
   usage?: { totalTokens: number }
   cancelled?: boolean
   submitted?: { tool: string; arguments: Record<string, unknown> }
+  /** A real submit call was rejected; Kimchi may repair it within its existing budget. */
+  submissionError?: string
   error?: { kind: 'context-window-exceeded' | 'provider-error'; message: string }
   conversation?: readonly unknown[]
 }

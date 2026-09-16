@@ -14,6 +14,10 @@ class WorkflowHandler extends XpcMainHandler implements WorkflowIpcApi {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
   }
+  async retryWorkflow(params: { sessionId: string; runId: string }): Promise<WorkflowStartReply> {
+    try { return { ok: true, run: await this._host().retryWorkflow(params) } }
+    catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) } }
+  }
   async stopAgent(params: { sessionId: string; runId: string; agentId: string }) { return this._host().stopAgent(params) }
   async stopWorkflow(params: { sessionId: string; runId: string }) { return this._host().stopWorkflow(params) }
   async stopSession(params: { sessionId: string }) { return this._host().stopSession(params) }

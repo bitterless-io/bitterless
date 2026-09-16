@@ -80,6 +80,9 @@ export const createWorkflowPiSession: PiSessionFactory = async (start, customToo
     cwd, agentDir: runtime.agentDir, modelRuntime, model, thinkingLevel: attempt.opts.thinkingLevel ?? runtime.thinkingLevel,
     tools, customTools, resourceLoader: loader, settingsManager: SettingsManager.inMemory(), sessionManager: SessionManager.inMemory()
   })
+  // Kimchi owns the output-repair budget. A rejected submission must not start an
+  // unbounded Pi tool loop before Kimchi can count the failed turn.
+  session.agent.shouldStopAfterTurn = ({ toolResults }) => toolResults.some(result => result.toolName === WORKFLOW_SUBMIT_RESULT)
   return session
 }
 
@@ -92,6 +95,7 @@ export class WorkflowPiSession {
   private closing?: Promise<void>
   private closed = false
   private submitted?: AgentTurnResult['submitted']
+  private submissionError?: string
   private terminalMessages: AssistantMessage[] = []
   private turnIndex = 0
   private toolArguments = new Map<string, unknown>()
@@ -112,6 +116,18 @@ export class WorkflowPiSession {
       name: WORKFLOW_SUBMIT_RESULT, label: 'Submit workflow result',
       description: 'Submit the final structured workflow result. Call this tool instead of writing JSON as text.',
       parameters: Type.Object({ result: schema }),
+      prepareArguments: args => {
+        if (!args || typeof args !== 'object' || Array.isArray(args)) return args
+        const result = (args as { result?: unknown }).result
+        if (typeof result !== 'string' || Value.Check(schema, result)) return args
+        // Some providers encode a nested JSON result as a string. Decode once,
+        // without coercing fields or accepting a value outside the original schema.
+        try {
+          const decoded: unknown = JSON.parse(result)
+          if (Value.Check(schema, decoded)) return { ...args, result: decoded }
+        } catch { /* Leave malformed values for the SDK's normal validation. */ }
+        return args
+      },
       execute: async (_id, args) => {
         this.signal.throwIfAborted()
         if (this.closed) throw new Error('Workflow Agent is closing')
@@ -145,6 +161,10 @@ export class WorkflowPiSession {
       const args = this.toolArguments.get(event.toolCallId)
       this.toolArguments.delete(event.toolCallId)
       this.diagnostic('tool_result', event.toolName, event.toolCallId, () => ({ args, result: event.result, isError: event.isError }))
+      if (event.toolName === WORKFLOW_SUBMIT_RESULT && event.isError) {
+        const result = event.result as { content?: Array<{ type: string; text?: string }> }
+        this.submissionError = result.content?.filter(part => part.type === 'text').map(part => part.text ?? '').join('\n').split('\n\nReceived arguments:')[0] || 'Workflow result submission was rejected'
+      }
       this.callbacks.action('Thinking…')
     }
   }
@@ -187,7 +207,7 @@ export class WorkflowPiSession {
     if (this.closed) throw new Error('Workflow Agent is closing')
     const session = this.session!
     const offset = session.messages.length
-    this.submitted = undefined; this.terminalMessages = []
+    this.submitted = undefined; this.submissionError = undefined; this.terminalMessages = []
     this.diagnostic('prompt', `${this.start.attempt.providerId}/${this.start.attempt.modelId}`, 'workflow-prompt', () => {
       const activeTools = session.getActiveToolNames?.() ?? this.start.attempt.opts.tools
       return {
@@ -208,10 +228,13 @@ export class WorkflowPiSession {
     const rawErrorMessage = failure?.errorMessage || (failure ? 'Model provider returned an error' : promptError === undefined ? undefined : messageOf(promptError))
     const apiKey = this.start.runtime.relay?.apiKey
     const errorMessage = apiKey ? rawErrorMessage?.split(apiKey).join('[redacted]') : rawErrorMessage
+    // SDK events may set this while session.prompt is awaited.
+    const submissionError = this.submissionError as string | undefined
     const last = messages.at(-1)
     const text = last?.content?.filter(part => part.type === 'text').map(part => part.text ?? '').join('') ?? (last ? session.getLastAssistantText() ?? '' : '')
     const result: AgentTurnResult = {
       text, usage: { totalTokens }, ...(this.submitted ? { submitted: this.submitted } : {}),
+      ...(!this.submitted && submissionError ? { submissionError: apiKey ? submissionError.split(apiKey).join('[redacted]') : submissionError } : {}),
       ...(cancelled ? { cancelled: true } : {}),
       ...(!cancelled && errorMessage ? { error: { kind: /context.{0,20}(window|length|limit)|too many tokens|maximum.{0,20}tokens/i.test(errorMessage) ? 'context-window-exceeded' as const : 'provider-error' as const, message: errorMessage } } : {})
     }

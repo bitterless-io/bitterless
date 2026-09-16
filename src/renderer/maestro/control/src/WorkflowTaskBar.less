@@ -46,4 +46,15 @@
   [data-status='completed'] &__state, [data-status='completed'] &__state-icon { color: #35765b; }
   [data-status='waiting'] &__state, [data-status='approval'] &__state, [data-status='retrying'] &__state { color: #b25e09; }
   [data-status='queued'] &__state, [data-status='stopping'] &__state, [data-status='stopped'] &__state { color: #858d9d; }
+  @media (prefers-reduced-motion: no-preference) {
+    [data-status='running'] &__state-icon, [data-status='stopping'] &__state-icon {
+      animation: workflow-taskbar-spin 1s linear infinite;
+      transform-box: fill-box;
+      transform-origin: center;
+    }
+  }
+}
+
+@keyframes workflow-taskbar-spin {
+  to { transform: rotate(360deg); }
 }

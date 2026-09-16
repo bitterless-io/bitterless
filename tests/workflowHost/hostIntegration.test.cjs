@@ -260,3 +260,48 @@ test('workflow shortcut handler always supplies the authoritative shortcut origi
   const source = fs.readFileSync(path.join(root, 'src/main/xpc/workflow.handler.ts'), 'utf8')
   assert.match(source, /startWorkflow\(\{ \.\.\.params, origin: 'shortcut' \}\)/)
 })
+
+
+test('manual retry deduplicates concurrent clicks and uses current host admission, workspace and model', async () => {
+  let release, lookups = 0, starts = 0
+  const checks = []
+  const { host, supervisor } = integration(undefined, async (_id, cwd) => {
+    assert.equal(cwd, undefined)
+    await new Promise(done => { release = done })
+    return { cwd: '/current-project', providerId: 'current', modelId: 'current-model' }
+  }, id => checks.push(id))
+  supervisor.retryRequest = async (sessionId, runId) => {
+    lookups++; assert.equal(runId, 'failed-run')
+    return { sessionId, entry: { kind: 'builtin', name: 'mini-demo' }, input: 'original input', origin: 'shortcut' }
+  }
+  const start = supervisor.start.bind(supervisor)
+  supervisor.start = (...args) => { starts++; return start(...args) }
+  const first = host.retryWorkflow({ sessionId: 'chat-a', runId: 'failed-run' })
+  const second = host.retryWorkflow({ sessionId: 'chat-a', runId: 'failed-run' })
+  await tick(); assert.equal(lookups, 1); assert.equal(starts, 0)
+  release()
+  assert.deepEqual(await first, await second)
+  assert.equal(starts, 1); assert.equal(supervisor.request.cwd, '/current-project')
+  assert.equal(supervisor.runtime.modelId, 'current-model'); assert.equal(checks.length, 2)
+  const blocked = integration(undefined, undefined, () => { throw Error('chat busy') })
+  blocked.supervisor.retryRequest = supervisor.retryRequest
+  await assert.rejects(blocked.host.retryWorkflow({ sessionId: 'chat-a', runId: 'failed-run' }), /chat busy/)
+  assert.equal(blocked.supervisor.request, undefined)
+  blocked.supervisor.retryRequest = async () => { throw Error('old entry missing') }
+  await assert.rejects(blocked.host.retryWorkflow({ sessionId: 'chat-a', runId: 'failed-run' }), /old entry missing/)
+})
+
+
+test('stop during retry lookup fences launch and waits for the pending retry', async () => {
+  const { host, supervisor } = integration(undefined, undefined, () => {})
+  let release
+  supervisor.retryRequest = () => new Promise(done => { release = done })
+  const retry = host.retryWorkflow({ sessionId: 'chat-a', runId: 'failed' })
+  const rejected = assert.rejects(retry, { name: 'AbortError' })
+  let stopped = false
+  const stopping = host.stopSession({ sessionId: 'chat-a' }).then(() => { stopped = true })
+  await tick(); assert.equal(stopped, false)
+  release({ sessionId: 'chat-a', entry: { kind: 'builtin', name: 'mini-demo' }, input: 'original', origin: 'shortcut' })
+  await rejected; await stopping
+  assert.equal(supervisor.request, undefined)
+})

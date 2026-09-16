@@ -24,6 +24,8 @@ export interface WorkflowRunSnapshot {
   id: string
   sessionId: string
   name: string
+  /** Retained launch entry; older snapshots may not have it. */
+  entry?: WorkflowEntry
   input: string
   status: WorkflowRunStatus
   createdAt: number
@@ -39,14 +41,16 @@ export interface WorkflowApi {
   listRuns(params?: { sessionId?: string }): Promise<WorkflowSnapshot>
   listWorkflows(): Promise<WorkflowDescriptor[]>
   startWorkflow(params: WorkflowStartRequest): Promise<WorkflowRunSnapshot>
+  retryWorkflow(params: { sessionId: string; runId: string }): Promise<WorkflowRunSnapshot>
   stopAgent(params: { sessionId: string; runId: string; agentId: string }): Promise<{ ok: true }>
   stopWorkflow(params: { sessionId: string; runId: string }): Promise<{ ok: true }>
   stopSession(params: { sessionId: string }): Promise<{ ok: true }>
 }
 /** The XPC handler must return failures: electron-xpc converts thrown errors to null. */
 export type WorkflowStartReply = { ok: true; run: WorkflowRunSnapshot } | { ok: false; error: string }
-export type WorkflowIpcApi = Omit<WorkflowApi, 'startWorkflow'> & {
+export type WorkflowIpcApi = Omit<WorkflowApi, 'startWorkflow' | 'retryWorkflow'> & {
   startWorkflow(params: WorkflowStartRequest): Promise<WorkflowStartReply>
+  retryWorkflow(params: { sessionId: string; runId: string }): Promise<WorkflowStartReply>
 }
 export const isWorkflowAgentLive = (status: WorkflowAgentStatus): boolean =>
   status === 'queued' || status === 'running' || status === 'waiting' || status === 'approval' || status === 'retrying' || status === 'stopping'

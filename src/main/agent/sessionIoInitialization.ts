@@ -1,4 +1,5 @@
 import { modelIoLog } from './runtime/modelIoLog'
+import { prepareSessionReview } from './sessionReview'
 import { runInAgentSession } from './runtime/agentSessionContext'
 
 export interface SessionIoConfiguration {
@@ -19,7 +20,7 @@ export class SessionIoInitialization {
     const id = sessionId?.trim()
     if (!id) return Promise.reject(new Error('A chat session is required.'))
     const existing = this.pending.get(id)
-    if (existing) return existing
+    if (existing) return this.prepareReview(id, source, existing)
     const pending = runInAgentSession(id, async () => {
       const saved = await modelIoLog.dirForSession(id)
       if (saved && !this.incomplete.has(id)) return saved
@@ -47,6 +48,14 @@ export class SessionIoInitialization {
     })
     this.pending.set(id, pending)
     void pending.finally(() => { if (this.pending.get(id) === pending) this.pending.delete(id) }).catch(() => undefined)
-    return pending
+    return this.prepareReview(id, source, pending)
+  }
+
+  private async prepareReview(sessionId: string, source: 'new-chat' | 'missing-history', pending: Promise<string>): Promise<string> {
+    const directory = await pending
+    if (source === 'missing-history') {
+      await prepareSessionReview({ sessionId, directory, directories: await modelIoLog.dirsForSession(sessionId) })
+    }
+    return directory
   }
 }

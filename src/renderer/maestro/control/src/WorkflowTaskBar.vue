@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUpdate, onMounted, onUnmounted, onUpdated, ref, watch } from 'vue'
-import { IconAlertTriangle, IconCheck, IconChevronDown, IconClock, IconLoader2, IconPlayerStop, IconSquares, IconX } from '@tabler/icons-vue'
+import { IconAlertTriangle, IconCheck, IconChevronDown, IconClock, IconLoader2, IconPlayerStop, IconRefresh, IconSquares, IconX } from '@tabler/icons-vue'
 import IconBtn from '@renderer/common/components/IconBtn/IconBtn.vue'
-import { isWorkflowAgentLive, type WorkflowAgentTask } from '@shared/agentWorkflow.api'
+import { isWorkflowAgentLive, type WorkflowAgentTask, type WorkflowRunSnapshot } from '@shared/agentWorkflow.api'
 import { workflowStore } from './store/workflow.store'
 import { workflowText } from './workflow.text'
 import './WorkflowTaskBar.less'
@@ -35,6 +35,7 @@ const summary = computed(() => {
   if (active.value.length && active.value.every(task => task.status === 'stopping')) return text.value.stoppingAll
   const confirmations = active.value.filter(task => task.status === 'approval').length
   if (confirmations) return text.value.waiting.replace('{count}', String(confirmations))
+  if (liveRuns.value.some(run => run.status === 'running')) return text.value.working
   const failures = finished.value.filter(task => task.status === 'failed').length
   if (failures) return text.value.failures.replace('{count}', String(failures))
   const failedRun = runs.value.find(run => run.status === 'failed')
@@ -79,6 +80,16 @@ const stop = async (task?: WorkflowAgentTask): Promise<void> => {
     if (task) await workflowStore.stopAgent(sessionId, task.runId, task.id)
     else await workflowStore.stopSession(sessionId)
   } catch { if (props.sessionId === sessionId) actionError.value = text.value.stopError }
+  finally { pending.value.delete(key) }
+}
+const retry = async (run: WorkflowRunSnapshot): Promise<void> => {
+  const sessionId = props.sessionId
+  const key = `retry:${run.id}`
+  if (pending.value.has(key)) return
+  pending.value.add(key)
+  actionError.value = ''
+  try { await workflowStore.retry(sessionId, run.id) }
+  catch (error) { if (props.sessionId === sessionId) actionError.value = error instanceof Error ? error.message : text.value.retryError }
   finally { pending.value.delete(key) }
 }
 const pointer = (event: PointerEvent): void => { if (open.value && event.target instanceof Node && !root.value?.contains(event.target)) close() }
@@ -142,6 +153,10 @@ onUnmounted(() => { observer?.disconnect(); clearInterval(timer); document.remov
         <details v-for="run in runs" :key="run.id" class="workflow-taskbar__detail" name="workflow-taskbar__run-result" :open="!run.agents.length || run.status === 'failed'">
           <summary>{{ run.name }} · {{ text.states[run.status] }}</summary>
           <p>{{ run.input }}</p>
+          <div v-if="run.status === 'failed' || (run.status === 'completed' && run.agents.some(agent => agent.status === 'failed'))" class="workflow-taskbar__actions" name="workflow-taskbar__retry">
+            <span>{{ run.entry ? text.rerun : text.retryUnavailable }}</span>
+            <IconBtn v-if="run.entry" class="workflow-taskbar__icon-button" :title="text.rerun" :aria-label="text.rerun" :disabled="pending.has(`retry:${run.id}`) || liveRuns.length > 0" @click="retry(run)"><IconRefresh :size="14" /></IconBtn>
+          </div>
           <pre v-if="run.error" class="workflow-taskbar__error">{{ run.error }}</pre>
           <template v-if="run.result"><strong>{{ text.result }}</strong><pre>{{ run.result }}</pre></template>
         </details>

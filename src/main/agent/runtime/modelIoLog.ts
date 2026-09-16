@@ -199,6 +199,22 @@ class ModelIoLog {
     }
   }
 
+  /** All retained rotations of one chat, oldest first. Flush the active writer before indexing. */
+  async dirsForSession(sessionId: string): Promise<string[]> {
+    const handle = this.handles.get(sessionId)
+    if (handle?.opening) await handle.opening
+    if (handle) await handle.queue
+    const suffix = `-${safeSessionSegment(sessionId)}`
+    const names = (await readdir(this.root())).filter(name => /^\d{17}-/.test(name) && name.slice(17) === suffix).sort()
+    const directories: string[] = []
+    for (const name of names) {
+      const directory = join(this.root(), name)
+      if (await this.hasSavedParts(directory)) directories.push(directory)
+    }
+    if (handle?.dir && !directories.includes(handle.dir) && await this.hasSavedParts(handle.dir)) directories.push(handle.dir)
+    return directories
+  }
+
   /** mkdir 成功不代表写入成功；空目录不能作为已保存日志交给用户。 */
   private async hasSavedParts(dir: string): Promise<boolean> {
     try {

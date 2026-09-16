@@ -23,6 +23,14 @@ class WorkflowStore {
     await this.refresh()
     return run
   }
+  async retry(sessionId: string, runId: string): Promise<WorkflowRunSnapshot> {
+    const reply = await api.retryWorkflow({ sessionId, runId })
+    if (reply?.ok === false) throw new Error(reply.error)
+    const run = reply?.ok === true ? reply.run : undefined
+    if (!run?.id || run.id === runId || run.sessionId !== sessionId) throw new Error('Workflow retry was not acknowledged')
+    await this.refresh()
+    return run
+  }
   private apply(snapshot: WorkflowSnapshot): void {
     if (!snapshot || !Array.isArray(snapshot.runs) || !Number.isFinite(snapshot.revision) || snapshot.revision < this.revision) return
     this.runs = snapshot.runs

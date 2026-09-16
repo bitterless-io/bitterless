@@ -60,6 +60,17 @@ test('Kimchi output repair sends another turn into the same attempt/session',asy
  const h=fixture(wf,{start(a,ctx){ctx.host.handle({type:'attempt.turn.result',id:a.id,turnId:a.turnId,result:{text:'not submitted'}})},turn(event,ctx){ctx.result(event.id,event.turnId,completed('fixed'))}})
  const result=await h.run();assert.equal(result.status,'completed');assert.deepEqual(result.output,completed('fixed'));assert.equal(h.attempts.size,1);assert.equal(h.events.filter(e=>e.type==='attempt.turn').length,1)
 })
+test('rejected submissions retain the real error and consume only the existing repair budget',async()=>{
+ const error='Validation failed for tool "workflow_submit_result": result.output must be array'
+ const wf=createWorkflow({name:'rejected-submit'}).then(task('agent',{maxOutputRepairs:2})).commit()
+ const fail=(id,turnId,ctx)=>ctx.host.handle({type:'attempt.turn.result',id,turnId,result:{text:'',submissionError:error}})
+ const h=fixture(wf,{start(a,ctx){fail(a.id,a.turnId,ctx)},turn(event,ctx){assert.match(event.prompt,/previous workflow_submit_result call was rejected/);assert(event.prompt.includes(error));fail(event.id,event.turnId,ctx)}})
+ const result=await h.run()
+ assert.equal(result.output.status,'failed');assert.equal(result.output.error,`Output repairs exhausted: ${error}`)
+ assert.equal(h.attempts.size,1);assert.equal(h.events.filter(e=>e.type==='attempt.turn').length,2)
+ assert(h.rows.get('1').logs.every(log=>!log.text.includes('without calling')))
+ assert(h.rows.get('1').logs.some(log=>log.text.includes(error)))
+})
 test('model cannot forge stopped; exhausted repairs become explicit failed outcome',async()=>{
  const wf=createWorkflow({name:'forged-stop'}).then(task('agent',{maxOutputRepairs:1})).commit()
  const forged={status:'stopped',error:'model chose to stop'}

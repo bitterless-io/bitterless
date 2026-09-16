@@ -165,6 +165,26 @@ test('invalid result and model-authored stopped outcome never create a submissio
  await h.agent.close()
 })
 
+test('submission compatibility decodes once only when the original schema validates the decoded value', async () => {
+ const h = fixture(async () => {})
+ await h.agent.turn('work')
+ const submit = h.tools().find(tool => tool.name === WORKFLOW_SUBMIT_RESULT)
+ const raw = { result: JSON.stringify({ count: 2 }) }
+ const prepared = submit.prepareArguments(raw)
+ assert.deepEqual(prepared, { result: { count: 2 } })
+ assert.equal(typeof raw.result, 'string', 'raw provider arguments remain available for diagnostics')
+ for (const args of [null, [], { result: '{invalid' }, { result: '{"count":"2"}' }, { result: JSON.stringify(raw.result) }]) {
+  assert.equal(submit.prepareArguments(args), args, 'malformed, double-encoded, and wrong-field-type values are never coerced')
+ }
+ await h.agent.close()
+ const strings = fixture(async () => {}, Type.String())
+ await strings.agent.turn('work')
+ const stringSubmit = strings.tools().find(tool => tool.name === WORKFLOW_SUBMIT_RESULT)
+ const stringResult = { result: '{"count":2}' }
+ assert.equal(stringSubmit.prepareArguments(stringResult), stringResult, 'an output schema accepting strings retains literal JSON text')
+ await strings.agent.close()
+})
+
 test('provider errors and context errors remain visible and cannot reuse previous turn text', async () => {
  let count = 0
  const h = fixture(async (_text, session, emit) => {

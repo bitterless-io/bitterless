@@ -39,6 +39,7 @@ export class KimchiHost implements HostPort {
   private readonly sessions = new Set<HostSession>()
   private readonly stopped = new Set<string>()
   private readonly pathCleanup = new Map<string, Promise<void>>()
+  private readonly submissionErrors = new Map<string, string>()
   constructor(
     private readonly workflow: WorkflowDefinition,
     private readonly request: WorkflowStartRequest,
@@ -102,7 +103,7 @@ export class KimchiHost implements HostPort {
     if (!row) return
     if (event.type === 'step-retry' || event.type === 'agent-steer') {
       if (!this.stopped.has(row.id)) { row.status = 'retrying'; row.currentAction = event.type === 'agent-steer' ? '修复输出格式…' : '等待重试…' }
-      this.log(row, event.type === 'agent-steer' ? `输出修复：${event.violation}` : `重试：${event.error}`)
+      this.log(row, event.type === 'agent-steer' ? `输出修复：${this.submissionErrors.get(event.path) ?? event.violation}` : `重试：${event.error}`)
     } else if (event.type === 'step-log') this.log(row, event.message)
     else if (event.type === 'step-completed' || event.type === 'step-failed' || event.type === 'step-cancelled') {
       // Kimchi dispose() is synchronous; defer visible completion until the supervisor ACKs cleanup.
@@ -201,9 +202,12 @@ export class KimchiHost implements HostPort {
             this.send({ type: 'attempt.start', attempt: { id: current.id, rowId: Number(row.id), turnId: current.turnId, prompt: usedRetries ? firstPrompt : prompt, opts: { label: row.label, phase: row.phase, tools: options?.tools, thinkingLevel: options?.thinkingLevel, outputSchema: request.outputSchema, asks: request.asks }, providerId, modelId } })
           } else {
             current.turn = deferred<AgentTurnResult>(); current.turnId = `${current.id}:${++turns}`; pending = current.turn.promise
-            this.send({ type: 'attempt.turn', id: current.id, turnId: current.turnId, prompt })
+            const submissionError = this.submissionErrors.get(request.path)
+            this.send({ type: 'attempt.turn', id: current.id, turnId: current.turnId, prompt: submissionError ? `${prompt}\n\nThe previous workflow_submit_result call was rejected:\n${submissionError}` : prompt })
           }
           const result = await pending
+          if (result.submissionError) this.submissionErrors.set(request.path, result.submissionError)
+          else this.submissionErrors.delete(request.path)
           conversation = result.conversation ?? conversation
           if (cancelled()) return unavailable('stopped', 'Agent stopped by user; result unavailable')
           if (result.error) throw new Error(result.error.message)
@@ -215,7 +219,7 @@ export class KimchiHost implements HostPort {
           if (options && request.outputSchema) {
             const value = result.submitted?.tool === 'workflow_submit_result' ? result.submitted.arguments.result : undefined
             const violation = describeSchemaViolations(request.outputSchema, value)
-            if (violation && turns > Math.max(0, step.maxOutputRepairs ?? 2)) return unavailable('failed', `Output repairs exhausted: ${violation}`)
+            if (violation && turns > Math.max(0, step.maxOutputRepairs ?? 2)) return unavailable('failed', `Output repairs exhausted: ${result.submissionError ?? violation}`)
           }
           return result
         } catch (error) {

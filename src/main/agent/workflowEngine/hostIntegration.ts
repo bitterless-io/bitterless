@@ -37,6 +37,7 @@ export const assertWorkflowSession = (sessionId: string): string => {
 export class WorkflowHostIntegration implements WorkflowApi {
   private readonly supervisor: WorkflowSupervisor
   private closed = false
+  private readonly retrying = new Map<string, Promise<WorkflowRunSnapshot>>()
   private readonly stopping = new Set<string>()
   private readonly starting = new Map<string, Set<Promise<WorkflowRunSnapshot>>>()
 
@@ -69,6 +70,24 @@ export class WorkflowHostIntegration implements WorkflowApi {
       signal.throwIfAborted()
       return result
     })
+  }
+
+  async retryWorkflow(params: { sessionId: string; runId: string }): Promise<WorkflowRunSnapshot> {
+    const sessionId = assertWorkflowSession(params.sessionId)
+    const key = JSON.stringify([sessionId, params.runId])
+    const existing = this.retrying.get(key)
+    if (existing) return existing
+    if (this.closed || this.stopping.has(sessionId)) throw new Error('The workflow host or chat is stopping.')
+    if (this.starting.has(sessionId)) throw new Error('A workflow is already starting in this chat.')
+    const pending = this.supervisor.retryRequest(sessionId, params.runId).then(request => this.startInSession(request))
+    this.retrying.set(key, pending)
+    const starts = new Set([pending])
+    this.starting.set(sessionId, starts)
+    try { return await pending }
+    finally {
+      if (this.retrying.get(key) === pending) this.retrying.delete(key)
+      if (this.starting.get(sessionId) === starts) this.starting.delete(sessionId)
+    }
   }
 
   async startWorkflow(request: WorkflowStartRequest): Promise<WorkflowRunSnapshot> {

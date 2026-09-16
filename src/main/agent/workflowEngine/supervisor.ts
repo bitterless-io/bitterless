@@ -122,7 +122,7 @@ export class WorkflowSupervisor {
     try {
       this.deps.recordIo?.(run.sessionId, { ...line, detail: {
         source: 'workflow', sessionId: run.sessionId, runId: run.id, workflow: run.name,
-        ...(attempt ? { agentId: String(attempt.rowId), attemptId: attempt.id, turnId } : {}),
+        ...(attempt ? { agentId: String(attempt.rowId), attemptId: attempt.id, turnId, label: attempt.opts.label, phase: attempt.opts.phase, providerId: attempt.providerId, modelId: attempt.modelId } : {}),
         ...(line.detail === undefined ? {} : { data: line.detail })
       } })
     } catch { /* Diagnostics must not change workflow execution or cleanup. */ }
@@ -146,11 +146,19 @@ export class WorkflowSupervisor {
   private async flush(): Promise<void> { await this.writes; if (this.persistenceError) throw this.persistenceError }
   async list(sessionId?: string): Promise<WorkflowSnapshot> { await this.initialized; return this.snapshot(sessionId) }
 
+  async retryRequest(sessionId: string, runId: string): Promise<WorkflowStartRequest> {
+    await this.initialized
+    const run = this.runs.find(run => run.id === runId && run.sessionId === sessionId)
+    if (!run || (run.status !== 'failed' && !(run.status === 'completed' && run.agents.some(agent => agent.status === 'failed'))) || this.live.has(runId)) throw new Error('Only a failed workflow or a completed workflow with failed Agents can be retried after cleanup.')
+    if (!run.entry) throw new Error('This older workflow has no saved launch entry. Start it again with /workflow.')
+    return { sessionId, entry: structuredClone(run.entry), input: run.input, origin: 'shortcut' }
+  }
+
   async start(request: WorkflowStartRequest, runtime: WorkflowRuntimeConfig): Promise<WorkflowRunSnapshot> {
     await this.initialized
     if (this.disposed) throw new Error('Workflow supervisor is closed')
     if (!request.sessionId.trim()) throw new Error('Workflow requires a chat session')
-    const run: WorkflowRunSnapshot = { id: randomUUID(), sessionId: request.sessionId, name: request.entry.kind === 'builtin' ? request.entry.name : request.entry.path.split('/').pop() ?? 'workflow', input: request.input, status: 'running', createdAt: Date.now(), agents: [] }
+    const run: WorkflowRunSnapshot = { id: randomUUID(), sessionId: request.sessionId, name: request.entry.kind === 'builtin' ? request.entry.name : request.entry.path.split('/').pop() ?? 'workflow', entry: structuredClone(request.entry), input: request.input, status: 'running', createdAt: Date.now(), agents: [] }
     this.recordIo(run, { kind: 'note', name: 'workflow-start', turn: 0, subject: run.name, text: request.input, detail: { entry: request.entry, cwd: request.cwd } })
     this.runs.push(run); this.publish(); await this.flush()
     if (terminalRun(run) || this.disposed) return structuredClone(run)

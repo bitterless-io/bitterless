@@ -7,7 +7,7 @@ const roles = [
   ['risks', '边界风险', '列出三个边界情况与处理建议']
 ] as const
 export default createWorkflow({ name: 'mini-demo', description: '三个真实 Pi Agent 并行分析，再由独立 Agent 汇总；停止的分支明确列为缺失。', input: Type.String(), maxConcurrency: 3 })
-  .parallel(roles.map(([name, label, task]) => createAgentTask({ name, label, input: Type.String(), output: Type.Array(Type.String()), tools: [], retries: 0, thinkingLevel: 'low', prompt: ({ input }) => `需求：${input.trim() || '设计一个可新增、勾选完成和删除待办的最小清单'}\n${task}，用中文简短回答。只分析，不使用工具。` })), { name: 'analysis' })
+  .parallel(roles.map(([name, label, task]) => createAgentTask({ name, label, input: Type.String(), output: Type.Array(Type.String()), tools: [], retries: 0, thinkingLevel: 'low', prompt: ({ input }) => `需求：${input.trim() || '设计一个可新增、勾选完成和删除待办的最小清单'}\n${task}，用中文简短回答。只分析，不执行文件、命令或外部工具；分析完成后必须调用 workflow_submit_result 提交结果。` })), { name: 'analysis' })
   .then(createAgentTask({ name: 'synthesize', label: '汇总', output: Type.String(), tools: [], retries: 0, thinkingLevel: 'low', prompt: ({ ctx }) => `用中文汇总以下独立 Agent 结果。只使用 status=completed 的 output；逐个说明 stopped/failed 的分支，不能补写缺失结论。\n${JSON.stringify(ctx.getStepResult('analysis'))}` }))
   .then(createStep({ name: 'report', run: ({ ctx }) => {
     const analysis = ctx.getStepResult<Record<string, AgentOutcome<string[]>>>('analysis') ?? {}

@@ -59,6 +59,14 @@ Nested-repository fix verified: 2026-09-16, workflow suites BL100/CW101 (201 tot
 
 修复契约：workflow 与普通聊天共用按 chat sessionId 分桶的 agent-io 日志。主进程在启动、派发和结束时记录生命周期，Agent worker 通过专用消息记录实际提示上下文、完整工具返回、assistant 消息与回合结果；主进程绑定 runId/agentId/attemptId 后串行落盘。诊断消息不进入 UI snapshot，不截成任务面板的 64KB 摘要；停止期间仍接收已产生的日志。仅记录模型内容和状态，不序列化 runtime/auth 配置，并移除 relay key。
 
-已有日志的 /copy_session_path 仍只读、等待已提交的写队列、支持重启查找。New chat 即初始化诊断目录与当前系统提示快照；复制缺失旧日志时补当前初始化快照，并明确历史缺失。初始化不创建模型 runtime、不发模型请求；旧版本没有保存的原始输入输出无法补回，runs.json 的摘要不冒充完整模型日志。
+已有日志的 /copy_session_path 保持原始 JSONL 不变、等待已提交的写队列、支持重启查找；此次会添加派生的索引与阅读入口。New chat 即初始化诊断目录与当前系统提示快照；复制缺失旧日志时补当前初始化快照，并明确历史缺失。初始化不创建模型 runtime、不发模型请求；旧版本没有保存的原始输入输出无法补回，runs.json 的摘要不冒充完整模型日志。
 
 本轮验证：workflow 215项、新聊天/日志路径/上下文/项目提示47项通过（两端合计262项）；相关Node/Vue类型检查、worker隔离构建、Cowork日志文件系统守卫通过。未运行Electron E2E。人工测试：新建→直接复制路径→hi→workflow demo→停止→重启后再复制。
+
+## 2026-09-16：动画、子 Agent 审查入口和重试
+
+Running / Stopping 图标增加旋转并尊重 reduced-motion。复制会话路径时在保留日志旁生成 README、跨目录 session-index.json 和可独立运行的 review-session.cjs；实际原文保持不变，索引扫描在 Worker thread。新聊天与立即复制共享一次初始化写入，复制仍会等待生成审查入口。
+
+结构化提交兼容一次 JSON 字符串解码，随后严格校验原 schema；每次 submit 结束当前工具循环，无效结果交回 Kimchi 有界 repair，保留真实错误。workflow 失败或包含失败 Agent 时可人工重新运行整个流程；Main 保存 entry 和完整 input，验证会话归属、清理完成和忙碌状态，再按当前模型/工作区创建新 run，保留旧证据。旧记录无 entry 时要求重新输入 /workflow。
+
+人工验收指南：/Users/ral/Documents/projects/overmind/areas/agent-runtime/workflow/workflow-context-and-retry-testing.md。
