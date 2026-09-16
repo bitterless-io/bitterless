@@ -21,6 +21,7 @@ const database = {
 }
 const settings = new Map()
 const runtimeSessions = []
+let modelCalls = 0
 class NetworkStub {
   async checkTarget() { return true }
   async createSession(options) {
@@ -30,6 +31,7 @@ class NetworkStub {
       prompts: [],
       subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener) },
       async prompt(message) {
+        modelCalls += 1
         this.prompts.push(message.text)
         const emit = (event) => { for (const listener of listeners) listener(event) }
         emit({ type: 'thinking_delta', delta: 'Considering the request' })
@@ -195,6 +197,76 @@ test('real host, native MaestroAgentService, BaseAgent and SQLite DAO work end t
     assert(!runtimeSessions.at(-1).prompts[0].includes('hello'))
     await host.closeSession(session.sessionId)
     await host.closeSession(other.sessionId)
+    // Logout owns accepted prompts even while their first DAO operation is pending.
+    const deferred = () => {
+      let resolve
+      const promise = new Promise((done) => { resolve = done })
+      return { promise, resolve }
+    }
+    for (const delayedOperation of ['read', 'first-save']) {
+      const raceSession = await host.createSession({ cwd: directory, mcpServers: [] })
+      const entered = deferred(), release = deferred(), finalEntered = deferred(), finalRelease = deferred()
+      let saveCalls = 0
+      const delayedStore = {
+        listExternalSessions: () => store.listExternalSessions(),
+        getExternalSession: async (params) => {
+          if (delayedOperation === 'read') { entered.resolve(); await release.promise }
+          return await store.getExternalSession(params)
+        },
+        saveExternalSession: async (params) => {
+          saveCalls += 1
+          if (delayedOperation === 'first-save' && saveCalls === 1) { entered.resolve(); await release.promise }
+          if (delayedOperation === 'first-save' && saveCalls === 2) { finalEntered.resolve(); await finalRelease.promise }
+          return await store.saveExternalSession(params)
+        }
+      }
+      const delayedHost = new MaestroAcpHost(delayedStore, runtime)
+      const beforeCalls = modelCalls
+      const pending = delayedHost.prompt(raceSession.sessionId, [{ type: 'text', text: 'must not execute after logout' }], context())
+      await entered.promise
+      authenticated = false
+      let logoutFinished = false
+      const logout = cancelExternalTurns().then(() => { logoutFinished = true })
+      // A fast re-login must not revive the already accepted old-generation request.
+      authenticated = true
+      await new Promise((resolve) => setImmediate(resolve))
+      assert.equal(logoutFinished, false)
+      release.resolve()
+      if (delayedOperation === 'first-save') {
+        await finalEntered.promise
+        assert.equal(logoutFinished, false, 'logout waits until final persistence drains')
+        finalRelease.resolve()
+      }
+      assert.equal((await pending).stopReason, 'cancelled')
+      await logout
+      assert.equal(modelCalls, beforeCalls)
+      const persisted = await store.getExternalSession({ id: raceSession.sessionId })
+      assert.equal(persisted.messages.length, delayedOperation === 'read' ? 0 : 2)
+      assert(persisted.messages.every((message) => !message.streaming))
+    }
+    const prepareEntered = deferred(), releasePrepare = deferred()
+    let targetChecks = 0
+    const preparingHost = new MaestroAcpHost(store, {
+      ...runtime,
+      prepare: async () => { prepareEntered.resolve(); await releasePrepare.promise },
+      checkTarget: async () => { targetChecks += 1; return { ready: true } }
+    })
+    const access = preparingHost.checkAccess()
+    await prepareEntered.promise
+    authenticated = false
+    await cancelExternalTurns()
+    authenticated = true
+    releasePrepare.resolve()
+    await assert.rejects(access, /authentication changed/)
+    assert.equal(targetChecks, 0)
+    const cancelledBeforeStart = context()
+    cancelledBeforeStart.controller.abort()
+    const beforeCancelled = modelCalls
+    const cancelledSession = await host.createSession({ cwd: directory, mcpServers: [] })
+    assert.equal((await host.prompt(cancelledSession.sessionId, [{ type: 'text', text: 'already cancelled' }], cancelledBeforeStart)).stopReason, 'cancelled')
+    assert.equal(modelCalls, beforeCancelled)
+    assert.equal((await store.getExternalSession({ id: cancelledSession.sessionId })).messages.length, 0)
+
     // Copy shipping bundles away from the repository: no node_modules, tsx or ASAR loader.
     const endpoint = createAcpEndpoint({ appId: 'bitterless-test', userData: directory, environment: 'test', socketPath: join(directory, 'built.sock') })
     const server = await startAcpServer({ host, endpoint })
