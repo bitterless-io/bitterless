@@ -1,7 +1,7 @@
 ---
 status: done
 depends-on: []
-verify: independent focused regression and actual Vue component checks passed; see review 001-3
+verify: independent focused regression, actual Vue component checks and A10 full-payload integration passed; see reviews 001-3 and 001-4
 ---
 
 # Skills three sources — design gate and delivery
@@ -102,3 +102,17 @@ After merging remote `dev/next` (`37f76ab6`), the Skills implementation was reva
 | `yarn check:renderer-i18n` | Still fails the existing `maestroTabAlias must start language initialization before evaluating product UI` assertion, `/tmp/bl-skills-merged-i18n.log` |
 
 The i18n failure is an existing checker/entrypoint mismatch: the checker requires a dynamic `import('./…')`, while `src/renderer/maestro/tabAlias/src/tabAlias.ts` intentionally uses a static component import to avoid the documented `file://` CSS-preload/CSP failure. Its bootstrap still awaits language initialization before Vue mounting. Both this entrypoint and `scripts/renderer-i18n/check-renderer-i18n.mjs` are unchanged between remote `37f76ab6` and merged `683a0cb8`; this is not a Skills or merge regression. The earlier full-Main diagnostic comparison is historical evidence and was not relabeled as a fresh post-merge comparison. No Electron app or E2E was run; no application code was changed during this verification.
+
+## A10 final payload audit
+
+Final completion audit adds [review 4](../reviews/skills-three-sources-001-4.md): execute the actual next-input export and request wrappers with full catalog comparison. Existing source tests and review 3 are retained; the supplemental integration check and independent review passed. Both desktop suites now pass 47/47. No new product scope or cloud deployment is required.
+
+### A10 integration evidence follow-up (2026-09-16)
+
+Added `tests/skillsThreeSources/requestParity.test.mjs` to replace the prior helper-only inference with actual call-path evidence. It compiles unchanged production modules and executes `MaestroAgentService.copyNextTurnContext`, real export/prompt assembly, and clipboard output. The real `handleAgentTurn` idle-steering branch registers the Skills provider; real `BaseAgent.init` and `PiRuntimeAdapter.createSession` install the production `transformContext` request hook. Only desktop/cloud boundaries and the external SDK session shell are mocked; no Electron process, provider request, credentials or new dependencies are involved.
+
+The same actual Registry contains **251 Skills across global/workspace/institution**, including three identical canonical names with distinct references. Assertions compare every exported/request catalog JSON payload byte-for-byte, then compare each latest entry's identity, description, source, reference, path, content revision and implicit-invocation policy with the actual snapshot. A metadata plus auxiliary-resource update changes only the intended Skill: the next real export and request share the new snapshot revision, prior catalog/history bytes are preserved, the native transform remains chained, and the SDK session is created only once.
+
+`node --test tests/skillScopes/scope.test.mjs tests/skillScopes/execution.test.mjs tests/skillsThreeSources/*.test.mjs` now passes **47/47** on source HEAD `f0468d3c` plus these test changes (`/tmp/bl-skills-a10-alltests.log`); the new isolated integration case also passes (`/tmp/bl-skills-request-parity.log`). `git diff --check` passes. The older helper test was renamed to describe its actual scope. No production logic was changed; independent A10 evidence review passed in review 4.
+
+The supplemental test and evidence are a local follow-up commit pending remote synchronization. Root `.gitmodules` now specifies `main` for `bitterless-private` and `micromeet-bruno`, while their checkouts remain `dev/next`; root policy blocks further pull/push/gitlink updates until Ral chooses the branch alignment. Already-pushed product code and cloud deployment remain unchanged.

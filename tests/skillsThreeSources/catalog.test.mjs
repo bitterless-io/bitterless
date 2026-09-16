@@ -87,7 +87,7 @@ test('watch missing directories, rename and linked target changes without restar
 
 const { buildAgentTurnPrompt } = await load('src/main/agent/runtime/agentPrompt.ts')
 const { appendCurrentSkillCatalog } = await load('src/main/agent/runtime/skillCatalogRequest.ts')
-test('next-input export and actual request use the same complete catalog, refreshed without history rewrite', t => {
+test('prompt and request catalog helpers refresh without history rewrite and reject overflow', t => {
   const f=fixture(t), root=join(f.workspace,'.agents/skills'); const dir=skill(root,'changing','Original')
   const catalog=f.registry.catalogPrompt(f.workspace)
   const pending=buildAgentTurnPrompt({ message:'Inspect skills', currentUrl:'', briefs:[], catalog })
