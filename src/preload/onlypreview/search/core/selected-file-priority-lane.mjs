@@ -173,12 +173,16 @@ export class OnlyPreviewSelectedFilePriorityLane {
     }
     lane.queryCount += 1;
     try {
+      // The scope gate runs before the name match, not after it. Files is scope-fenced like
+      // Contents now, so a selected file outside the scope is not a Files hit at all - returning it
+      // here would flash one row in from the priority lane and then have the authoritative branch
+      // take it away again. Skipping the match also skips two ICU normalizations per query.
+      if (!isGlobalSearchPathInScope(lane.relativePath, scope)) {
+        return { cancelled: false, files: [], contents: [] };
+      }
       const files = normalizeSearchText(lane.entry.name).includes(normalizeSearchText(query))
         ? [createGlobalSearchFileAuthority(lane.entry)]
         : [];
-      if (!isGlobalSearchPathInScope(lane.relativePath, scope)) {
-        return { cancelled: false, files, contents: [] };
-      }
       const outcome = await lane.index.searchContents(query, {
         maxResults,
         scope,

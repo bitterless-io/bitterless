@@ -54,6 +54,15 @@ export const searchOnlyPreviewGlobalFiles = async ({
 }) => {
   const normalizedQuery = normalizeSearchText(query);
   if (!normalizedQuery || maxResults <= 0) return { authorities: [], truncated: false };
+  // The containment test, resolved once instead of once per entry. `null` means "every path", so
+  // Project scope and the synthetic root drop out of the loop entirely rather than re-deciding the
+  // same branch for every entry in the workspace; a directory scope builds its `dir/` prefix once
+  // rather than rebuilding that string on each of the 130k iterations a large workspace walks. The
+  // trailing slash is what keeps the test segment-safe, so `one-archive/x` is not read as living
+  // inside `one`. Kept as a plain prefix rather than a closure: this is the hot loop, and a direct
+  // `startsWith` beats a call through a function reference.
+  const scopePrefix =
+    scope.kind === 'project' || scope.relativePath === '' ? null : `${scope.relativePath}/`;
   await new Promise((resolveTurn) => setImmediate(resolveTurn));
   if (isCancelled()) return { authorities: [], truncated: false, cancelled: true };
   const directoryAuthorities = [];
@@ -68,9 +77,12 @@ export const searchOnlyPreviewGlobalFiles = async ({
       sliceStartedAt = performance.now();
     }
     if (isCancelled()) return { authorities: [], truncated: false, cancelled: true };
+    // Order matters and is load-bearing: the two cheap rejections run before the ICU-heavy
+    // `normalizeSearchText`, which dominates this loop. A narrow scope therefore makes the walk
+    // cheaper rather than more expensive, because most entries never reach the normalizer.
     if (
       (entry.nodeKind !== 'file' && entry.nodeKind !== 'directory') ||
-      !inScope(entry.relativePath, scope) ||
+      (scopePrefix !== null && !entry.relativePath.startsWith(scopePrefix)) ||
       !normalizeSearchText(entry.name).includes(normalizedQuery)
     ) {
       continue;

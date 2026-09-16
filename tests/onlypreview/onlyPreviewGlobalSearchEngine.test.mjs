@@ -413,12 +413,19 @@ test('Global Search independently caps Files and Contents and includes directori
   }
 });
 
-test('Files stays project-wide while Contents obeys the current directory scope', async () => {
+// Owner decision, 2026-09-16: 「files 的部分也要受到 Contents scope 的限制」. This inverts the
+// earlier rule that made Files the one project-wide lookup
+// (docs/issues/onlypreview-directory-selection-and-global-file-scope.md). One scope now fences both
+// sections, so `areas/network` is reachable by name only at Project scope.
+test('both sections obey the scope, and Files is project-wide only at Project scope', async () => {
   const workspace = createWorkspace();
   mkdirSync(join(workspace.rootPath, 'one'));
+  mkdirSync(join(workspace.rootPath, 'one-archive'));
   mkdirSync(join(workspace.rootPath, 'areas'));
   mkdirSync(join(workspace.rootPath, 'areas', 'network'));
-  writeFileSync(join(workspace.rootPath, 'one', 'current.txt'), 'network in current');
+  writeFileSync(join(workspace.rootPath, 'one', 'network-notes.txt'), 'network in current');
+  // A sibling whose name has the scope as a string prefix: it must NOT be swept in by `one`.
+  writeFileSync(join(workspace.rootPath, 'one-archive', 'network-old.txt'), 'network archived');
   writeFileSync(join(workspace.rootPath, 'areas', 'network', 'guide.txt'), 'network outside');
   const engine = createOnlyPreviewSearchEngine();
   try {
@@ -439,11 +446,12 @@ test('Files stays project-wide while Contents obeys the current directory scope'
     });
     assert.deepEqual(
       scoped.files.map(({ relativePath }) => relativePath),
-      ['areas/network']
+      ['one/network-notes.txt'],
+      'the scope fences Files: `areas/network` and the `one-archive` sibling are both out'
     );
     assert.deepEqual(
       scoped.contents.map(({ relativePath }) => relativePath),
-      ['one/current.txt']
+      ['one/network-notes.txt']
     );
     const project = await engine.search({
       workspaceId: 'workspace',
@@ -455,10 +463,11 @@ test('Files stays project-wide while Contents obeys the current directory scope'
       isCancelled: () => false
     });
     assert.deepEqual(
-      project.files.map(({ relativePath }) => relativePath),
-      ['areas/network']
+      project.files.map(({ relativePath }) => relativePath).sort(),
+      ['areas/network', 'one-archive/network-old.txt', 'one/network-notes.txt'],
+      'Project scope still reaches every name in the workspace'
     );
-    assert.equal(project.contents.length, 2);
+    assert.equal(project.contents.length, 3);
   } finally {
     await engine.shutdown();
     rmSync(workspace.base, { recursive: true, force: true });
@@ -470,7 +479,7 @@ test('first build streams Files and scoped Contents while final results wait for
   mkdirSync(join(workspace.rootPath, 'current'));
   mkdirSync(join(workspace.rootPath, 'areas'));
   mkdirSync(join(workspace.rootPath, 'areas', 'network'));
-  writeFileSync(join(workspace.rootPath, 'current', 'local.txt'), 'network local');
+  writeFileSync(join(workspace.rootPath, 'current', 'network-local.txt'), 'network local');
   writeFileSync(join(workspace.rootPath, 'areas', 'network', 'network.js'), 'network outside');
   const diagnosticEvents = [];
   let diagnosticSequence = 0;
@@ -501,6 +510,9 @@ test('first build streams Files and scoped Contents while final results wait for
       databasePath: workspace.databasePath
     });
     await candidateReady.promise;
+    // The prioritized file sits OUTSIDE the scope. Before Files was scope-fenced the lane streamed
+    // it straight into Files; now it must be withheld, and the first streamed row has to come from
+    // inside `current` instead.
     const priority = engine.supersedePriority({
       workspaceId: 'workspace',
       generation: 3,
@@ -529,7 +541,12 @@ test('first build streams Files and scoped Contents while final results wait for
       });
     await firstResult.promise;
     assert.equal(streamed[0].section, 'files');
-    assert.equal(streamed[0].relativePath, 'areas/network/network.js');
+    assert.equal(streamed[0].relativePath, 'current/network-local.txt');
+    assert.equal(
+      streamed.some(({ relativePath }) => relativePath === 'areas/network/network.js'),
+      false,
+      'the out-of-scope prioritized file must not flash into Files and then be taken away'
+    );
     await new Promise((resolveTurn) => setImmediate(resolveTurn));
     assert.equal(settled, false, 'the final response must still wait for content index promotion');
 
@@ -539,15 +556,18 @@ test('first build streams Files and scoped Contents while final results wait for
     const response = await searching;
     assert.deepEqual(
       response.files.map(({ relativePath }) => relativePath),
-      ['areas/network', 'areas/network/network.js']
+      ['current/network-local.txt'],
+      'the terminal Files set is fenced by the same scope as Contents'
     );
     assert.deepEqual(
       response.contents.map(({ relativePath }) => relativePath),
-      ['current/local.txt']
+      ['current/network-local.txt']
     );
     assert.notEqual(
-      response.files.find(({ relativePath }) => relativePath.endsWith('network.js')).resultToken,
-      earlyToken
+      response.files.find(({ relativePath }) => relativePath.endsWith('network-local.txt'))
+        .resultToken,
+      earlyToken,
+      'the authoritative row still replaces the streamed one and revokes its token'
     );
     const gateIndex = diagnosticEvents.findIndex(
       ({ event, gate }) => event === 'search-gate' && gate === 'index-build'

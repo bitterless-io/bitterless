@@ -10,9 +10,9 @@ replaces the former Project-sidebar filter/search UI, separates filename/directo
 file-content matches, and gives every selected result a bounded preview below the result list.
 
 The Project sidebar returns to one job: browse the current root. Its first row is the root directory
-itself. The explicitly selected directory, including that root row, is the default Contents scope;
-the search workspace can explicitly switch Contents to the whole project. Files always searches
-project-wide file and directory names.
+itself. The explicitly selected directory, including that root row, is the default search scope; the
+search workspace can explicitly switch that scope to the whole project. **One scope fences both
+sections** - names and bodies answer the same question about the same subtree.
 
 ## Visual Direction
 
@@ -29,7 +29,7 @@ language.
 | Divider           | `#d9ddea`             | result/preview split and quiet borders                                      |
 | Ink / muted       | `#25283a` / `#6f7487` | primary and secondary copy                                                  |
 | Floating gutter   | `24px`                | transparent space between the native Search view edge and workspace surface |
-| Floating surface  | `14px` radius         | one clipped search workspace with a restrained two-layer Ink shadow         |
+| Floating surface  | `14px` radius         | one clipped search workspace with a restrained two-layer action-blue ring   |
 
 Typography remains the app's system UI stack. File names use 12px/650, relative directories and
 media labels use 10px/500, preview text uses the existing editor monospace stack, and group labels
@@ -188,11 +188,13 @@ interface OnlyPreviewGlobalSearchResponse {
   `ag`.
 - A file may appear once in Files and once in Contents because the sections answer different
   questions. Exact-path deduplication occurs only inside each section.
-- Files always uses Project scope over the existing file/directory metadata tier. Its complete
-  matches are stable-partitioned as directories then files before the 250-row cap and token issue.
-  Contents uses the live explicit directory by default and switches to Project through the
-  selector. Both sections retain
-  the same hidden/fixed/config/depth policy. Switching Contents scope cancels/supersedes the request,
+- Files answers from the existing file/directory metadata tier and is fenced by the same scope as
+  Contents. Its complete matches are stable-partitioned as directories then files before the 250-row
+  cap and token issue. Both sections take the live explicit directory by default and switch to
+  Project through the one selector; a directory scope covers its strict descendants, so the scope
+  directory's own row is not a hit and a sibling that merely shares the name as a prefix
+  (`one-archive` under scope `one`) is not swept in. Both sections retain
+  the same hidden/fixed/config/depth policy. Switching scope cancels/supersedes the request,
   immediately clears rows and preview issued for the previous scope, and immediately reruns the
   current non-empty query without the typing debounce. It does not derive an anchor from result
   selection.
@@ -287,9 +289,9 @@ type OnlyPreviewGlobalSearchPreview =
 | `Left` / `Right` on group heading               | collapse/expand only that group; both begin expanded                                                                                            |
 | click or `Enter`                                | select and preview immediately; Office loads lazily; rapid changes coalesce to the last candidate without changing main Preview                 |
 | double-click or `Cmd/Ctrl+Enter` on file        | open it in the main Preview, close Global Search                                                                                                |
-| explicit Project-tree file/directory selection  | update the live Current directory; rerun only directory-scoped Contents                                                                         |
+| explicit Project-tree file/directory selection  | update the live Current directory; rerun both sections when the scope is the current directory                                                  |
 | double-click or `Cmd/Ctrl+Enter` on directory   | expand its full ancestry and target, select and center-focus it in Project, then close Global Search                                            |
-| Contents scope selector                         | immediately retire the prior request/results and rerun the current non-empty query for Current directory or Project; Files remains project-wide |
+| Search scope selector                           | immediately retire the prior request/results and rerun the current non-empty query for Current directory or Project; it fences Files and Contents alike |
 | drag/keyboard separator                         | resize result/preview split within 25–70%                                                                                                       |
 | click any transparent area outside the workspace | close Global Search in its own renderer, consume the click, and restore its live opener                                                         |
 | `Esc`                                           | close Global Search once, including with a non-empty query; restore prior Preview bounds and opener focus                                      |
@@ -356,6 +358,20 @@ keeps its own Escape handling. Query clearing remains a separate Clear action, n
   prove strict or union coverage by later excludes only within one non-refundable 16,384-credit
   ledger. Scale-dependent scans, representatives, continuation/product states, fixed-width keys,
   queue entries, and visited entries reserve before work or allocation; exhaustion fails open.
+- The Files section is answered by one in-memory pass over the file/directory metadata tier, so its
+  cost is linear in workspace size rather than in the query: about 200ms at 130,000 entries, and
+  already the dominant per-query cost at 6,000 files
+  ([issue](../issues/onlypreview-files-section-per-query-rescan.md)). The scope is what bounds it.
+  The per-entry guard runs node-kind, then scope containment, then the Unicode normalization - the
+  normalizer is the expensive step and by far the largest share of it is the locale lowercase, so a
+  narrow scope makes the pass **cheaper**, never more expensive, because most entries are rejected
+  before they reach it. The containment test resolves the scope once per query rather than rebuilding
+  its `dir/` prefix per entry, and Project scope skips the test entirely instead of re-deciding the
+  same branch 130,000 times. Measured on 130,000 entries with 1% under the scope: Project scope is
+  unchanged at 186ms and a directory scope falls from 182ms to 28ms, a factor proportional to what
+  the scope excludes rather than a fixed one. Answering the section from the index instead of the scan remains
+  [task 071](../plan/tasks/onlypreview-files-section-sql-lookup-071.md); it is the structural fix,
+  and the scope is the bound that makes the scan acceptable until then.
 - Search remains one-active/one-latest and time-sliced. Filename traversal never opens file bodies;
   content reads keep the 1MiB cap; result preview adds at most one 256KiB text buffer, one 200-entry
   directory listing, or one bounded 25MiB Office buffer with one format Worker/Viewer. Supersession

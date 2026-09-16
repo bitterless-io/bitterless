@@ -68,6 +68,27 @@ const shadowLayers = (declaration) => {
   return layers;
 };
 
+/**
+ * 一层 box-shadow 四条边各自超出盒子多少。
+ *
+ * `offsetX offsetY blur spread`，四个都可省且**零可以不带单位**，所以先把 `rgba(…)` 整段剥掉
+ * （里面的数字不是长度），再按空白切词逐个认。某一侧的延伸量 = 该方向的偏移 + blur/2 + spread。
+ */
+const shadowReach = (layer) => {
+  const [offsetX = 0, offsetY = 0, blur = 0, spread = 0] = layer
+    .replace(/\([^)]*\)/g, ' ')
+    .split(/\s+/)
+    .filter((token) => /^-?\d*\.?\d+(px)?$/.test(token))
+    .map((token) => Number(token.replace('px', '')));
+  const bleed = blur / 2 + spread;
+  return {
+    上: -offsetY + bleed,
+    下: offsetY + bleed,
+    左: -offsetX + bleed,
+    右: offsetX + bleed
+  };
+};
+
 describe('编译后的 CSS：面板主体带蓝色投影', () => {
   const body = ruleOf('.onlypreview-global-search');
   const shadow = body.match(/box-shadow:\s*([^;]+);/)?.[1];
@@ -97,22 +118,36 @@ describe('编译后的 CSS：面板主体带蓝色投影', () => {
     assert.ok(alphas[1] >= 0.16, `第二层 alpha ${alphas[1]} 低于原来的 0.16`);
   });
 
-  test('总延伸量 ≤ 24px —— 超出会被 view 边界裁掉', () => {
-    // 面板按 `FLOATING_GUTTER_PX = 24` 内缩定位，所以阴影只有 24px 可落。
-    // 向下延伸 = offsetY + spread + blur/2。这一条是这次真实的取舍：综合出来的第一版是
-    // `0 16px 32px -12px`（向下 36px），会被切一刀。
+  test('四条边的延伸量都 ≤ 24px —— 超出会被 view 边界裁掉', () => {
+    // 面板按 `FLOATING_GUTTER_PX = 24` 内缩定位，所以阴影每一侧只有 24px 可落。
+    //
+    // **按位置解析，不是"第一个带 px 的就是 offsetY"。** 原来那个解析器按 `matchAll(/(-?\d+)px/g)`
+    // 取前三个数，靠的是 x 偏移恰好写成不带单位的 `0` 才碰巧对齐 —— 一旦 y 偏移也归零（这次就是），
+    // 它把 blur 读成 offsetY、把 spread 读成 blur，于是给 `0 0 40px -2px` 算出 39px 的假越界。
+    // CSS 允许无单位的零，所以按空白切词、逐个认长度才是确定的。
     const gutter = Number(source('src/renderer/onlypreview/globalSearch/src/App.vue')
       .match(/FLOATING_GUTTER_PX = (\d+)/)?.[1]);
     assert.equal(gutter, 24, 'gutter 变了，这条上限要跟着重新算');
     for (const layer of shadowLayers(shadow)) {
-      const [offsetY, blur, spread] = [
-        ...layer.matchAll(/(-?\d+)px/g)
-      ].map((match) => Number(match[1]));
-      const reach = offsetY + (spread ?? 0) + blur / 2;
-      assert.ok(
-        reach <= gutter,
-        `这一层向下延伸 ${reach}px，超过 ${gutter}px 的可落空间：${layer}`
-      );
+      const sides = shadowReach(layer);
+      for (const [side, reach] of Object.entries(sides)) {
+        assert.ok(
+          reach <= gutter,
+          `这一层向${side}延伸 ${reach}px，超过 ${gutter}px 的可落空间：${layer}`
+        );
+      }
+    }
+  });
+
+  test('是一圈，不是往下压 —— 面板上沿也必须有阴影', () => {
+    // Ral 2026-09-16:「search 弹窗阴影效果应该堆成的围绕窗口而不是偏下」。
+    // 原来的 `0 14px 28px -10px` 向上延伸是 -10px，也就是上沿一点阴影都没有；只钉"向下不越界"
+    // 的旧守卫对此完全无感。这一条钉的就是他要的那件事本身。
+    for (const layer of shadowLayers(shadow)) {
+      const { 上: top, 下: bottom, 左: left, 右: right } = shadowReach(layer);
+      assert.ok(top > 0, `这一层上沿没有阴影（向上 ${top}px）：${layer}`);
+      assert.equal(top, bottom, `上下不对称（${top} vs ${bottom}）：${layer}`);
+      assert.equal(left, right, `左右不对称（${left} vs ${right}）：${layer}`);
     }
   });
 

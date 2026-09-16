@@ -166,14 +166,16 @@ test('browsed hidden directories remain valid empty Search scopes outside the Se
           { relativePath: 'visible/title-scope-hit.pdf', nodeKind: 'file' }
         ]
       );
+      // A hidden directory stays a VALID scope that simply projects nothing - it is browseable but
+      // outside the Search projection, so neither section has anything to return. Files used to
+      // answer project-wide here and hand back the same rows as `projectTitles`; since the owner
+      // fenced Files by the scope too (2026-09-16), both sections are empty and the scope is still
+      // accepted rather than rejected, which is what this test exists to prove.
       const hiddenTitles = await search(engine, 1, 'hidden-titles', 'scope-hit', 500, {
         kind: 'directory',
         relativePath: '.hidden'
       });
-      assert.deepEqual(
-        hiddenTitles.files.map(({ relativePath }) => relativePath),
-        projectTitles.files.map(({ relativePath }) => relativePath)
-      );
+      assert.deepEqual(hiddenTitles.files, []);
       assert.deepEqual(hiddenTitles.contents, []);
 
       assert.equal((await search(engine, 1, 'japanese', '日本')).contents.length > 0, true);

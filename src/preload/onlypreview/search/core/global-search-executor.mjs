@@ -208,7 +208,7 @@ const runSnapshotPhase = async ({
     const rawOutcome = await searchOnlyPreviewGlobalFiles({
       entries: filesWithRecentListings(context, lease.treeEntries, lease.searchPolicy),
       query,
-      scope: { kind: 'project' },
+      scope,
       maxResults: cap,
       isCancelled: isBranchCancelled
     });
@@ -368,7 +368,7 @@ export const executeOnlyPreviewGlobalSearch = async (context, params) => {
       // Publish verified names before any metadata, content-build or promotion gate. The terminal
       // phase merges the same listings, so a new row cannot disappear when an older build finishes.
       const recent = await searchOnlyPreviewGlobalFiles({
-        entries: context.browseIndex.searchEntries(), query, scope: { kind: 'project' },
+        entries: context.browseIndex.searchEntries(), query, scope: validatedScope,
         maxResults: cap, isCancelled
       });
       if (recent.cancelled || isCancelled()) throw cancelledError();
@@ -415,7 +415,7 @@ export const executeOnlyPreviewGlobalSearch = async (context, params) => {
           const files = await searchOnlyPreviewGlobalFiles({
             entries: filesWithRecentListings(context, metadata.treeEntries, metadata.searchPolicy),
             query,
-            scope: { kind: 'project' },
+            scope: validatedScope,
             maxResults: cap,
             isCancelled: branchIsCancelled
           });

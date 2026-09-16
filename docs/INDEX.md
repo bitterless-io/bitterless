@@ -824,8 +824,14 @@ design document.
   proposed: the Files group is answered by a scope-blind in-memory rescan costing 1.5us per tree entry
   per query - about 200ms on a 130,000-entry workspace - while the normalised name it recomputes is
   already stored in `files.normalized_title`. Task
-  [071](plan/tasks/onlypreview-files-section-sql-lookup-071.md) is blocked on one product decision:
-  does the Files group stay project-wide.
+  [071](plan/tasks/onlypreview-files-section-sql-lookup-071.md) is unblocked - the product decision
+  landed as "no" on 2026-09-16 - but the SQL lookup itself is not started.
+- [OnlyPreview Global Search Files section scope](plan/tasks/onlypreview-files-section-scope-178.md) -
+  implemented; owner verification pending: one scope now fences Files and Contents alike, reversing
+  the Files half of
+  [the directory-selection decision](issues/onlypreview-directory-selection-and-global-file-scope.md);
+  the scan resolves the scope once per query, so a narrow scope makes it cheaper rather than dearer,
+  and the search panel's shadow became a ring instead of sitting below the panel.
 - [OnlyPreview indexing plan comparison and evaluation](design/onlypreview-indexing-plan-evaluation.md) -
   four indexing designs behind one interface, ten evaluation dimensions with the first four as gates,
   a 39-gate lifecycle battery that was mutation-tested, and the measured ranking.

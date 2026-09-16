@@ -1,6 +1,8 @@
 # OnlyPreview directory selection and Global Search file scope
 
-Status: tasks 038 and 072 implemented; owner verification pending
+Status: tasks 038 and 072 implemented; **the Files half of this decision was reversed on
+2026-09-16** - see [Reversal](#reversal-2026-09-16) below and
+[task 178](../plan/tasks/onlypreview-files-section-scope-178.md). The tree-selection half stands.
 
 ## Problem
 
@@ -30,7 +32,7 @@ Project tree
   file selection                  -> Current directory is its parent
 
 Global Search
-  Files    -> always search project-wide file + directory metadata
+  Files    -> always search project-wide file + directory metadata   <- REVERSED 2026-09-16
   Contents -> Current directory by default; selector may switch to Project
 ```
 
@@ -68,3 +70,23 @@ adds the narrow arrow-hit-target exception without changing task 038's completed
 Global Search scope, or keyboard contract. Its
 [first independent review](../plan/reviews/onlypreview-tree-disclosure-toggle-072-1.md) passed with
 no finding.
+
+## Reversal (2026-09-16)
+
+Owner, 2026-09-16: 「files 的部分也要受到 Contents scope 的限制」. One scope now fences both
+sections; the split above is no longer the shipped behavior.
+
+The original reasoning is left intact above because it is still the honest account of the trade,
+and it names exactly what is given up: a project-level name such as `network` no longer appears in
+Files while the scope is a directory that does not contain it. The selector is the way back - it
+switches both sections to Project at once - and it is relabelled from "Contents scope" to "Search
+scope" because it no longer governs only Contents.
+
+What moved the decision is that the two sections were answering questions about different subtrees
+at the same time, which reads as a bug rather than as a feature: the same query showed bodies from
+the current directory beside names from everywhere. The current design is recorded in
+[the Global Search design](../design/onlypreview-global-search.md); the change itself is
+[task 178](../plan/tasks/onlypreview-files-section-scope-178.md).
+
+The tree-selection half of this issue - one-click directory selection, the row/arrow gesture split,
+and file selection anchoring to its parent - is untouched and still current.

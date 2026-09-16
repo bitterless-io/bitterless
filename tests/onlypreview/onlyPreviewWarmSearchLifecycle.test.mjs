@@ -243,6 +243,9 @@ test('schema-8 warm snapshot restores empty directories symlinks and maximum dep
 test('an active index streams warm rows while refresh stays pending for terminal replacement', async () => {
   const workspace = createWorkspace();
   mkdirSync(join(workspace.rootPath, 'current'));
+  // Inside the scope, so it is the warm Files row. The root-level `network` below stays as the
+  // out-of-scope control: Files is fenced by the scope now, so it must not come back.
+  mkdirSync(join(workspace.rootPath, 'current', 'network'));
   mkdirSync(join(workspace.rootPath, 'network'));
   writeFileSync(join(workspace.rootPath, 'current', 'local.txt'), 'network local');
   const engine = createOnlyPreviewSearchEngine();
@@ -291,7 +294,7 @@ test('an active index streams warm rows while refresh stays pending for terminal
     const response = await searching;
     assert.deepEqual(
       response.files.map(({ relativePath }) => relativePath),
-      ['network']
+      ['current/network']
     );
     assert.deepEqual(
       response.contents.map(({ relativePath }) => relativePath),

@@ -31,8 +31,12 @@ const bounded = async (promise, label) => {
 };
 const paths = (results) => results.map(({ relativePath }) => relativePath);
 const cancelled = (error) => error?.code === 'CANCELLED';
+// `current/network/` exists so a directory scope still has a folder AND a file to match by name.
+// Before Files was scope-fenced the only name matches were under `areas/`, i.e. outside the scope
+// this test uses - which is exactly what may no longer stream.
 const sampleFiles = {
   'current/local.txt': 'network inside the selected directory',
+  'current/network/network.md': '# network inside the selected directory',
   'areas/network/network.md': '# network outside the selected directory',
   'outside-body.txt': 'network in another root file'
 };
@@ -124,7 +128,7 @@ const holdBeforeMetadata = ({ engine, gate }, failure) => {
   return held;
 };
 
-test('cold Files and folder tokens work before either content build, with project Files and directory Contents', async () => {
+test('cold Files and folder tokens work before either content build, both fenced by the directory scope', async () => {
   await withEngine(sampleFiles, async (fixture) => {
     const { engine, gate, start, search, request } = fixture;
     const build = holdContentBuild(fixture);
@@ -178,7 +182,12 @@ test('cold Files and folder tokens work before either content build, with projec
         'Files bypass blocked scoped Contents'
       );
       const earlyFiles = streamed.filter(({ section }) => section === 'files');
-      assert.deepEqual(paths(earlyFiles), ['areas/network', 'areas/network/network.md']);
+      assert.deepEqual(paths(earlyFiles), ['current/network', 'current/network/network.md']);
+      assert.equal(
+        streamed.some(({ relativePath }) => relativePath.startsWith('areas/')),
+        false,
+        'the cold metadata snapshot is fenced by the scope, exactly like Contents'
+      );
       assert.deepEqual(
         earlyFiles.map(({ nodeKind }) => nodeKind),
         ['directory', 'file']
@@ -189,7 +198,7 @@ test('cold Files and folder tokens work before either content build, with projec
       );
       assert.equal(settled, false);
       const memory = await engine.memory();
-      assert.equal(memory.treeMetadataEntryCount, 6);
+      assert.equal(memory.treeMetadataEntryCount, 8);
       assert.ok(memory.treeMetadataEstimatedBytes > 0);
       assert.equal(memory.measurementComplete, false);
       assert.equal(memory.diskIndexBytes, null);
@@ -204,15 +213,16 @@ test('cold Files and folder tokens work before either content build, with projec
       const filePreview = await preview(earlyFiles[1]);
       assert.equal(filePreview.kind, 'text');
       assert.equal(filePreview.adapter, 'markdown');
-      assert.equal(filePreview.text, sampleFiles['areas/network/network.md']);
+      assert.equal(filePreview.text, sampleFiles['current/network/network.md']);
       const directoryPreview = await preview(earlyFiles[0]);
       assert.equal(directoryPreview.kind, 'directory');
-      assert.deepEqual(paths(directoryPreview.entries), ['areas/network/network.md']);
+      assert.deepEqual(paths(directoryPreview.entries), ['current/network/network.md']);
       assert.equal(engine.index, undefined, 'token previews do not require promotion');
       scoped.release();
       await bounded(contentsReady.promise, 'scoped Contents batch');
       assert.deepEqual(paths(streamed.filter(({ section }) => section === 'contents')), [
-        'current/local.txt'
+        'current/local.txt',
+        'current/network/network.md'
       ]);
       assert.equal(settled, false, 'the terminal still waits for the atomic full index');
       assert.equal(build.traversals(), 0);
@@ -220,7 +230,7 @@ test('cold Files and folder tokens work before either content build, with projec
       await bounded(initializing, 'initial index promotion');
       const response = await bounded(searching, 'fresh terminal response');
       assert.deepEqual(paths(response.files), paths(earlyFiles));
-      assert.deepEqual(paths(response.contents), ['current/local.txt']);
+      assert.deepEqual(paths(response.contents), ['current/local.txt', 'current/network/network.md']);
       assert.equal(response.filesTruncated, false);
       assert.equal(response.contentsTruncated, false);
       assert.equal(build.traversals(), 1, 'early Files did not add a content traversal');
@@ -324,8 +334,13 @@ test('cancelling a cold search revokes early tokens and releases readers without
     await bounded(initializing, 'promotion after cancelled reader');
     state.cancelled = false;
     const response = await search('after-cancellation');
-    assert.deepEqual(paths(response.files), ['areas/network', 'areas/network/network.md']);
-    assert.equal(response.contents.length, 3);
+    assert.deepEqual(paths(response.files), [
+      'areas/network',
+      'current/network',
+      'areas/network/network.md',
+      'current/network/network.md'
+    ]);
+    assert.equal(response.contents.length, 4);
     assert.equal(engine.activeQueryCount, 0);
   });
 });
@@ -346,7 +361,7 @@ test('cancelling before metadata is ready promptly settles the query and does no
     metadata.release();
     await bounded(initializing, 'initialization continues after query cancellation');
     state.cancelled = false;
-    assert.equal((await search('after-pre-metadata-cancel')).files.length, 2);
+    assert.equal((await search('after-pre-metadata-cancel')).files.length, 4);
   });
 });
 

@@ -1,7 +1,7 @@
 ---
 id: onlypreview-files-section-sql-lookup-071
 scope: Answer the Global Search Files section from the index instead of rescanning every tree entry
-status: blocked on one product decision (does the Files group stay project-wide) and on task 043
+status: unblocked and rescoped - the product decision landed as "no" (task 178) and task 043 is implemented; the SQL lookup itself is not started
 depends-on: [onlypreview-indexing-plan-comparison-070, onlypreview-cold-folders-native-search-overlay-043]
 verify: node --test tests/onlypreview/onlyPreviewGlobalSearchEngine.test.mjs tests/onlypreview/onlyPreviewGlobalSearchContract.test.mjs tests/onlypreview/onlyPreviewSearchEngine.scope.test.mjs tests/onlypreview/onlyPreviewSearchEngineSqliteIndex.test.mjs && node --test tests/indexing/indexingPipeline.test.mjs && node tests/indexing/bench/queryHotspots.bench.mjs --scale medium && node tests/indexing/bench/planMatrix.bench.mjs --plans A --scales medium --repeat 3 && yarn typecheck:node && yarn eslint --cache . && git diff --check
 ---
@@ -31,7 +31,7 @@ A benchmark plan answering the same section from SQL measures 3.45ms project-wid
 
 - `docs/issues/onlypreview-files-section-per-query-rescan.md`
 - `docs/issues/onlypreview-directory-selection-and-global-file-scope.md` - the product decision that
-  makes the section project-wide
+  made the section project-wide, and its 2026-09-16 reversal
 - `docs/design/onlypreview-indexing-plan-evaluation.md`
 - `docs/design/onlypreview-global-search.md`
 
@@ -52,8 +52,8 @@ A benchmark plan answering the same section from SQL measures 3.45ms project-wid
    `LIMIT` in SQL, because SQL cannot express that order and would return a different page.
 3. Bound the collected set and report explicitly when the bound is reached.
 4. Prove ordering parity at caps below the match count, where ordering decides which rows survive.
-5. Only after the product decision: pass the validated scope through instead of the hardcoded
-   `{ kind: 'project' }`.
+5. ~~Only after the product decision: pass the validated scope through instead of the hardcoded
+   `{ kind: 'project' }`.~~ Done in [task 178](onlypreview-files-section-scope-178.md).
 
 ## Acceptance
 
@@ -66,8 +66,21 @@ A benchmark plan answering the same section from SQL measures 3.45ms project-wid
 - Existing `tests/onlypreview/*` suites pass unchanged; `planMatrix --plans A` still reports parity
   PASS.
 
-## Blocked on
+## No longer blocked
 
-- **Product decision:** does the Files group stay project-wide? Variant 1 (implementation only, no
-  behaviour change) can proceed without it; Variant 2 (honour the scope) cannot.
-- **Task 043**, which currently has `sqlite-index.mjs` open with four lines changed.
+Both blockers cleared on 2026-09-16:
+
+- **Product decision: answered "no".** Owner: 「files 的部分也要受到 Contents scope 的限制」. The
+  section is no longer project-wide, and Step 5 of this task - passing the validated scope instead
+  of the hardcoded `{ kind: 'project' }` - shipped in
+  [task 178](onlypreview-files-section-scope-178.md), along with the priority-lane site this task
+  never listed.
+- **Task 043** is implemented.
+
+What remains here is Steps 1-4, the part this task was actually about: answer the section from the
+index instead of rescanning every tree entry. Scoping bounded the scan but did not remove it, so the
+~200ms project-wide floor at 130,000 entries is unchanged - a Project-scope query still walks the
+whole tier. Note for whoever picks it up: the three call sites feed a **lazy generator**
+(`filesWithRecentListings` merges the browse index over `treeEntries`), not the sorted array, so a
+binary-searched range slice over `compareOnlyPreviewTreeEntries` order does not apply where it
+looks like it should.

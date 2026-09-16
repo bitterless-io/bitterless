@@ -128,10 +128,14 @@ corpus text. Directories are picked by measured text share rather than by name, 
 read against the work the scope actually removes.
 
 This is the dimension Ral named first: asking for one directory must be faster than asking for the
-whole project. Plan A satisfies it for Contents (24x at the 1% directory) and **not at all** for
-Files (1.0x), because project-wide Files is a deliberate product decision recorded in
+whole project. Plan A satisfied it for Contents (24x at the 1% directory) and **not at all** for
+Files (1.0x), because project-wide Files was a deliberate product decision recorded in
 [docs/issues/onlypreview-directory-selection-and-global-file-scope.md](../issues/onlypreview-directory-selection-and-global-file-scope.md).
-That decision, not the code, is what makes scoped Files impossible - so the alternatives implement
+That decision, not the code, is what made scoped Files impossible. **It was reversed on 2026-09-16**
+([task 178](../plan/tasks/onlypreview-files-section-scope-178.md)): Files now honours the scope, so
+plan A's Files column here is measured against a contract it no longer implements, and the numbers
+below predate the fence. The scan itself is unchanged, so the project-wide floor these measurements
+established still stands - so the alternatives implement
 scoped Files and the benchmark shows what it costs and what it buys.
 
 ### D4 Result parity (gate: no mismatch, no extra)
@@ -570,10 +574,11 @@ Parity: every plan PASS at every scale.
 
 Plan A is flat at 1.0x for both the unique needle and a name query at *every* scope, because its
 per-query floor is now dominated by the in-memory tree-entry scan - 6499 entries re-normalised on
-every query - and that scan is scope-blind. **Asking plan A for one directory costs the same as asking
-for the whole project.** Ral's first requirement is not met by plan A at 6000 files, and it is not a
-tuning problem: the Files section is project-wide by product decision and the scan is what implements
-it.
+every query - and that scan was scope-blind. **Asking plan A for one directory cost the same as
+asking for the whole project.** That was the state when this evaluation ran; the 2026-09-16 scope
+reversal fences the scan, which bounds the directory case without removing the project-wide floor.
+Answering the section from the index - the structural fix these measurements argue for - remains
+[task 071](../plan/tasks/onlypreview-files-section-sql-lookup-071.md).
 
 **Plan D's floor is now measured and it is disqualifying as a sole design.** 110-175ms per
 project-wide query at 45MiB, growing linearly with corpus bytes - a name query at 170ms against plan
