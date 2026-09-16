@@ -37,7 +37,7 @@ export async function loadWorkflow(request: WorkflowStartRequest): Promise<Loade
     const sourceHash = createHash('sha256').update(`${WORKFLOW_ENGINE_VERSION}:${definition.name}:${JSON.stringify(definition)}`).digest('hex')
     return { definition, sourceHash, engineVersion: WORKFLOW_ENGINE_VERSION }
   }
-  if (!isAbsolute(request.entry.path) || !/\.(?:ts|mts)$/.test(request.entry.path)) throw new Error('Workflow path must be an absolute .ts or .mts file')
+  if (request.entry.kind !== 'file' || !isAbsolute(request.entry.path) || !/\.(?:ts|mts)$/.test(request.entry.path)) throw new Error('Workflow path must be an absolute .ts or .mts file')
   const require = createRequire(import.meta.url)
   const alias: Record<string, string> = {}
   for (const name of ['typebox', 'typebox/value', 'typebox/compile', '@kimchi-dev/kimchi-workflows', '@kimchi-dev/kimchi-workflows/flow', '@kimchi-dev/kimchi-workflows/engine']) alias[name] = require.resolve(name)

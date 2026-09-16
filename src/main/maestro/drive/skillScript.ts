@@ -182,8 +182,10 @@ export async function runSkillScript(opts: {
       if (!target) throw new Error('api.fetch requires a non-empty path or url')
       const normalized: ApiCall = { ...call, url: target }
       const decision = await onApiBeforeFetch?.(normalized)
+      ck()
       if (decision?.safety === 'unsafe') throw new Error(`api ${decision.method} ${decision.path} blocked: ${decision.reason}`)
       const r = await replay.apiFetch(normalized, call.auth ?? auth ?? null)
+      ck()
       onApiFetch?.(normalized, r)
       if (!r.ok) {
         throw new Error(`api ${(normalized.method || 'GET').toUpperCase()} ${normalized.url} → ${r.status || r.error}`)

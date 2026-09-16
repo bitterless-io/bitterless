@@ -1,8 +1,13 @@
 <script setup lang="ts">
-import { Button, Empty, Message, Tag } from '@arco-design/web-vue'
+import { Button, Empty, Message, Tag, Select, Option } from '@arco-design/web-vue'
 import { IconFolderOpen } from '@tabler/icons-vue'
 import { renderMarkdown } from '@maestro-renderer/control/src/markdown'
 import { workbenchStore as store } from '../workbench.store'
+import SkillScopeControl from '../components/SkillScopeControl.vue'
+import { computed, unref } from 'vue'
+import { i18n } from '@renderer/common/i18n/i18n.helper'
+import { skillScopeEn, skillScopeZh } from '../skillScope.messages'
+const scopeText = computed(() => String(unref(i18n.global.locale)).startsWith('zh') ? skillScopeZh : skillScopeEn)
 import './WorkbenchSkillsView.less'
 
 const openSelectedSkillDirectory = async (): Promise<void> => {
@@ -66,6 +71,13 @@ const skillSourceLabel = (source: string): string => {
     </div>
 
     <div class="workbench-skills__catalog">
+      <SkillScopeControl />
+      <div name="skills__scope-filter" class="skills__scope-filter">
+        <Select v-model="store.skillFilterScope" size="mini" :aria-label="scopeText.scope">
+          <Option value="all">{{ scopeText.all }}</Option><Option value="shared">{{ scopeText.shared }}</Option>
+          <Option value="institution">{{ scopeText.institution }}</Option><Option value="unassigned">{{ scopeText.unassigned }}</Option>
+        </Select>
+      </div>
       <div class="workbench-skills__catalog__header">
         <span class="workbench-skills__catalog__title" :title="store.selectedDomain || store.currentDomain">
           {{ store.selectedDomain || 'all domains' }}
@@ -93,6 +105,7 @@ const skillSourceLabel = (source: string): string => {
         @click="store.selectSkill(skill.id)"
       >
         <b class="workbench-skills__skill__name">{{ skill.name }}</b>
+        <span class="skills__scope-label">{{ skill.scope === 'institution' ? scopeText.institution + ' · ' + skill.institutionId : skill.scope === 'unassigned' ? scopeText.unassigned : scopeText.shared }}</span>
         <span class="workbench-skills__skill__meta">{{ skillSourceLabel(skill.source) }} · {{ skill.inputs.length }} inputs</span>
       </button>
       <Empty
@@ -105,6 +118,12 @@ const skillSourceLabel = (source: string): string => {
     <div class="workbench-skills__detail">
       <Empty v-if="!store.selectedSkill" class="workbench-skills__detail__empty" description="Select a skill" />
       <template v-else>
+        <div v-if="store.selectedSkill?.scope === 'unassigned'" name="skills__assignment" class="skills__assignment" role="status">
+          <p>{{ scopeText.legacy }}</p><SkillScopeControl /><Button size="mini" type="primary" @click="store.assignSelectedSkillScope()">{{ scopeText.assign }}</Button>
+          <p v-if="store.skillScopeError" role="alert">{{ store.skillScopeError }}</p>
+        </div>
+        <p v-if="store.selectedSkill" class="skills__reference">{{ scopeText.reference }}: <code>{{ store.selectedSkill.reference || store.selectedSkill.id }}</code></p>
+
         <div class="workbench-skills__detail__header">
           <h2 class="workbench-skills__detail__title">{{ store.selectedSkill.name }}</h2>
           <div class="workbench-skills__detail__actions">

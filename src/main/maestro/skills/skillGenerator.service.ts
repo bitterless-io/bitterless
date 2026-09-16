@@ -1,3 +1,4 @@
+import { skillExecutionGuard } from '@maestro-main/skills/skillScope.context'
 import type { CodexDebugEvent, SkillCreateResult, SkillInput, SkillSummary } from '@maestro-shared/coach.api'
 import type { TraceEvent } from '@maestro-shared/trace.types'
 import type { BaseAgent } from '@main/agent/BaseAgent'
@@ -147,6 +148,7 @@ export class SkillGeneratorService {
     // Dedup: same-named recording ON THE SAME DOMAIN -> new VERSION (archive the
     // old, overwrite in place) instead of a duplicate skill. New name (or same
     // name on a different domain) -> create fresh.
+    await this.registry.scopeStorage.authorizeCreation()
     const existing = this.registry.findRecordingByName(name, currentUrl)
     if (existing) {
       this.registry.archiveSkill(existing.id)
@@ -474,6 +476,7 @@ export class SkillGeneratorService {
   // Optimize an EXISTING skill: refine name/description/triggers/notes via Codex
   // (keeping the recorded steps + API workflow) and rewrite the skill in place.
   async train(skillId: string, guidance: string): Promise<SkillCreateResult> {
+    const guard = await skillExecutionGuard(skillId)
     const recipe = this.registry.readRecipe(skillId)
     if (!recipe) return { ok: false, message: 'Skill not found.', error: 'no-skill' }
     this.debug({ phase: 'train-start', level: 'info', message: `Optimizing skill ${recipe.name}.`, detail: { skillId } })
@@ -496,6 +499,7 @@ export class SkillGeneratorService {
     const updatedRecipe: SkillRecipe = redactRecipeForStorage({ ...recipe, name, description, aliases, shortcuts, keywords, triggers, detail, notes, fieldRules, updatedAt: Date.now() })
     const body = buildSkillBody(updatedRecipe, draft)
 
+    await guard()
     this.registry.archiveSkill(skillId) // version the prior state before replacing
     const skill = this.registry.overwriteSkill(skillId, { recipe: updatedRecipe, body })
     if (!skill) return { ok: false, message: 'Failed to update skill.', error: 'update-failed' }

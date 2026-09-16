@@ -1,3 +1,4 @@
+import { authorizeSkillReference, assertSkillContext, onSkillContextChanged, skillExecutionGuard } from '@maestro-main/skills/skillScope.context'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { navigateAgentBrowser, type BrowserNavigationAction } from './browserNavigation'
 import type { BrowserWindow } from 'electron'
@@ -394,12 +395,13 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     return clipText(JSON.stringify(run, null, 1)) + this._state.drainNewTabsNote(this.browserTarget.getStore()?.sessionId)
   }
 
-  toolSkillContract(skillId: string): string {
+  async toolSkillContract(skillId: string): Promise<string> {
+    await authorizeSkillReference(skillId)
     const services = this._state.ensureServices()
     const recipe = services.registry.readRecipe(skillId)
     const skill = services.registry
       .listSkills()
-      .find((item) => item.id === skillId)
+      .find((item) => (item.id === skillId || item.reference === skillId))
     if (!recipe) {
       if (!skill) return `ERROR: unknown skill_id "${skillId}".`
       const detail = services.registry.readSkillDetail(skillId)
@@ -494,13 +496,14 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     skillId: string,
     variablesJson: string
   ): Promise<string> {
+    const skillContext = await authorizeSkillReference(skillId)
     if (!this.targetReplay) return 'ERROR: browser view is not ready.'
     const services = this._state.ensureServices()
     const recipe = services.registry.readRecipe(skillId)
     if (!recipe) {
       const skill = services.registry
         .listSkills()
-        .find((item) => item.id === skillId)
+        .find((item) => (item.id === skillId || item.reference === skillId))
       if (!skill) return `ERROR: unknown skill_id "${skillId}".`
       return `ERROR: skill "${skill.name}" is an external markdown skill with no Coach recipe.json — read get_skill_contract and use normal browser tools if needed.`
     }
@@ -521,7 +524,7 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     variables = check.data as Record<string, string>
     const skill = services.registry
       .listSkills()
-      .find((item) => item.id === skillId)
+      .find((item) => (item.id === skillId || item.reference === skillId))
     if (skill) {
       this._state.lastAgentRun = { skill, skills: [skill] }
       this._state.broadcastActivity('skill', `running ${skill.name}`)
@@ -542,11 +545,13 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     const auth = readApiProfile(host)
     const controller = new AbortController()
     const watchdog = setTimeout(() => controller.abort(), 120_000)
+    const stopScope = onSkillContextChanged(() => { try { assertSkillContext(skillContext) } catch { controller.abort() } })
     const apiResults: {
       call: { method?: string; url: string }
       result: ApiCallResult
     }[] = []
     try {
+      assertSkillContext(skillContext)
       const run = await runSkillScript({
         script: recipe.script,
         replay: this.targetReplay,
@@ -561,14 +566,17 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
           this.broadcastApiActivity(call.method, call.url, result.ok, result.auth)
         },
         onApiBeforeFetch: async (call) => {
+          assertSkillContext(skillContext)
           const decision = classifySkillApiCall(recipe, call)
           await this.handleSkillApiSafety(decision, call.url, {
             query: call.query,
             body: call.body
           })
+          assertSkillContext(skillContext)
           return decision
         }
       })
+      assertSkillContext(skillContext)
       const lastApi = apiResults[apiResults.length - 1]
       const replay: ReplayResult = {
         ok: run.ok,
@@ -603,15 +611,17 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
       })
       return clipText(JSON.stringify(run, null, 1)) + this._state.drainNewTabsNote(this.browserTarget.getStore()?.sessionId)
     } finally {
+      stopScope()
       clearTimeout(watchdog)
     }
   }
 
   async toolReplayUi(skillId: string, variablesJson: string): Promise<string> {
+    const skillContext = await authorizeSkillReference(skillId)
     const services = this._state.ensureServices()
     const skill = services.registry
       .listSkills()
-      .find((item) => item.id === skillId)
+      .find((item) => (item.id === skillId || item.reference === skillId))
     if (!skill) return `ERROR: unknown skill_id "${skillId}".`
     const variables: Record<string, string> = {}
     if (variablesJson.trim()) {
@@ -631,7 +641,8 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     }
     const recipe = services.registry.readRecipe(skillId)
     if (!recipe) return 'ERROR: skill recipe was not found.'
-    const replay = await this.replayRecipe(recipe, variables)
+    const replay = await this.replayRecipe(recipe, variables, await skillExecutionGuard(skillId))
+    assertSkillContext(skillContext)
     this._state.lastAgentRun = { skill, skills: [skill], replay }
     await new Promise((resolve) => setTimeout(resolve, 700))
     return (
@@ -645,7 +656,8 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
 
   async replayRecipe(
     recipe: SkillRecipe,
-    variables: Record<string, string>
+    variables: Record<string, string>,
+    guard?: () => Promise<void>
   ): Promise<ReplayResult> {
     if (!this.targetReplay) {
       return {
@@ -655,7 +667,7 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
         errors: ['Browser view is not ready.']
       }
     }
-    return await this.targetReplay.replay(recipe, variables)
+    return await this.targetReplay.replay(recipe, variables, guard)
   }
 
   private async handleSkillApiSafety(

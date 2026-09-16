@@ -1,3 +1,4 @@
+import { onSkillContextChanged, skillScopeContext, assertSkillContext } from '@maestro-main/skills/skillScope.context'
 import { workflowCompletionId, workflowCompletionContext } from './workflowEngine/completion'
 import { SessionIoInitialization } from './sessionIoInitialization'
 import { WorkflowHostIntegration } from './workflowEngine/hostIntegration'
@@ -273,6 +274,16 @@ const DRILL_BUILTIN_SKILL: AgentSkillBrief = {
 
 @injectable()
 export class MaestroAgentService extends CommonService<MaestroAgentServiceState> {
+  private readonly stopSkillContextListener = onSkillContextChanged(() => {
+    for (const turn of this.activeAgentTurns.values()) {
+      turn.steeringInbox.cancel('Skill institution changed')
+      turn.state = 'aborting'
+      turn.resolveRootStart(false)
+    }
+    this.resetAgentSessions()
+    this.lastAgentRun = {}
+  })
+
   private workflowHost: WorkflowHostIntegration | null = null
 
   getWorkflowHost(): WorkflowHostIntegration {
@@ -331,6 +342,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
   workflowTools(sessionId: string): PiToolSpec[] { return this.getWorkflowHost().chatTools(sessionId) }
 
   async shutdownWorkflows(): Promise<void> {
+    this.stopSkillContextListener()
     await this.workflowHost?.dispose()
     this.workflowHost = null
   }
@@ -1790,7 +1802,8 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       const seed = recipe ? extractVariablesFromMessage(message, recipe) : {}
       const missing = recipe ? requiredInputNames(recipe).filter((name) => !seed[name]) : []
       return {
-        id: skill.id,
+        id: skill.reference || skill.id,
+        scope: skill.scope === 'institution' ? 'institution' as const : 'shared' as const, institutionId: skill.institutionId, reference: skill.reference, path: skill.path,
         name: skill.name,
         triggers: skill.triggers,
         description: skill.description,
@@ -1838,6 +1851,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       sessionKey?: string
     }
   ): Promise<AgentReply> {
+    const authorizedSkillContext = await skillScopeContext.authorize().catch(() => null)
     const cancelledReply = (): AgentReply => ({
       ok: false,
       text: 'Stopped.',
@@ -1851,7 +1865,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     const currentUrl = browserSession.tabs.find((tab) => tab.id === browserSession.selectedTabId)?.url || browserSession.initiatingTab?.url || this._state.currentUrl
     const windowTabs = options?.windowTabs ?? this._state.describeWindowTabs()
     const registry = this._state.existingSkillRegistry() || this._state.ensureServices().registry
-    const recordings = registry.listSkillsForDomain(currentUrl)
+    const recordings = registry.listSkillsForDomain(currentUrl).filter(skill => skill.scope !== 'institution' || Boolean(authorizedSkillContext))
     const skillBriefs = this.agentSkillBriefs(message, recordings, registry)
     const nowLocal = options?.messageSentAt || localNow()
     const buildTurnPrompt = (includeConversationMemory: boolean): string => buildAgentTurnPrompt({
@@ -1866,6 +1880,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       briefs: skillBriefs
     })
     if (!options?.steeringInbox) {
+      assertSkillContext(authorizedSkillContext)
       const steered = await agent.steerActiveTurn(buildTurnPrompt(false))
       if (options?.isCancelled?.()) return cancelledReply()
       if (steered.outcome === 'delivered') return { ok: true, text: '', ts: Date.now(), mergedIntoTurn: true }
@@ -1892,6 +1907,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         if (!next) return replayReply
         await agent.setProjectRoot(this._state.projectRootForSession(this.agentSessionKey(options?.sessionKey)))
         if (options?.isCancelled?.()) return cancelledReply()
+        assertSkillContext(authorizedSkillContext)
         const follow = await agent.prompt(next.text, undefined, { steeringInbox: options?.steeringInbox, messageId: next.messageId, turnId: next.turnId })
         return { ...replayReply, ok: follow.ok && !follow.errorMessage, text: [replayReply.text, follow.text].filter(Boolean).join('\n\n'), error: follow.error || follow.errorMessage }
       }
@@ -1909,8 +1925,9 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         agent.retainBackgroundContext(workflowCompletionId(run), workflowCompletionContext(run))
       }
     }
-    const runPrompt = async (): Promise<Awaited<ReturnType<BaseAgent['prompt']>>> =>
-      await agent.prompt(
+    const runPrompt = async (): Promise<Awaited<ReturnType<BaseAgent['prompt']>>> => {
+      assertSkillContext(authorizedSkillContext)
+      return await agent.prompt(
         buildTurnPrompt(Boolean(options?.includeConversationMemory)) + turnMedia.note,
         undefined,
         {
@@ -1921,6 +1938,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
           images: turnMedia.images
         }
       )
+    }
 
     if (options?.isCancelled?.()) return cancelledReply()
     let result = await runPrompt()

@@ -160,6 +160,7 @@ export class WorkflowSupervisor {
     await this.initialized
     if (this.disposed) throw new Error('Workflow supervisor is closed')
     if (!request.sessionId.trim()) throw new Error('Workflow requires a chat session')
+    if (request.entry.kind === 'library') throw new Error('Workflow library references must be authorized and resolved before execution')
     const run: WorkflowRunSnapshot = { id: randomUUID(), sessionId: request.sessionId, name: request.entry.kind === 'builtin' ? request.entry.name : request.entry.path.split('/').pop() ?? 'workflow', entry: structuredClone(request.entry), input: request.input, status: 'running', createdAt: Date.now(), agents: [] }
     this.recordIo(run, { kind: 'note', name: 'workflow-start', turn: 0, subject: run.name, text: request.input, detail: { entry: request.entry, cwd: request.cwd } })
     this.runs.push(run); this.publish(); await this.flush()

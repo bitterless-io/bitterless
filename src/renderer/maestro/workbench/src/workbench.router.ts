@@ -1,6 +1,7 @@
 import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-router'
 import WorkbenchRecordingView from './views/WorkbenchRecordingView.vue'
 import WorkbenchSkillsView from './views/WorkbenchSkillsView.vue'
+import WorkbenchWorkflowsView from './views/WorkbenchWorkflowsView.vue'
 import WorkbenchInjectionsView from './views/WorkbenchInjectionsView.vue'
 import WorkbenchToolsView from './views/WorkbenchToolsView.vue'
 import WorkbenchModelsView from './views/WorkbenchModelsView.vue'
@@ -14,6 +15,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/', redirect: () => ({ name: preferredWorkbenchPane() }) },
   { path: '/capture', name: 'recording', component: WorkbenchRecordingView, alias: '/recording' },
   { path: '/skills', name: 'skills', component: WorkbenchSkillsView },
+  { path: '/workflows', name: 'workflows', component: WorkbenchWorkflowsView },
   { path: '/injections', name: 'injections', component: WorkbenchInjectionsView },
   { path: '/tools', name: 'tools', component: WorkbenchToolsView },
   { path: '/models', name: 'models', component: WorkbenchModelsView },

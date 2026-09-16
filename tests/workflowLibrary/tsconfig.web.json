@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.web.json",
+  "compilerOptions": { "composite": false, "strict": true, "noEmit": true },
+  "include": ["../../src/env.d.ts", "../../src/renderer/maestro/workbench/src/views/WorkbenchWorkflowsView.vue", "../../src/renderer/maestro/workbench/src/components/WorkflowFlow.vue", "../../src/renderer/maestro/workbench/src/workflowLibrary.store.ts", "../../src/renderer/maestro/workbench/src/workflowGraph.ts"]
+}

@@ -1,5 +1,7 @@
 # Bitterless Documentation
 
+- [Workbench institution workflows](features/workbench-institution-workflows.md) — list, detail, Kimchi diagram and safe cloud update synchronization; in progress.
+
 - [A blank New tab paints black instead of the Bitterless splash](issues/maestro-blank-new-tab-paints-black.md) — fixed; owner verification pending;
   the prewarmed `about:blank` document covered the host splash (near-black in macOS dark mode), so a blank tab keeps its view hidden until a real document commits.
 

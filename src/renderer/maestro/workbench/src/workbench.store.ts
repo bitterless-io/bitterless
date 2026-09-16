@@ -31,6 +31,8 @@ import type {
   SkillExportResult,
   SkillImportResult,
   SkillSummary,
+  SkillSharingScope,
+  SkillScopeContextInfo,
   WorkbenchPane
 } from '@maestro-shared/coach.api'
 import type { HeaderMap, NetworkTiming, TraceEvent } from '@maestro-shared/trace.types'
@@ -130,6 +132,7 @@ const requestIdOf = (row: Row | undefined): string => {
 export const workbenchPanes: WorkbenchPane[] = [
   'recording',
   'skills',
+  'workflows',
   'injections',
   'tools',
   'models',
@@ -216,6 +219,12 @@ const recordSearchTerms = (query: string): string[] =>
 class WorkbenchStoreState {
   activePane: WorkbenchPane = preferredWorkbenchPane()
   rows: Row[] = []
+  skillImportScope: SkillSharingScope = 'shared'
+  skillFilterScope: 'all' | 'shared' | 'institution' | 'unassigned' = 'all'
+  skillInstitution: SkillScopeContextInfo | null = null
+  skillScopeError = ''
+  private skillRequest = 0
+  private skillDetailRequest = 0
   skills: SkillSummary[] = []
   llmConfig: LlmConfig | null = null
   llmLoading = false
@@ -351,7 +360,8 @@ class WorkbenchStoreState {
   }
 
   get domainSkills(): SkillSummary[] {
-    return this.selectedDomain ? this.skills.filter((skill) => skill.domain === this.selectedDomain) : this.skills
+    const scoped = this.skills.filter(skill => this.skillFilterScope === 'all' || skill.scope === this.skillFilterScope)
+    return this.selectedDomain ? scoped.filter((skill) => skill.domain === this.selectedDomain) : scoped
   }
 
   get domains(): { domain: string; count: number; active: boolean }[] {
@@ -411,7 +421,10 @@ class WorkbenchStoreState {
       this.selectedDomain = this.domainExists(domain) ? domain : this.selectedDomain
       void this.refreshSkills()
     })
-    xpcRenderer.subscribe('coach/skills-changed', () => void this.refreshSkills())
+    xpcRenderer.subscribe('coach/skills-changed', payload => {
+      if (payload.params?.contextChanged) this.clearInstitutionSkills()
+      void this.refreshSkills()
+    })
     xpcRenderer.subscribe('coach/injected-buttons-changed', () => {
       if (this.activePane === 'injections') void this.refreshInjectedButtons()
     })
@@ -795,8 +808,33 @@ class WorkbenchStoreState {
     this.syncCaptureRecordsSoon()
   }
 
+  clearInstitutionSkills(): void {
+    this.skillRequest++; this.skillDetailRequest++
+    this.skills = this.skills.filter(skill => skill.scope !== 'institution')
+    this.skillInstitution = null
+    this.skillImportScope = 'shared'
+    if (!this.skills.some(skill => skill.id === this.selectedSkillId)) { this.selectedSkillId = ''; this.skillDetail = null }
+  }
+
+  async assignSelectedSkillScope(): Promise<void> {
+    this.skillScopeError = ''
+    if (!this.selectedSkillId) return
+    try {
+      const result = await coach.assignSkillScope({ skillId: this.selectedSkillId, sharingScope: this.skillImportScope })
+      if (!result.ok) { this.skillScopeError = result.error || result.message; return }
+      await this.refreshSkills()
+      if (result.skill) { this.selectedSkillId = result.skill.id; await this.loadSkillDetail(result.skill.id) }
+    } catch (error) { this.skillScopeError = (error as Error).message }
+  }
+
   async refreshSkills(): Promise<void> {
-    this.skills = await coach.listSkills()
+    const request = ++this.skillRequest
+    const skills = await coach.listSkills()
+    const context = await coach.getSkillScopeContext()
+    if (request !== this.skillRequest) return
+    this.skills = skills
+    this.skillInstitution = context
+    if (!context && this.skillImportScope === 'institution') this.skillImportScope = 'shared'
     this.ensureSelectedDomain()
     const selected = this.skills.find((skill) => skill.id === this.selectedSkillId)
     const selectedInDomain = selected && (!this.selectedDomain || selected.domain === this.selectedDomain)
@@ -819,7 +857,9 @@ class WorkbenchStoreState {
   }
 
   async loadSkillDetail(skillId: string): Promise<void> {
-    this.skillDetail = skillId ? await coach.getSkillDetail({ skillId }) : null
+    const request = ++this.skillDetailRequest
+    const detail = skillId ? await coach.getSkillDetail({ skillId }) : null
+    if (request === this.skillDetailRequest && skillId === this.selectedSkillId) this.skillDetail = detail
   }
 
   async openSelectedSkillDirectory(): Promise<{ ok: boolean; path?: string; error?: string }> {
@@ -833,7 +873,7 @@ class WorkbenchStoreState {
   }
 
   async importSkillPackage(): Promise<SkillImportResult> {
-    const result = await coach.importSkillPackage()
+    const result = await coach.importSkillPackage({ sharingScope: this.skillImportScope })
     if (result.ok && result.skill) {
       await this.refreshSkills()
       this.selectedDomain = result.skill.domain
@@ -864,7 +904,7 @@ class WorkbenchStoreState {
     this.ingesting = true
     try {
       await this.syncCaptureRecordsNow()
-      const result = await coach.summarizeSkill({ workflow: this.workflowDesc.trim(), records: this.buildIngestRecords() })
+      const result = await coach.summarizeSkill({ workflow: this.workflowDesc.trim(), sharingScope: this.skillImportScope, records: this.buildIngestRecords() })
       if (result.ok && result.skill) {
         await this.refreshSkills()
         this.selectedSkillId = result.skill.id
