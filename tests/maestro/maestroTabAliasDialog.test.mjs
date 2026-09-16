@@ -50,9 +50,17 @@ class FakeWebContentsView {
   setBackgroundColor(color) { this.background = color }
 }
 
+// 覆盖层自己的日志:与 main 侧 `moduleLog('tab-alias')` 同一个 scope。测试里收集起来,
+// 既当断言材料,也保证这些行真的被调用过。
+export const layerLogs = []
 const Service = actualMembers('src/main/maestro/windows/main/maestroTabAliasView.service.ts', [
   'preload', 'requestAlias', 'snapshot', 'resolveDialog', 'setBounds', 'reset', 'present', 'ensureView', 'failOpen', 'attach', 'detach', 'publish'
 ], {
+  tabAliasLog: {
+    info: (msg, detail) => layerLogs.push({ level: 'info', msg, detail }),
+    warn: (msg, detail) => layerLogs.push({ level: 'warn', msg, detail }),
+    error: (msg, detail) => layerLogs.push({ level: 'error', msg, detail })
+  },
   WebContentsView: FakeWebContentsView,
   join: (...parts) => parts.join('/'),
   __dirname: '/app/out/main',
@@ -164,6 +172,48 @@ test('a request with no measured rect asks for a layout instead of stalling on g
   await flush()
   service.requestAlias({ tabLabel: 'Example', alias: '' })
   assert.ok(service._state.layouts >= 1, '没有矩形就先催一次布局')
+})
+
+// 这一条是本文件的重点:它跑的是**两个真实实现**拼起来的那条缝 ——
+// `MaestroBrowserViewService.promptTabAlias`(菜单点击落点)与 `MaestroWindowController.requestTabAlias`
+// (对话框入口),而且按生产的方式接线(`setState(this)` 传的就是 controller 本人)。
+// 用一个 stub 当 `requestTabAlias` 是测不出这个 bug 的:stub 不碰 `this`,而真实实现第一行就碰。
+test('clicking Alias… actually reaches the dialog layer — the seam is called ON the controller', async () => {
+  const logs = []
+  const traces = []
+  const calls = []
+  const Browser = actualMembers('src/main/maestro/windows/main/maestroBrowserView.service.ts',
+    ['promptTabAlias', 'isDefaultHomeTab', 'displayUrl', 'homeCompositeSetting'],
+    {
+      MAESTRO_LOCAL_HOME_DISPLAY_URL: 'bitterless://home',
+      tabAliasLog: {
+        info: (msg, detail) => logs.push({ level: 'info', msg, detail }),
+        warn: (msg, detail) => logs.push({ level: 'warn', msg, detail }),
+        error: (msg, detail) => logs.push({ level: 'error', msg, detail })
+      }
+    })
+  const Controller = actualMembers('src/main/maestro/windows/main/maestroWindow.controller.ts', ['requestTabAlias'])
+
+  const controller = new Controller()
+  controller.historyView = { hide: () => calls.push('historyView.hide') }
+  controller.tabAliasView = { requestAlias: () => { calls.push('requestAlias'); return Promise.resolve('Reports') } }
+  Object.assign(controller, { emitTrace: event => traces.push(event), saveMaestroSettings() {}, readMaestroSettings: () => ({}) })
+
+  const service = new Browser()
+  const tab = { id: 'tab-1', kind: 'browser', url: 'https://example.com/', title: 'Example', pinned: false }
+  Object.assign(service, {
+    tabs: [tab], compositeTabs: new Map(), broadcastTabs: () => calls.push('broadcastTabs'), _state: controller
+  })
+
+  // 菜单项点下去走的就是这一行(`click: () => void this.promptTabAlias(tab.id)`)。
+  await service.promptTabAlias(tab.id)
+
+  assert.deepEqual(calls, ['historyView.hide', 'requestAlias', 'broadcastTabs'],
+    '摘进局部变量再调会丢 `this`,controller 第一行 `this.historyView.hide()` 当场同步抛,' +
+    '而 `.catch()` 挂在调用结果上根本没机会挂上 —— 表单从来不会被请求')
+  assert.equal(tab.alias, 'Reports')
+  assert.deepEqual(logs.map(entry => entry.msg), ['menu clicked', 'dialog answered', 'alias applied'],
+    '这条线每一步都要留一行 —— 上一次失败时从菜单到表单一行日志都没有')
 })
 
 test('the dialog renderer mounts without a dynamic import', () => {

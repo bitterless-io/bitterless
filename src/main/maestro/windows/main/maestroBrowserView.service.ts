@@ -17,6 +17,7 @@ import { normalizeUrl } from '@maestro-main/settings/coachSettings.service'
 import { getMaestroPreviewOpener } from './previewOpener.registry'
 import { focusAddressBarForBlankTab } from './newTabFocus'
 import { MAESTRO_PARTITION } from '@maestro-main/data/maestroDataRoot'
+import { moduleLog } from '@main/logging/moduleLog'
 import type {
   AgentActivityStep,
   CaptureState,
@@ -78,6 +79,14 @@ const injectBtnStore = createXpcMainEmitter<InjectBtnApi>('InjectBtnDao')
 const browserHistory = createXpcMainEmitter<BrowserHistoryApi>('BrowserHistoryDao');
 
 const isWorkbenchInternalUrl = (url: string): boolean => /^(?:bitterless|micromeet):\/\/workbench(?:[/?#].*)?$/i.test(url.trim())
+
+/**
+ * 别名这条线的日志。**每一步都留一行** —— 这个功能失败过一次,而那次失败从菜单到表单一行日志
+ * 都没有,只能靠读源码猜(docs/issues/maestro-tab-alias-does-nothing.md)。
+ *
+ * 查法:`grep '"scope":"tab-alias"' <日志目录>/main*.log`。
+ */
+const tabAliasLog = moduleLog('tab-alias')
 
 interface LocalHomeEntry {
   url: string
@@ -1699,7 +1708,16 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       },
       { label: 'Duplicate', enabled: canDuplicate, click: () => void this.openTabWithUrl(tab.url) },
       { type: 'separator' },
-      { label: 'Alias…', enabled: canAlias, click: () => void this.promptTabAlias(tab.id) },
+      // `.catch` 不是装饰:菜单项的 handler 是 fire-and-forget,里面任何一次抛都会变成一条
+      // unhandled rejection —— 用户看到的是「点了没反应」,日志里什么都没有。
+      {
+        label: 'Alias…',
+        enabled: canAlias,
+        click: () => void this.promptTabAlias(tab.id).catch((err) => {
+          tabAliasLog.error('prompt threw', { error: String(err) })
+          this._state.emitTrace({ kind: 'error', msg: 'tab alias: ' + String(err), ts: Date.now() })
+        })
+      },
       { label: 'Set as homepage', enabled: canSetHome, click: () => void this.setAsHomepage(tab.id) },
       {
         label: 'Restore default homepage',
@@ -1724,15 +1742,28 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
    */
   private async promptTabAlias(tabId: string): Promise<void> {
     const tab = this.tabs.find((item) => item.id === tabId)
+    tabAliasLog.info('menu clicked', { tabId, known: Boolean(tab), defaultHome: this.isDefaultHomeTab(tab) })
     if (!tab || this.isDefaultHomeTab(tab)) return
-    const request = this._state.requestTabAlias
-    if (!request) return
-    const answer = await request({ tabLabel: tab.alias || tab.title || this.displayUrl(tab), alias: tab.alias || '' }).catch(
-      (err) => {
+    if (!this._state.requestTabAlias) {
+      tabAliasLog.error('no dialog seam on the window controller')
+      this._state.emitTrace({ kind: 'error', msg: 'tab alias: the dialog is unavailable in this window', ts: Date.now() })
+      return
+    }
+    // **必须调在 `this._state` 上。** 把方法摘进局部变量再调(`const request = this._state.requestTabAlias`)
+    // 会丢掉 `this` —— controller 的 `requestTabAlias` 第一行就是 `this.historyView.hide()`,于是这一
+    // 调**同步抛** `TypeError: Cannot read properties of undefined`。同步抛意味着挂在调用**结果**上的
+    // `.catch()` 根本没机会挂上,错误直接逃出这个 async 方法,被菜单项的 `void this.promptTabAlias(...)`
+    // 吞成一条 unhandled rejection:点了没反应、没有表单、没有任何日志。这正是 2026-09-16 Ral 报的
+    // 「alias 无效」(docs/issues/maestro-tab-alias-does-nothing.md)。cowork 没这个问题,因为它调的是
+    // 模块单例 `shellAlertViewService.requestPrompt(...)` —— 方法调用,`this` 天然绑住。
+    const answer = await this._state
+      .requestTabAlias({ tabLabel: tab.alias || tab.title || this.displayUrl(tab), alias: tab.alias || '' })
+      .catch((err) => {
+        tabAliasLog.error('dialog request failed', { error: (err as Error).message })
         this._state.emitTrace({ kind: 'error', msg: 'tab alias: ' + (err as Error).message, ts: Date.now() })
         return null
-      }
-    )
+      })
+    tabAliasLog.info('dialog answered', { tabId, outcome: answer === null ? 'cancel' : 'confirm', length: answer?.length ?? 0 })
     if (answer === null) return
     const current = this.tabs.find((item) => item.id === tabId)
     if (!current) return
@@ -1743,6 +1774,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     // 落过一次还不够:设为主页**之后**再改名走的是这里,不补写就重启即失(tab-alias.md G5)。
     // 默认固有 Home 走不到这儿(`isDefaultHomeTab` 已经在方法开头挡掉了)。
     if (current.pinned) this._state.saveMaestroSettings?.({ homeAlias: current.alias || '' })
+    tabAliasLog.info('alias applied', { tabId, cleared: !current.alias, pinned: current.pinned })
     this.broadcastTabs()
   }
 

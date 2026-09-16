@@ -14,7 +14,16 @@ import { tabAliasStore } from './tabAlias.store'
 // (docs/issues/maestro-tab-alias-does-nothing.md)。其余每个 maestro 渲染入口都是静态 import。
 import TabAliasApp from './TabAliasApp.vue'
 
+// `[tab-alias]` 前缀 = 主进程日志里的 `scope` 字段(`formatApplicationLogMessage` 解析它),
+// 与 main 侧 `moduleLog('tab-alias')` 同一个 scope:一次改名从菜单到表单挂载能在一条 grep 里连起来。
+// 这个入口必须同时登记在 `logPolicy.service.ts` 的第一方渲染进程表里,否则这些行一条都到不了日志。
+const log = (msg: string, detail?: unknown): void => {
+  if (detail === undefined) console.info(`[tab-alias] renderer ${msg}`)
+  else console.info(`[tab-alias] renderer ${msg}`, detail)
+}
+
 const bootstrap = async (): Promise<void> => {
+  log('bootstrap start')
   // 准备工作**不许挡住挂载**:这一层是盖在操作区上的透明覆盖层,没挂载就是一张什么都没画的
   // 全矩形 —— 点了 `Alias…` 什么也看不到。语言拿不到最多是英文,快照拿不到下一次广播还会补。
   try {
@@ -23,9 +32,10 @@ const bootstrap = async (): Promise<void> => {
     // 一定已经有内容可画,不会先闪一帧空白对话框。
     await tabAliasStore.init()
   } catch (error) {
-    console.error('[maestro tab alias] bootstrap degraded:', error)
+    console.error('[tab-alias] renderer bootstrap degraded:', error)
   }
   createApp(TabAliasApp).use(ArcoVue).use(i18n).mount('#app')
+  log('mounted', { dialog: Boolean(tabAliasStore.dialog) })
 }
 
 void bootstrap()

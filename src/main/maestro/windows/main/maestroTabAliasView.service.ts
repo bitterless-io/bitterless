@@ -15,7 +15,11 @@ import {
 } from '@maestro-shared/tabAlias.api'
 import type { TraceEvent } from '@maestro-shared/trace.types'
 import { MAESTRO_PARTITION } from '@maestro-main/data/maestroDataRoot'
+import { moduleLog } from '@main/logging/moduleLog'
 import { createBoundsApplier } from './viewBounds'
+
+/** 与 `maestroBrowserView.service.ts` 同一个 scope —— 一次改名的全部步骤要在一条 grep 里连起来。 */
+const tabAliasLog = moduleLog('tab-alias')
 
 export interface MaestroTabAliasViewServiceState {
   browserWindow: BrowserWindow | null
@@ -66,6 +70,7 @@ export class MaestroTabAliasViewService extends CommonService<MaestroTabAliasVie
    * 不必再依赖加载完成后的那次补挂。失败照样走 `unavailable` 闩。
    */
   preload(): void {
+    tabAliasLog.info('layer preload requested')
     this.ensureView()
   }
 
@@ -76,6 +81,7 @@ export class MaestroTabAliasViewService extends CommonService<MaestroTabAliasVie
    * 早就过期的表单在半秒后自己跳出来。
    */
   requestAlias(params: { tabLabel: string; alias: string }): Promise<string | null> {
+    tabAliasLog.info('dialog requested', { ready: this.ready, attached: this.attached, unavailable: this.unavailable, busy: Boolean(this.dialog) })
     if (this.dialog) {
       this._state.emitTrace({ kind: 'info', msg: 'tab alias: a dialog is already open', ts: Date.now() })
       return Promise.resolve(null)
@@ -83,6 +89,7 @@ export class MaestroTabAliasViewService extends CommonService<MaestroTabAliasVie
     // 起不来就**当场认**,而不是存下 settle 去等一个永远不会到的 ready。每次都记一行:
     // 否则「点了没反应」在 trace 里是一片空白。
     if (this.unavailable) {
+      tabAliasLog.error('layer unavailable — answering as no change')
       this._state.emitTrace({ kind: 'error', msg: 'tab alias: the dialog layer is unavailable in this window', ts: Date.now() })
       return Promise.resolve(null)
     }
@@ -106,7 +113,11 @@ export class MaestroTabAliasViewService extends CommonService<MaestroTabAliasVie
   /** 渲染层的答复。`dialogId` 不匹配 = 一条过期的答复,丢掉(窗口可能已经在它手上关掉了)。 */
   resolveDialog(params: { dialogId: string; outcome: 'confirm' | 'cancel'; value?: string }): void {
     const dialog = this.dialog
-    if (!dialog || dialog.dialogId !== params.dialogId) return
+    if (!dialog || dialog.dialogId !== params.dialogId) {
+      tabAliasLog.warn('stale answer ignored', { open: Boolean(dialog), outcome: params.outcome })
+      return
+    }
+    tabAliasLog.info('answer received', { outcome: params.outcome, length: params.value?.length ?? 0 })
     const settle = this.settle
     this.dialog = null
     this.settle = null
@@ -182,6 +193,7 @@ export class MaestroTabAliasViewService extends CommonService<MaestroTabAliasVie
     // 而能调它的那个页面已经没了。不收场就和加载失败一模一样地把功能毒死。
     view.webContents.on('render-process-gone', (_event, details) => {
       if (this.view !== view) return
+      tabAliasLog.error('renderer gone', { reason: details.reason })
       this._state.emitTrace({ kind: 'error', msg: `tab alias renderer gone (${details.reason}) — resolving as cancelled`, ts: Date.now() })
       this.unavailable = true
       this.detach()
@@ -196,11 +208,13 @@ export class MaestroTabAliasViewService extends CommonService<MaestroTabAliasVie
       .then(() => {
         if (this.view !== view) return
         this.ready = true
+        tabAliasLog.info('layer loaded', { pending: Boolean(this.dialog) })
         // 加载是异步的,请求多半比它先到 —— 加载完必须自己补挂一次,否则第一次弹窗永远不出现。
         this.present()
       })
       .catch((err) => {
         if (this.view !== view) return
+        tabAliasLog.error('layer load failed', { error: (err as Error).message })
         this._state.emitTrace({ kind: 'error', msg: 'tab alias load: ' + (err as Error).message, ts: Date.now() })
         // **先闩后结**:闩管的是这之后的每一次请求,少了它 `ready` 停在 false、view 却还活着,
         // 下一次请求就挂在一个没人能 resolve 的 Promise 上。
@@ -244,9 +258,8 @@ export class MaestroTabAliasViewService extends CommonService<MaestroTabAliasVie
               : null
     if (gate) {
       // 「对话框在页面底下」和「对话框根本没挂上」是两件完全不同的事,不点名就要靠猜。
-      // 走 `emitTrace` 而不是只打 `console.info`:主进程的 console 不进 electron-log,
-      // 打包版里那一行谁也看不到,于是「点了没反应」在日志里是一片空白。
-      console.info(`[maestro] event=tab-alias-blocked gate=${gate}`)
+      // 两路都发:`tab-alias` scope 进日志文件(打包版里唯一查得到的地方),trace 进 Control 面板。
+      tabAliasLog.info(`not attached gate=${gate}`)
       if (gate !== 'closed') {
         this._state.emitTrace({ kind: 'info', msg: `tab alias: dialog not attached (gate=${gate})`, ts: Date.now() })
       }
@@ -258,6 +271,7 @@ export class MaestroTabAliasViewService extends CommonService<MaestroTabAliasVie
     this.attached = true
     // 挂上之后才显 —— 建的时候是 `setVisible(false)`。成对,和 cowork 那份一致。
     view.setVisible(true)
+    tabAliasLog.info('dialog attached', { width: Math.round(bounds.width), height: Math.round(bounds.height) })
   }
 
   private detach(): void {

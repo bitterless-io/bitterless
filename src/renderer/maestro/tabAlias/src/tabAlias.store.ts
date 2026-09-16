@@ -30,7 +30,12 @@ class TabAliasState {
   }
 
   private async pull(): Promise<void> {
-    const snapshot = await aliasDialog.snapshot().catch(() => null)
+    // 拉不到快照 = 这一层和 main 的 XPC 通路断了,而症状与「没有对话框」一模一样(都是空白覆盖层)。
+    // 不点名就分不清,所以失败必须留一行 —— scope 与 main 侧的 `tab-alias` 对齐。
+    const snapshot = await aliasDialog.snapshot().catch((error) => {
+      console.error('[tab-alias] renderer snapshot failed:', error)
+      return null
+    })
     const next = snapshot?.dialog ?? null
     const changed = next?.dialogId !== this.dialog?.dialogId
     this.dialog = next
@@ -51,14 +56,28 @@ class TabAliasState {
     if (!dialog || this.busy) return
     this.busy = true
     // 空串是**删除**别名,回到页面标题 —— 与取消是两件事,所以它也走 confirm。
-    await aliasDialog.resolve({ dialogId: dialog.dialogId, outcome: 'confirm', value: this.draft.trim() })
+    await this.answer({ dialogId: dialog.dialogId, outcome: 'confirm', value: this.draft.trim() })
   }
 
   async cancel(): Promise<void> {
     const dialog = this.dialog
     if (!dialog || this.busy) return
     this.busy = true
-    await aliasDialog.resolve({ dialogId: dialog.dialogId, outcome: 'cancel' })
+    await this.answer({ dialogId: dialog.dialogId, outcome: 'cancel' })
+  }
+
+  /**
+   * 两个按钮唯一的出口。**答复失败要解掉 `busy`** —— 否则两个按钮永远禁用,表单开着却答不了,
+   * 而 main 那边还 await 着;再点 `Alias…` 会因为「已有对话框」直接返回 null。一行日志都没有的话,
+   * 这与「点了没反应」看起来完全一样。
+   */
+  private async answer(params: { dialogId: string; outcome: 'confirm' | 'cancel'; value?: string }): Promise<void> {
+    try {
+      await aliasDialog.resolve(params)
+    } catch (error) {
+      this.busy = false
+      console.error('[tab-alias] renderer resolve failed:', error)
+    }
   }
 
   /** 返回是否已处理 —— 处理了的键由调用方 `preventDefault`。 */

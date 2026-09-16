@@ -84,6 +84,20 @@ const maestroSqliteDevCspPlugin = {
   }
 };
 
+const maestroOverlayDevCspPlugin = {
+  name: 'bitterless:maestro-overlay-dev-csp',
+  apply: 'serve' as const,
+  transformIndexHtml(html: string, context: { path: string }) {
+    if (!context.path.includes('/maestro/tabAlias/') && !context.path.includes('/maestro/history/')) {
+      return html;
+    }
+    return html.replace(
+      "connect-src 'none'",
+      "connect-src 'self' ws://localhost:* wss://localhost:*"
+    );
+  }
+};
+
 const coinDevCspPlugin = {
   name: 'bitterless:coin-dev-csp',
   apply: 'serve' as const,
@@ -594,6 +608,7 @@ export default defineConfig({
       submodulesDevCspPlugin,
       onlyPreviewDevCspPlugin,
       maestroSqliteDevCspPlugin,
+      maestroOverlayDevCspPlugin,
       monacoEditorPlugin({
         // **只保留 `editorWorkerService`。** 不传这个选项时插件默认吐出全部 worker,
         // 于是产物里有一个 **12 MB 的 `ts.worker.bundle.js`** ＋ css/html/json 三个,

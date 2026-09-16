@@ -59,6 +59,15 @@ export type LogScope =
    * **绝不记页面正文**:那是不可信的第三方内容,不进日志。
    */
   | 'deep-fetch'
+  /**
+   * Tab 别名表单的整条链:菜单点击 → 请求 → 覆盖层建/载/挂 → 渲染层答复 → 写回 tab。
+   *
+   * 每一步一行,**包括成功的步**。理由是一次真实失败:`promptTabAlias` 把 controller 的方法摘进
+   * 局部变量再调,丢了 `this`,于是同步抛 TypeError、被菜单 handler 的 `void` 吞掉 —— 点了没反应,
+   * 而从菜单到表单整条线一行日志都没有,只能读源码猜(docs/issues/maestro-tab-alias-does-nothing.md)。
+   * 成功的那几行是这条线的基线:没有它们,「走到哪一步断的」永远答不了。
+   */
+  | 'tab-alias'
 
 export interface ModuleLogger {
   info(msg: string, detail?: Record<string, unknown>): void

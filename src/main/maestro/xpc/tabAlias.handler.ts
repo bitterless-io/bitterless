@@ -1,9 +1,13 @@
 import { XpcMainHandler } from 'electron-xpc/main'
 import { maestroWindowHelper } from '@maestro-main/windows/main/maestroWindow.controller'
+import { moduleLog } from '@main/logging/moduleLog'
 import type {
   MaestroTabAliasSnapshot,
   MaestroTabAliasXpcContract
 } from '@maestro-shared/tabAlias.api'
+
+/** 与 main 侧覆盖层同一个 scope —— 这两行证明「渲染层确实在跟 main 说话」。 */
+const tabAliasLog = moduleLog('tab-alias')
 
 /**
  * 别名表单渲染进程 ↔ main。实例化即注册 `xpc:MaestroTabAliasXpcHandler/<method>`。
@@ -13,7 +17,9 @@ import type {
  */
 export class MaestroTabAliasXpcHandler extends XpcMainHandler implements MaestroTabAliasXpcContract {
   async snapshot(): Promise<MaestroTabAliasSnapshot> {
-    return maestroWindowHelper.tabAliasSnapshot()
+    const snapshot = maestroWindowHelper.tabAliasSnapshot()
+    tabAliasLog.info('snapshot pulled', { revision: snapshot.revision, open: Boolean(snapshot.dialog) })
+    return snapshot
   }
 
   async resolve(params: {
