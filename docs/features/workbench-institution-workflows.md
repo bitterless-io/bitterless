@@ -1,6 +1,6 @@
 # Workbench institution Kimchi workflows
 
-Status: approved by Ral, implementation in progress (2026-09-16).
+Status: implemented and independently verified on merged dev/next (2026-09-16). See [acceptance review](../plan/reviews/workbench-institution-workflows-001-01.md).
 
 ## Scope
 

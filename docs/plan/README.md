@@ -1,6 +1,6 @@
 # Bitterless Delivery Plan
 
-- [Workbench institution workflows 001](tasks/workbench-institution-workflows-001.md) — in progress; institution library, safe updates and Kimchi visualization.
+- [Workbench institution workflows 001](tasks/workbench-institution-workflows-001.md) — done; Shared/institution Workflow and Skill catalogs, safe updates and Kimchi visualization.
 
 - [Zellij session lifecycle 177](tasks/zellij-session-lifecycle-177.md) — done;
   isolate unhealthy sessions, close exact targets, and preserve healthy tasks across app restart.

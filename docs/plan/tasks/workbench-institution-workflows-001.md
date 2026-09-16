@@ -1,9 +1,9 @@
 ---
 id: workbench-institution-workflows-001
 scope: Institution Kimchi workflow library, synchronization and visual Workbench
-status: in-progress
+status: done
 depends-on: []
-verify: pending
+verify: passed
 ---
 
 ## objective
@@ -73,3 +73,7 @@ Shared/institution storage, visible import/recording target, legacy assignment, 
 - Independent actual SFC render review passed desktop and constrained light/dark layouts after correcting the new scope-control contrast. Fixtures are private verification artifacts and never application fallback.
 
 Exact final hash, combined validation, independent review and push remain parent release gates.
+
+## Final independent acceptance (2026-09-16)
+
+Merged source `74598b31604fa17e7a9ece9a522a7c3111bdd974` passed independent Workflow and Skills contract review, 52 focused tests, strict Workflow/Skills Node/Vue types, Workflow engine types and a complete production-mode Electron/Vue build (23.14 seconds). Actual Skills dark/light/constrained/logged-out renders and Workflow graph renders passed. Version `260916170618` was preserved. Inherited repository type/line-count limitations and exact commands are recorded in [the independent review](../reviews/workbench-institution-workflows-001-01.md). No blocking finding remains. Final remote synchronization is handled by the release coordinator; no desktop distribution/restart was requested.
