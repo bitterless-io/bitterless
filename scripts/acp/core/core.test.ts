@@ -130,6 +130,20 @@ test('malformed messages, pre-init, notification silence and split UTF-8 frames'
   } finally { socket.destroy(); await f.cleanup(); }
 });
 
+test('prompt delegates durable validation to the host without an unreserved session read', async () => {
+  const f = await fixture();
+  const { peer } = await connect(f.endpoint.socketPath);
+  try {
+    await initialize(peer);
+    const { sessionId } = await newSession(peer, f.directory);
+    f.host.getSession = async () => { throw new Error('Unreserved durable read before prompt'); };
+    const prompt = () => peer.request<{ stopReason: string }>('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hello' }] });
+    assert.equal((await prompt()).stopReason, 'end_turn');
+    await f.host.deleteSession!(sessionId);
+    await assert.rejects(prompt(), (error: unknown) => error instanceof AcpError && error.code === -32002);
+  } finally { await peer.close(); await f.cleanup(); }
+});
+
 test('permission allow/deny/cancel, session exclusivity, cancellation and disconnect release', async () => {
   const f = await fixture();
   const a = await connect(f.endpoint.socketPath); const b = await connect(f.endpoint.socketPath);

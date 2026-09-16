@@ -53,6 +53,10 @@ export interface AcpHost {
   listSessions(): Promise<AcpSession[]>;
   /** Reconstruct runtime context and return the complete replayable persisted transcript. */
   loadSession(params: AcpSessionSetup & { sessionId: string }): Promise<{ session: AcpSession; history: SessionUpdate[] }>;
+  /** Acquire auth/turn ownership before any async preparation, then validate the durable session.
+   * Core deliberately does not call getSession before prompt: such a read would sit outside
+   * the host's cancellation/auth lifetime. Missing sessions must throw AcpError(-32002, ...).
+   */
   prompt(sessionId: string, prompt: ContentBlock[], context: AcpPromptContext): Promise<PromptResponse>;
   setMode?(sessionId: string, modeId: string): Promise<AcpSession>;
   setConfigOption?(sessionId: string, configId: string, value: string): Promise<AcpSession>;

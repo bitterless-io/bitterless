@@ -205,8 +205,9 @@ export const startAcpServer = async (options: AcpServerOptions): Promise<AcpServ
         let active = true;
         const done = Promise.resolve().then(async (): Promise<PromptResponse> => {
           await host.checkAccess();
-          await get(sessionId);
           if (controller.signal.aborted) return { stopReason: 'cancelled' };
+          // The host validates durable state inside its auth/turn reservation.
+          // A separate awaited read here would allow auth replacement before admission.
           const result = await host.prompt(sessionId, prompt, {
             signal: controller.signal,
             emit: async (update) => { if (active && !peer.isClosed) await emit(sessionId, update); },
