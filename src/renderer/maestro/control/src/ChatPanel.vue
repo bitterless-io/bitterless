@@ -364,7 +364,11 @@ async function selectHistory(sessionId: string): Promise<void> {
 
 async function stop(): Promise<void> {
   if (!stopEnabled.value) return
-  await messageStore.stop(props.session.id)
+  try {
+    await messageStore.stop(props.session.id)
+  } catch (error) {
+    Message.error('Could not stop this turn: ' + (error instanceof Error ? error.message : String(error)) + '. Try Stop again.')
+  }
 }
 
 function onChatKeydown(event: KeyboardEvent): void {

@@ -31,7 +31,7 @@ dom.window.HTMLElement.prototype.getClientRects = function () {
   }
   return this.isConnected ? [{ width: 100, height: 30 }] : []
 }
-const harness = { aborts: [], pending: [], saved: [] }
+const harness = { aborts: [], pending: [], sends: [], pendingSends: [], saved: [] }
 globalThis.__chatEscapeHarness = harness
 
 await build({
@@ -63,7 +63,11 @@ await build({
               const harness = globalThis.__chatEscapeHarness
               if (method === 'abortAgent') {
                 harness.aborts.push(params)
-                return new Promise(resolve => harness.pending.push(resolve))
+                return new Promise((resolve, reject) => harness.pending.push({ resolve, reject }))
+              }
+              if (method === 'sendAgentMessage') {
+                harness.sends.push(params)
+                return new Promise(resolve => harness.pendingSends.push(resolve))
               }
               if (method === 'saveSession') harness.saved.push(params.session)
               if (method === 'listSessions') return []
@@ -91,6 +95,7 @@ await build({
 })
 
 const { createApp, h, nextTick } = await import('vue')
+const { Message } = await import('@arco-design/web-vue')
 const { ChatPanel, messageStore, channelStore } = await import(pathToFileURL(join(temp, 'chat.mjs')).href)
 let app
 const flush = async () => {
@@ -103,6 +108,7 @@ const mount = async ({ busy = true, aborting = false } = {}) => {
   messageStore.historySessions = []
   harness.aborts = []
   harness.saved = []
+  harness.sends = []
   focused = true
   visibility = 'visible'
   const created = messageStore.createSession({ title: 'Current', intent: 'chat', operationTabId: 'tab-current' })
@@ -127,11 +133,13 @@ const escape = (options = {}, target = document.body) => {
   return event
 }
 const finishStop = async () => {
-  for (const resolve of harness.pending.splice(0)) resolve()
+  for (const pending of harness.pending.splice(0)) pending.resolve()
   await flush()
 }
 afterEach(async () => {
   await finishStop()
+  for (const resolve of harness.pendingSends.splice(0)) resolve({ ok: false, text: '', error: 'test finished', ts: Date.now() })
+  Message.clear()
   app?.unmount()
   app = undefined
   for (const overlay of document.querySelectorAll('[data-test-overlay]')) overlay.remove()
@@ -269,4 +277,113 @@ test('unmount removes the listener before another chat receives Escape', async (
   app = undefined
   assert.equal(escape().defaultPrevented, false)
   assert.equal(harness.aborts.length, 0)
+})
+
+test('Stop stays busy and disabled beyond 900ms until the native receipt, including after a session switch', async () => {
+  const { session, background } = await mount()
+  escape()
+  channelStore.currentOperationTabId = 'tab-background'
+  await new Promise(resolve => setTimeout(resolve, 950))
+  await flush()
+  const beforeReceipt = { busy: session.busy, aborting: session.aborting, streaming: session.messages.at(-1).streaming }
+  assert.deepEqual(beforeReceipt, { busy: true, aborting: true, streaming: true })
+  assert.equal(document.querySelector('.chat-panel__stop-button').disabled, true)
+  await finishStop()
+  assert.deepEqual(beforeReceipt, { busy: true, aborting: true, streaming: true })
+  assert.equal(session.busy, false)
+  assert.equal(session.messages.at(-1).content, 'Partial reply')
+  assert.equal(background.busy, true)
+  assert.equal(background.activeTurnId, 'turn-background')
+  assert.deepEqual(harness.aborts, [{ sessionId: session.id }])
+})
+
+test('native Stop rejection exposes an error and leaves the same turn retryable with its partial reply', async () => {
+  const { session } = await mount()
+  escape()
+  harness.pending.shift().reject(new Error('native cleanup failed'))
+  await flush()
+  assert.equal(session.busy, true)
+  assert.equal(session.aborting, false)
+  assert.equal(session.activeTurnId, 'turn-current')
+  assert.equal(session.messages.at(-1).content, 'Partial reply')
+  assert.equal(document.querySelector('.chat-panel__stop-button').disabled, false)
+  assert.match(document.body.textContent, /Could not stop.*native cleanup failed/)
+  escape()
+  assert.equal(harness.aborts.length, 2)
+  await finishStop()
+  assert.equal(session.busy, false)
+  assert.equal(session.messages.at(-1).content, 'Partial reply')
+})
+
+for (const first of ['model reply', 'Stop receipt']) {
+  test(`real send preserves Stop ownership and partial text when ${first} arrives first`, async () => {
+    const { session, background } = await mount({ busy: false })
+    session.activeTurnId = undefined
+    session.messages.at(-1).streaming = false
+    messageStore.globalBusySessionId = ''
+    const sending = messageStore.send(session.id, 'New request')
+    await flush()
+    assert.equal(harness.pendingSends.length, 1)
+    messageStore.pushStream({ sessionId: session.id, delta: 'Live partial reply' })
+    await new Promise(resolve => setTimeout(resolve, 25))
+    escape()
+    await flush()
+    const reply = () => harness.pendingSends.shift()({ ok: false, text: 'late cancellation result', error: 'cancelled', ts: Date.now() })
+    if (first === 'model reply') {
+      reply()
+      await sending
+      await flush()
+      assert.equal(session.busy, true)
+      assert.equal(session.aborting, true)
+      assert.equal(document.querySelector('.chat-panel__stop-button').disabled, true)
+      assert.equal(await messageStore.send(session.id, 'overlap'), null)
+      channelStore.currentOperationTabId = 'tab-background'
+      await finishStop()
+    } else {
+      await finishStop()
+      channelStore.currentOperationTabId = 'tab-background'
+      reply()
+      await sending
+    }
+    assert.equal(session.busy, false)
+    assert.equal(session.aborting, false)
+    assert.equal(session.messages.at(-1).content, 'Live partial reply')
+    assert.equal(session.messages.at(-1).streaming, false)
+    assert.equal(harness.saved.at(-1).messages.at(-1).content, 'Live partial reply')
+    assert.equal(background.busy, true)
+    assert.equal(background.activeTurnId, 'turn-background')
+  })
+}
+
+test('a late real send reply after Stop failure cannot clear the retryable original turn', async () => {
+  const { session, background } = await mount({ busy: false })
+  session.activeTurnId = undefined
+  session.messages.at(-1).streaming = false
+  messageStore.globalBusySessionId = ''
+  const sending = messageStore.send(session.id, 'New request')
+  await flush()
+  messageStore.pushStream({ sessionId: session.id, delta: 'Retain this partial reply' })
+  await new Promise(resolve => setTimeout(resolve, 25))
+  const turnId = session.activeTurnId
+  escape()
+  harness.pending.shift().reject(new Error('native cleanup failed'))
+  await flush()
+  channelStore.currentOperationTabId = 'tab-background'
+  harness.pendingSends.shift()({ ok: false, text: 'late cancellation result', error: 'cancelled', ts: Date.now() })
+  await sending
+  await flush()
+  assert.equal(session.busy, true)
+  assert.equal(session.aborting, false)
+  assert.equal(session.activeTurnId, turnId)
+  assert.equal(session.messages.at(-1).content, 'Retain this partial reply')
+  assert.equal(messageStore.globalBusySessionId, session.id)
+  assert.equal(document.querySelector('.chat-panel__stop-button').disabled, false)
+  assert.equal(background.activeTurnId, 'turn-background')
+  channelStore.currentOperationTabId = 'tab-current'
+  escape()
+  assert.deepEqual(harness.aborts, [{ sessionId: session.id }, { sessionId: session.id }])
+  await finishStop()
+  assert.equal(session.busy, false)
+  assert.equal(session.messages.at(-1).content, 'Retain this partial reply')
+  assert.equal(background.busy, true)
 })

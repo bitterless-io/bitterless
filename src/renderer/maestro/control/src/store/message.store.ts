@@ -166,6 +166,7 @@ class MessageStoreState {
   private scrollNearRaf = 0
   private streamFlushRaf = 0
   private streamBuffers = markRaw(new Map<string, string>())
+  private stoppingTurns = markRaw(new Map<string, string | undefined>())
 
   sessions: MessageSession[] = []
   historySessions: MessageSessionSummary[] = []
@@ -325,7 +326,9 @@ class MessageStoreState {
       reply = { ok: false, text: String(err), ts: Date.now(), error: String(err) }
     }
 
-    if (session.activeTurnId !== turnId) return reply
+    // A model reply can arrive before native abort cleanup. The Stop operation owns
+    // finalization once requested, including a failed cleanup awaiting an explicit retry.
+    if (session.activeTurnId !== turnId || this.stoppingTurns.get(session.id) === turnId) return reply
 
     const wasAborted = session.aborting
     const fallback = wasAborted ? 'Stopped.' : reply.ok ? 'Done.' : 'Failed.'
@@ -351,12 +354,15 @@ class MessageStoreState {
     if (!session || session.archivedAt || !session.busy || session.aborting) return
     const turnId = session.activeTurnId
     session.aborting = true
+    this.stoppingTurns.set(session.id, turnId)
     try {
-      await Promise.race([coach.abortAgent({ sessionId: session.id }), delay(900)])
-    } catch {
-      /* best effort */
+      await coach.abortAgent({ sessionId: session.id })
+    } catch (error) {
+      if (session.activeTurnId === turnId) session.aborting = false
+      throw error
     }
     this.forceStopTurn(session, turnId)
+    if (this.stoppingTurns.get(session.id) === turnId) this.stoppingTurns.delete(session.id)
   }
 
   async archive(sessionId: string): Promise<boolean> {

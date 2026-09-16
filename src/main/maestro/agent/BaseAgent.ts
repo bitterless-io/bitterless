@@ -98,6 +98,8 @@ export class BaseAgent {
   private disposePromise: Promise<void> | null = null
   private activePromptDrain: Promise<void> | null = null
   private abortPromise: Promise<void> | null = null
+  private stopFailed = false
+  private failedSessionAborts = new Set<AgentRuntimeSession>()
   private managedPrompts = new Set<Promise<unknown>>()
   private pendingTools = new Set<Promise<string>>()
   private sessionAborts = new WeakMap<AgentRuntimeSession, Promise<void>>()
@@ -252,7 +254,7 @@ export class BaseAgent {
     options?: BaseAgentPromptOptions
   ): Promise<AgentTurnReply> {
     if (this.disposed) return { ok: false, text: '', error: 'agent has been disposed' }
-    if (this.busy || this.abortPromise || this.managedPrompts.size || this.pendingTools.size || this.pendingSessionAborts.size) {
+    if (this.busy || this.abortPromise || this.stopFailed || this.managedPrompts.size || this.pendingTools.size || this.pendingSessionAborts.size) {
       return { ok: false, text: '', error: 'agent is already handling a message' }
     }
     this.busy = true
@@ -312,7 +314,14 @@ export class BaseAgent {
       this.busy = false
       resolvePromptDrain()
       if (this.activePromptDrain === promptDrain) this.activePromptDrain = null
+      // Let abort join the completed prompt, then retain the caller's shared GUI/ACP
+      // turn ownership until native cleanup settles. Stop reports cleanup failures.
+      await this.drainAcceptedStop()
     }
+  }
+
+  private async drainAcceptedStop(): Promise<void> {
+    await this.abortPromise?.catch(() => undefined)
   }
 
   /**
@@ -387,6 +396,7 @@ export class BaseAgent {
     this.sessionPromise = null
     this.primed = false
     if (managed) this.trackSessionAbort(managed)
+    for (const session of this.failedSessionAborts) this.trackSessionAbort(Promise.resolve(session))
     for (const creation of this.pendingSessionCreations) this.trackSessionAbort(creation)
 
     const oneShotAborts = [...this.activeOneShotSessions].map((session) => session.abort())
@@ -407,7 +417,10 @@ export class BaseAgent {
     if (existing) return existing
     const abort = Promise.resolve().then(() => session.abort())
     this.sessionAborts.set(session, abort)
-    void abort.catch(() => this.sessionAborts.delete(session))
+    void abort.then(() => this.failedSessionAborts.delete(session), () => {
+      this.sessionAborts.delete(session)
+      this.failedSessionAborts.add(session)
+    })
     return abort
   }
 
@@ -425,7 +438,7 @@ export class BaseAgent {
    */
   async abort(): Promise<void> {
     if (this.abortPromise) return await this.abortPromise
-    if (!this.busy && !this.activePromptDrain && !this.managedPrompts.size && !this.pendingSessionAborts.size && !this.pendingTools.size) return
+    if (!this.busy && !this.activePromptDrain && !this.failedSessionAborts.size && !this.managedPrompts.size && !this.pendingSessionAborts.size && !this.pendingTools.size) return
     this.abortGeneration += 1
     const managed = this.sessionPromise
     const drain = this.activePromptDrain
@@ -435,14 +448,21 @@ export class BaseAgent {
       // the original model/tool work has stopped; retain admission until every owner settles.
       const results = await Promise.allSettled([
         ...pendingAborts,
+        ...[...this.failedSessionAborts].map((session) => this.abortSession(session)),
         ...(managed ? [this.trackSessionAbort(managed)] : []),
         ...(drain ? [drain] : []),
-        ...this.managedPrompts
+        // A cancelled network request normally rejects. Its result belongs to prompt(),
+        // while Stop reports whether the separate native cleanup succeeded.
+        ...[...this.managedPrompts].map((prompt) => prompt.catch(() => undefined))
       ])
       while (this.pendingTools.size) await Promise.allSettled([...this.pendingTools])
       if (this.sessionPromise === managed) { this.sessionPromise = null; this.primed = false }
       const failure = results.find((result) => result.status === 'rejected')
-      if (failure?.status === 'rejected') throw failure.reason
+      if (failure?.status === 'rejected') {
+        this.stopFailed = true
+        throw failure.reason
+      }
+      this.stopFailed = false
     }).finally(() => {
       if (this.abortPromise === stopping) this.abortPromise = null
     })
@@ -533,6 +553,9 @@ export class BaseAgent {
     } finally {
       if (typeof unsubscribe === 'function') unsubscribe()
       setThinking(false)
+      if (options.abortGeneration !== undefined) {
+        while (this.pendingTools.size) await Promise.allSettled([...this.pendingTools])
+      }
     }
     const text = streamed.trim() || finalText.trim()
     return { text, streamedChars: streamed.length, finalChars: finalText.length, toolCalls, stopReason, errorMessage }

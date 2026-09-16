@@ -18,10 +18,18 @@ const mod = { exports: {} }
 vm.runInThisContext(`(function(exports,require,module){${source}\n})`, { filename: file })(mod.exports, id =>
   id === './runtime/coachRuntimeAdapter' ? { CoachRuntimeAdapter: class { constructor() { throw Error('Unexpected default network adapter') } } } : require(id), mod)
 const { BaseAgent } = mod.exports
+const contextFile = resolve(import.meta.dirname, '../../src/main/maestro/agent/runtime/agentExecutionContext.ts')
+const contextSource = ts.transpileModule(readFileSync(contextFile, 'utf8'), {
+  fileName: contextFile,
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+}).outputText
+const contextModule = { exports: {} }
+vm.runInThisContext(`(function(exports,require,module){${contextSource}\n})`, { filename: contextFile })(contextModule.exports, require, contextModule)
+const { runAgentTurn, observeAgentTool } = contextModule.exports
 const deferred = () => {
-  let resolve
-  const promise = new Promise(done => { resolve = done })
-  return { promise, resolve }
+  let resolve, reject
+  const promise = new Promise((done, fail) => { resolve = done; reject = fail })
+  return { promise, resolve, reject }
 }
 const tick = () => new Promise(resolve => setImmediate(resolve))
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
@@ -112,12 +120,12 @@ test('Stop joins concurrent requests and native cleanup beyond 1500ms even after
   let receipts = 0
   const stops = [f.agent.abort(), f.agent.abort()].map(stop => stop.then(() => { receipts++ }))
   finish.resolve()
-  await prompt
+  await tick()
   await delay(1550)
   const beforeCleanup = receipts
   const replacement = await f.agent.prompt('replacement')
   cleaned.resolve()
-  await Promise.all(stops)
+  await Promise.all([prompt, ...stops])
   assert.equal(beforeCleanup, 0)
   assert.equal(replacement.ok, false)
   assert.equal(receipts, 2)
@@ -208,12 +216,11 @@ test('Stop rejects late host tools and retains already-running tool work after m
   const stopping = f.agent.abort().then(() => { acknowledged = true })
   await assert.rejects(f.sessions[0].options.tools[0].execute({}), /cancelled/i)
   modelFinish.resolve()
-  await prompt
   await tick()
   const early = acknowledged
   const replacement = await f.agent.prompt('replacement')
   toolFinish.resolve()
-  await Promise.all([tool, stopping])
+  await Promise.all([prompt, tool, stopping])
   assert.equal(early, false)
   assert.equal(replacement.ok, false)
   assert.equal(calls, 1)
@@ -229,4 +236,107 @@ test('idle Stop leaves an initialized session usable and disposal still rejects 
   await f.agent.dispose()
   assert.equal(f.sessions[0].aborted, 1)
   assert.equal((await f.agent.prompt('after disposal')).ok, false)
+})
+
+test('native abort success still acknowledges Stop when the raw fetch rejects with AbortError', async t => {
+  const entered = deferred(), finish = deferred()
+  t.after(() => finish.resolve())
+  const f = fixture(async () => { entered.resolve(); await finish.promise }, {
+    abort: async () => { finish.reject(new DOMException('This operation was aborted', 'AbortError')) }
+  })
+  const prompt = f.agent.prompt('old', 5000)
+  await entered.promise
+  const result = await f.agent.abort().then(() => ({ ok: true }), error => ({ error }))
+  assert.equal((await prompt).ok, false)
+  assert.deepEqual(result, { ok: true })
+  assert.equal(f.sessions[0].aborted, 1)
+})
+
+test('failed native cleanup retains its session and blocks replacement until a real retry succeeds', async t => {
+  const entered = deferred(), finish = deferred(), cleaned = deferred()
+  t.after(() => { finish.resolve(); cleaned.resolve() })
+  const failure = new Error('native cleanup failed')
+  const f = fixture(async () => { entered.resolve(); await finish.promise }, {
+    abort: async session => { if (session.aborted === 1) throw failure; await cleaned.promise }
+  })
+  const prompt = f.agent.prompt('old', 5000)
+  await entered.promise
+  const first = f.agent.abort().then(() => undefined, error => error)
+  finish.resolve()
+  await prompt
+  assert.equal(await first, failure)
+  const afterFailure = await f.agent.prompt('replacement')
+  let acknowledged = false
+  const retry = f.agent.abort().then(() => { acknowledged = true })
+  await tick()
+  const observed = { accepted: afterFailure.ok, acknowledged, abortCalls: f.sessions[0].aborted }
+  cleaned.resolve()
+  await retry
+  assert.deepEqual(observed, { accepted: false, acknowledged: false, abortCalls: 2 })
+  assert.equal((await f.agent.prompt('fresh')).ok, true)
+})
+
+test('Stop retry retains the actual failed reset session while a fresh managed turn drains', async t => {
+  const entered = deferred(), finish = deferred(), cleanup = deferred()
+  t.after(() => { finish.resolve(); cleanup.resolve() })
+  const failure = new Error('prior session cleanup failed')
+  const f = fixture(async () => { entered.resolve(); await finish.promise }, {
+    abort: async session => {
+      if (session === f.sessions[0] && session.aborted === 1) { await cleanup.promise; throw failure }
+      if (session !== f.sessions[0]) finish.resolve()
+    }
+  })
+  await f.agent.init()
+  const prompt = f.agent.prompt('new', 5000, { freshSession: true })
+  await entered.promise
+  const stopping = f.agent.abort().then(() => undefined, error => error)
+  cleanup.resolve()
+  assert.equal(await stopping, failure)
+  await prompt
+  await f.agent.abort()
+  assert.equal(f.sessions[0].aborted, 2, 'retry must reach the failed old session, not the already-cleaned new one')
+  assert.equal(f.sessions[1].aborted, 1)
+})
+
+test('the shared GUI and ACP owner remains reserved until native Stop cleanup finishes', async t => {
+  const entered = deferred(), finish = deferred(), cleaned = deferred()
+  t.after(() => { finish.resolve(); cleaned.resolve() })
+  const f = fixture(async () => { entered.resolve(); await finish.promise }, { abort: async () => cleaned.promise })
+  const original = runAgentTurn(() => f.agent.prompt('old', 5000))
+  await entered.promise
+  const stopping = f.agent.abort()
+  finish.resolve()
+  await tick()
+  const competing = await runAgentTurn(async () => 'external replacement').then(value => ({ value }), error => ({ error }))
+  cleaned.resolve()
+  await Promise.all([original, stopping])
+  assert.match(competing.error?.message || '', /busy/i)
+  assert.equal(await runAgentTurn(async () => 'fresh external turn'), 'fresh external turn')
+})
+
+test('Stop accepted while a host tool outlives the model still reserves the shared owner through native cleanup', async t => {
+  const entered = deferred(), toolFinish = deferred(), modelFinish = deferred(), cleaned = deferred()
+  t.after(() => { toolFinish.resolve(); modelFinish.resolve(); cleaned.resolve() })
+  let tool
+  const f = fixture(async session => {
+    tool = session.options.tools[0].execute({})
+    await modelFinish.promise
+  }, {
+    abort: async () => cleaned.promise,
+    tools: [{ name: 'write', description: 'fixture', params: [], execute: () => observeAgentTool('write', {
+      input: {}, execute: async () => { entered.resolve(); await toolFinish.promise; return 'written' }
+    }) }]
+  })
+  const original = runAgentTurn(() => f.agent.prompt('old', 5000))
+  await entered.promise
+  modelFinish.resolve()
+  await tick()
+  const stopping = f.agent.abort()
+  toolFinish.resolve()
+  await tick()
+  const competing = await runAgentTurn(async () => 'external replacement').then(value => ({ value }), error => ({ error }))
+  cleaned.resolve()
+  const [reply] = await Promise.all([original, stopping, tool])
+  assert.match(competing.error?.message || '', /busy/i)
+  assert.equal(reply.ok, false)
 })
