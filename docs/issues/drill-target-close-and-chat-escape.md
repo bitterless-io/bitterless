@@ -9,7 +9,7 @@ The current Maestro ChatPanel exposes a Stop button while the session is busy an
 ## Contract
 
 - Plain Escape while the chat surface and its current session are active invokes exactly the same Stop action as its enabled Stop button, including the existing drilling confirmation where applicable.
-- Hidden/disabled Stop, idle/archived/stopping chat, another active session, another app/browser view, key repeat and IME composition do not trigger a second or unrelated stop. Existing dismissible overlays retain their normal Escape behavior; do not add a global OS shortcut.
+- Hidden/disabled Stop, idle/stopping chat, another active session, another app/browser view, key repeat and IME composition do not trigger a second or unrelated stop. Existing dismissible overlays retain their normal Escape behavior; do not add a global OS shortcut.
 - Preserve saved messages, model/provider behavior, tab switching, and unrelated sessions.
 - Implement in an isolated worktree, independently review, merge into the original attached branch, and synchronize Git as Ral requested.
 

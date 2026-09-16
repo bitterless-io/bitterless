@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { IconFolder, IconFolderOpen, IconListDetails, IconLoader2, IconMicrophone, IconPaperclip, IconPlayerPause, IconPlayerStop, IconPlus, IconRefresh, IconSend2, IconSparkles, IconX } from '@tabler/icons-vue'
 import { fileIcon } from './fileIcon'
 import { Button, Drawer, Message, Modal, Tooltip } from '@arco-design/web-vue'
@@ -25,6 +25,8 @@ const input = ref('')
 const selectedFiles = ref<ChatAttachment[]>([])
 const fileInput = ref<HTMLInputElement | null>(null)
 const composerRef = ref<HTMLTextAreaElement | null>(null)
+const panelRef = ref<HTMLElement | null>(null)
+const stopEnabled = computed(() => props.session.busy && !props.session.aborting)
 const historyVisible = ref(false)
 const historyContainer = ref<HTMLElement | null>(null)
 const voiceRecording = ref(false)
@@ -361,8 +363,33 @@ async function selectHistory(sessionId: string): Promise<void> {
 }
 
 async function stop(): Promise<void> {
+  if (!stopEnabled.value) return
   await messageStore.stop(props.session.id)
 }
+
+function onChatKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Escape' || event.defaultPrevented || event.repeat || event.isComposing || event.keyCode === 229) return
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || !stopEnabled.value) return
+  if (!document.hasFocus() || document.visibilityState !== 'visible') return
+  if (channelStore.activeSource !== 'cowork' || channelStore.activeSession?.id !== props.session.id) return
+  const panel = panelRef.value
+  if (!panel?.getClientRects().length) return
+  // Disabling the composer during a turn moves focus to body. Other focused controls
+  // outside this chat, and dismissible overlays, retain ownership of Escape.
+  const target = event.target
+  if (target instanceof Node && target !== document.body && target !== document.documentElement && !panel.contains(target)) return
+  const overlays = document.querySelectorAll<HTMLElement>(
+    '.arco-modal, .arco-drawer, .arco-trigger-popup:not(.arco-tooltip) .arco-trigger-popup-wrapper, [role="dialog"], [role="menu"], [role="listbox"]'
+  )
+  for (const overlay of overlays) {
+    if (overlay.getClientRects().length && getComputedStyle(overlay).visibility !== 'hidden') return
+  }
+  event.preventDefault()
+  void stop()
+}
+
+onMounted(() => window.addEventListener('keydown', onChatKeydown))
+onBeforeUnmount(() => window.removeEventListener('keydown', onChatKeydown))
 
 function onComposerKeydown(event: KeyboardEvent): void {
   if (event.key !== 'Enter' || event.shiftKey) return
@@ -397,6 +424,7 @@ function setHistoryContainer(el: HTMLElement | null): void {
 
 <template>
   <div
+    ref="panelRef"
     class="chat-panel"
     @dragenter.prevent="onDragEnter"
     @dragover.prevent
@@ -638,7 +666,7 @@ function setHistoryContainer(el: HTMLElement | null): void {
             type="outline"
             status="danger"
             size="small"
-            :disabled="session.aborting"
+            :disabled="!stopEnabled"
             :title="session.aborting ? 'Stopping' : 'Stop'"
             :aria-label="session.aborting ? 'Stopping' : 'Stop'"
             @click="stop"
