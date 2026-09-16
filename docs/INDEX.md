@@ -1,6 +1,6 @@
 # Bitterless Documentation
 
-- [Drill target closure and chat Escape](issues/drill-target-close-and-chat-escape.md) — in progress; [task](plan/tasks/drill-stop-escape-001.md).
+- [Drill target closure and chat Escape](issues/drill-target-close-and-chat-escape.md) — implemented and independently verified; [task](plan/tasks/drill-stop-escape-001.md).
 
 - [Local ACP agent access](features/local-acp.md) — local socket, stdio and Codex MCP integration; implemented and independently verified.
 

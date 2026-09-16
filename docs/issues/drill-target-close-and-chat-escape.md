@@ -1,6 +1,6 @@
 # Chat Escape uses the enabled Stop action
 
-Status: in progress. Requested by Ral on 2026-09-16.
+Status: implemented and independently verified. Requested by Ral on 2026-09-16.
 
 ## Triage
 
