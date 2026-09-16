@@ -1,0 +1,32 @@
+{
+  "include": [
+    "../../src/main/acp/core/**/*.ts",
+    "../../src/main/acp/helpers/**/*.ts",
+    "../../src/main/acp/acpStdio.main.ts",
+    "../../src/main/acp/acpMcp.main.ts",
+    "../../src/main/acp/maestroAcp.host.ts",
+    "../../src/main/acp/maestroAcp.lifecycle.ts",
+    "../../src/main/maestro/agent/runtime/agentExecutionContext.ts"
+  ],
+  "compilerOptions": {
+    "composite": false,
+    "noCheck": false,
+    "noEmit": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "noImplicitReturns": true,
+    "skipLibCheck": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": [
+      "node"
+    ],
+    "baseUrl": "../..",
+    "paths": {
+      "@maestro-shared/*": [
+        "src/shared/maestro/*"
+      ]
+    }
+  }
+}

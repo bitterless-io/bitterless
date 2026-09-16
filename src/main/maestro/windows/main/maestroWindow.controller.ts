@@ -1,4 +1,5 @@
 import { BrowserWindow, WebContentsView, app, dialog, shell } from 'electron'
+import { assertAgentIdle, confirmAgentOperation, runAgentTurn } from '@maestro-main/agent/runtime/agentExecutionContext'
 import type { MessageBoxOptions } from 'electron'
 import { xpcMain } from 'electron-xpc/main'
 import { join } from 'path'
@@ -850,7 +851,7 @@ class MaestroWindowController
   }
 
   async replaySkill(params: { skillId: string; variables: Record<string, string> }): Promise<ReplayResult> {
-    return await this.skillService.replaySkill(params)
+    return await runAgentTurn(() => this.skillService.replaySkill(params))
   }
 
   async sendAgentMessage(params: { message: string; sessionId?: string; context?: AgentConversationContext }): Promise<AgentReply> {
@@ -930,6 +931,7 @@ class MaestroWindowController
   }
 
   async setLlmConfig(params: { provider: string; model: string; effort?: LlmEffort }): Promise<LlmConfig> {
+    assertAgentIdle()
     return await this.llmService.setLlmConfig(params)
   }
 
@@ -1442,8 +1444,10 @@ class MaestroWindowController
       message: `Allow ${summary}?`,
       detail
     }
-    const result = this.browserWindow ? await dialog.showMessageBox(this.browserWindow, options) : await dialog.showMessageBox(options)
-    const allowed = result.response === 0
+    const allowed = await confirmAgentOperation({ title: 'browser_intercept', input: { summary, detail } }, async () => {
+      const result = this.browserWindow ? await dialog.showMessageBox(this.browserWindow, options) : await dialog.showMessageBox(options)
+      return result.response === 0
+    })
     await this.resolveHostApprovalEvent(eventId, allowed ? 'approved' : 'denied')
     this.broadcastActivity('tool', `${allowed ? 'approved' : 'denied'}: ${summary}`, allowed)
     return allowed

@@ -50,6 +50,7 @@ export interface BaseAgentOptions {
   /** Live provider thinking state; not persisted as message activity. */
   onThinking?: (state: Omit<AgentThinkingState, 'sessionId'>) => void
   onDebug?: (event: CodexDebugEvent) => void
+  onRuntimeEvent?: (event: AgentRuntimeEvent) => void
 }
 
 // LLM provider/model are env-switchable. Subscription OAuth tokens are created by the in-app
@@ -88,6 +89,7 @@ export class BaseAgent {
   // the LLM system prompt directly); `primed` tracks whether this session has received it.
   private primed = false
   private busy = false
+  private abortGeneration = 0
   // Runtime overrides set by the UI provider switch; take precedence over env/opts.
   private providerOverride?: string
   private modelOverride?: string
@@ -241,6 +243,7 @@ export class BaseAgent {
     if (this.disposed) return { ok: false, text: '', error: 'agent has been disposed' }
     if (this.busy) return { ok: false, text: '', error: 'agent is already handling a message' }
     this.busy = true
+    const abortGeneration = this.abortGeneration
     let resolvePromptDrain: () => void = () => undefined
     const promptDrain = new Promise<void>((resolve) => {
       resolvePromptDrain = resolve
@@ -263,6 +266,7 @@ export class BaseAgent {
         this.sessionPromise = null
         throw err
       }
+      if (abortGeneration !== this.abortGeneration) throw new Error('Agent turn cancelled')
       const turn = await this.runPrompt(session, this.withSystemPreamble({ text: message, media: options?.media, images: options?.images }), timeoutMs)
       this.debug(turn.errorMessage ? 'agent-turn-error' : 'agent-turn-complete', turn.errorMessage ? 'warn' : 'info', 'agent runtime turn completed.', {
         durationMs: Date.now() - startedAt,
@@ -392,6 +396,7 @@ export class BaseAgent {
    * the session so aborted output is never reused as later model context. No-op when idle.
    */
   async abort(): Promise<void> {
+    this.abortGeneration += 1
     if (!this.busy || !this.sessionPromise) return
     try {
       const session = await Promise.race([this.sessionPromise, sleep(500).then(() => null)])
@@ -427,6 +432,7 @@ export class BaseAgent {
       this.opts.onThinking?.({ active, ts: Date.now() })
     }
     const unsubscribe = session.subscribe((event: AgentRuntimeEvent) => {
+      this.opts.onRuntimeEvent?.(event)
       const type = event?.type
       if (type === 'text_delta') {
         setThinking(false)

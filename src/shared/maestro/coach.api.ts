@@ -951,6 +951,7 @@ export interface AgentCompactReply {
 }
 
 export interface AgentReply {
+  stopReason?: string
   ok: boolean
   text: string
   ts: number

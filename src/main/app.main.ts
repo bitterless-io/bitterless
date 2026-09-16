@@ -17,6 +17,7 @@ import { dialogHelper } from './dialog/dialog.helper';
 import './xpc/app.handler';
 import { updateService } from '@main/updateHelper/update.service';
 import { mcpBridgeServer } from './mcp/mcpBridge.server';
+import { startMaestroAcpServer, stopMaestroAcpServer } from './acp/maestroAcp.runtime';
 import { startBitterlessMcpStdioServer } from './mcp/mcpStdio.helper';
 import {
   OptionalStartupLifecycle,
@@ -330,6 +331,7 @@ const cleanupResources = (): Promise<void> => {
     try { await stopEyesOnAgentsRuntime?.(); } catch {
       // Best-effort shutdown: the remaining application resources must still be released.
     }
+    try { await stopMaestroAcpServer(); } catch {}
     try { await mcpBridgeServer.stop(); } catch {}
     try {
       await withTodoXpcTimeout(
@@ -489,6 +491,9 @@ const startOptionalIntegrations = async (
   await runDiagnosedStartupStage('mcp-bridge', async () => {
     await mcpBridgeServer.start();
   });
+  if (!canStartNextStage()) return;
+
+  await runDiagnosedStartupStage('acp-bridge', startMaestroAcpServer);
   if (!canStartNextStage()) return;
 
   await runDiagnosedStartupStage('eyes-on-agents', async () => {

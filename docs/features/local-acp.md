@@ -4,7 +4,7 @@ Status: implementation in progress. Requested by Ral on 2026-09-16.
 
 ## Objective
 
-Expose the existing Maestro agent inside Bitterless to external applications through a local Unix socket. Deliver a usable end-to-end integration, including persistent sessions, real runtime execution, streamed output, cancellation, permissions, standard ACP stdio interoperability, and an MCP adapter usable by Codex. Work stays on the requested isolated worktree and branch; do not merge or deploy as part of this task.
+Expose the existing Maestro agent inside Bitterless to external applications through a local Unix socket. Deliver a usable end-to-end integration, including persistent sessions, real runtime execution, streamed output, cancellation, permissions, standard ACP stdio interoperability, and an MCP adapter usable by Codex. Implement in the requested isolated worktree; after implementation and independent verification, merge into the original checkout's attached branch (release/2608), as explicitly requested by Ral in the same session. Re-check destination branch and worktree before merging. Ral also requested Git synchronization: sync the merged branch upstream after verification. Application release/deployment is out of scope.
 
 ## Protocol and transports
 
@@ -59,3 +59,40 @@ Derive environment-specific endpoint from existing app userData/runtime director
 ## Delivery evidence
 
 To be completed after implementation and independent verification.
+
+## Usage
+
+The server starts with the Bitterless GUI and remains locked until the normal Bitterless login and Maestro AI Login are ready. The first session request initializes the real Maestro SQLite preload and browser/tools runtime. Maestro may open its usual window because browser tools act on that live window. External sessions are separate from GUI conversations; they retain their workspace, conversation context, and ACP transcript in Maestro's existing SQLite store.
+
+Production macOS discovery is `~/Library/Application Support/Bitterless/acp/production.json`. Other runtime profiles use their existing isolated userData directory and profile name (`production-debug`, `test-debug`, or `test-release`). The descriptor contains the actual short `.sock` path. `BITTERLESS_ACP_SOCKET` and `BITTERLESS_ACP_DESCRIPTOR` override the endpoint/discovery locations at app startup; their parent directories must be owned by the current user and mode 0700. A socket override must be absolute and shorter than 104 UTF-8 bytes on Unix.
+
+For an ACP client with a command/args setting, use an ordinary Node 22+ runtime and the packaged byte-transparent bridge:
+
+```json
+{
+  "command": "node",
+  "args": [
+    "/Applications/Bitterless.app/Contents/Resources/acp/acpStdio.cjs",
+    "--descriptor",
+    "/Users/YOUR_USER/Library/Application Support/Bitterless/acp/production.json"
+  ]
+}
+```
+
+For Codex, add this MCP server configuration to the desired Codex config, replacing the username and app location with the installed paths:
+
+```toml
+[mcp_servers.bitterless_acp]
+command = "node"
+args = ["/Applications/Bitterless.app/Contents/Resources/acp/acpMcp.cjs", "--descriptor", "/Users/YOUR_USER/Library/Application Support/Bitterless/acp/production.json"]
+```
+
+The MCP workflow is `acp_session_new` (absolute `cwd`) → `acp_prompt_start` → repeated `acp_prompt_poll` with the returned `runId`. Poll returns streamed updates, pending permission requests and final stop reason/error. Use `acp_permission_respond` with an explicitly chosen option from the pending request; no permission is approved automatically. `acp_session_cancel` remains callable while a prompt waits or runs. Reconnect using `acp_session_list` and `acp_session_load` with the saved session ID/cwd. This is ACP through MCP; Codex's native App Server protocol and `--remote unix://` are different protocols.
+
+Development helpers are built by `yarn build:acp-helpers` into `build/acp/`. The normal Electron build also rebuilds these standalone helpers, and packaging copies them outside `app.asar` into `Resources/acp/`, so ordinary Node does not need Electron's ASAR loader. Helpers write only protocol messages to stdout. A direct ACP socket client can also connect to the descriptor's socket and send UTF-8 newline-delimited JSON-RPC 2.0.
+
+Supported baseline: ACP v1 initialization/authentication, persistent new/list/load sessions, text/resource links, streamed text/thoughts/tool calls/results, host-policy permission requests, cancellation and transient session close. Runtime errors are protocol errors. The runtime's selected app model is used; there is no fake per-session model/config mode. Client-supplied MCP servers, image/audio prompts and embedded resources are rejected explicitly. No invented plan updates are emitted because the native Maestro runtime has no structured plan event.
+
+Only one shared Maestro turn runs at a time across external clients, GUI chat, trainer/delegate and direct skill replay. Overlap returns an explicit busy error. Cancellation/disconnect stops the model and denies pending permissions. A host tool already executing cannot undo its effects; turn ownership is retained until underlying tool execution drains, including a tool whose model-facing timeout has expired. Logout cancels external turns and waits for final persistence before closing SQLite. Streamed transcript checkpoints are saved at most once per second and flushed on normal completion/cancellation; an abrupt process crash can lose the latest checkpoint interval.
+
+Current verification: strict ACP TypeScript, 10 transport/helper integration tests, native Maestro/SQLite integration, full Electron build, customer-auth regressions and startup checks passed. See the [delivery task](../plan/tasks/acp-local-001.md) for exact commands, pre-existing Maestro test failures and environment limits. No live provider call or signed installer was required for this implementation; Windows-specific runtime/ACL behavior still needs a Windows execution environment.

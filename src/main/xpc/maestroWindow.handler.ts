@@ -1,4 +1,5 @@
 import { BrowserWindow } from 'electron'
+import { cancelExternalTurns } from '@main/acp/maestroAcp.lifecycle'
 import { XpcMainHandler, createXpcMainEmitter } from 'electron-xpc/main'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
@@ -47,6 +48,7 @@ const waitForWindowLoad = (window: BrowserWindow): Promise<void> =>
   })
 
 class MaestroWindowHandler extends XpcMainHandler {
+  private authenticated = false
   private runtimeInitialized = false
   private bootPromise: Promise<void> | null = null
   private cleanupPromise: Promise<void> | null = null
@@ -77,17 +79,43 @@ class MaestroWindowHandler extends XpcMainHandler {
   }
 
   async _destroyForAuth(): Promise<void> {
+    this.authenticated = false
     this.authInvalidated = true
+    await cancelExternalTurns()
     persistAuthInvalidation()
     await this.runAuthCleanup()
   }
 
   async prepareForAuthenticatedSession(): Promise<void> {
-    if (!this.isAuthInvalidated()) return
-    await this.runAuthCleanup()
+    if (this.isAuthInvalidated()) await this.runAuthCleanup()
+    this.authenticated = true
+  }
+
+  lockForAuthInvalidation(): void {
+    this.authenticated = false
+    void cancelExternalTurns()
+  }
+
+  async ensureExternalRuntimeReady(): Promise<void> {
+    this.assertExternalAccess()
+    await this.cleanupPromise
+    if (!maestroWindowHelper.browserWindow || maestroWindowHelper.browserWindow.isDestroyed()) {
+      if (!this.bootPromise) this.bootPromise = this.boot().finally(() => { this.bootPromise = null })
+      await this.bootPromise
+    }
+    this.assertExternalAccess()
+    await maestroWindowHelper.whenReady()
+  }
+
+  assertExternalAccess(): void {
+    if (!this.authenticated || this.authCleanupPromise || this.isAuthInvalidated()) {
+      throw new Error('Sign in to Bitterless before using ACP')
+    }
   }
 
   async destroyForHostQuit(): Promise<void> {
+    this.authenticated = false
+    await cancelExternalTurns()
     await this.destroyMaestroRuntime()
   }
 
@@ -117,7 +145,7 @@ class MaestroWindowHandler extends XpcMainHandler {
 
       const window = maestroWindowHelper.create()
       window.once('closed', () => {
-        void this.destroyMaestroRuntime()
+        void cancelExternalTurns().then(() => this.destroyMaestroRuntime())
       })
       await maestroWindowHelper.whenReady()
       if (window.isDestroyed()) throw new Error('[maestro] window closed before startup completed')

@@ -1,4 +1,5 @@
 import { clipboard, dialog, shell } from 'electron'
+import { assertAgentIdle, assertExternalTurnActive, confirmAgentOperation, emitExternalAgentEvent, observeAgentTool, runAgentTurn } from './runtime/agentExecutionContext'
 import type { BrowserWindow, MessageBoxOptions } from 'electron'
 import { createXpcMainEmitter, xpcMain } from 'electron-xpc/main'
 import { randomUUID } from 'crypto'
@@ -240,6 +241,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
   }
 
   applyLlmTarget(provider: string, model: string, effort: LlmEffort = 'low'): void {
+    assertAgentIdle()
     this.activeLlmProvider = provider
     this.activeLlmModel = model
     this.activeLlmEffort = effort
@@ -273,6 +275,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
   }
 
   resetAgentSessions(): void {
+    assertAgentIdle()
     this.pi?.reset()
     this.piTrainer?.reset()
     this.piDelegate?.reset()
@@ -792,7 +795,11 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     }
   }
 
-  async sendAgentMessage(params: {
+  async sendAgentMessage(params: { message: string; sessionId?: string; context?: AgentConversationContext }): Promise<AgentReply> {
+    return await runAgentTurn(() => this.sendAgentMessageUnlocked(params))
+  }
+
+  private async sendAgentMessageUnlocked(params: {
     message: string
     sessionId?: string
     context?: AgentConversationContext
@@ -872,6 +879,10 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
   }
 
   async delegateMessage(params: { message: string; sessionId?: string }): Promise<AgentReply> {
+    return await runAgentTurn(() => this.delegateMessageUnlocked(params))
+  }
+
+  private async delegateMessageUnlocked(params: { message: string; sessionId?: string }): Promise<AgentReply> {
     const message = params.message.trim()
     if (!message) {
       return {
@@ -889,6 +900,15 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     this.lastAgentRun = {}
     this.getExistingDelegateAgent(params?.sessionId)?.reset()
     return { ok: true }
+  }
+
+  async releaseExternalSession(sessionId: string): Promise<void> {
+    if (!sessionId.startsWith('acp:')) throw new Error('Invalid external session')
+    const agent = this.maestroAgents.get(sessionId)
+    await agent?.dispose()
+    this.maestroAgents.delete(sessionId)
+    this.hydratedMaestroAgentSessions.delete(sessionId)
+    this.attachedPaths.delete(sessionId)
   }
 
   async abortAgent(params?: { sessionId?: string }): Promise<void> {
@@ -937,7 +957,13 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
           onDebug: broadcastCodexDebug,
           onActivity: this.relayAgentActivity,
           onThinking: (state) => broadcastAgentThinking(key, state),
-          onStream: (delta) => broadcastAgentStream(key, delta)
+          onStream: (delta) => {
+            broadcastAgentStream(key, delta)
+            emitExternalAgentEvent(key, { type: 'text', text: delta })
+          },
+          onRuntimeEvent: (event) => {
+            if (event.type === 'thinking_delta') emitExternalAgentEvent(key, { type: 'thought', text: event.delta })
+          }
         })
       )
       this.maestroAgents.set(key, agent)
@@ -1173,6 +1199,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     this.lastAgentArtifacts = []
     this.tabsOpenedThisTurn = []
     const turnMedia = options?.mediaInput || { note: '' }
+    assertExternalTurnActive()
     const result = await agent.prompt(
       buildAgentTurnPrompt({
         message,
@@ -1233,6 +1260,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       return {
         ok: true,
         text: result.text,
+        stopReason: result.stopReason,
         ts: Date.now(),
         skill,
         skills,
@@ -1254,7 +1282,11 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     }
   }
 
-  async trainerMessage(params: {
+  async trainerMessage(params: { message: string; sessionId?: string; files?: { name: string; content: string }[] }): Promise<AgentReply> {
+    return await runAgentTurn(() => this.trainerMessageUnlocked(params))
+  }
+
+  private async trainerMessageUnlocked(params: {
     message: string
     sessionId?: string
     files?: { name: string; content: string }[]
@@ -1437,7 +1469,10 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         })
     })
     registry.add(...tools)
-    return registry.toRuntimeTools()
+    return registry.toRuntimeTools().map((tool) => ({
+      ...tool,
+      execute: async (args) => await observeAgentTool(tool.name, { input: args, execute: () => tool.execute(args) })
+    }))
   }
 
   private async confirmHostToolCall(request: HostToolConfirmRequest): Promise<boolean> {
@@ -1483,10 +1518,12 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       message: `Allow the agent to run ${request.toolName}?`,
       detail
     }
-    const result = this._state.browserWindow
-      ? await dialog.showMessageBox(this._state.browserWindow, options)
-      : await dialog.showMessageBox(options)
-    const allowed = result.response === 0
+    const allowed = await confirmAgentOperation({ title: request.toolName, input: request.args }, async () => {
+      const result = this._state.browserWindow
+        ? await dialog.showMessageBox(this._state.browserWindow, options)
+        : await dialog.showMessageBox(options)
+      return result.response === 0
+    })
     await this.resolveHostApprovalEvent(eventId, allowed ? 'approved' : 'denied')
     broadcastAgentActivity(
       'tool',

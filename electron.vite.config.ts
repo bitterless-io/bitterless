@@ -1,4 +1,5 @@
 import { resolve } from 'path'
+import { execFileSync } from 'node:child_process'
 import { defineConfig } from 'electron-vite'
 import vue from '@vitejs/plugin-vue'
 import { config as dotenvConfig } from 'dotenv'
@@ -116,12 +117,15 @@ const generateEnvDefines = () => {
 
 export default defineConfig({
   main: {
+    plugins: [{ name: 'bitterless-acp-helpers', closeBundle: () => { execFileSync(process.execPath, ['scripts/acp/build-helpers.mjs'], { stdio: 'inherit' }) } }],
     define: { ...generateEnvDefines(), ...maestroBuildDefine },
     build: {
       externalizeDeps: { exclude: bundledRuntimeDependencies },
       rollupOptions: {
         input: {
           'app.main': resolve('src/main/app.main.ts'),
+          acpStdio: resolve('src/main/acp/acpStdio.main.ts'),
+          acpMcp: resolve('src/main/acp/acpMcp.main.ts'),
           codexHookHelper: resolve('src/main/eyesOnAgents/codexHookHelper.main.ts'),
           mcpHelper: resolve('src/main/mcp/mcpHelper.main.ts')
         },

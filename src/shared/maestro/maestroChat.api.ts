@@ -1,3 +1,4 @@
+import type { SessionUpdate } from '@agentclientprotocol/sdk'
 import type { AgentActivityStep, ReplayResult, SkillSummary, WorkspaceRef } from './coach.api'
 
 export type MaestroChatRole = 'human' | 'ai'
@@ -35,6 +36,7 @@ export interface MaestroChatMessage {
 }
 
 export interface MaestroChatDetail {
+  externalHistory?: SessionUpdate[]
   compressedContext: string
   compressedUntilMessageId?: string
   compressedAt?: number
@@ -53,6 +55,7 @@ export interface MaestroChatSession {
 }
 
 export interface MaestroChatSessionSummary {
+  cwd?: string
   id: string
   operationTabId: string
   title: string
@@ -64,6 +67,9 @@ export interface MaestroChatSessionSummary {
 }
 
 export interface MaestroChatApi {
+  listExternalSessions(): Promise<MaestroChatSessionSummary[]>
+  getExternalSession(params: { id: string }): Promise<MaestroChatSession | null>
+  saveExternalSession(params: { session: MaestroChatSession }): Promise<{ ok: boolean }>
   listSessions(params?: { operationTabId?: string }): Promise<MaestroChatSessionSummary[]>
   getSession(params: { id: string }): Promise<MaestroChatSession | null>
   saveSession(params: { session: MaestroChatSession }): Promise<{ ok: boolean }>

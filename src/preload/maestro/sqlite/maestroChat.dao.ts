@@ -50,6 +50,7 @@ const parseJson = <T>(value: string, fallback: T): T => {
 }
 
 const normalizeDetail = (detail: MaestroChatDetail | undefined): MaestroChatDetail => ({
+  externalHistory: Array.isArray(detail?.externalHistory) ? detail.externalHistory : undefined,
   compressedContext: detail?.compressedContext || '',
   compressedUntilMessageId: detail?.compressedUntilMessageId || undefined,
   compressedAt: detail?.compressedAt || undefined,
@@ -95,7 +96,29 @@ const toSessionBase = (row: SessionRow): Omit<MaestroChatSession, 'messages'> =>
 })
 
 export class MaestroChatDao extends XpcPreloadHandler implements MaestroChatApi {
+  async listExternalSessions(): Promise<MaestroChatSessionSummary[]> {
+    return await this._listSessions({ operationTabId: '__acp__' })
+  }
+
+  async getExternalSession(params: { id: string }): Promise<MaestroChatSession | null> {
+    if (!params.id.startsWith('acp:')) return null
+    const session = await this._getSession(params)
+    return session?.operationTabId === '__acp__' ? session : null
+  }
+
+  async saveExternalSession(params: { session: MaestroChatSession }): Promise<{ ok: boolean }> {
+    if (!params.session.id.startsWith('acp:') || params.session.operationTabId !== '__acp__') {
+      throw new Error('Invalid external session namespace')
+    }
+    return await this._saveSession(params)
+  }
+
   async listSessions(params?: { operationTabId?: string }): Promise<MaestroChatSessionSummary[]> {
+    if (params?.operationTabId === '__acp__') return []
+    return (await this._listSessions(params)).filter((session) => session.operationTabId !== '__acp__')
+  }
+
+  private async _listSessions(params?: { operationTabId?: string }): Promise<MaestroChatSessionSummary[]> {
     const args: unknown[] = []
     let where = ''
     if (params?.operationTabId) {
@@ -134,12 +157,18 @@ export class MaestroChatDao extends XpcPreloadHandler implements MaestroChatApi 
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       archivedAt: row.archived_at || undefined,
+      cwd: normalizeDetail(parseJson(row.detail_json, { compressedContext: '' })).workspace?.path,
       messageCount: row.message_count || 0,
       preview: row.preview || ''
     }))
   }
 
   async getSession(params: { id: string }): Promise<MaestroChatSession | null> {
+    if (params.id.startsWith('acp:')) return null
+    return await this._getSession(params)
+  }
+
+  private async _getSession(params: { id: string }): Promise<MaestroChatSession | null> {
     const row = sqliteManager.db
       .prepare('SELECT id, operation_tab_id, title, created_at, updated_at, archived_at, detail_json FROM cowork_chat_session WHERE id = ?')
       .get(params.id) as SessionRow | undefined
@@ -156,6 +185,13 @@ export class MaestroChatDao extends XpcPreloadHandler implements MaestroChatApi 
   }
 
   async saveSession(params: { session: MaestroChatSession }): Promise<{ ok: boolean }> {
+    if (params.session.id.startsWith('acp:') || params.session.operationTabId === '__acp__') {
+      throw new Error('External sessions are owned by ACP')
+    }
+    return await this._saveSession(params)
+  }
+
+  private async _saveSession(params: { session: MaestroChatSession }): Promise<{ ok: boolean }> {
     const db = sqliteManager.db
     const session = params.session
     const upsertSession = db.prepare(
@@ -216,6 +252,7 @@ export class MaestroChatDao extends XpcPreloadHandler implements MaestroChatApi 
   }
 
   async deleteSession(params: { id: string }): Promise<{ ok: boolean }> {
+    if (params.id.startsWith('acp:')) throw new Error('External sessions are owned by ACP')
     const db = sqliteManager.db
     db.transaction(() => {
       db.prepare('DELETE FROM cowork_chat_message WHERE session_id = ?').run(params.id)

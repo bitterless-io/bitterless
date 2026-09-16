@@ -1,3 +1,4 @@
+import { confirmAgentOperation } from '@maestro-main/agent/runtime/agentExecutionContext'
 import { dialog } from 'electron'
 import type { BrowserWindow, MessageBoxOptions } from 'electron'
 import { injectable } from 'inversify'
@@ -675,10 +676,12 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
       message: `Allow ${params.method} request?`,
       detail: `${params.reason}\n\n${params.method} ${apiActivityPath(params.url, this._state.currentUrl)}`
     }
-    const result = this._state.browserWindow
-      ? await dialog.showMessageBox(this._state.browserWindow, options)
-      : await dialog.showMessageBox(options)
-    const allowed = result.response === 0
+    const allowed = await confirmAgentOperation({ title: params.method + ' ' + path, input: params }, async () => {
+      const result = this._state.browserWindow
+        ? await dialog.showMessageBox(this._state.browserWindow, options)
+        : await dialog.showMessageBox(options)
+      return result.response === 0
+    })
     await this._state.resolveHostApprovalEvent(
       eventId,
       allowed ? 'approved' : 'denied'

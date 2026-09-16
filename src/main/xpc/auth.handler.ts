@@ -51,6 +51,7 @@ class AuthHandler extends XpcMainHandler {
     this.sessionShouldBeActive = false;
     this.sessionActivationGeneration += 1;
     coinWindowHandler.lockForAuthInvalidation();
+    maestroWindowHandler.lockForAuthInvalidation();
     if (this.deactivationPromise) return await this.deactivationPromise;
 
     const request = this._deactivateSession();

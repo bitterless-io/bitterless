@@ -42,6 +42,8 @@ files:
   - '!**/*.md'
   - '!**/node-pty/prebuilds/win32*/**'
 extraResources:
+  - from: build/acp
+    to: acp
   - from: asar_unpacked
     to: app.asar.unpacked
   - from: skills/bitterless-todo
