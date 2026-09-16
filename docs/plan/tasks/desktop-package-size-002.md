@@ -35,6 +35,9 @@ notarization or upload.
   supports direct CLI invocation against an existing application bundle.
 - The gate uses byte-based limits of 220 MiB for `app.asar` and 650 MiB for the unpacked
   application, and rejects known renderer/build-only package roots.
+  **Superseded 2026-09-16** by `docs/issues/asar-packs-the-build-toolchain.md`: the archive gate is
+  now 195 MiB and the application gate is per target (600 MiB for darwin/arm64 and darwin/x64;
+  win32/x64 keeps 650 until a Windows pack measures it).
 - The release remains at `0.0.35`; this correction is completed and verified before retrying the
   cancelled release.
 
@@ -71,6 +74,8 @@ notarization or upload.
   `@micromeet/cli` workspace. The separately compiled `maestro-tools/micromeet` executable remains.
 - `afterPack` and the direct CLI enforce 220 MiB ASAR and 650 MiB application limits, banned roots,
   and AST-derived packaged runtime imports before signing or publication.
+  **Superseded 2026-09-16** — see `docs/issues/asar-packs-the-build-toolchain.md` for the current
+  limits, the build-time payload deny-list, and the `.mjs` widening of the AST-derived import gate.
 - The first independent review found one missing explicit `protobufjs` runtime root. The fix makes
   it a production dependency and adds the AST-derived external-root gate. Round-two review passed
   with no remaining P1, P2, or P3 finding.

@@ -81,6 +81,12 @@ files:
   # kimchi as a bare specifier at runtime. The '**/' prefix covers both the hoisted and the
   # nested node_modules shape, because yarn can flip that on any install.
   # esbuild is deliberately NOT here: @earendil-works/pi-coding-agent can reach it.
+  #
+  # lightningcss is matched as a FAMILY: it declares eleven platform-suffixed optionalDependencies
+  # (lightningcss-darwin-x64, lightningcss-win32-x64-msvc, lightningcss-linux-*-gnu/musl, …) and only
+  # the host's own variant installs. Naming one would leave every other build machine uncovered.
+  # @rolldown and @typescript need no equivalent — they are scopes, so '@scope/**' already covers
+  # their platform packages.
   - '!**/node_modules/typescript/**'
   - '!**/node_modules/@typescript/**'
   - '!**/node_modules/vite/**'
@@ -89,8 +95,15 @@ files:
   - '!**/node_modules/rolldown/**'
   - '!**/node_modules/@rolldown/**'
   - '!**/node_modules/lightningcss/**'
-  - '!**/node_modules/lightningcss-darwin-arm64/**'
+  - '!**/node_modules/lightningcss-*/**'
   - '!**/node_modules/chai/**'
+  # kimchi's own ./host, ./extension and ./testing exports require the typescript and vitest that the
+  # block above removes, so they are now a permanently broken import surface. Dropping them turns a
+  # MODULE_NOT_FOUND that only reproduces inside a packaged build into a resolve-time absence, and
+  # makes the "only /flow and /engine" contract physically true instead of merely documented.
+  - '!**/node_modules/@kimchi-dev/kimchi-workflows/dist/host/**'
+  - '!**/node_modules/@kimchi-dev/kimchi-workflows/dist/testing/**'
+  - '!**/node_modules/@kimchi-dev/kimchi-workflows/dist/verification/**'
 extraResources:
   - from: asar_unpacked
     to: app.asar.unpacked

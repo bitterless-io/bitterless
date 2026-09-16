@@ -5,6 +5,14 @@ Date: 2026-09-16. Status: implemented; human model/UI verification pending. Owne
 ## Contract
 
 - Pin @kimchi-dev/kimchi-workflows 0.0.9 and use public flow/engine exports. No Pi CLI, external Bun or cloud workflow service.
+- **Only `./flow` and `./engine` may be imported.** `./host`, `./extension` and `./testing` require the
+  `typescript` and `vitest` that kimchi declares as its own dependencies; those are excluded from the
+  package (`docs/issues/asar-packs-the-build-toolchain.md`), and `dist/{host,testing,verification}` is
+  excluded with them so the restriction fails at resolve time rather than as a MODULE_NOT_FOUND that
+  only reproduces inside a packaged build. The package audit enforces both halves.
+- The package must stay in `dependencies`. `out/main/workflow-engine.worker.mjs`,
+  `workflow-author.mjs` and `workflow-agent.worker.mjs` are unbundled and import it — plus `typebox`
+  and `jiti` — as bare specifiers, so a move to `devDependencies` throws on the first workflow run.
 - One workflow utilityProcess per run, one utilityProcess per active Agent attempt; Main owns process/tool cleanup and permission to start retries.
 - Dynamic .ts/.mts exports a committed Kimchi WorkflowDefinition. A local author helper creates schema-checked AgentOutcome values: completed with output, stopped with reason, failed with reason. Single stop does not invent a successful result or cancel independent siblings.
 - Whole run stop propagates to all work. A stopped/finished UI state requires cleanup acknowledgement; forced termination must verify owned resources. Retries cannot overlap previous uncleaned attempts.

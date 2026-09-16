@@ -103,7 +103,62 @@
 maestro-tools(118.31 MiB)主导,Electron 大版本升级会一步跳 30–50 MiB;
 一个会因为合法升级而红的闸门,只会被条件反射地调高,而不会被读。
 
-### 4. 依赖快照
+### 4. 对抗式复核查出的四处补丁(同日,第二轮)
+
+第一轮落地后跑了一轮"试图证伪这个修复是完整的"的复核。查出两个**阻断级**问题 —— 都已复现、已修:
+
+**(a) 体积闸门只测了一个目标就全局收紧。** 650 → 600 是拿 mac_arm 一个实测数推的,但这是**全局**常量,
+`afterPack` 对每个目标都跑。实测 `external_tools/win` **166 MiB**,比 mac_arm 的 119 多 **47 MiB**,
+再叠上没测过的 Windows Electron 差值 —— 最宽松的下界也只到 ~591,离 600 只有 9 MiB。
+**修法:改成按目标查表。** 只有测过的目标才收紧:
+
+```
+darwin/arm64  600 MiB   ← 实测 544.32
+darwin/x64    600 MiB   ← 推导:只差 maestro-tools(130 vs 119)与 Electron 切片,~560,余量 ~40
+win32/x64     650 MiB   ← 保持不动。真打一次 Windows 拿到数之前,不给它更紧的闸门
+```
+
+原则一句话:**没测过的目标不收紧闸门**。给一个没人打过的目标收紧限额,正是"在别人机器上突然变红"的成因,
+而那恰恰是这个 issue 本身要消灭的故障模式。
+
+**(b) 外部依赖闸门看不见 `.mjs`,而这个修复整个建立在三个 `.mjs` 上。**
+`collectExternalPackageReferences` 过滤的是 `/^\/out\/(?:main|preload)\/.+\.js$/` —— 只扫 49 个 `.js`。
+而 `@kimchi-dev/kimchi-workflows`、`typebox`、`jiti` 的**唯一**引用方是三个 `.mjs` worker
+(`workflow-engine.worker.mjs`、`workflow-author.mjs`、`workflow-agent.worker.mjs`),它们全部落在过滤器之外
+—— 实测这三个包在被扫的 49 个文件里出现 **0 次**。
+
+也就是说:「kimchi 必须留在 `dependencies`」这条本修复的核心不变量,本来应该由这个闸门守着,
+而它看的是错的文件后缀。修法是一行 —— `.+\.[cm]?js$`。修后实测该闸门看见的 external root 从 24 涨到 27,
+三个包各自的引用方都被正确归因。
+
+另外两处非阻断但已一并修掉:
+
+- **lightningcss 只排了一个平台变体。** 它有 **11 个**平台后缀的 optionalDependency,排除规则与守卫
+  都只写了 `lightningcss-darwin-arm64`。这台机器上只装 arm64 那个,所以本机任何目标都不受影响;
+  换台机器 / CI 就会漏进去(落在 `app.asar.unpacked`,吃的是 .app 闸门,不是 asar 闸门)。
+  改成按族匹配:glob 用 `lightningcss-*`,正则用 `lightningcss(?:-[a-z0-9-]+)?`。
+  `@rolldown` / `@typescript` 不需要同样处理 —— 它们是 scope,`@scope/**` 天然覆盖所有平台包。
+- **守卫的三条锚点比它守的排除规则窄。** 排除规则用 `**/node_modules/…`(含嵌套),
+  守卫里有三条写成 `^node_modules/`(只认提升到根的那份)。方向是危险的那一侧:
+  排除比守卫宽 → 嵌套形态下的回归会**静默发包**。这个包里有 146 个嵌套 `node_modules` 目录。
+  三条统一改成 `(?:^|\/)node_modules\/`。
+
+**并把这两次漂移的成因一次性堵掉**:排除清单(YAML)和拒绝清单(正则)是两份手写的、描述同一份契约的列表,
+已经各漂了一次。新增用例从守卫一侧反向走契约 —— 每条 `FORBIDDEN_PACKED_PATHS` 配一个探针路径,
+断言模板**确实**排除它,且**提升态与嵌套态都排**;再断言平台族变体与"故意保留"的包(esbuild、
+kimchi 的 flow/engine、llama 的 `binariesGithubRelease.json`)各自落在正确一侧。
+
+### 5. 顺带:kimchi 的 host 面已经是坏的,索性让它物理消失
+
+剔掉 typescript/vitest 之后,kimchi 自己的 `dist/host`(61 个文件)、`dist/testing`、`dist/verification`
+变成一个**永久坏掉的 import 面** —— 它们 `require` 的东西已经不在包里了。这类坏法最难查:
+开发态解析正常,只在**打包态**抛 MODULE_NOT_FOUND。
+
+所以把这三个目录一起排掉,并在 `docs/features/kimchi-workflow.md` 的契约里写死"只能 import
+`./flow` 和 `./engine`"。运行时抛错 → 解析期缺失,约束从"文档里写着"变成"物理上成立"。
+顺带回收 ~399 KiB。
+
+### 6. 依赖快照
 
 `desktopPackageAudit.test.mjs` 里那条 `dependency classification` 用例,断言的是
 `Object.keys(package.json.dependencies)` 的**精确列表**。这次它**如期变红**

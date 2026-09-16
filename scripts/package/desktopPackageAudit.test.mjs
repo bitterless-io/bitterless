@@ -20,9 +20,22 @@ const require = createRequire(import.meta.url);
 const { createPackage } = require('@electron/asar');
 const { parse: parseYaml } = require('yaml');
 const afterPack = require('./desktopPackage.audit.cjs');
+// Resolved THROUGH app-builder-lib on purpose. A bare require('minimatch') picks up whatever version
+// happens to be hoisted — here a stale 3.1.2 — while electron-builder matches the files: patterns with
+// its own nested 10.1.2. Asserting glob behaviour against a different matcher than the one that packs
+// the app is how a test stays green while the build disagrees.
+const electronBuilderRequire = createRequire(require.resolve('app-builder-lib'));
+const minimatchModule = electronBuilderRequire('minimatch');
+const minimatch = typeof minimatchModule === 'function'
+  ? minimatchModule
+  : (minimatchModule.minimatch ?? minimatchModule.default);
 const {
   BANNED_PACKAGES,
+  DEFAULT_MAX_APP_BYTES,
+  DEFAULT_MAX_ASAR_BYTES,
+  FORBIDDEN_PACKED_PATHS,
   LLAMA_BUILD_GUARD_ENTRY,
+  MAX_APP_BYTES_BY_TARGET,
   auditDesktopPackage,
   getPathSize,
   packageIsPresent,
@@ -729,7 +742,8 @@ test('build-time payloads packed into app.asar fail, naming the template that ex
         'incremental build state',
         'repository-only directory',
       ]) {
-        assert.match(error.message, new RegExp(`${label} in app\\.asar`));
+        // Anchored on the trailing ' (' so it cannot be satisfied by 'in app.asar.unpacked'.
+        assert.match(error.message, new RegExp(`${label} in app\\.asar \\(`));
       }
       assert.match(error.message, /electron-builder\.tmp\.yml; electron-builder\.yml is generated/);
       // The sibling files the exclusion must never take with it.
@@ -821,8 +835,11 @@ test('Electron Builder template carries every build-time exclusion the audit enf
     '!**/node_modules/rolldown/**',
     '!**/node_modules/@rolldown/**',
     '!**/node_modules/lightningcss/**',
-    '!**/node_modules/lightningcss-darwin-arm64/**',
+    '!**/node_modules/lightningcss-*/**',
     '!**/node_modules/chai/**',
+    '!**/node_modules/@kimchi-dev/kimchi-workflows/dist/host/**',
+    '!**/node_modules/@kimchi-dev/kimchi-workflows/dist/testing/**',
+    '!**/node_modules/@kimchi-dev/kimchi-workflows/dist/verification/**',
   ]) {
     assert(config.files?.includes(pattern), `Electron Builder template must exclude ${pattern}`);
   }
@@ -836,6 +853,149 @@ test('Electron Builder template carries every build-time exclusion the audit enf
   assert(
     !config.files?.some((pattern) => /node_modules\/(?:@esbuild|esbuild)\//.test(pattern)),
     'esbuild is reachable from a production dependency and must stay in the package',
+  );
+});
+
+// The exclusion list and the deny-list are two hand-written lists describing one contract, and they
+// have already drifted once each: lightningcss was named by a single platform variant in both, and
+// three deny-list patterns were anchored ^node_modules/ while their template twins matched nested
+// copies too. This walks the contract from the guard's side — for every payload the audit refuses,
+// the template must actually exclude it, in BOTH the hoisted and the nested node_modules shape.
+test('every payload the audit refuses is actually excluded by the Electron Builder template', () => {
+  const config = parseYaml(readProjectFile('electron-builder.tmp.yml'));
+  const exclusions = (config.files ?? [])
+    .filter((pattern) => typeof pattern === 'string' && pattern.startsWith('!'))
+    .map((pattern) => pattern.slice(1));
+  const nest = (probe) => probe.startsWith('node_modules/')
+    ? `node_modules/@scope/host-pkg/${probe}`
+    : probe;
+
+  // One probe per FORBIDDEN_PACKED_PATHS entry, in declaration order.
+  const probes = [
+    'node_modules/node-llama-cpp/llama/gitRelease.bundle',
+    'node_modules/some-package/lib/index.d.ts',
+    'node_modules/@earendil-works/pi-coding-agent/docs/exy.png',
+    'node_modules/better-sqlite3-multiple-ciphers/deps/sqlite3/sqlite3.c',
+    'node_modules/@kimchi-dev/kimchi-workflows/dist/host/index.js',
+    'node_modules/typescript/lib/tsc.js',
+    'tsconfig.web.tsbuildinfo',
+    'docs/design.html',
+  ];
+  assert.equal(
+    probes.length,
+    FORBIDDEN_PACKED_PATHS.length,
+    'every FORBIDDEN_PACKED_PATHS entry needs a probe path here',
+  );
+
+  for (const [index, probe] of probes.entries()) {
+    const { label, pattern } = FORBIDDEN_PACKED_PATHS[index];
+    assert(pattern.test(probe), `probe ${probe} must be refused by the "${label}" pattern`);
+    assert(
+      exclusions.some((exclusion) => minimatch(probe, exclusion, { dot: true })),
+      `the template must exclude ${probe} ("${label}")`,
+    );
+    const nested = nest(probe);
+    if (nested === probe) continue;
+    assert(
+      pattern.test(nested),
+      `the "${label}" pattern must also refuse the nested shape ${nested}`,
+    );
+    assert(
+      exclusions.some((exclusion) => minimatch(nested, exclusion, { dot: true })),
+      `the template must also exclude the nested shape ${nested} ("${label}")`,
+    );
+  }
+
+  // The families that ship one native package per platform: only the host's own variant installs, so
+  // naming a single one leaves every other build machine uncovered.
+  for (const platformVariant of [
+    'node_modules/lightningcss-darwin-arm64/lightningcss.darwin-arm64.node',
+    'node_modules/lightningcss-darwin-x64/lightningcss.darwin-x64.node',
+    'node_modules/lightningcss-win32-x64-msvc/lightningcss.win32-x64-msvc.node',
+    'node_modules/lightningcss-linux-x64-gnu/lightningcss.linux-x64-gnu.node',
+    'node_modules/@rolldown/binding-win32-x64-msvc/rolldown-binding.node',
+    'node_modules/@typescript/typescript-linux-x64/tsc',
+  ]) {
+    assert(
+      exclusions.some((exclusion) => minimatch(platformVariant, exclusion, { dot: true })),
+      `the template must exclude the platform variant ${platformVariant}`,
+    );
+    assert(
+      FORBIDDEN_PACKED_PATHS.some(({ pattern }) => pattern.test(platformVariant)),
+      `the deny-list must refuse the platform variant ${platformVariant}`,
+    );
+  }
+
+  // esbuild is reachable from @earendil-works/pi-coding-agent, and the bare lightningcss package must
+  // not be swept up by the family glob written for its variants.
+  for (const kept of [
+    'node_modules/esbuild/lib/main.js',
+    'node_modules/@esbuild/darwin-arm64/bin/esbuild',
+    'node_modules/@kimchi-dev/kimchi-workflows/dist/flow/index.js',
+    'node_modules/@kimchi-dev/kimchi-workflows/dist/engine/index.js',
+    'node_modules/node-llama-cpp/llama/binariesGithubRelease.json',
+  ]) {
+    assert(
+      !FORBIDDEN_PACKED_PATHS.some(({ pattern }) => pattern.test(kept)),
+      `${kept} is reachable at runtime and must not be refused`,
+    );
+  }
+});
+
+test('the application limit is per target, and only measured targets are tightened', () => {
+  // Tightening a gate for a target nobody has packed is how a green build turns red on another
+  // machine — the exact failure this issue was about. win32/x64 stages a maestro-tools store ~47 MiB
+  // larger than mac_arm's, so it keeps the untightened default until a real Windows pack measures it.
+  assert.equal(DEFAULT_MAX_APP_BYTES, 650 * 1024 * 1024);
+  assert.equal(MAX_APP_BYTES_BY_TARGET['darwin/arm64'], 600 * 1024 * 1024);
+  assert.equal(MAX_APP_BYTES_BY_TARGET['darwin/x64'], 600 * 1024 * 1024);
+  assert.equal(
+    MAX_APP_BYTES_BY_TARGET['win32/x64'],
+    undefined,
+    'win32/x64 must fall back to the default until a Windows pack has been measured',
+  );
+  assert.equal(DEFAULT_MAX_ASAR_BYTES, 195 * 1024 * 1024);
+});
+
+test('the per-target application limit is the one actually enforced', async () => {
+  const fixture = await createSyntheticApplication({ platform: 'mac', arch: 'arm64' });
+  const appBytes = getPathSize(fixture.applicationPath);
+
+  // darwin/arm64 resolves to 600 MiB; the synthetic app is far under it, so the gate is silent.
+  assert.doesNotThrow(() => auditDesktopPackage(fixture.applicationPath));
+  // An explicit option still wins over the table.
+  assert.throws(
+    () => auditDesktopPackage(fixture.applicationPath, { maxAppBytes: appBytes - 1 }),
+    new RegExp(`application is .* above the ${(((appBytes - 1) / (1024 * 1024)).toFixed(2)).replace('.', '\\.')} MiB limit`),
+  );
+});
+
+test('the external package gate reads the unbundled .mjs workers, not only .js', async () => {
+  // The three workflow workers are .mjs and are the ONLY packaged files importing
+  // @kimchi-dev/kimchi-workflows, typebox and jiti. A .js-only filter left this gate blind to exactly
+  // the dependency whose mispackaging caused docs/issues/asar-packs-the-build-toolchain.md.
+  const fixture = await createSyntheticApplication({
+    archiveFiles: {
+      'out/main/workflow-engine.worker.mjs': 'import { runWorkflow } from "@kimchi-dev/kimchi-workflows/engine";\nexport { runWorkflow };\n',
+      'node_modules/@kimchi-dev/kimchi-workflows/package.json': '{"name":"@kimchi-dev/kimchi-workflows"}\n',
+    },
+  });
+
+  const present = auditDesktopPackage(fixture.applicationPath);
+  assert(
+    present.externalPackageRoots.includes('@kimchi-dev/kimchi-workflows'),
+    'a bare specifier imported from a .mjs worker must be seen by the gate',
+  );
+
+  const missing = await createSyntheticApplication({
+    archiveFiles: {
+      'out/main/workflow-engine.worker.mjs': 'import { runWorkflow } from "@kimchi-dev/kimchi-workflows/engine";\nexport { runWorkflow };\n',
+    },
+  });
+
+  assert.throws(
+    () => auditDesktopPackage(missing.applicationPath),
+    /missing external package roots: @kimchi-dev\/kimchi-workflows \(required by \/out\/main\/workflow-engine\.worker\.mjs\)/,
   );
 });
 

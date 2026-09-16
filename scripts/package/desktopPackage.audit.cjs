@@ -17,12 +17,33 @@ const MIB = 1024 * 1024;
 // Re-based 2026-09-16 against a measured mac_arm Preview package: app.asar 179.69 MiB,
 // application 544.32 MiB (docs/issues/asar-packs-the-build-toolchain.md). The archive keeps ~8.5%
 // headroom — enough for organic out/renderer growth, tight enough that a single dependency
-// regression of the shape we just removed (9-25 MiB) fails the build the day it lands. The
-// application keeps ~10%, deliberately looser: it is dominated by Electron Framework and
-// maestro-tools, which step 30-50 MiB on an Electron major upgrade, and a gate that fails on a
-// legitimate upgrade gets raised reflexively instead of read.
+// regression of the shape we just removed (9-25 MiB) fails the build the day it lands.
+//
+// The archive limit is target-independent: the packed tree is this host's node_modules plus out/,
+// and nothing in the config varies it per platform (npmRebuild false, no per-platform files:).
 const DEFAULT_MAX_ASAR_BYTES = 195 * MIB;
-const DEFAULT_MAX_APP_BYTES = 600 * MIB;
+// The APPLICATION limit is per target, because only darwin/arm64 has been measured since those
+// exclusions landed and tightening a gate for a target nobody has packed is how a green build turns
+// red on someone else's machine. Every unmeasured target keeps the pre-existing 650 MiB ceiling
+// until it has a real number from an actual pack.
+//
+//   darwin/arm64 — 544.32 MiB measured. 600 leaves ~10%, deliberately looser than the archive's
+//                  8.5%: the .app is dominated by Electron Framework (217.63) and maestro-tools
+//                  (118.31), which step 30-50 MiB on an Electron major upgrade, and a gate that
+//                  fails on a legitimate upgrade gets raised reflexively instead of read.
+//   darwin/x64   — not packed on this host, but it differs from darwin/arm64 only by its
+//                  maestro-tools store (130 MiB vs 119, measured under external_tools/) and the
+//                  Electron slice, so ~560 MiB against 600 still carries ~40 MiB. Derived, not
+//                  measured — re-base it the first time mac_intel actually packs.
+//   win32/x64    — deliberately LEFT AT 650. Its tool store is 166 MiB, +47 over mac_arm, on top of
+//                  an unmeasured Windows Electron delta. The most generous floor puts it ~591
+//                  against 600, which is less headroom than a single missed dependency. It gets a
+//                  real number from a real Windows pack before it gets a tighter gate.
+const DEFAULT_MAX_APP_BYTES = 650 * MIB;
+const MAX_APP_BYTES_BY_TARGET = Object.freeze({
+  'darwin/arm64': 600 * MIB,
+  'darwin/x64': 600 * MIB,
+});
 const BINARY_HEADER_BYTES = 64 * 1024;
 const BETTER_SQLITE3_BINARY_PARTS = Object.freeze([
   'app.asar.unpacked',
@@ -100,26 +121,37 @@ const BANNED_PACKAGES = Object.freeze([
 // Checked against the archive listing AND app.asar.unpacked: electron-builder auto-unpacks any module
 // carrying a .node, so better-sqlite3's C sources and the toolchain's native bindings only ever appear
 // in the unpacked tree, where an archive-only check would never see them come back.
+// Every node_modules pattern below is anchored (?:^|\/) rather than ^, because the template twins use
+// '**/node_modules/…' and therefore also exclude nested copies. An anchor that only matched the
+// hoisted shape would make the exclusion BROADER than its guard, which is the dangerous direction: a
+// regression under one of this archive's 146 nested node_modules directories would ship in silence.
 const FORBIDDEN_PACKED_PATHS = Object.freeze([
   {
     label: 'llama.cpp source bundle',
-    pattern: /^node_modules\/node-llama-cpp\/llama\/gitRelease\.bundle$/,
+    pattern: /(?:^|\/)node_modules\/node-llama-cpp\/llama\/gitRelease\.bundle$/,
   },
   {
     label: 'TypeScript declaration file',
-    pattern: /^node_modules\/.+\.d\.(?:ts|mts|cts)$/,
+    pattern: /(?:^|\/)node_modules\/.+\.d\.(?:ts|mts|cts)$/,
   },
   {
     label: 'pi-coding-agent README artwork',
-    pattern: /^node_modules\/@earendil-works\/pi-coding-agent\/docs\//,
+    pattern: /(?:^|\/)node_modules\/@earendil-works\/pi-coding-agent\/docs\//,
   },
   {
     label: 'better-sqlite3 C build input',
-    pattern: /^node_modules\/better-sqlite3-multiple-ciphers\/(?:deps\/|src\/|binding\.gyp$)/,
+    pattern: /(?:^|\/)node_modules\/better-sqlite3-multiple-ciphers\/(?:deps\/|src\/|binding\.gyp$)/,
   },
   {
+    label: 'unreachable kimchi host surface',
+    pattern: /(?:^|\/)node_modules\/@kimchi-dev\/kimchi-workflows\/dist\/(?:host|testing|verification)\//,
+  },
+  {
+    // lightningcss ships ELEVEN platform-suffixed native packages (darwin-x64, win32-x64-msvc,
+    // linux-*-gnu/musl, …) and only the host's own installs. Naming one of them would leave the gate
+    // open on every other build machine, so the suffix is matched as a family.
     label: 'build toolchain',
-    pattern: /(?:^|\/)node_modules\/(?:@rolldown|@typescript|@vitest|chai|lightningcss|lightningcss-darwin-arm64|rolldown|typescript|vite|vitest)\//,
+    pattern: /(?:^|\/)node_modules\/(?:@rolldown|@typescript|@vitest|chai|lightningcss(?:-[a-z0-9-]+)?|rolldown|typescript|vite|vitest)\//,
   },
   {
     label: 'incremental build state',
@@ -696,8 +728,14 @@ const walkAst = (node, visit) => {
 };
 
 const collectExternalPackageReferences = (asarPath, archiveEntries) => {
+  // .mjs and .cjs belong here, not just .js. The three unbundled workers — workflow-engine.worker.mjs,
+  // workflow-author.mjs, workflow-agent.worker.mjs — are the ONLY packaged files that import
+  // @kimchi-dev/kimchi-workflows, typebox and jiti as bare specifiers, so a .js-only filter left this
+  // gate blind to exactly the dependency whose mispackaging caused
+  // docs/issues/asar-packs-the-build-toolchain.md. parseJavaScript already falls back to
+  // sourceType 'module', so the extra extensions need no other change.
   const javascriptEntries = archiveEntries.filter((entry) => {
-    return /^\/out\/(?:main|preload)\/.+\.js$/.test(entry);
+    return /^\/out\/(?:main|preload)\/.+\.[cm]?js$/.test(entry);
   });
   if (javascriptEntries.length === 0) {
     throw new Error('app.asar contains no Main or Preload JavaScript to inspect');
@@ -815,9 +853,8 @@ const writePackagedUpdateFeed = (inputPath) => {
 
 const auditDesktopPackage = (inputPath, options = {}) => {
   const maxAsarBytes = options.maxAsarBytes ?? DEFAULT_MAX_ASAR_BYTES;
-  const maxAppBytes = options.maxAppBytes ?? DEFAULT_MAX_APP_BYTES;
   validateLimit('maxAsarBytes', maxAsarBytes);
-  validateLimit('maxAppBytes', maxAppBytes);
+  // maxAppBytes is resolved AFTER the application target is known — see MAX_APP_BYTES_BY_TARGET.
 
   const applicationPath = resolveApplicationPath(inputPath);
   const resourcesPath = getResourcesPath(applicationPath);
@@ -837,9 +874,6 @@ const auditDesktopPackage = (inputPath, options = {}) => {
   console.log(
     `[desktop-package-audit] app.asar ${formatMiB(asarBytes)} MiB (${asarBytes} bytes; limit ${formatMiB(maxAsarBytes)} MiB)`
     + `; app.asar.unpacked ${formatMiB(unpackedBytes)} MiB, outside that limit`,
-  );
-  console.log(
-    `[desktop-package-audit] application ${formatMiB(appBytes)} MiB (${appBytes} bytes; limit ${formatMiB(maxAppBytes)} MiB)`,
   );
 
   let archiveEntries;
@@ -876,6 +910,17 @@ const auditDesktopPackage = (inputPath, options = {}) => {
   } catch (error) {
     failures.push(`native runtime gate failed: ${error.message}`);
   }
+  // An unresolved target falls back to the loosest ceiling on purpose: the native runtime gate above
+  // has already recorded a failure, and guessing a tighter limit would stack a second, misleading one.
+  const targetKey = applicationTarget && `${applicationTarget.platform}/${applicationTarget.arch}`;
+  const maxAppBytes = options.maxAppBytes
+    ?? MAX_APP_BYTES_BY_TARGET[targetKey]
+    ?? DEFAULT_MAX_APP_BYTES;
+  validateLimit('maxAppBytes', maxAppBytes);
+  console.log(
+    `[desktop-package-audit] application ${formatMiB(appBytes)} MiB (${appBytes} bytes;`
+    + ` limit ${formatMiB(maxAppBytes)} MiB for ${targetKey ?? 'an unresolved target'})`,
+  );
   let maestroTools = null;
   try {
     if (!applicationTarget) throw new Error('the application target is unavailable');
@@ -1052,6 +1097,7 @@ module.exports.assertLlamaNeverBuildsInPlace = assertLlamaNeverBuildsInPlace;
 module.exports.collectForbiddenPackedPaths = collectForbiddenPackedPaths;
 module.exports.DEFAULT_MAX_APP_BYTES = DEFAULT_MAX_APP_BYTES;
 module.exports.DEFAULT_MAX_ASAR_BYTES = DEFAULT_MAX_ASAR_BYTES;
+module.exports.MAX_APP_BYTES_BY_TARGET = MAX_APP_BYTES_BY_TARGET;
 module.exports.auditDesktopPackage = auditDesktopPackage;
 module.exports.collectExternalPackageReferences = collectExternalPackageReferences;
 module.exports.findApplicationTarget = findApplicationTarget;

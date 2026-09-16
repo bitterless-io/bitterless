@@ -34,6 +34,8 @@ already compile that CLI into a standalone binary under `Resources/maestro-tools
 - Run a deterministic Electron Builder `afterPack` audit before code signing. Fail packaging when
   `app.asar` exceeds 220 MiB, the complete unpacked application exceeds 650 MiB, or known
   renderer/build-only package roots are present in the archive.
+  **Superseded 2026-09-16** by `docs/issues/asar-packs-the-build-toolchain.md` (195 MiB archive;
+  per-target application gate; plus a deny-list for build-time payloads).
 - Keep the size audit callable independently so an unsigned directory build can prove the final
   artifact shape before a signed release is retried.
 - Do not upload, notarize, or refresh CDN content after an audit failure.
@@ -42,6 +44,7 @@ already compile that CLI into a standalone binary under `Resources/maestro-tools
 
 - A production-configured macOS arm64 directory build passes the package audit.
 - `app.asar` is no larger than 220 MiB and the unpacked `.app` is no larger than 650 MiB.
+  **Superseded 2026-09-16** — current numbers in `docs/issues/asar-packs-the-build-toolchain.md`.
 - The audit proves that banned renderer/build-only roots and `@micromeet/cli` are absent.
 - Main/Preload external-runtime checks, production build, and existing release gates still pass.
 

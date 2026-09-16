@@ -1,5 +1,10 @@
 # Bitterless Documentation
 
+- [Background workflows and active tasks](features/background-workflow-tasks.md) — implementing; concurrent chat, pause/resume, Tasks history modal, completion delivery.
+
+- [Windows locale pruning drops Chinese and English](issues/windows-locale-pruning-drops-chinese-and-english.md) — **open, not fixed**;
+  the electronLanguages allowlist uses macOS `.lproj` naming, which cannot match Windows/Linux `.pak` basenames; needs one real Windows pack to settle.
+
 - [app.asar packs the build toolchain](issues/asar-packs-the-build-toolchain.md) — fixed; packaged build verified;
   exclude the build-time payloads, assert them against the artifact, and re-base both size gates off real headroom.
 
@@ -962,7 +967,9 @@ earlier review rounds were remediated; Ral's runtime/visual verification remains
   public, idempotent Step interface plus versioned agent guidance.
 - [Desktop package includes build-only dependencies](issues/desktop-package-includes-build-only-dependencies.md) - fixed:
   renderer/build-only production dependencies and a duplicated CLI workspace inflated the macOS
-  app to about 1.1 GiB; the committed package is now guarded at 220 MiB ASAR / 650 MiB app.
+  app to about 1.1 GiB; the committed package is guarded by an `afterPack` size gate.
+  Superseded limits — see [app.asar packs the build toolchain](issues/asar-packs-the-build-toolchain.md)
+  for the current 195 MiB ASAR gate and the per-target application gate.
 - [Fast publish omits stale native dependencies](issues/fast-publish-stale-native-dependencies.md) - fixed; owner packaging verification pending:
   a stale local installation can lag the local Electron and SQLCipher lock entries, while macOS ARM
   fast publish now preserves the current local working tree and begins with a frozen install.
