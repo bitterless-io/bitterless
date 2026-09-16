@@ -44,7 +44,9 @@
   &__run-sub { overflow: hidden; color: #828c9f; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
   &__run-head time { color: #949baa; font-size: 9.5px; white-space: nowrap; }
   &__run-chevron--closed { transform: rotate(-90deg); }
-  &__run > &__row { margin: 0 5px; }
+  // Rows sit on the run card now; white rows plus a darker hover keep the affordance visible.
+  &__run > &__row { margin: 0 5px; background: #fff; }
+  &__run > &__row:hover, &__run > &__row.workflow-taskbar__row--expanded { background: #eef0f6; }
   &__run > &__row:last-child { margin-bottom: 5px; }
   &__run[data-category='failed'] &__run-copy strong { color: #b23b44; }
   &__run[data-category='stopped'] &__run-copy strong { color: #858d9d; }

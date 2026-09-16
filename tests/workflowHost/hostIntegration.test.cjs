@@ -20,6 +20,7 @@ function load(relative, modules = {}) {
 }
 const context = load('src/main/agent/runtime/agentSessionContext.ts')
 const activityModule = load('src/main/agent/workflowEngine/activitySummary.ts', { '../../../shared/agentWorkflow.api': load('src/shared/agentWorkflow.api.ts') })
+const waitModule = load('src/main/agent/workflowEngine/workflowWait.ts')
 function integration(tools = () => [], runtime, assertCanStartShortcut, library) {
   let supervisor
   class Supervisor {
@@ -35,7 +36,7 @@ function integration(tools = () => [], runtime, assertCanStartShortcut, library)
   }
   const { WorkflowHostIntegration } = load('src/main/agent/workflowEngine/hostIntegration.ts', {
     electron: { app: { getPath: () => '/test-user-data' } },
-    './supervisor': { WorkflowSupervisor: Supervisor }, './activitySummary': activityModule, '../runtime/agentSessionContext': context,
+    './supervisor': { WorkflowSupervisor: Supervisor }, './activitySummary': activityModule, './workflowWait': waitModule, '../runtime/agentSessionContext': context,
     '../runtime/modelIoLog': { modelIoLog: { append() {} } },
     ...(library ? { '../../workflowLibrary/workflowLibraryRuntime': { workflowLibraryRuntime: library } } : {})
   })
@@ -72,7 +73,9 @@ test('rejects ambiguous entries, missing chat owner, unknown workflow, and unsaf
   }
   await assert.rejects(host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'builtin', name: 'unknown' }, input: 'x' }), /Unknown/)
   await assert.rejects(host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'file', path: '../relative.ts' }, input: 'x' }), /absolute/)
-  assert.equal((await host.listWorkflows()).length, 7)
+  const catalog = await host.listWorkflows()
+  assert.equal(catalog.length, 8, 'update this count deliberately when the built-in catalog changes')
+  assert.ok(catalog.some(workflow => workflow.name === 'plan-workflow'), 'the model cannot pick a workflow workflow_list never shows')
 })
 
 test('host tool cancellation waits for the real resource to stop, with a separate per-agent context', async () => {

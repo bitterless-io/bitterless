@@ -3,7 +3,7 @@ import { isWorkflowAgentActive, workflowActivityFacts, type WorkflowAgentTask, t
 /** Re-exported so a view reads its own module's presentation layer, not the wire contract. */
 export { workflowActivityFacts }
 
-export type WorkflowTaskCategory = 'active' | 'paused' | 'completed' | 'failed' | 'stopped'
+export type WorkflowTaskCategory = 'active' | 'completed' | 'failed' | 'stopped'
 
 export const newestWorkflowRuns = (runs: readonly WorkflowRunSnapshot[]): WorkflowRunSnapshot[] =>
   [...runs].reverse().sort((a, b) => b.createdAt - a.createdAt)

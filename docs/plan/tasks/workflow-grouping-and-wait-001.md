@@ -13,15 +13,23 @@ planner rather than adding a resume host.
 
 ## Parts
 
-- [ ] **Counts** — task bar label becomes `N workflows · M agents`, localized in every bundle, driven
+- [x] **Counts** — task bar label becomes `N workflows · M agents`, localized in every bundle, driven
       by the same shared fact computation the status row already uses so the two cannot disagree.
-- [ ] **Grouping** — roster groups by workflow first and status second; group header aggregates an
+- [x] **Grouping** — roster groups by workflow first and status second; group header aggregates an
       attention state, carries elapsed time and a subtitle, collapses when the run has ended, and
       owns per-workflow stop and rerun.
-- [ ] **Wait** — a host chat tool that suspends the turn until named runs settle, states what it is
-      waiting for before suspending, continues in the same session with real outcomes, reports
-      missing branches honestly, and yields to a new user message.
-- [ ] **Planner** — non-interactive workflow planning reusing Kimchi's plan schema, plan renderer and
+- [x] **Wait (Bitterless)** — `workflow_wait` declares an intent and returns at once; the turn ends
+      normally; when every named run settles the host claims a host-authored turn and continues in
+      the same chat. Refuses waits that could never fire, fires once, yields to a busy chat.
+- [ ] **Wait (Cowork)** — blocked on representing a host-authored turn. Cowork's only proven path to
+      start a turn is the renderer's `turnService.send()`, which appends a `role: 'human'` message
+      the user never typed and which `recordUserChainMessage` persists into `chain/<sessionId>.jsonl`
+      as 用户原话, where compaction feeds it back forever. Avoiding that means adding a host-authored
+      turn to `turn.service.ts` — whose own guard, `check-behavior-turn-steering.mjs`, currently
+      crashes before reaching its assertions, so that file would be changed with the net down.
+      Until then `workflow_wait` is deliberately **not registered** in Cowork rather than shipped
+      as a promise the host cannot keep.
+- [x] **Planner** — non-interactive workflow planning reusing Kimchi's plan schema, plan renderer and
       authoring guidance; renders a proposal into the chat and never executes it unprompted.
 
 ## Not in scope

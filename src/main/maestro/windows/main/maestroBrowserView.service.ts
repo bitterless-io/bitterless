@@ -37,6 +37,11 @@ import type {
   MaestroCompositeTabHostApi,
   MaestroCompositeTabSpec
 } from '@maestro-shared/compositeTab.api'
+import { MAESTRO_ZELLIJ_TAB_ID } from '@maestro-shared/compositeTab.identity'
+import {
+  MAESTRO_TAB_ALIAS_MAX_LENGTH,
+  MAESTRO_TAB_INLINE_RENAME_MAX_LENGTH
+} from '@maestro-shared/tabAlias.api'
 import type { InjectBtnApi, InjectBtnEntry, InjectBtnInput } from '@maestro-shared/injectBtn.api'
 import type { SavedTab } from '@maestro-shared/tabs.api'
 import type { TraceEvent } from '@maestro-shared/trace.types'
@@ -256,6 +261,14 @@ export interface MaestroBrowserViewServiceState {
   forcePinnedHomeBoot?(): boolean
   /** 弹别名表单,`null` = 取消(不改动 alias)。覆盖层归 controller,见 `maestroTabAliasView.service.ts`。 */
   requestTabAlias?(params: { tabLabel: string; alias: string }): Promise<string | null>
+  /**
+   * 弹关闭确认,`true` = 继续关。
+   *
+   * 和上面一条一样声明成可选(测试夹具喂的是手写 state 字面量),但降级方向**相反**:取不到这个
+   * seam 时按 `true` 处理,否则「没有覆盖层」会变成「Zellij tab 永远关不掉」
+   * (docs/features/maestro-zellij-close-confirm.md #4)。
+   */
+  requestCloseConfirm?(params: { terminalLabels: string[] }): Promise<boolean>
   openWorkbenchTab(): Promise<WorkbenchTabState>
   /**
    * Send the Workbench to the background.
@@ -265,6 +278,13 @@ export interface MaestroBrowserViewServiceState {
    * button's mini-app rows) has to say so explicitly, the way `newTab()` already does.
    */
   backgroundWorkbenchTab(): Promise<WorkbenchTabState>
+  /**
+   * 摘掉 chip + 隐藏 Workbench view(**不销毁** view,录制状态要活过关 tab)。
+   *
+   * 这里需要它,是因为 chip 的右键菜单 `Close` 与 tab 菜单的 `Close` 长在同一份模板里 ——
+   * 而 Workbench 不在 `this.tabs` 里,走不了 `closeTab`。
+   */
+  closeWorkbenchTab(): Promise<WorkbenchTabState>
   newTab(): Promise<void>
   stopCapture(): Promise<CaptureState>
   broadcastActivity(phase: AgentActivityStep['phase'], label: string, ok?: boolean): void
@@ -1725,9 +1745,49 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
         click: () => void this.restoreDefaultHomepage()
       },
       { type: 'separator' },
-      { label: 'Close', enabled: canClose, click: () => void this.closeTab({ id: tab.id }) },
+      // 三条都走 `closeTabByUser` / 带闸的批量方法 —— 人点的关闭要先过 Zellij 确认那一道
+      // (maestro-zellij-close-confirm.md #3)。程序发起的关闭仍然直接调 `closeTab`。
+      { label: 'Close', enabled: canClose, click: () => void this.closeTabByUser({ id: tab.id }) },
       { label: 'Close other tabs', enabled: otherClosable, click: () => void this.closeTabsExcept(tab.id) },
       { label: 'Close tabs to the right', enabled: rightClosable, click: () => void this.closeTabsToRight(tab.id) }
+    ])
+    menu.popup({ window: win })
+  }
+
+  /**
+   * 右击 Workbench chip —— 和右击一个 mini-app tab **同一份模板、同一个顺序、同一批分隔符**,
+   * 不同的只是哪几项是亮的(Ral 2026-09-16,docs/issues/maestro-workbench-chip-divider-and-menu.md)。
+   *
+   * 不亮的**置灰而不是隐藏**,沿用 `showTabMenu` 对默认固有 tab 的既有口径:「为什么不能点」要
+   * 看得见。五项灰掉各有理由,都不是「懒得实现」:
+   *
+   * · `Reload` —— Workbench view 是 boot 建一次、活过关 tab 的那一个,而且是唯一被允许把录制写进
+   *   磁盘的 renderer。reload 它 = 把刻意保住的 Capture 状态清掉。
+   * · `Duplicate` —— 单例,结构上就做不出第二个(workbench-tab.md #9)。
+   * · `Alias…` —— 名字来自 i18n registry,没有落脚点存别名(同默认固有 Home)。
+   * · `Set as homepage` / `Restore default homepage` —— 只有 mini-app 能当主页,且后者作用在
+   *   pinned 槽位上,与这个 chip 无关。
+   *
+   * 最后两项同集合是**位置决定的事实**:chip 锚在 pinned 组正后方,所以「它右边的」就是「除它
+   * 之外所有可关闭的」。两项都留着,是因为菜单要和 mini-app 那份逐项对齐。
+   */
+  async showWorkbenchTabMenu(): Promise<void> {
+    const win = this._state.browserWindow
+    if (!win) return
+    const hasClosable = this.tabs.some((tab) => !tab.pinned)
+    const menu = Menu.buildFromTemplate([
+      { label: 'New tab', click: () => void this._state.newTab() },
+      { type: 'separator' },
+      { label: 'Reload', enabled: false },
+      { label: 'Duplicate', enabled: false },
+      { type: 'separator' },
+      { label: 'Alias…', enabled: false },
+      { label: 'Set as homepage', enabled: false },
+      { label: 'Restore default homepage', enabled: false },
+      { type: 'separator' },
+      { label: 'Close', click: () => void this._state.closeWorkbenchTab() },
+      { label: 'Close other tabs', enabled: hasClosable, click: () => void this.closeClosableTabs() },
+      { label: 'Close tabs to the right', enabled: hasClosable, click: () => void this.closeClosableTabs() }
     ])
     menu.popup({ window: win })
   }
@@ -1765,14 +1825,37 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       })
     tabAliasLog.info('dialog answered', { tabId, outcome: answer === null ? 'cancel' : 'confirm', length: answer?.length ?? 0 })
     if (answer === null) return
+    this.applyTabAlias(tabId, answer)
+  }
+
+  /**
+   * tab 条里就地改名(双击 Zellij chip)的写回口。
+   *
+   * **只认 Zellij**,而且这一道不是重复渲染层那一判:XPC 是独立入口,`CoachXpcContract` 上的方法
+   * 渲染进程谁都能调,而这一条会写进设置与 sqlite。和 `setAsHomepage` 硬拒非 composite 同一条纪律
+   * ——手势只是**看得见的**那一半(docs/features/zellij-tab-inline-rename.md #2)。
+   */
+  async setTabAlias(params: { id: string; alias: string }): Promise<void> {
+    const tab = this.tabs.find((item) => item.id === params.id)
+    if (!tab || tab.kind !== MAESTRO_ZELLIJ_TAB_ID) return
+    this.applyTabAlias(params.id, String(params.alias || '').slice(0, MAESTRO_TAB_INLINE_RENAME_MAX_LENGTH))
+  }
+
+  /**
+   * alias 的唯一写回路径(覆盖层表单 ＋ 就地改名共用)。
+   *
+   * 对话框/输入框是异步的,回来时这个 tab 可能已经被关掉 —— 所以按 id **重新找一次**,而不是让
+   * 调用方捕获那个对象。空串是**删除**别名,不是「别名是空的」。
+   */
+  private applyTabAlias(tabId: string, value: string): void {
     const current = this.tabs.find((item) => item.id === tabId)
     if (!current) return
-    const next = answer.trim()
     // 全空白与空串同义:「清空并保存」是删除,不是「别名是几个空格」。
+    const next = value.trim().slice(0, MAESTRO_TAB_ALIAS_MAX_LENGTH)
     current.alias = next || undefined
     // 固有槽位那个 tab 是 pinned 的,不进 SavedTab —— 它的名字只有设置这一个落脚点。晋升那一刻
     // 落过一次还不够:设为主页**之后**再改名走的是这里,不补写就重启即失(tab-alias.md G5)。
-    // 默认固有 Home 走不到这儿(`isDefaultHomeTab` 已经在方法开头挡掉了)。
+    // 默认固有 Home 走不到这儿(`isDefaultHomeTab` 已经在 `promptTabAlias` 开头挡掉了)。
     if (current.pinned) this._state.saveMaestroSettings?.({ homeAlias: current.alias || '' })
     tabAliasLog.info('alias applied', { tabId, cleared: !current.alias, pinned: current.pinned })
     this.broadcastTabs()
@@ -1877,7 +1960,18 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
 
   private async closeTabsExcept(keepId: string): Promise<void> {
     const ids = this.tabs.filter((tab) => tab.id !== keepId && !tab.pinned).map((tab) => tab.id)
-    for (const id of ids) await this.closeTab({ id })
+    await this.closeTabsAsUser(ids)
+  }
+
+  /**
+   * Workbench chip 的 `Close other tabs` / `Close tabs to the right` —— 它自己不在 `this.tabs` 里,
+   * 上面两个按 id 定位的方法都用不上,而这两项在它身上恰好是同一个集合(它锚在 pinned 组正后方)。
+   *
+   * 范围在**点的那一刻**重算,不是建菜单时:agent 会在后台开关 tab,一份建菜单时抓下来的 id 列表
+   * 点下去可能已经过期。
+   */
+  private async closeClosableTabs(): Promise<void> {
+    await this.closeTabsAsUser(this.tabs.filter((tab) => !tab.pinned).map((tab) => tab.id))
   }
 
   private async closeTabsToRight(afterId: string): Promise<void> {
@@ -1887,7 +1981,58 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       .slice(index + 1)
       .filter((tab) => !tab.pinned)
       .map((tab) => tab.id)
+    await this.closeTabsAsUser(ids)
+  }
+
+  /**
+   * 人发起的单个关闭(tab 条的 `×`、右键 `Close`、`Cmd+W`)。
+   *
+   * 和 `closeTab` 分开而不是在它里面加闸:`closeTab` 还被取页收尾、drill 分支回收、OnlyPreview
+   * 换宿主、`setAsHomepage` 关旧 Home 调用 —— 在那条路上加一道要人回答的闸,等于让这些程序路径挂
+   * 在一个没人会看的对话框上(maestro-zellij-close-confirm.md #1)。
+   */
+  async closeTabByUser(params: { id: string }): Promise<void> {
+    await this.closeTabsAsUser([params.id])
+  }
+
+  /**
+   * 一次人发起的关闭:先把**整个范围**过一遍确认,再逐个关。
+   *
+   * 闸开在这里而不是 `closeTab` 里,是 G4 的全部实现 —— 范围里三个 Zellij 也只问一次。取消 =
+   * 一个 tab 都不关,包括范围里那些非 Zellij 的:一次 `Close other tabs` 是一个动作,半关一半不是
+   * 任何人点它时想要的结果。
+   */
+  private async closeTabsAsUser(ids: string[]): Promise<void> {
+    if (!ids.length) return
+    if (!(await this.confirmCloseScope(ids))) return
     for (const id of ids) await this.closeTab({ id })
+  }
+
+  /**
+   * 这一次关闭范围里有没有 Zellij tab —— 有就问一次,没有就原样放行。
+   *
+   * 没有 Zellij 时**一次 await 都不多加**:非 Zellij 的关闭路径要和改动前逐字一致(G5)。
+   * 拿不到覆盖层 seam 时按 `true` 放行,理由见 #4(拦住等于让 Zellij tab 再也关不掉)。
+   */
+  private async confirmCloseScope(ids: string[]): Promise<boolean> {
+    const terminals = this.tabs.filter((tab) => ids.includes(tab.id) && tab.kind === MAESTRO_ZELLIJ_TAB_ID)
+    if (!terminals.length) return true
+    if (!this._state.requestCloseConfirm) {
+      this._state.emitTrace({
+        kind: 'error',
+        msg: 'close confirm: the dialog is unavailable in this window — closing without asking',
+        ts: Date.now()
+      })
+      return true
+    }
+    const terminalLabels = terminals.map((tab) => tab.alias?.trim() || tab.title || 'Zellij')
+    // **必须调在 `this._state` 上。** 摘进局部变量再调会丢掉 `this`,而 controller 的实现第一行就用
+    // 到了它 —— 那一调同步抛,`.catch()` 根本没机会挂上,菜单项把它吞成一条 unhandled rejection:
+    // 点了没反应、没有对话框、没有日志(docs/issues/maestro-tab-alias-does-nothing.md)。
+    return await this._state.requestCloseConfirm({ terminalLabels }).catch((err) => {
+      this._state.emitTrace({ kind: 'error', msg: 'close confirm: ' + (err as Error).message, ts: Date.now() })
+      return true
+    })
   }
 
   private showPageMenu(wc: WebContents, params: ContextMenuParams): void {
@@ -2029,7 +2174,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
   }
 
   async closeActiveTab(): Promise<void> {
-    if (this.activeTabId) await this.closeTab({ id: this.activeTabId })
+    if (this.activeTabId) await this.closeTabByUser({ id: this.activeTabId })
   }
 
   async openFilePreviewTab(params: { path: string; tabId?: string }): Promise<void> {

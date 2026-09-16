@@ -127,6 +127,10 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
     await maestroWindowHelper.showTabMenu(params)
   }
 
+  async showWorkbenchTabMenu(): Promise<void> {
+    await maestroWindowHelper.showWorkbenchTabMenu()
+  }
+
   async openDemo(): Promise<{ url: string }> {
     return await maestroWindowHelper.openDemo()
   }
@@ -476,8 +480,16 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
     await maestroWindowHelper.reorderTabs(params)
   }
 
+  /**
+   * tab 条的 `×`。走 `closeTabByUser` 而不是 `closeTab` —— 这是渲染层唯一的关闭调用,也就是人点的
+   * 那一下,所以它要过 Zellij 确认那一道(docs/features/maestro-zellij-close-confirm.md #3)。
+   */
   async closeTab(params: { id: string }): Promise<void> {
-    await maestroWindowHelper.closeTab(params)
+    await maestroWindowHelper.closeTabByUser(params)
+  }
+
+  async setTabAlias(params: { id: string; alias: string }): Promise<void> {
+    await maestroWindowHelper.setTabAlias(params)
   }
 
   async getTabs(): Promise<TabInfo[]> {

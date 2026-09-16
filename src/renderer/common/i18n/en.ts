@@ -111,6 +111,8 @@ export const en = {
       homeTab: 'Home',
       newTab: 'New tab',
       closeTab: 'Close tab',
+      renameTab: 'Tab name',
+      renameTabHint: 'Double-click to rename',
       tabControlled: 'The agent is controlling this tab',
       back: 'Back',
       forward: 'Forward',
@@ -443,6 +445,14 @@ export const en = {
     placeholder: 'Tab name',
     hint: 'Leave it empty to go back to the page title.',
     save: 'Save',
+    cancel: 'Cancel'
+  },
+  maestroTabClose: {
+    title: 'Close this terminal tab?',
+    titleMany: 'Close these terminal tabs?',
+    message: 'The Zellij session running in it ends with the tab.',
+    messageMany: 'The Zellij sessions running in them end with the tabs.',
+    confirm: 'Close',
     cancel: 'Cancel'
   },
   workflowLibrary: {

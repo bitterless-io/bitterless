@@ -21,6 +21,7 @@ function load(relative, modules = {}) {
 
 const shared = load('src/shared/agentWorkflow.api.ts')
 const activityModule = load('src/main/agent/workflowEngine/activitySummary.ts', { '../../../shared/agentWorkflow.api': shared })
+const waitModule = load('src/main/agent/workflowEngine/workflowWait.ts')
 const { WorkflowActivitySummaryService, validateWorkflowActivitySentence, WORKFLOW_ACTIVITY_PROMPT } = activityModule
 const context = load('src/main/agent/runtime/agentSessionContext.ts')
 // Real timer rounds: the scheduler uses unref'd timers, which setImmediate rounds never advance.
@@ -86,6 +87,23 @@ test('facts count only active Agents of the asked chat, excluding paused and fin
   assert.equal(brief.tasks[0].workflow, 'mini-demo')
   assert.equal(brief.tasks[0].goal, 'Compare three handoff options')
   assert.equal(JSON.stringify(brief).includes('/auth'), false)
+})
+
+test('a live run with no Agent yet still counts as a workflow and keeps its header', () => {
+  // supervisor publishes a run with agents: [] before forking its engine worker, so "running with
+  // zero Agents" is a real broadcast state. Counting only runs that already have an active Agent
+  // reported "1 workflow" while two were running, and hid the second run's Stop button entirely.
+  const runs = [
+    run('a', 'chat', [agent('1', 'running')]),
+    { ...run('starting', 'chat', []), status: 'running' }
+  ]
+  const facts = shared.workflowActivityFacts(runs, 'chat')
+  assert.equal(facts.runs, 2, 'both live runs are counted, even the one with no Agent yet')
+  assert.equal(facts.agents, 1)
+  // A finished run contributes nothing, so the bar still empties when the work is over.
+  assert.equal(shared.workflowActivityFacts([{ ...run('done', 'chat', [agent('1', 'completed')]), status: 'completed' }], 'chat').runs, 0)
+  // Starting a second run changes the scope, so a sentence about one workflow is dropped at once.
+  assert.notEqual(shared.workflowActivityFacts([runs[0]], 'chat').scope, facts.scope)
 })
 
 test('signature changes only when the described work changes, so idle snapshots cost no model call', () => {
@@ -264,7 +282,7 @@ test('the host publishes activity with every snapshot and a filtered listing kee
   const { WorkflowHostIntegration } = load('src/main/agent/workflowEngine/hostIntegration.ts', {
     electron: { app: { getPath: () => '/test-user-data' } },
     './supervisor': { WorkflowSupervisor: Supervisor },
-    './activitySummary': activityModule,
+    './activitySummary': activityModule, './workflowWait': waitModule,
     '../runtime/agentSessionContext': context,
     '../runtime/modelIoLog': { modelIoLog: { append() {} } }
   })

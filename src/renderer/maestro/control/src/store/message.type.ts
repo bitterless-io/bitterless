@@ -87,6 +87,8 @@ export interface Turn {
   /** Stable root request for this Turn. Steering messages never replace this retry anchor. */
   rootText: string
   rootHumanMessageId?: string
+  /** The root came from the host (a settled workflow), not from the user typing. */
+  hostAuthored?: boolean
   phase: TurnPhase
   assistantMessageId?: string
   /** Most recently sealed segment, used for metadata-only final replies without duplicating text. */

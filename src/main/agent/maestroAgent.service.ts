@@ -1,6 +1,7 @@
 import { skillCloud } from '@maestro-main/skills/skillCloud.runtime'
 import { onSkillContextChanged, skillScopeContext, assertSkillContext } from '@maestro-main/skills/skillScope.context'
 import { workflowCompletionId, workflowCompletionContext } from './workflowEngine/completion'
+import { workflowWaitContinuationText } from './workflowEngine/workflowWait'
 import { SessionIoInitialization } from './sessionIoInitialization'
 import { WorkflowHostIntegration } from './workflowEngine/hostIntegration'
 import { buildWebSearchTools } from './tools/webSearchTools'
@@ -294,6 +295,25 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       onRunSettled: async run => {
         const agent = this.getExistingMaestroAgent(run.sessionId)
         agent?.retainBackgroundContext(workflowCompletionId(run), workflowCompletionContext(run))
+      },
+      onWaitSatisfied: async ({ sessionId, runs }) => {
+        // The outcomes already reached this chat's background context above; this only re-enters the
+        // model loop. If the chat is busy, do nothing: the user's own turn wins and still gets them.
+        const turnId = randomUUID()
+        const rootText = workflowWaitContinuationText(runs)
+        let claim: AgentTurnClaimResult
+        try {
+          claim = this.claimAgentTurn({ sessionId, turnId, rootText, startedAt: Date.now(), hostAuthored: true })
+        } catch (error) {
+          console.warn('[workflow] chat continuation not claimed', sessionId, String(error))
+          return
+        }
+        if (!claim.ok) return
+        try {
+          await this.sendAgentMessage({ sessionId, turnId, intent: 'root', message: rootText })
+        } catch (error) {
+          console.warn('[workflow] chat continuation failed', sessionId, String(error))
+        }
       },
       assertCanStartShortcut: (sessionId, otherWorkflowSessions) => {
         this.assertAgentRuntimeActive()
@@ -900,9 +920,11 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     const turn: ActiveAgentTurn = {
       continuationOf: params.continuationOf,
       sessionId,
-      operationTabId: this._state.activeTabId || undefined,
+      // A host-authored continuation binds to the chat that owns it, not to whatever tab is on screen.
+      operationTabId: params.operationTabId || (params.hostAuthored ? undefined : this._state.activeTabId || undefined),
       turnId,
       rootText,
+      hostAuthored: params.hostAuthored,
       startedAt: Number.isFinite(params.startedAt) ? params.startedAt : Date.now(),
       state: 'reserved',
       generation: ++this.agentTurnGeneration,
@@ -952,7 +974,8 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       rootText: turn.rootText,
       startedAt: turn.startedAt,
       state: turn.state,
-      stopError: turn.stopError
+      stopError: turn.stopError,
+      hostAuthored: turn.hostAuthored
     }
   }
 

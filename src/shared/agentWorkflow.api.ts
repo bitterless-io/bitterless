@@ -1,5 +1,5 @@
 /** Shared workflow presentation contract. No Electron, Pi, or credentials cross this boundary. */
-export type WorkflowBuiltinName = 'mini-demo' | 'code-review' | 'refactor-scout' | 'diagnose' | 'perf-review' | 'research' | 'agent-task'
+export type WorkflowBuiltinName = 'mini-demo' | 'code-review' | 'refactor-scout' | 'diagnose' | 'perf-review' | 'research' | 'agent-task' | 'plan-workflow'
 export type WorkflowEntry = { kind: 'builtin'; name: WorkflowBuiltinName } | { kind: 'file'; path: string } | { kind: 'library'; ref: string }
 export type WorkflowAgentStatus = 'queued' | 'running' | 'waiting' | 'approval' | 'retrying' | 'pausing' | 'paused' | 'stopping' | 'completed' | 'failed' | 'stopped'
 export type WorkflowRunStatus = 'running' | 'stopping' | 'completed' | 'failed' | 'stopped'
@@ -77,6 +77,9 @@ export const isWorkflowAgentLive = (status: WorkflowAgentStatus): boolean =>
 /** A paused Agent stays live and stoppable, but does not occupy the active task bar. */
 export const isWorkflowAgentActive = (status: WorkflowAgentStatus): boolean => isWorkflowAgentLive(status) && status !== 'paused'
 
+/** A run is live while it can still produce work — including before its first Agent exists. */
+export const isWorkflowRunLive = (run: WorkflowRunSnapshot): boolean => run.status === 'running' || run.status === 'stopping'
+
 /** Deterministic view of one chat's active Agents; main and renderer must agree on these counts. */
 export interface WorkflowActivityFacts {
   runs: number
@@ -97,12 +100,14 @@ export interface WorkflowActivityFacts {
 }
 
 export function workflowActivityFacts(runs: readonly WorkflowRunSnapshot[], sessionId: string): WorkflowActivityFacts {
-  const active = runs
-    .filter(run => run.sessionId === sessionId)
-    .flatMap(run => run.agents.filter(agent => isWorkflowAgentActive(agent.status)).map(agent => ({ run, agent })))
+  const mine = runs.filter(run => run.sessionId === sessionId)
+  // A run is published with no Agents at all while its engine worker starts. Counting only runs that
+  // already have an active Agent would report "1 workflow" for seconds while two are really running.
+  const live = mine.filter(isWorkflowRunLive)
+  const active = mine.flatMap(run => run.agents.filter(agent => isWorkflowAgentActive(agent.status)).map(agent => ({ run, agent })))
   const started = active.map(({ agent }) => agent.startedAt ?? agent.queuedAt).filter(value => Number.isFinite(value) && value > 0)
   return {
-    runs: new Set(active.map(({ run }) => run.id)).size,
+    runs: live.length,
     agents: active.length,
     awaitingUser: active.filter(({ agent }) => agent.status === 'approval').length,
     startedAt: started.length ? Math.min(...started) : 0,
@@ -110,7 +115,7 @@ export function workflowActivityFacts(runs: readonly WorkflowRunSnapshot[], sess
       .map(({ run, agent }) => [run.id, agent.id, agent.status, (agent.currentAction || '').slice(0, 80)].join(''))
       .sort()
       .join('\n'),
-    scope: active.map(({ run, agent }) => [run.id, agent.id, agent.label].join('|')).sort().join('\n'),
+    scope: [...live.map(run => run.id), ...active.map(({ run, agent }) => [run.id, agent.id, agent.label].join('|'))].sort().join('\n'),
     brief: JSON.stringify({
       tasks: active.slice(0, 8).map(({ run, agent }) => ({
         workflow: run.name,

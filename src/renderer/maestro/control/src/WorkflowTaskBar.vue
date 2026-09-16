@@ -26,7 +26,8 @@ const active = computed(() => tasks.value.filter(task => isWorkflowAgentActive(t
 // The roster groups by workflow: with two runs live, a flat status list cannot say which is which.
 const groups = computed(() => groupWorkflowRuns(runs.value)
   .map(group => ({ ...group, agents: props.history ? group.agents : group.agents.filter(task => isWorkflowAgentActive(task.status)) }))
-  .filter(group => props.history || group.agents.length))
+  // A live run with no Agent yet still gets its header, so it can be seen and stopped at once.
+  .filter(group => props.history || group.agents.length || !group.ended))
 const latestRun = computed(() => newestWorkflowRuns(runs.value)[0])
 /** Only an explicit user choice is stored; the default follows whether the run is still going. */
 const runOpen = ref(new Map<string, boolean>())

@@ -198,7 +198,19 @@ export interface CoachXpcContract {
   // Reorder the visible tab strip by current tab ids. Main validates against the live tab set and
   // keeps pinned tabs fixed; home persists the rebroadcast order.
   reorderTabs(params: { ids: string[] }): Promise<void>
+  /**
+   * 人点的关闭(tab 条的 `×`)。
+   *
+   * 关闭范围里有 Zellij tab 时,main 会先弹一次确认 —— 所以这条**不是**一个静默的 `closeTab`,
+   * 它可能什么都不做(docs/features/maestro-zellij-close-confirm.md #3)。
+   */
   closeTab(params: { id: string }): Promise<void>
+  /**
+   * 就地改名:把 alias 写回一个 tab,空串 = 删除别名、退回页面/spec 的 title。
+   *
+   * main 侧**只认 Zellij tab**,其余一律忽略(docs/features/zellij-tab-inline-rename.md #2)。
+   */
+  setTabAlias(params: { id: string; alias: string }): Promise<void>
   getTabs(): Promise<TabInfo[]>
   getAgentBrowserSession(params: { sessionId: string }): Promise<AgentBrowserSessionState>
   showAgentBrowserTab(params: { sessionId: string; tabId: string }): Promise<{ ok: boolean; error?: string }>
@@ -208,6 +220,15 @@ export interface CoachXpcContract {
   // Right-click a tab → native context menu (built + popped in the main process, so it
   // renders above the operation view).
   showTabMenu(params: { id: string }): Promise<void>
+  /**
+   * Right-click the Workbench chip → the SAME native menu, with the rows that cannot apply to it
+   * greyed out rather than hidden.
+   *
+   * It takes no id on purpose: the Workbench is not an `OperationTab` (two booleans on
+   * `WorkbenchViewService`, not a row of `tabs`), so `showTabMenu` could only serve it through a
+   * synthetic id — which would turn its "unknown id → return" guard into something bypassable.
+   */
+  showWorkbenchTabMenu(): Promise<void>
   // Sign in to a selectable LLM provider. Main rejects hidden/unknown provider IDs.
   // Codex supports 'browser' and 'device_code'; Local account login lives in Configuration.
   loginLlm(params: { provider: string; method: LlmLoginMethod }): Promise<LlmConfig>
@@ -994,6 +1015,13 @@ export interface AgentTurnSnapshot {
   startedAt: number
   state: 'reserved' | 'running' | 'aborting'
   stopError?: string
+  /**
+   * The root text was written by the host, not typed by the user.
+   *
+   * The renderer must never render it as a human message: a background workflow finishing is not
+   * the user speaking, and a fabricated user line would also be replayed as theirs on reload.
+   */
+  hostAuthored?: boolean
 }
 
 export interface AgentTurnClaimRequest {
@@ -1003,6 +1031,8 @@ export interface AgentTurnClaimRequest {
   turnId: string
   rootText: string
   startedAt: number
+  /** See AgentTurnSnapshot.hostAuthored. */
+  hostAuthored?: boolean
 }
 
 export interface AgentTurnClaimResult {

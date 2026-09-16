@@ -30,6 +30,12 @@ class WorkbenchStore {
     this.apply(await coach.closeWorkbenchTab())
   }
 
+  // Right-click the chip → ask main to pop the native tab menu. It does not change `open` /
+  // `visible`: right-clicking a chip never changes which surface is on screen.
+  async showMenu(): Promise<void> {
+    await coach.showWorkbenchTabMenu()
+  }
+
   async openPane(pane: WorkbenchPane): Promise<void> {
     await this.openTab()
     xpcRenderer.broadcast('coach/workbench-pane', { pane })

@@ -1186,6 +1186,12 @@ class MaestroWindowController
     return this.tabAliasView.requestAlias(params)
   }
 
+  /** 关闭 Zellij tab 的确认:`true` = 继续关。与别名共用同一层覆盖层。 */
+  requestCloseConfirm(params: { terminalLabels: string[] }): Promise<boolean> {
+    this.historyView.hide();
+    return this.tabAliasView.requestCloseConfirm(params)
+  }
+
   tabAliasSnapshot(): MaestroTabAliasSnapshot {
     return this.tabAliasView.snapshot()
   }
@@ -1810,6 +1816,12 @@ class MaestroWindowController
     await this.browserView.showTabMenu(params)
   }
 
+  // Deliberately does NOT touch the Workbench's open/visible pair: right-clicking a chip never
+  // changes which surface is on screen, and the mini-app chips behave the same way.
+  async showWorkbenchTabMenu(): Promise<void> {
+    await this.browserView.showWorkbenchTabMenu()
+  }
+
   async showNewTabMenu(params: { x: number; y: number }): Promise<void> {
     // Deliberately does NOT touch the Workbench: this is armed by HOVER, and hovering a button must
     // not change what is on screen. Each menu row backgrounds it when it is actually picked.
@@ -1866,6 +1878,20 @@ class MaestroWindowController
 
   async closeTab(params: { id: string }): Promise<void> {
     await this.browserView.closeTab(params)
+  }
+
+  /**
+   * 人点的关闭(tab 条的 `×`)。**不要**把 `closeTab` 改成走这条 —— 它还被 drill 分支回收、
+   * OnlyPreview 换宿主、agent 取页收尾调用,那些不该弹确认
+   * (docs/features/maestro-zellij-close-confirm.md #3)。
+   */
+  async closeTabByUser(params: { id: string }): Promise<void> {
+    await this.browserView.closeTabByUser(params)
+  }
+
+  /** tab 条里就地改名(双击 Zellij chip)。只认 Zellij,判据在 browserView 里。 */
+  async setTabAlias(params: { id: string; alias: string }): Promise<void> {
+    await this.browserView.setTabAlias(params)
   }
 
   async getTabs(): Promise<TabInfo[]> {

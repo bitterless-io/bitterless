@@ -111,6 +111,8 @@ export const zh: typeof en = {
       homeTab: '主页',
       newTab: '新建标签页',
       closeTab: '关闭标签页',
+      renameTab: '标签页名称',
+      renameTabHint: '双击可重命名',
       tabControlled: 'agent 正在控制这个标签页',
       back: '后退',
       forward: '前进',
@@ -435,6 +437,14 @@ export const zh: typeof en = {
     placeholder: '标签页名称',
     hint: '清空并保存,即可显示回页面标题。',
     save: '保存',
+    cancel: '取消'
+  },
+  maestroTabClose: {
+    title: '关闭这个终端标签页?',
+    titleMany: '关闭这些终端标签页?',
+    message: '里面正在运行的 Zellij 会话会随标签页一起结束。',
+    messageMany: '里面正在运行的 Zellij 会话会随标签页一起结束。',
+    confirm: '关闭',
     cancel: '取消'
   },
   workflowLibrary: {

@@ -10,7 +10,7 @@ import type { ViewRect } from '@maestro-shared/coach.api'
 import {
   MAESTRO_TAB_ALIAS_MAX_LENGTH,
   MAESTRO_TAB_ALIAS_STATE_EVENT,
-  type MaestroTabAliasDialog,
+  type MaestroShellDialog,
   type MaestroTabAliasSnapshot
 } from '@maestro-shared/tabAlias.api'
 import type { TraceEvent } from '@maestro-shared/trace.types'
@@ -30,11 +30,26 @@ export interface MaestroTabAliasViewServiceState {
 }
 
 /**
- * 别名表单的覆盖层。一个 `WebContentsView`,盖在**操作区**上。
+ * 覆盖层对话框的答案。两种对话框共用一个形状,`value` 只对别名表单有意义。
+ *
+ * 不用 `string | null | boolean` 那种联合:调用方要写 `typeof answer === 'boolean'` 才知道自己拿到
+ * 了什么,而两个入口各自的包装(`requestAlias` / `requestConfirm`)本来就该把这件事收干净。
+ */
+interface MaestroShellAnswer {
+  confirmed: boolean
+  value: string
+}
+
+/**
+ * Maestro 壳的覆盖层对话框。一个 `WebContentsView`,盖在**操作区**上。
  *
  * 形制照 `MaestroWorkbenchViewService`(自己的 view、自己的 bounds applier、由 controller 统一
  * 摆位),对话框语义照 OnlyPreview 的 alert 层(main 持有 Promise,渲染层拉快照后回 resolve)。
  * 四条硬约束写在各自的方法上 —— 每一条都来自仓里一次真实的失败,别照着别处的写法改。
+ *
+ * 它承载两种对话框:别名表单,和关闭 Zellij tab 的确认
+ * (docs/features/maestro-zellij-close-confirm.md #2)。类名保留 `TabAlias` 的理由见
+ * `tabAlias.api.ts` 顶部 —— 四处字符串键。
  */
 @injectable()
 export class MaestroTabAliasViewService extends CommonService<MaestroTabAliasViewServiceState> {
@@ -60,8 +75,15 @@ export class MaestroTabAliasViewService extends CommonService<MaestroTabAliasVie
    */
   private unavailable = false
   private revision = 0
-  private dialog: MaestroTabAliasDialog | null = null
-  private settle: ((value: string | null) => void) | null = null
+  private dialog: MaestroShellDialog | null = null
+  private settle: ((answer: MaestroShellAnswer) => void) | null = null
+  /**
+   * 这一层起不来时,**当前这个请求**该按什么答案收场。
+   *
+   * 逐请求而不是一个常量:别名的「起不来」是「什么都不改」,关闭确认的「起不来」是**照常关闭**
+   * —— 两者方向相反,理由见 maestro-zellij-close-confirm.md #4。
+   */
+  private unavailableAnswer: MaestroShellAnswer = { confirmed: false, value: '' }
 
   /**
    * 开窗时预建预载,把渲染进程的启动成本从「点开菜单那一刻」挪走。
@@ -77,30 +99,78 @@ export class MaestroTabAliasViewService extends CommonService<MaestroTabAliasVie
   /**
    * 弹出别名表单,`null` = 取消(Escape / 取消按钮 / 表单被拆掉)。
    *
-   * 一次只准有一个:第二个请求直接判为「无改动」而不是排队 —— 菜单是异步弹的,排队只会让一个
-   * 早就过期的表单在半秒后自己跳出来。
+   * 空串是一个**合法答案**(= 删除别名),所以「没改」必须用 `null` 而不是空串表达。
    */
   requestAlias(params: { tabLabel: string; alias: string }): Promise<string | null> {
-    tabAliasLog.info('dialog requested', { ready: this.ready, attached: this.attached, unavailable: this.unavailable, busy: Boolean(this.dialog) })
+    return this.open(
+      {
+        variant: 'alias',
+        dialogId: randomUUID(),
+        tabLabel: String(params.tabLabel || ''),
+        alias: String(params.alias || '').slice(0, MAESTRO_TAB_ALIAS_MAX_LENGTH)
+      },
+      // 这一层起不来 ⇒ 什么都不改。别名是可选的,丢一次改名没有任何代价。
+      { confirmed: false, value: '' }
+    ).then((answer) => (answer.confirmed ? answer.value.slice(0, MAESTRO_TAB_ALIAS_MAX_LENGTH) : null))
+  }
+
+  /**
+   * 弹出关闭确认,`true` = 继续关。
+   *
+   * **这一层起不来时答 `true`。** 照抄别名那一路的 `false` 会让这扇窗里的 Zellij tab 再也关不掉
+   * —— `×` / 右键 / `Cmd+W` 三个入口全被同一道看不见的闸挡住。丢一次确认是体验降级,丢掉「关闭」
+   * 这个动作本身是功能坏掉,而且没有第二条路绕开(maestro-zellij-close-confirm.md #4)。
+   */
+  requestCloseConfirm(params: { terminalLabels: string[] }): Promise<boolean> {
+    return this.open(
+      {
+        variant: 'closeConfirm',
+        dialogId: randomUUID(),
+        terminalLabels: (params.terminalLabels || []).map((label) => String(label || ''))
+      },
+      { confirmed: true, value: '' }
+    ).then((answer) => answer.confirmed)
+  }
+
+  /**
+   * 两种对话框唯一的开口。
+   *
+   * 一次只准有一个:第二个请求直接按**取消**收场而不是排队 —— 菜单是异步弹的,排队只会让一个早就
+   * 过期的对话框在半秒后自己跳出来。注意「已经有一个开着」用的是取消,不是 `unavailableAnswer`:
+   * 那时屏幕上**有**东西,按取消收场不会让人困惑。
+   */
+  private open(dialog: MaestroShellDialog, unavailableAnswer: MaestroShellAnswer): Promise<MaestroShellAnswer> {
+    tabAliasLog.info('dialog requested', {
+      variant: dialog.variant,
+      ready: this.ready,
+      attached: this.attached,
+      unavailable: this.unavailable,
+      busy: Boolean(this.dialog)
+    })
     if (this.dialog) {
-      this._state.emitTrace({ kind: 'info', msg: 'tab alias: a dialog is already open', ts: Date.now() })
-      return Promise.resolve(null)
+      this._state.emitTrace({ kind: 'info', msg: 'tab dialog: a dialog is already open', ts: Date.now() })
+      return Promise.resolve({ confirmed: false, value: '' })
     }
     // 起不来就**当场认**,而不是存下 settle 去等一个永远不会到的 ready。每次都记一行:
     // 否则「点了没反应」在 trace 里是一片空白。
     if (this.unavailable) {
-      tabAliasLog.error('layer unavailable — answering as no change')
-      this._state.emitTrace({ kind: 'error', msg: 'tab alias: the dialog layer is unavailable in this window', ts: Date.now() })
-      return Promise.resolve(null)
+      tabAliasLog.error('layer unavailable — answering with the fallback', {
+        variant: dialog.variant,
+        confirmed: unavailableAnswer.confirmed
+      })
+      this._state.emitTrace({
+        kind: 'error',
+        msg:
+          'tab dialog: the dialog layer is unavailable in this window — answering as ' +
+          (unavailableAnswer.confirmed ? 'confirmed' : 'no change'),
+        ts: Date.now()
+      })
+      return Promise.resolve(unavailableAnswer)
     }
-    const dialog: MaestroTabAliasDialog = {
-      dialogId: randomUUID(),
-      tabLabel: String(params.tabLabel || ''),
-      alias: String(params.alias || '').slice(0, MAESTRO_TAB_ALIAS_MAX_LENGTH)
-    }
-    return new Promise<string | null>((settle) => {
+    return new Promise<MaestroShellAnswer>((settle) => {
       this.settle = settle
       this.dialog = dialog
+      this.unavailableAnswer = unavailableAnswer
       this.publish()
       this.present()
     })
@@ -117,14 +187,14 @@ export class MaestroTabAliasViewService extends CommonService<MaestroTabAliasVie
       tabAliasLog.warn('stale answer ignored', { open: Boolean(dialog), outcome: params.outcome })
       return
     }
-    tabAliasLog.info('answer received', { outcome: params.outcome, length: params.value?.length ?? 0 })
+    tabAliasLog.info('answer received', { variant: dialog.variant, outcome: params.outcome, length: params.value?.length ?? 0 })
     const settle = this.settle
     this.dialog = null
     this.settle = null
     this.publish()
     this.present()
-    // `cancel` 交回 `null`(不动 alias),`confirm` 交回字符串 —— 空串是**删除**,不是取消。
-    settle?.(params.outcome === 'confirm' ? String(params.value ?? '').slice(0, MAESTRO_TAB_ALIAS_MAX_LENGTH) : null)
+    // 两种对话框共用这一条回路:别名靠 `value`,确认只看 `confirmed`。
+    settle?.({ confirmed: params.outcome === 'confirm', value: String(params.value ?? '') })
   }
 
   /**
@@ -148,6 +218,9 @@ export class MaestroTabAliasViewService extends CommonService<MaestroTabAliasVie
     // 新窗口 = 一次全新的加载尝试。闩住的是**这一个 view 的加载结果**,不是「这台机器上这个
     // 功能永久坏了」。
     this.unavailable = false
+    // 关窗是**取消**,不走 `unavailableAnswer`:那条兜底说的是「这一层坏了,别拦着用户」,而窗口
+    // 都没了的时候没有用户在等 —— 照 `confirmed: true` 结掉等于在拆窗过程中接着关一批 tab。
+    this.unavailableAnswer = { confirmed: false, value: '' }
     this.failOpen()
     if (!view || view.webContents.isDestroyed()) return
     try {
@@ -224,13 +297,17 @@ export class MaestroTabAliasViewService extends CommonService<MaestroTabAliasVie
     return view
   }
 
-  /** 这一层不可用时的收场:等着的那个 Promise 按「什么都不改」结掉,而不是把调用方永远吊住。 */
+  /**
+   * 这一层不可用时的收场:等着的那个 Promise 按**这个请求自己的兜底答案**结掉,而不是把调用方
+   * 永远吊住。别名 ⇒ 什么都不改;关闭确认 ⇒ 照常关闭(#4)。
+   */
   private failOpen(): void {
     const settle = this.settle
+    const answer = this.unavailableAnswer
     this.dialog = null
     this.settle = null
     this.revision += 1
-    settle?.(null)
+    settle?.(answer)
   }
 
   /**

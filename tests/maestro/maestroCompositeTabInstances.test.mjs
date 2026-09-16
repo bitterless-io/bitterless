@@ -135,6 +135,7 @@ const fixture = async (context, options = {}) => {
   const opened = [];
   const closed = [];
   const backgrounded = [];
+  const workbenchClosed = [];
   const traces = [];
   const settings = { startUrl: '', llmProvider: 'openai-codex', llmModel: 'x', llmEffort: 'low', ...(options.settings || {}) };
   const state = {
@@ -172,6 +173,10 @@ const fixture = async (context, options = {}) => {
     // OperationTab, so a tab activated under it reads as "nothing happened".
     backgroundWorkbenchTab: async () => {
       backgrounded.push(Date.now());
+    },
+    // 摘 chip + 隐藏 view。chip 右键菜单的 `Close` 只能走这条 —— Workbench 不在 `tabs` 里。
+    closeWorkbenchTab: async () => {
+      workbenchClosed.push(true);
     },
     switchCaptureTarget: async () => undefined
   };
@@ -215,7 +220,7 @@ const fixture = async (context, options = {}) => {
   service.createPinnedHomeTab();
   await service.loadPinnedHomeTab();
   context.after(() => service.reset());
-  return { service, state, settings, opened, closed, backgrounded, traces };
+  return { service, state, settings, opened, closed, backgrounded, workbenchClosed, traces };
 };
 
 const latestStrip = () =>
@@ -596,4 +601,94 @@ test('address-bar component previews reuse the initiating New Tab slot and rejec
   await assert.rejects(service.openFilePreviewTab({ path: '/outside/late.md', tabId: 'closed-tab' }), /no longer available/);
   assert.equal(service.tabs.length, count);
   registerMaestroPreviewOpener(null);
+});
+
+/**
+ * 右击 Workbench chip —— Ral 2026-09-16:「workbench 右击应该有和 mini app 右击一样的菜单」。
+ *
+ * 这一组钉的是**逐项对齐**,不是「有个菜单就行」:两份模板的标签与分隔符序列必须字字相同,
+ * 差别只许出现在哪几项是亮的。Workbench 不在 `this.tabs` 里,所以它走的是自己那条
+ * `showWorkbenchTabMenu()`;`showTabMenu({ id })` 对它永远找不到。
+ */
+const labelsOf = () => menus.at(-1).template.map((item) => item.label ?? '---');
+const enabledOf = () => Object.fromEntries(
+  menus.at(-1).template.filter((item) => item.label).map((item) => [item.label, item.enabled !== false])
+);
+
+test('the Workbench chip menu is the mini-app menu with the inapplicable rows greyed, not hidden', async (context) => {
+  const f = await fixture(context);
+  const miniapp = await f.service.openCompositeTab({ id: 'zellij' });
+
+  menus.length = 0;
+  await f.service.showTabMenu({ id: miniapp.id });
+  const miniappLabels = labelsOf();
+
+  menus.length = 0;
+  await f.service.showWorkbenchTabMenu();
+  assert.deepEqual(labelsOf(), miniappLabels, '同一份模板、同一个顺序、同一批分隔符');
+
+  assert.deepEqual(enabledOf(), {
+    'New tab': true,
+    // 五项灰的,各有理由(docs/issues/maestro-workbench-chip-divider-and-menu.md)——
+    // 置灰而不是隐藏:「为什么不能点」要看得见。
+    Reload: false,
+    Duplicate: false,
+    'Alias…': false,
+    'Set as homepage': false,
+    'Restore default homepage': false,
+    Close: true,
+    'Close other tabs': true,
+    'Close tabs to the right': true
+  });
+});
+
+test('Workbench Close hides the view instead of closing a tab, and the two close-batch rows share one scope', async (context) => {
+  const f = await fixture(context);
+  const first = await f.service.openCompositeTab({ id: 'zellij' });
+  const second = await f.service.openCompositeTab({ id: 'zellij' });
+  const pinnedId = f.service.tabs.find((tab) => tab.pinned).id;
+
+  menus.length = 0;
+  await f.service.showWorkbenchTabMenu();
+  const byLabel = Object.fromEntries(menus.at(-1).template.filter((item) => item.label).map((item) => [item.label, item]));
+
+  // `Close` 摘 chip + 隐藏 view —— 一个 operation tab 都不许关掉。
+  byLabel.Close.click();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(f.workbenchClosed, [true]);
+  assert.equal(f.service.tabs.length, 3);
+
+  // chip 锚在 pinned 组正后方,所以「其余」与「右边的」是同一个集合:全部可关闭的 tab。
+  byLabel['Close tabs to the right'].click();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(f.service.tabs.map((tab) => tab.id), [pinnedId]);
+  assert.equal(f.service.tabs.includes(first) || f.service.tabs.includes(second), false);
+
+  // 没有可关闭的 tab 了 —— 两项置灰,`Close` 仍然亮着(chip 自己永远关得掉)。
+  menus.length = 0;
+  await f.service.showWorkbenchTabMenu();
+  const after = enabledOf();
+  assert.equal(after['Close other tabs'], false);
+  assert.equal(after['Close tabs to the right'], false);
+  assert.equal(after.Close, true);
+});
+
+/**
+ * 关闭范围在**点的那一刻**重算。
+ *
+ * agent 会在后台开关 tab:一份建菜单时抓下来的 id 列表,等人点下去可能已经过期 —— 少关一个,
+ * 或者对着一个已经不在的 id 关。
+ */
+test('the Workbench close-batch scope is recomputed on click, not captured when the menu is built', async (context) => {
+  const f = await fixture(context);
+  menus.length = 0;
+  await f.service.showWorkbenchTabMenu();
+  const closeOthers = menus.at(-1).template.find((item) => item.label === 'Close other tabs');
+
+  // 菜单已经建好了,agent 这时候才开出这个 tab。
+  const late = await f.service.openCompositeTab({ id: 'zellij' });
+  closeOthers.click();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(f.service.tabs.includes(late), false, '建菜单之后开的 tab 也在范围里');
+  assert.equal(f.service.tabs.every((tab) => tab.pinned), true);
 });

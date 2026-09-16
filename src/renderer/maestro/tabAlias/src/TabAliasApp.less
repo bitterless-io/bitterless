@@ -73,3 +73,24 @@ body,
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* 这一次关闭会结束的那些 Zellij 会话。名字可能很长,一行一个并省略号收尾 ——
+   它是给人核对的清单,不是可点的列表,所以同样不给底色、不画边框。 */
+.maestro-tab-alias__terminals {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 132px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.maestro-tab-alias__terminal {
+  overflow: hidden;
+  color: oklch(0.38 0.02 268);
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

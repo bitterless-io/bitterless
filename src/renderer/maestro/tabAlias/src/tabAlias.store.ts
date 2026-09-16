@@ -3,20 +3,22 @@ import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer'
 import {
   MAESTRO_TAB_ALIAS_MAX_LENGTH,
   MAESTRO_TAB_ALIAS_STATE_EVENT,
-  type MaestroTabAliasDialog,
+  type MaestroShellDialog,
   type MaestroTabAliasXpcContract
 } from '@maestro-shared/tabAlias.api'
 
 const aliasDialog = createXpcRendererEmitter<MaestroTabAliasXpcContract>('MaestroTabAliasXpcHandler')
 
 /**
- * 别名表单的控制器。**main 是唯一的真相源** —— 这里只拉快照、回答复,不自己记「有没有对话框」。
+ * 覆盖层对话框的控制器。**main 是唯一的真相源** —— 这里只拉快照、回答复,不自己记「有没有对话框」。
  *
  * 广播只带 revision,内容一律走 `snapshot()`:渲染进程可能在广播之后才挂载(view 是懒建的),
  * 两条路合成一条就不会出现「广播收到了但状态是旧的」。
+ *
+ * 两种形状:别名表单,和关闭 Zellij tab 的确认(docs/features/maestro-zellij-close-confirm.md #2.1)。
  */
 class TabAliasState {
-  dialog: MaestroTabAliasDialog | null = null
+  dialog: MaestroShellDialog | null = null
   draft = ''
   /** 答复在飞 —— 两个按钮都禁用,同一个对话框不可能被答两次。 */
   busy = false
@@ -40,7 +42,7 @@ class TabAliasState {
     const changed = next?.dialogId !== this.dialog?.dialogId
     this.dialog = next
     if (!changed) return
-    this.draft = next?.alias ?? ''
+    this.draft = next?.variant === 'alias' ? next.alias : ''
     this.busy = false
     this.focusRevision += 1
   }
@@ -55,8 +57,13 @@ class TabAliasState {
     const dialog = this.dialog
     if (!dialog || this.busy) return
     this.busy = true
-    // 空串是**删除**别名,回到页面标题 —— 与取消是两件事,所以它也走 confirm。
-    await this.answer({ dialogId: dialog.dialogId, outcome: 'confirm', value: this.draft.trim() })
+    // 空串是**删除**别名,回到页面标题 —— 与取消是两件事,所以它也走 confirm。确认框没有输入,
+    // 不带 `value`。
+    await this.answer(
+      dialog.variant === 'alias'
+        ? { dialogId: dialog.dialogId, outcome: 'confirm', value: this.draft.trim() }
+        : { dialogId: dialog.dialogId, outcome: 'confirm' }
+    )
   }
 
   async cancel(): Promise<void> {

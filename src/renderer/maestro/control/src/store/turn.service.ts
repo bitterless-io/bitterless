@@ -817,7 +817,9 @@ export class TurnService extends CommonService<MessageStoreState> {
     this._state.flushStreamBuffer(session.id)
     // Stop during workspace/attachment setup, before the root request entered the transcript: release
     // the reserved Turn silently. send() returns a rejection and the composer restores the user's text.
-    if (!turn.rootHumanMessageId) {
+    // A host-authored turn never has a root human message, but it does have a live bubble; taking
+    // the silent-release path would leave a spinner that never finishes.
+    if (!turn.rootHumanMessageId && !turn.hostAuthored) {
       session.turn = undefined
       this._state.setActiveAgentTurnSnapshot(null, turn.id)
       session.updatedAt = Date.now()

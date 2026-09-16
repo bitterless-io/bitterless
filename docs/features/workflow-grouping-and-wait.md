@@ -50,30 +50,53 @@ looked identical to stopping the right one.
 Today a finished run is delivered into the chat and into the main Agent's background context, but the
 main Agent never waits — it ends its turn, and the user must prompt again before the result is used.
 
-- A host tool lets the main Agent **wait for named runs in this chat** and continue in the same
-  session once they settle.
-- The Agent **must say what it is waiting for before it suspends**. A silent stall is a failure, not
+**The wait declares an intent; it never blocks.** A blocking host tool was ruled out on mechanism, not
+taste: the agent's `abort()` awaits every in-flight tool promise, so Stop could never end a blocking
+wait; and a user's follow-up only reaches the model when steering drains at a tool boundary, so it
+would hang with no bubble and no error. Chat tools receive no AbortSignal either. So:
+
+- `workflow_wait` records which runs this chat is waiting for and **returns at once**. The Agent then
+  ends its turn normally, so Stop works and the next user message works.
+- The Agent **must say what it is waiting for** in that final reply. A silent stall is a failure, not
   a feature: the user has to be able to tell waiting apart from hanging.
-- Settling includes failure and being stopped. On continuation the Agent reports which branches are
-  missing rather than presenting a partial result as complete.
-- **The user outranks the wait.** A new user message cancels it and is answered immediately; the runs
-  keep going and still deliver normally.
-- Waiting is bounded and cancellable, and it never blocks another workflow, another chat, or the
-  broadcast.
+- When every named run settles, the host starts **one fresh turn in the same chat**. It fires once —
+  the intent is consumed as it fires, so a repeated snapshot cannot continue the chat twice.
+- **The continuation root is host-authored, never the user speaking.** It is flagged as such end to
+  end so no surface renders it as a message the user typed, on first paint or on any later reload.
+- **The continuation prompt is a pointer, not a restatement.** Each run's full outcome already reached
+  the chat's background context when it settled; repeating it would show the model the same result
+  twice. The prompt names each run's outcome — finished, finished with N failed Agents, failed, or
+  stopped — so a failed branch can never pass for a finished one.
+- **The user outranks the wait.** A new user message cancels it; the runs keep going and still deliver
+  normally. If the chat is busy when the runs settle, no turn is forced — the outcome reaches the
+  user's own next turn through the existing background context, exactly as before.
+- Waiting on work that has already finished, on a run from another chat, or on nothing at all is
+  refused with a reason rather than accepted into a wait that could never fire.
+- **The tool is only offered where the continuation is actually wired.** A tool that promises the
+  conversation will resume on its own, in an app that cannot resume it, is worse than no tool. Today
+  that means Bitterless has it; see the task doc for what Cowork needs first.
 
 ## 4 · Planning a workflow
 
 - Planning **reuses Kimchi's own authoring contract** rather than inventing prompts: its plan schema
   (goal, summary, acceptance criteria, decisions, steps with what each receives, produces and
-  delivers), its plan renderer, and its authoring reference.
-- The desktop host **rejects interactive and questionnaire steps**, so the interactive interview in
-  Kimchi's own `create.workflow` cannot run here. The planner is therefore a **non-interactive
-  variant**: it produces one plan in a single pass, renders it into the chat, and the user confirms
-  in conversation. The schema and prompt text are unchanged.
-- What is lost relative to the interactive version — batched clarifying questions before the plan —
-  is stated in the doc rather than hidden, and the plan says which decisions were inferred rather
-  than confirmed.
-- A plan is a proposal, never an execution. Nothing runs until the user accepts it.
+  delivers), its plan renderer, and its design instructions.
+- That contract is **reproduced, not imported**. `workflowPlanSchema`, `renderWorkflowPlan` and
+  `designPrompt` live in Kimchi's `host/builtin/` and are **not in its public exports map** — only
+  the whole `createWorkflowWorkflow` is, and that workflow is built from interactive and
+  questionnaire steps this host rejects. Borrowing three symbols out of a private module would bind
+  the planner to one patch release's internal file layout, so the schema descriptions and prompt text
+  are copied verbatim from the pinned version and kept in sync by hand.
+- The desktop host **rejects interactive and questionnaire steps**, so Kimchi's interview cannot run
+  here. The planner is a **non-interactive variant**: one pass, one plan, rendered into the chat,
+  confirmed in conversation.
+- Losing the interview is handled in the open, not hidden. Every choice a question would have settled
+  becomes an entry in **inferred decisions** naming what was assumed, and the question itself becomes
+  an **open question** the user is asked to correct. The rendered plan has no "confirmed decisions"
+  heading, because without an interviewer nothing in it was confirmed.
+- A plan is a proposal, never an execution. The planner declares read-only tools, writes no file, and
+  creates nothing; the rendered proposal says so explicitly.
+- A design Agent that is stopped or fails yields an error, not an empty proposal.
 
 ## Verification
 

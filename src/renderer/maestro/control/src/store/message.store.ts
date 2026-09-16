@@ -400,7 +400,9 @@ export class MessageStoreState {
     session.id = snapshot.sessionId
     session.createdAt = snapshot.startedAt
     session.updatedAt = Date.now()
-    if (snapshot.state !== 'reserved') {
+    // A host-authored root — a background workflow finishing — is not something the user said, so
+    // it must never enter the transcript as their message, here or on any later reload.
+    if (snapshot.state !== 'reserved' && !snapshot.hostAuthored) {
       session.messages.push(
         this.withTokenCount({
           id: uid(),
@@ -596,6 +598,7 @@ export class MessageStoreState {
       generation: snapshot.generation,
       rootText: snapshot.rootText,
       rootHumanMessageId: root?.id,
+      hostAuthored: snapshot.hostAuthored,
       phase: segments.some((message) => message.content.trim()) ? 'streaming' : 'accepted',
       lastAssistantMessageId: segments[segments.length - 1]?.id,
       sealedAssistantSegments: segments.length,

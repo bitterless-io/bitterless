@@ -68,6 +68,25 @@
 .maestro-menu-bar__tab-label { min-width: 0; flex: 1; overflow: hidden; padding-right: 20px; text-overflow: ellipsis; white-space: nowrap; user-select: none; }
 .maestro-menu-bar__tab-label--pinned { padding-right: 0; font-weight: 500; }
 
+/* 就地改名的输入框(双击 Zellij chip)。
+   宽度由内联 `width: <n>ch` 跟着字走,`max-width` 那一半是硬的:没有它,20 个中文字会把 chip 顶宽,
+   而 tab 条的收缩算法会把**其余每一个** tab 挤变形(zellij-tab-inline-rename.md #6)。
+   无边框、无底色 —— 它就在 chip 里,自己再画一个框等于在 chip 里套一个盒子(CLAUDE.md《Borderless UI》)。 */
+.maestro-menu-bar__tab-rename {
+  min-width: 0;
+  max-width: 100%;
+  height: 18px;
+  flex: 0 1 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  margin-right: 20px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  outline: none;
+}
+
 .maestro-menu-bar__tab-close.icon-btn.arco-btn {
   position: absolute;
   top: 4px;

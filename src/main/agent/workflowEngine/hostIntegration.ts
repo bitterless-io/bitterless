@@ -1,4 +1,5 @@
 import { app } from 'electron'
+import { WorkflowWaitRegistry, workflowWaitReceipt, workflowWaitRejectionMessage, type WorkflowWaitSatisfied } from './workflowWait'
 import { isAbsolute, join } from 'node:path'
 import type { WorkflowApi, WorkflowBuiltinName, WorkflowDescriptor, WorkflowRunSnapshot, WorkflowSnapshot, WorkflowStartRequest } from '../../../shared/agentWorkflow.api'
 import { workflowLibraryRuntime } from '../../workflowLibrary/workflowLibraryRuntime'
@@ -16,12 +17,15 @@ export const WORKFLOW_DESCRIPTORS: WorkflowDescriptor[] = [
   { name: 'refactor-scout', description: 'Find small, defensible refactors without broad rewrites.' },
   { name: 'diagnose', description: 'Compare competing explanations for a bug or failing command.' },
   { name: 'perf-review', description: 'Investigate measured bottlenecks rather than performance guesses.' },
-  { name: 'research', description: 'Research external evidence and independently verify claims.' }
+  { name: 'research', description: 'Research external evidence and independently verify claims.' },
+  { name: 'plan-workflow', description: 'Turn a goal into a reviewable workflow plan. Produces a proposal only; it creates and runs nothing.' }
 ]
 
 export interface WorkflowHostOptions {
   broadcast: ConstructorParameters<typeof WorkflowSupervisor>[0]['broadcast']
   onRunSettled?(run: WorkflowRunSnapshot): Promise<void>
+  /** Start a fresh assistant turn in this chat because a declared wait was satisfied. */
+  onWaitSatisfied?(satisfied: WorkflowWaitSatisfied): void | Promise<void>
   assertCanStartShortcut?(sessionId: string, otherWorkflowSessions: string[]): void
   runtime(sessionId: string, cwd?: string): Promise<Omit<WorkflowRuntimeConfig, 'tools'> & { cwd: string }>
   tools(signal?: AbortSignal, onApproval?: (waiting: boolean) => void, sessionId?: string): AgentToolSpec[]
@@ -42,6 +46,7 @@ export const assertWorkflowSession = (sessionId: string): string => {
 
 export class WorkflowHostIntegration implements WorkflowApi {
   private readonly supervisor: WorkflowSupervisor
+  private readonly waits = new WorkflowWaitRegistry()
   private readonly activity: WorkflowActivitySummaryService | null
   private closed = false
   private readonly retrying = new Map<string, Promise<WorkflowRunSnapshot>>()
@@ -168,6 +173,11 @@ export class WorkflowHostIntegration implements WorkflowApi {
       // Persisted terminal snapshots are the durable outbox. The consumer deduplicates by run ID.
       void this.options.onRunSettled?.(structuredClone(run)).catch(error => console.warn('[workflow] completion delivery deferred', run.id, String(error)))
     }
+    // A satisfied wait is removed as it fires, so a repeated snapshot cannot continue a chat twice.
+    for (const satisfied of this.waits.settle(runs)) {
+      void Promise.resolve(this.options.onWaitSatisfied?.({ sessionId: satisfied.sessionId, runs: satisfied.runs.map(run => structuredClone(run)) }))
+        .catch(error => console.warn('[workflow] chat continuation not started', satisfied.sessionId, String(error)))
+    }
   }
   async listRuns(params?: { sessionId?: string }) {
     const snapshot = await this.supervisor.list(params?.sessionId)
@@ -290,7 +300,21 @@ export class WorkflowHostIntegration implements WorkflowApi {
           const run = await this.startWorkflow({ sessionId, entry: { kind: 'builtin', name: 'agent-task' }, input: input + context })
           return JSON.stringify({ runId: run.id, name: run.name, status: run.status, background: true })
         }
-      }
+      },
+      // Only offered where a settled wait can actually continue the chat. A tool that promises the
+      // conversation will resume on its own, in an app that cannot resume it, is worse than absent.
+      ...(this.options.onWaitSatisfied ? [{
+        name: 'workflow_wait',
+        description: 'Declare that this chat should continue once named background runs finish. Returns IMMEDIATELY — it does not block and must not be polled. End your turn right after calling it, saying which workflows you are waiting for; when they all settle this chat continues on its own with their real outcomes. A new user message cancels the wait and is answered first.',
+        params: [{ name: 'runIds', description: 'Comma-separated exact run IDs from workflow_tasks. Omit to wait for every running workflow in this chat.' }],
+        execute: async args => {
+          const requested = String(args.runIds ?? '').split(',').map(value => value.trim()).filter(Boolean)
+          const snapshot = await this.supervisor.list()
+          const outcome = this.waits.declare(sessionId, requested, snapshot.runs, Date.now())
+          if (!outcome.ok) throw new Error(workflowWaitRejectionMessage(outcome))
+          return workflowWaitReceipt(outcome.intent, snapshot.runs)
+        }
+      }] : [])
     ]
   }
 }
