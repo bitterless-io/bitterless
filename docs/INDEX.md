@@ -1,5 +1,7 @@
 # Bitterless Documentation
 
+- [Skills 三层来源与实时上下文设计](features/skills-three-sources.md) — design awaiting Ral approval; [page mockup](design/skills-three-sources.html); implementation not started.
+
 - [Workbench institution workflows](features/workbench-institution-workflows.md) — list, detail, Kimchi diagram and safe cloud update synchronization; independently verified.
 
 - [A blank New tab paints black instead of the Bitterless splash](issues/maestro-blank-new-tab-paints-black.md) — fixed; owner verification pending;
