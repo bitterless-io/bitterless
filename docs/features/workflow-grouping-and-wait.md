@@ -57,8 +57,13 @@ would hang with no bubble and no error. Chat tools receive no AbortSignal either
 
 - `workflow_wait` records which runs this chat is waiting for and **returns at once**. The Agent then
   ends its turn normally, so Stop works and the next user message works.
-- The Agent **must say what it is waiting for** in that final reply. A silent stall is a failure, not
-  a feature: the user has to be able to tell waiting apart from hanging.
+- **The wait is shown in the status bar, not asserted in a message.** The row reads "waiting for N
+  workflows to finish" and is rendered from the host's own registry. That matters twice over: an
+  Agent cannot tell the user it will wait without actually registering one, and the indicator cannot
+  outlive a wait that has already fired or been cancelled. The Agent's closing reply says what it
+  will do afterwards; it does not have to remember to announce the count.
+- The declared wait **outranks** the plain background-Agent line, being the more specific fact; the
+  Agent count and elapsed time move to that row's meta.
 - When every named run settles, the host starts **one fresh turn in the same chat**. It fires once —
   the intent is consumed as it fires, so a repeated snapshot cannot continue the chat twice.
 - **The continuation root is host-authored, never the user speaking.** It is flagged as such end to
@@ -72,9 +77,12 @@ would hang with no bubble and no error. Chat tools receive no AbortSignal either
   user's own next turn through the existing background context, exactly as before.
 - Waiting on work that has already finished, on a run from another chat, or on nothing at all is
   refused with a reason rather than accepted into a wait that could never fire.
-- **The tool is only offered where the continuation is actually wired.** A tool that promises the
-  conversation will resume on its own, in an app that cannot resume it, is worse than no tool. Today
-  that means Bitterless has it; see the task doc for what Cowork needs first.
+- **The tool never promises more than its host can do.** Declaring a wait, and showing it, works in
+  both apps. Whether the host then starts the continuation turn itself is a property of the host, and
+  the receipt carries it: where it can, the Agent is told to say it will pick the work up itself;
+  where it cannot, the Agent is told explicitly not to claim that, and that the outcomes will simply
+  be in its context when the user speaks next. Bitterless resumes today; see the task doc for what
+  Cowork needs before it can.
 
 ## 4 · Planning a workflow
 

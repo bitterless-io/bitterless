@@ -21,14 +21,19 @@ planner rather than adding a resume host.
 - [x] **Wait (Bitterless)** — `workflow_wait` declares an intent and returns at once; the turn ends
       normally; when every named run settles the host claims a host-authored turn and continues in
       the same chat. Refuses waits that could never fire, fires once, yields to a busy chat.
-- [ ] **Wait (Cowork)** — blocked on representing a host-authored turn. Cowork's only proven path to
-      start a turn is the renderer's `turnService.send()`, which appends a `role: 'human'` message
-      the user never typed and which `recordUserChainMessage` persists into `chain/<sessionId>.jsonl`
-      as 用户原话, where compaction feeds it back forever. Avoiding that means adding a host-authored
-      turn to `turn.service.ts` — whose own guard, `check-behavior-turn-steering.mjs`, currently
-      crashes before reaching its assertions, so that file would be changed with the net down.
-      Until then `workflow_wait` is deliberately **not registered** in Cowork rather than shipped
-      as a promise the host cannot keep.
+- [x] **Wait — declaring and showing it (both apps)** — the status bar renders "waiting for N
+      workflows to finish" from the host registry, so it cannot be claimed without being registered
+      nor outlive a cancelled one. The user's own turn cancels the wait and clears the row.
+- [ ] **Wait — Cowork resuming by itself** — the receipt already tells the Cowork agent not to claim
+      it will, so nothing is currently dishonest; what is missing is the resume. Cowork's only proven
+      path to start a turn is the renderer's `turnService.send()`, which appends a `role: 'human'`
+      message the user never typed and which `recordUserChainMessage` persists into
+      `chain/<sessionId>.jsonl` as 用户原话, where compaction feeds it back forever. A detached root
+      message plus a host-authored flag on the send params looks sufficient — `humanMessage` is only
+      used for token counting, the first-message title and `protectMessageIds` — but that cannot be
+      confirmed without running the app, and `turn.service.ts`'s own guard,
+      `check-behavior-turn-steering.mjs`, currently crashes before reaching its assertions, so the
+      change would land with the net down. Fix the guard first, then wire it.
 - [x] **Planner** — non-interactive workflow planning reusing Kimchi's plan schema, plan renderer and
       authoring guidance; renders a proposal into the chat and never executes it unprompted.
 
