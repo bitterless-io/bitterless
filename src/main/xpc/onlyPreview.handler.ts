@@ -16,6 +16,7 @@ import {
   parseOnlyPreviewProjectItemCopyRequest,
   parseOnlyPreviewProjectRootCopyRequest,
   parseOnlyPreviewCreateProjectFolderRequest,
+  parseOnlyPreviewPasteProjectItemsRequest,
   parseOnlyPreviewProjectRootRequest,
   parseOnlyPreviewRenameProjectItemRequest,
   toOnlyPreviewErrorPayload
@@ -642,9 +643,20 @@ class OnlyPreviewHandler
       await onlyPreviewProjectNativeActionService.copyProjectItemFromUi(
         window,
         request,
-        request.copyKind
+        request.copyKind,
+        request.selection
       );
     });
+  }
+
+  async pasteProjectItems(
+    params: ApiParams<'pasteProjectItems'>
+  ): ReturnType<OnlyPreviewApi['pasteProjectItems']> {
+    return await runOperation('pasteProjectItems', async () =>
+      onlyPreviewProjectNativeActionService.pasteProjectItems(
+        parseOnlyPreviewPasteProjectItemsRequest(params)
+      )
+    );
   }
 
   async reportProjectIndexFailed(

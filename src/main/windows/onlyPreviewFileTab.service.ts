@@ -14,6 +14,10 @@ import {
   getOnlyPreviewRendererTarget
 } from '@main/miniapps/onlypreview/views/onlyPreviewRendererTarget.service';
 import { ONLY_PREVIEW_FIND_FOCUS_EVENT } from '@shared/onlypreview/onlyPreview.types';
+import {
+  isApplicationFindFocusWithin,
+  registerApplicationFindDispatch
+} from '@main/menu/applicationFindMenu.service';
 
 export interface OnlyPreviewFileTabHost {
   window: BaseWindow;
@@ -31,9 +35,20 @@ export class OnlyPreviewFileTabSurface {
   private toolbar: WebContentsView | null = null;
   private disposed = false;
   private active = false;
+  private readonly shortcutContents = new WeakSet<WebContents>();
+  private readonly releaseFindDispatch: () => void;
 
   constructor(private readonly owner: OnlyPreviewFileTabHost) {
     this.container.setVisible(false);
+    this.releaseFindDispatch = registerApplicationFindDispatch((command, window) => {
+      if (command !== 'find-in-file' || !this.active || !this.isLive()) return false;
+      if (
+        window !== this.owner.window ||
+        !isApplicationFindFocusWithin(window, this.shortcutContents)
+      ) return false;
+      this.openFind();
+      return true;
+    });
   }
 
   async open(): Promise<void> {
@@ -144,6 +159,7 @@ export class OnlyPreviewFileTabSurface {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.releaseFindDispatch();
     this.region.destroy();
     onlyPreviewHostRegistry.revoke(this.host.hostToken);
     if (this.toolbar && !this.toolbar.webContents.isDestroyed()) this.toolbar.webContents.close();
@@ -157,22 +173,26 @@ export class OnlyPreviewFileTabSurface {
   }
 
   private bindShortcuts(contents: WebContents): void {
+    this.shortcutContents.add(contents);
     enrollMaestroShortcutContents(contents);
     contents.on('before-input-event', (event, input) => {
-      if (!this.active || input.type !== 'keyDown' || event.defaultPrevented) return;
+      if (!this.active || input.type !== 'keyDown' || event.defaultPrevented || input.isComposing) return;
       const command = process.platform === 'darwin' ? input.meta : input.control;
       const key = input.key.toLowerCase();
       if (command && !input.alt && !input.shift && key === 'f') {
         event.preventDefault();
-        const opened = this.region.openFind(this.host.hostToken);
-        if (opened) this.toolbar?.webContents.focus();
-        xpcMain.broadcast(ONLY_PREVIEW_FIND_FOCUS_EVENT, { hostId: this.host.hostId });
-
+        if (!input.isAutoRepeat) this.openFind();
       } else if (key === 'escape' && this.region.isFindOpen(this.host.hostToken)) {
         event.preventDefault();
         this.region.closeFind(this.host.hostToken);
         this.region.focusActiveContent(this.host.hostToken);
       }
     });
+  }
+
+  private openFind(): void {
+    const opened = this.region.openFind(this.host.hostToken);
+    if (opened) this.toolbar?.webContents.focus();
+    xpcMain.broadcast(ONLY_PREVIEW_FIND_FOCUS_EVENT, { hostId: this.host.hostId });
   }
 }

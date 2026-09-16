@@ -1,8 +1,10 @@
+import { workflowZh } from '../../maestro/control/src/workflow.messages';
 import type { en } from './en';
 import { zhCoin } from './zhCoin';
 import { zhTrench } from './zhTrench';
 
 export const zh: typeof en = {
+  workflow: workflowZh,
   auth: {
     navigationFailed: '登录成功，但页面跳转失败，请重试。',
     passwordSetupTitle: '设置登录密码',
@@ -24,6 +26,9 @@ export const zh: typeof en = {
     quit: '退出',
     show: '显示',
     quitConfirmTitle: '退出应用',
+    quitCleanupFailedTitle: '暂时无法退出',
+    quitCleanupFailedMessage: '尚未确认 Workflow 资源已清理，应用将保持打开。请在聊天中重试停止，然后再次退出。',
+    quitCleanupFailedOk: '保持打开',
     quitConfirmMessage: '确定要退出应用吗？',
     quitConfirmOk: '退出',
     quitConfirmCancel: '取消',

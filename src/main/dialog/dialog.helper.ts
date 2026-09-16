@@ -13,6 +13,16 @@ const showMessageBoxWithResolvedParent = async (
 };
 
 class DialogHelper {
+  async showQuitCleanupFailedDialog(): Promise<void> {
+    const messages = i18nHelper.getMessages();
+    await showMessageBoxWithResolvedParent({
+      type: 'error',
+      title: messages.app.quitCleanupFailedTitle,
+      message: messages.app.quitCleanupFailedMessage,
+      buttons: [messages.app.quitCleanupFailedOk],
+    });
+  }
+
   async showKeychainAccessDeniedDialog(): Promise<void> {
     const messages = i18nHelper.getMessages();
 

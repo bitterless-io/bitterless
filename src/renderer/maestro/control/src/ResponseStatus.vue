@@ -109,7 +109,7 @@ const status = computed<StatusView | null>(() => {
   const active = turn.value
   if (!active) return null
   if (active.aborting) {
-    return { tone: 'wait', text: i18nHelper.maestroControl.responseStatus.stopping }
+    return { tone: 'wait', text: active.stopError ? i18nHelper.workflow.stopError : i18nHelper.maestroControl.responseStatus.stopping }
   }
   if (active.thinking) {
     return {

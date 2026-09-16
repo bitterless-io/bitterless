@@ -98,7 +98,8 @@ export interface CoachXpcContract {
    * (`modelIoLog.append` 到量就换卷),给一个文件名等于只交出其中一段。
    * 不新建任何审计子系统 —— 它只是把 `modelIoLog` 已经在写的那个目录说出来。
    */
-  copySessionIoPath(params: { sessionId: string }): Promise<SessionIoPathResult>
+  ensureSessionIo(params: { sessionId: string; workspace?: WorkspaceRef }): Promise<SessionIoPathResult>
+  copySessionIoPath(params: { sessionId: string; workspace?: WorkspaceRef }): Promise<SessionIoPathResult>
   showSessionMenu(params: { sessionId: string }): Promise<SessionMenuResult>
   // Editable Cmd/Ctrl+Z reaches Chromium's undo stack in the fixed, focused Control view.
   editControlText(params: { action: 'undo' }): Promise<{ ok: boolean; error?: string }>;
@@ -110,7 +111,7 @@ export interface CoachXpcContract {
   // Stop the in-flight turn for a chat channel (the Stop button): aborts the live pi session so
   // the pending turn resolves. The agent session is then dropped so aborted output is not carried
   // into later model context.
-  abortAgent(params: { sessionId: string; turnId: string }): Promise<void>
+  abortAgent(params: { sessionId: string; turnId: string }): Promise<{ ok: true }>
   abortDelegate(params?: { sessionId?: string }): Promise<void>
   listTasks(): Promise<MaestroTask[]>
   respondTaskConfirm(params: { taskId: string; confirmId: string; confirm: boolean }): Promise<{ ok: boolean }>
@@ -963,6 +964,7 @@ export interface AgentTurnSnapshot {
   rootText: string
   startedAt: number
   state: 'reserved' | 'running' | 'aborting'
+  stopError?: string
 }
 
 export interface AgentTurnClaimRequest {

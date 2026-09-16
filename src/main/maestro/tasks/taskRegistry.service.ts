@@ -112,6 +112,8 @@ class TaskRegistry {
    * 渲染层订阅全都已经围绕 task 建好了。复用它,actionsheet 只要接一个数据源。
    */
   async askOperator(params: {
+    sessionId?: string
+    signal?: AbortSignal
     title: string
     detail?: string
     confirmLabel?: string
@@ -123,7 +125,10 @@ class TaskRegistry {
     /** Defaults just below BaseAgent's tool-call timeout. */
     timeoutMs?: number
   }): Promise<boolean> {
-    const task = this.start({ name: params.name || 'approval', kind: 'builtin', title: params.title, transient: true })
+    params.signal?.throwIfAborted()
+    const task = this.start({ name: params.name || 'approval', kind: 'builtin', title: params.title, transient: true, sessionId: params.sessionId })
+    const abort = (): void => { this.cancel({ taskId: task.id, reason: 'Workflow agent stopped while awaiting approval' }) }
+    params.signal?.addEventListener('abort', abort, { once: true })
     let allowed = false
     let timer: NodeJS.Timeout | undefined
     try {
@@ -142,6 +147,7 @@ class TaskRegistry {
       allowed = await pending
       return allowed
     } finally {
+      params.signal?.removeEventListener('abort', abort)
       if (timer) clearTimeout(timer)
       // 问完就收 —— 审批任务的全部意义就是那一问,留在册上只会占着"还有任务在跑"的位置,
       // 而状态条的 roster 是按 live 任务数出现的。

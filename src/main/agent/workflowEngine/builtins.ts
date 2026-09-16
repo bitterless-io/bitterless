@@ -1,0 +1,14 @@
+import type { WorkflowDefinition } from '@kimchi-dev/kimchi-workflows/flow'
+import type { WorkflowBuiltinName } from '../../../shared/agentWorkflow.api'
+import mini from './workflows/mini-demo'
+import review from './workflows/code-review'
+import refactor from './workflows/refactor-scout'
+import diagnose from './workflows/diagnose'
+import perf from './workflows/perf-review'
+import research from './workflows/research'
+const workflows: Record<WorkflowBuiltinName, WorkflowDefinition> = { 'mini-demo': mini, 'code-review': review, 'refactor-scout': refactor, diagnose, 'perf-review': perf, research }
+export function builtinWorkflow(name: string): WorkflowDefinition {
+  const workflow = workflows[(name === 'demo' ? 'mini-demo' : name) as WorkflowBuiltinName]
+  if (!workflow) throw new Error(`Unknown workflow: ${name}`)
+  return workflow
+}

@@ -394,9 +394,32 @@ const runtimeProfileBuildMarkerPlugin = {
   }
 };
 
+// Workflow code and Pi sessions execute in separate utility processes.
+const workflowWorkerPlugin = {
+  name: 'workflow:utility-workers',
+  async writeBundle() {
+    await esbuild({
+      entryPoints: {
+        'workflow-engine.worker': resolve('src/main/agent/workflowEngine/engine.worker.ts'),
+        'workflow-agent.worker': resolve('src/main/agent/workflowEngine/agent.worker.ts'),
+        'workflow-author': resolve('src/main/agent/workflowEngine/author.ts')
+      },
+      outdir: resolve('out/main'),
+      outExtension: { '.js': '.mjs' },
+      bundle: true,
+      platform: 'node',
+      format: 'esm',
+      target: 'node24',
+      packages: 'external',
+      external: ['electron'],
+      sourcemap: false
+    })
+  }
+}
+
 export default defineConfig({
   main: {
-    plugins: [runtimeProfileBuildMarkerPlugin],
+    plugins: [runtimeProfileBuildMarkerPlugin, workflowWorkerPlugin],
     define: { ...generateEnvDefines() },
     build: {
       externalizeDeps: { exclude: bundledRuntimeDependencies },

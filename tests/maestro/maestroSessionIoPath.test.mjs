@@ -62,17 +62,22 @@ const harness = (userData, filesystem = fs) => {
   const { modelIoLog, setModelIoRoot } = load('src/main/agent/runtime/modelIoLog.ts');
   const { runInAgentSession } = load('src/main/agent/runtime/agentSessionContext.ts');
   const { BaseAgent } = load('src/main/agent/BaseAgent.ts');
+  const { SessionIoInitialization } = load('src/main/agent/sessionIoInitialization.ts');
   boot(setModelIoRoot, userData);
   const copied = [], opened = [];
   const state = {
     agentSessionKey: id => id.trim(),
+    sessionIoInitialization: new SessionIoInitialization(),
+    maestroAgents: new Map(),
+    _state: { projectRootForSession: () => undefined },
+    getMaestroAgent: id => { const instance = agent(); state.maestroAgents.set(id, instance); return instance; },
     assertAgentRuntimeActive: () => { throw new Error('Directory operations must not start a runtime'); },
     openError: '', openReject: null
   };
   const bindings = { modelIoLog, i18nHelper, clipboard: { writeText: path => copied.push(path) }, shell: {
     openPath: async path => { opened.push(path); if (state.openReject) throw state.openReject; return state.openError; }
   } };
-  for (const name of ['resolveSessionIoDirectory', 'copySessionIoPath', 'openSessionIoDirectory']) {
+  for (const name of ['ensureSessionIo', 'resolveSessionIoDirectory', 'copySessionIoPath', 'openSessionIoDirectory']) {
     state[name] = method('src/main/agent/maestroAgent.service.ts', name, bindings);
   }
   const agent = () => new BaseAgent({
@@ -140,18 +145,18 @@ test('parallel sessions retain their own logs and a fresh logger resolves saved 
   assert.deepEqual(await restarted.state.copySessionIoPath({ sessionId: 'A' }), results[0]);
 });
 
-test('missing, empty, unreadable and failed-write logs never copy a directory or create one for lookup', async t => {
+test('missing/empty history gets a labelled current snapshot; unreadable and failed-write logs remain visible failures', async t => {
   const userData = await fixture(t);
   const h = harness(userData);
   const missing = await h.state.copySessionIoPath({ sessionId: 'old' });
-  assert.equal(missing.ok, false);
-  assert.match(missing.error, /No saved model I\/O log/);
-  assert.match(missing.error, /new message/i);
-  assert.deepEqual(await fs.readdir(userData), []);
+  assert.equal(missing.ok, true);
+  const snapshot = (await rowsIn(missing.path)).find(row => row.name === 'session-configuration');
+  assert.equal(snapshot.detail.evidence, 'current-configuration-only');
+  assert.match(snapshot.detail.explanation, /Historical model I\/O is unavailable/);
   const empty = join(userData, 'agent-io', '20260915000000000-old');
   await fs.mkdir(empty, { recursive: true });
   await fs.writeFile(join(empty, 'part-001.jsonl'), '');
-  assert.equal((await h.state.copySessionIoPath({ sessionId: 'old' })).ok, false);
+  assert.equal((await h.state.copySessionIoPath({ sessionId: 'old' })).path, missing.path);
   const failed = harness(userData, { ...fs, appendFile: async () => { throw new Error('fixture disk full'); } });
   const reply = await failed.runInAgentSession('failed', () => failed.agent().prompt('do not lose the model reply'));
   assert.equal(reply.ok, true, 'diagnostic failure cannot fail the model turn');
@@ -160,7 +165,7 @@ test('missing, empty, unreadable and failed-write logs never copy a directory or
   const unreadable = harness(userData, { ...fs, readdir: async () => { throw new Error('fixture permission denied'); } });
   assert.equal((await unreadable.state.copySessionIoPath({ sessionId: 'old' })).ok, false);
   assert.deepEqual(unreadable.copied, []);
-  assert.deepEqual(h.copied, []);
+  assert.deepEqual(h.copied, [missing.path, missing.path]);
 });
 
 test('disk lookup matches the complete session ID, skips an empty directory and accepts a saved part after 999', async t => {
@@ -180,7 +185,7 @@ test('disk lookup matches the complete session ID, skips an empty directory and 
 test('open uses the same resolved directory without clipboard writes and surfaces shell errors', async t => {
   const userData = await fixture(t);
   const h = harness(userData);
-  assert.equal((await h.state.openSessionIoDirectory({ sessionId: 'missing' })).ok, false);
+  assert.equal((await h.state.openSessionIoDirectory({ sessionId: '' })).ok, false);
   assert.deepEqual(h.opened, []);
   await h.runInAgentSession('open', () => h.agent().prompt('open fixture'));
   const opened = await h.state.openSessionIoDirectory({ sessionId: 'open' });

@@ -68,14 +68,35 @@ const windowsClipboardScript = (count: number): string =>
 
 const defaultExecuteCommand: OnlyPreviewClipboardCommandExecutor = async (command) => {
   await new Promise<void>((resolveCommand, rejectCommand) => {
-    execFile(command.executable, command.args, command.options, (error) => {
+    execFile(command.executable, command.args, command.options, (error, _stdout, stderr) => {
       if (error) {
+        Object.defineProperty(error, 'stderr', { value: stderr });
         rejectCommand(error);
         return;
       }
       resolveCommand();
     });
   });
+};
+
+const clipboardFailureDetail = (error: unknown): string => {
+  if (!error || typeof error !== 'object') return '';
+  const cause = error as { code?: unknown; signal?: unknown; stderr?: unknown };
+  const details: string[] = [];
+  if (
+    Number.isSafeInteger(cause.code) ||
+    (typeof cause.code === 'string' && /^[A-Z0-9_]{1,32}$/.test(cause.code))
+  ) {
+    details.push(`code=${cause.code}`);
+  }
+  if (typeof cause.signal === 'string' && /^[A-Z0-9_]{1,32}$/.test(cause.signal)) {
+    details.push(`signal=${cause.signal}`);
+  }
+  const scriptCode = typeof cause.stderr === 'string'
+    ? cause.stderr.match(/\((-?\d{1,8})\)\s*$/)?.[1]
+    : undefined;
+  if (scriptCode) details.push(`script=${scriptCode}`);
+  return details.length ? ` (${details.join(', ')})` : '';
 };
 
 const validateClipboardTarget = (platform: NodeJS.Platform, targetPath: string): void => {
@@ -106,26 +127,24 @@ export const createOnlyPreviewClipboardCommand = (
     windowsHide: true as const
   };
   if (platform === 'darwin') {
-    // Every path is collected into one AppleScript list, so a multi-selection pastes as several
-    // items rather than only the first. Paths still travel as `argv`, never interpolated into the
-    // script text.
+    // Native file URLs support Finder and other applications' file paste. JXA avoids AppleScript's
+    // `items` property: assigning to that name compiles but fails at runtime with error -10006.
+    // Paths remain argv values, never interpolated into executable source.
     return {
       executable: '/usr/bin/osascript',
       args: [
+        '-l',
+        'JavaScript',
         '-e',
-        'on run argv',
-        '-e',
-        'set items to {}',
-        '-e',
-        'repeat with argument in argv',
-        '-e',
-        'set end of items to POSIX file (argument as text)',
-        '-e',
-        'end repeat',
-        '-e',
-        'set the clipboard to items',
-        '-e',
-        'end run',
+        [
+          "ObjC.import('AppKit');",
+          'function run(argv) {',
+          '  const fileURLs = argv.map(path => $.NSURL.fileURLWithPath(path));',
+          '  const pasteboard = $.NSPasteboard.generalPasteboard;',
+          '  pasteboard.clearContents;',
+          "  if (!pasteboard.writeObjects($(fileURLs))) throw new Error('File clipboard write failed');",
+          '}'
+        ].join('\n'),
         '--',
         ...targetPaths
       ],
@@ -232,11 +251,15 @@ export class OnlyPreviewClipboardService {
         items.map((item) => projectClipboardText(item, copyKind)).join('\n')
       );
     } catch (error) {
-      if (error instanceof OnlyPreviewContractError && error.code === 'INVALID_INPUT') throw error;
-      throw new OnlyPreviewContractError(
+      if (error instanceof OnlyPreviewContractError) throw error;
+      const failure = new OnlyPreviewContractError(
         'OPERATION_FAILED',
-        'The operating system could not copy this item.'
+        `The operating system could not copy this item${clipboardFailureDetail(error)}.`
       );
+      // Keep the underlying helper error for Main diagnostics, without putting argv/file paths in
+      // the public error message or making the cause enumerable in the IPC payload.
+      Object.defineProperty(failure, 'cause', { value: error });
+      throw failure;
     }
   }
 }

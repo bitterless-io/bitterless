@@ -304,6 +304,15 @@ export class MessageStoreState {
     const session = this.createEmptySession(options)
     this.updateSessionContextUsage(session)
     this.sessions.push(session)
+    // Start durable diagnostics with the chat identity before any model turn or shortcut.
+    if (session.source === 'cowork') void (async () => {
+      try {
+        const result = await coach.ensureSessionIo({ sessionId: session.id, workspace: this.cloneWorkspace(session.detail.workspace) })
+        if (!result?.ok) console.warn('[session-io] initialization failed:', result?.error || 'No response')
+      } catch (error) {
+        console.warn('[session-io] initialization failed:', error)
+      }
+    })()
     this.restoreActiveTurn(session)
     this.replayTaskSnapshot()
     return session
@@ -512,6 +521,7 @@ export class MessageStoreState {
     if (session.turn?.id === snapshot.turnId) {
       session.turn.generation = snapshot.generation
       session.turn.aborting = snapshot.state === 'aborting'
+      session.turn.stopError = snapshot.stopError
       return
     }
     if (session.turn) return
@@ -557,7 +567,8 @@ export class MessageStoreState {
       thinking: false,
       startedAt: snapshot.startedAt,
       lastActivityAt: Date.now(),
-      aborting: snapshot.state === 'aborting'
+      aborting: snapshot.state === 'aborting',
+      stopError: snapshot.stopError
     }
   }
 

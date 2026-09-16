@@ -1,0 +1,49 @@
+.workflow-taskbar {
+  --workflow-accent: #4e5882;
+  --workflow-soft: #eef0f7;
+  position: relative;
+  margin-bottom: 4px;
+  font-size: 11.5px;
+  color: #465467;
+  &__bar { display: flex; align-items: center; min-height: 30px; gap: 8px; }
+  &__trigger { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; min-height: 26px; padding: 3px 7px; border: 0; border-radius: 6px; background: var(--workflow-soft); color: var(--workflow-accent); font-size: 11.5px; font-weight: 650; cursor: pointer; }
+  &__chevron--open { transform: rotate(180deg); }
+  &__summary { min-width: 0; overflow: hidden; color: #7e8796; font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+  &__elapsed { flex-shrink: 0; margin-left: auto; color: #8d96a7; font-size: 10px; white-space: nowrap; }
+  &__popover { position: absolute; bottom: calc(100% + 5px); left: 0; right: 0; z-index: 22; display: flex; flex-direction: column; overflow: hidden; padding: 7px; border-radius: 10px; background: #fff; box-shadow: 0 9px 30px rgb(50 57 85 / 15%); }
+  &__header { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 5px 8px; }
+  &__actions { display: flex; align-items: center; gap: 4px; }
+  &__stop-all { border: 0; border-radius: 5px; padding: 4px 6px; background: transparent; color: #9d424c; font-size: 10.5px; cursor: pointer; }
+  &__stop-all:disabled { opacity: .5; cursor: default; }
+  &__list { min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #c8ced9 transparent; }
+  &__row { margin-bottom: 3px; border-radius: 7px; }
+  &__row:hover, &__row--expanded { background: #f6f7fa; }
+  &__row-line { display: flex; align-items: flex-start; gap: 3px; }
+  &__task { display: flex; flex: 1; align-items: flex-start; gap: 7px; min-width: 0; padding: 9px 4px 8px 7px; border: 0; border-radius: 6px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+  &__state-icon { flex-shrink: 0; margin-top: 2px; color: var(--workflow-accent); }
+  &__copy { flex: 1; min-width: 0; }
+  &__identity { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  &__identity strong { min-width: 0; overflow: hidden; color: #354058; font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+  &__state { flex-shrink: 0; color: var(--workflow-accent); font-size: 10px; }
+  &__work { display: block; margin-top: 4px; overflow: hidden; color: #748096; font-size: 11px; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
+  &__side { display: flex; width: 38px; flex: 0 0 38px; flex-direction: column; align-items: center; padding: 5px 2px 0; }
+  &__side time { color: #8d96a7; font-size: 9px; white-space: nowrap; }
+  &__icon-button { width: 24px !important; min-width: 24px !important; height: 24px !important; flex: 0 0 24px !important; }
+  &__detail { overflow-wrap: anywhere; padding: 2px 12px 12px 29px; color: #657187; font-size: 10.5px; line-height: 1.6; }
+  &__detail p { margin: 3px 0 7px; }
+  &__detail ol { margin: 4px 0 8px; padding-left: 16px; }
+  &__detail pre { margin: 6px 0; white-space: pre-wrap; font: inherit; }
+  &__phase { color: #858e9e; }
+  &__history { padding: 8px 7px 4px; color: #8d96a7; font-size: 10px; }
+  &__empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 22px 12px; color: #7c8799; font-size: 11px; text-align: center; }
+  &__empty p { margin: 0; }
+  &__footer { flex-shrink: 0; padding: 6px 5px 2px; color: #8d96a7; font-size: 9.5px; text-align: right; }
+  &__notice { display: flex; gap: 8px; align-items: center; padding: 3px 5px; color: #b23b44; font-size: 11px; }
+  &__notice button { border: 0; border-radius: 5px; background: var(--workflow-soft); color: var(--workflow-accent); padding: 3px 7px; cursor: pointer; }
+  &__error { color: #b23b44; }
+  button:focus-visible, &__list:focus-visible { outline: 0; box-shadow: inset 0 0 0 2px #8b97bc70; }
+  [data-status='failed'] &__state, [data-status='failed'] &__state-icon { color: #b23b44; }
+  [data-status='completed'] &__state, [data-status='completed'] &__state-icon { color: #35765b; }
+  [data-status='waiting'] &__state, [data-status='approval'] &__state, [data-status='retrying'] &__state { color: #b25e09; }
+  [data-status='queued'] &__state, [data-status='stopping'] &__state, [data-status='stopped'] &__state { color: #858d9d; }
+}

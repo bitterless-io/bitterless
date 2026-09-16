@@ -100,6 +100,7 @@ export interface Turn {
   startedAt: number
   lastActivityAt: number
   aborting: boolean
+  stopError?: string
   retry?: { attempt: number; max: number }
   steering?: {
     count: number

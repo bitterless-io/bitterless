@@ -16,6 +16,7 @@ import {
   onlyPreviewUntitledFolderName
 } from '@shared/onlypreview/onlyPreviewEntryName.shared';
 import { onlyPreviewOpenDiagnostics } from './onlyPreviewOpenDiagnostics.runtime';
+import { readOnlyPreviewClipboardFiles } from './onlyPreviewClipboardRead.service';
 import { onlyPreviewSelectionCoordinator } from './onlyPreviewSelectionCoordinator.service';
 import {
   onlyPreviewWorkspaceRegistry,
@@ -314,6 +315,7 @@ export class OnlyPreviewProjectNativeActionService {
         const extra = await this.authorizeCopyItem(request.hostToken, request.workspaceId, entry);
         items.push(extra);
       }
+      this.requireCurrentItem(authority);
       await onlyPreviewClipboardService.copyProjectItems(items, copyKind);
     } catch (error) {
       // **把原因记下来再弹那个对话框。** 原来这里是裸 `catch {}`,于是授权失败、路径非法、osascript
@@ -406,6 +408,30 @@ export class OnlyPreviewProjectNativeActionService {
           'NAME_EXISTS',
           'Too many untitled folders already exist here.'
         );
+  }
+
+  async pasteProjectItems(request: {
+    hostToken: string;
+    workspaceId: string;
+    parentRelativePath: string;
+  }): Promise<OnlyPreviewProjectEntry[]> {
+    const authority = request.parentRelativePath
+      ? onlyPreviewWorkspaceRegistry.getProjectAuthorityItemRef(request.hostToken, {
+          workspaceId: request.workspaceId, relativePath: request.parentRelativePath
+        })
+      : onlyPreviewWorkspaceRegistry.getProjectAuthorityRootRef(request.hostToken, request.workspaceId);
+    this.requireCurrentAuthority(authority);
+    const sourcePaths = await readOnlyPreviewClipboardFiles();
+    this.requireCurrentAuthority(authority);
+    if (!sourcePaths.length) return [];
+    const created = await fileSearchWindowService.pasteProjectItems({
+      workspaceId: authority.workspaceId,
+      workspaceGeneration: authority.workspaceGeneration,
+      parentRelativePath: authority.relativePath,
+      sourcePaths
+    });
+    this.requireCurrentAuthority(authority);
+    return created.map(({ relativePath, name, nodeKind }) => ({ relativePath, name, nodeKind }));
   }
 
   async createProjectFolder(request: {

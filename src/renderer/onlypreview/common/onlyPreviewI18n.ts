@@ -175,6 +175,11 @@ const en = {
     saveFailed: 'Settings could not be saved. Your previous settings are unchanged.'
   },
   guide: {
+    builtinTitle: 'Preview with your agent',
+    builtinHint: 'Ask in chat to view a local file or folder in OnlyPreview. Preview is built in and ready to use.',
+    builtinExample: 'Preview this file in OnlyPreview: <file or folder path>',
+    builtinTargetHint: 'Attach a file or include its path. For a file the agent just created, ask “Preview the file you just created”.',
+    builtinUnavailable: 'This guide could not be opened. Close it and try again.',
     eyebrow: 'LOCAL MCP',
     title: 'Copy the skill to your agent',
     completeSetup: 'Complete setup instructions',
@@ -410,6 +415,11 @@ const zh: Localized<typeof en> = {
     saveFailed: '无法保存设置。原有设置保持不变。'
   },
   guide: {
+    builtinTitle: '让 Agent 为你打开预览',
+    builtinHint: '在聊天中要求查看本地文件或目录，即可在 OnlyPreview 中预览。预览功能已内置，无需安装。',
+    builtinExample: '通过 onlypreview 预览：<文件或目录路径>',
+    builtinTargetHint: '附上文件或提供路径。对于 Agent 刚生成的文件，可以直接说“用 only preview 预览刚生成的文件”。',
+    builtinUnavailable: '无法打开使用指南，请关闭后重试。',
     eyebrow: 'LOCAL MCP',
     title: '将技能复制给你的 Agent',
     completeSetup: '完整设置说明',

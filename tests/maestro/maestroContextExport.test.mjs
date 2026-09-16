@@ -17,7 +17,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
@@ -37,7 +37,8 @@ const load = (path, dependencies, extra = '') => {
   assert.equal(result.diagnostics?.filter(item => item.category === ts.DiagnosticCategory.Error).length, 0);
   const module = { exports: {} };
   new Function('require', 'module', 'exports', result.outputText)(
-    name => Object.hasOwn(dependencies, name) ? dependencies[name] : require(name), module, module.exports
+    name => Object.hasOwn(dependencies, name) ? dependencies[name]
+      : name.startsWith('.') ? load(resolve(dirname(resolve(root, path)), `${name}.ts`), dependencies) : require(name), module, module.exports
   );
   return module.exports;
 };
@@ -104,7 +105,8 @@ const mainHarness = (ioLogDir = null) => {
   };
   const servicePath = 'src/main/agent/maestroAgent.service.ts';
   owner.agentSkillBriefs = method(servicePath, 'agentSkillBriefs', {
-    DRILL_BUILTIN_SKILL: { id: 'drill', name: 'drill', description: 'Fixture skill', triggers: [], inputs: [], seed: {}, missing: [] }
+    DRILL_BUILTIN_SKILL: { id: 'drill', name: 'drill', description: 'Fixture skill', triggers: [], inputs: [], seed: {}, missing: [] },
+    DEEP_FETCH_BUILTIN_SKILL: { id: 'deep-fetch', name: 'deep-fetch', description: 'Fixture fetch skill', triggers: [], inputs: [], seed: {}, missing: [] }
   });
   owner.copyNextTurnContext = method(servicePath, 'copyNextTurnContext', {
     ...real, clipboard: { writeText: text => clipboardWrites.push(text) },

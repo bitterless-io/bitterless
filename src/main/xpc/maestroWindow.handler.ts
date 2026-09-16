@@ -349,13 +349,10 @@ class MaestroWindowHandler extends XpcMainHandler {
   private async destroyMaestroRuntime(): Promise<void> {
     if (!this.cleanupPromise) {
       this.cleanupPromise = (async () => {
-        try {
-          await maestroWindowHelper.shutdown()
-        } finally {
-          maestroSqliteWindowHelper.destroy()
-          this.releaseProxy?.()
-          this.releaseProxy = null
-        }
+        await maestroWindowHelper.shutdown()
+        maestroSqliteWindowHelper.destroy()
+        this.releaseProxy?.()
+        this.releaseProxy = null
       })().finally(() => {
         this.cleanupPromise = null
       })

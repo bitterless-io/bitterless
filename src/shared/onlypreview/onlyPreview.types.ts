@@ -194,6 +194,7 @@ export type OnlyPreviewProjectItemCopyKind = 'item' | 'absolute-path' | 'relativ
 export interface OnlyPreviewProjectItemCopyRequest
   extends OnlyPreviewHostRequest, OnlyPreviewFileRef {
   copyKind: OnlyPreviewProjectItemCopyKind;
+  selection?: { relativePath: string; nodeKind: 'file' | 'directory' }[];
 }
 
 export interface OnlyPreviewProjectRootRequest extends OnlyPreviewHostRequest {
@@ -201,6 +202,10 @@ export interface OnlyPreviewProjectRootRequest extends OnlyPreviewHostRequest {
 }
 
 export interface OnlyPreviewCreateProjectFolderRequest extends OnlyPreviewProjectRootRequest {
+  parentRelativePath: string;
+}
+
+export interface OnlyPreviewPasteProjectItemsRequest extends OnlyPreviewProjectRootRequest {
   parentRelativePath: string;
 }
 
@@ -692,6 +697,9 @@ export interface OnlyPreviewApi {
   ): Promise<OnlyPreviewResult<void>>;
   reportProjectIndexFailed(params: OnlyPreviewProjectRootRequest): Promise<OnlyPreviewResult<void>>;
   copyProjectItem(params: OnlyPreviewProjectItemCopyRequest): Promise<OnlyPreviewResult<void>>;
+  pasteProjectItems(
+    params: OnlyPreviewPasteProjectItemsRequest
+  ): Promise<OnlyPreviewResult<OnlyPreviewProjectEntry[]>>;
   createProjectFolder(
     params: OnlyPreviewCreateProjectFolderRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewProjectEntry>>;

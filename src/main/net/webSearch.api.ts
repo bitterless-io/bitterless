@@ -80,6 +80,7 @@ export interface WebSearchApiParams {
   publishedAfter?: string
   /** 调用方(工具层)算出的有效期限。省略则用 REQUEST_TIMEOUT_MS。 */
   timeoutMs?: number
+  signal?: AbortSignal
 }
 
 export const searchWebThroughCore = async (params: WebSearchApiParams): Promise<WebSearchApiResponse> => {
@@ -113,9 +114,10 @@ export const searchWebThroughCore = async (params: WebSearchApiParams): Promise<
       },
       body: JSON.stringify(body),
       // 应用侧超时必须**长于**服务端的 20s,否则请求在后台跑完(并照样计费)而模型已判它失败。
-      signal: AbortSignal.timeout(deadlineMs)
+      signal: params.signal ? AbortSignal.any([params.signal, AbortSignal.timeout(deadlineMs)]) : AbortSignal.timeout(deadlineMs)
     })
   } catch (err) {
+    params.signal?.throwIfAborted()
     const name = (err as Error)?.name
     if (name === 'TimeoutError' || name === 'AbortError') {
       throw new WebSearchError('timeout', `the search request timed out after ${Math.round(deadlineMs / 1000)}s`)

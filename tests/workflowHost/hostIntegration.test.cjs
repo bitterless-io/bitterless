@@ -1,0 +1,262 @@
+const { test } = require('node:test')
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const path = require('node:path')
+const ts = require('typescript')
+const root = path.resolve(__dirname, '../..')
+const bl = fs.existsSync(path.join(root, 'src/main/agent/maestroAgent.service.ts'))
+
+function load(relative, modules = {}) {
+  const filename = path.join(root, relative)
+  const code = ts.transpileModule(fs.readFileSync(filename, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
+  const module = { exports: {} }
+  new Function('require', 'module', 'exports', '__dirname', code)((name) => {
+    if (name in modules) return modules[name]
+    if (name.startsWith('node:')) return require(name)
+    throw Error('Unexpected test dependency: ' + name)
+  }, module, module.exports, path.dirname(filename))
+  return module.exports
+}
+const context = load('src/main/agent/runtime/agentSessionContext.ts')
+function integration(tools = () => [], runtime, assertCanStartShortcut) {
+  let supervisor
+  class Supervisor {
+    constructor(deps) { this.deps = deps; this.stops = []; supervisor = this }
+    async start(request, runtime) { this.request = request; this.runtime = runtime; return { id: 'run-1', ...request, status: 'running' } }
+    waitForRun() { return new Promise((resolve) => { this.finish = resolve }) }
+    stopAgent(...ids) { this.stops.push(ids) }
+    stopRun(...ids) { this.stops.push(ids) }
+    stopSession(...ids) { this.stops.push(ids) }
+    list() { return { runs: [], revision: 1 } }
+    setAgentStatus(...args) { this.status = args }
+    dispose() { this.disposed = true }
+  }
+  const { WorkflowHostIntegration } = load('src/main/agent/workflowEngine/hostIntegration.ts', {
+    electron: { app: { getPath: () => '/test-user-data' } },
+    './supervisor': { WorkflowSupervisor: Supervisor }, '../runtime/agentSessionContext': context,
+    '../runtime/modelIoLog': { modelIoLog: { append() {} } }
+  })
+  const host = new WorkflowHostIntegration({
+    broadcast() {}, tools, assertCanStartShortcut,
+    runtime: runtime || (async () => ({ cwd: '/test-project', providerId: 'chosen-provider', modelId: 'chosen-model', thinkingLevel: 'low', authPath: '/test-auth', systemPrompt: 'Selected project instructions' }))
+  })
+  return { host, supervisor }
+}
+const tick = () => new Promise((resolve) => setImmediate(resolve))
+
+test('workflow_run waits for final output and preserves selected session, model, and project', async () => {
+  const { host, supervisor } = integration(() => [{ name: 'web_search', description: 'search', params: [], execute: async () => '' }])
+  const tool = host.chatTools('chat-a').find((tool) => tool.name === 'workflow_run')
+  let settled = false
+  const result = tool.execute({ name: 'research', input: 'Verify these claims' }).then((value) => { settled = true; return value })
+  await tick()
+  assert.equal(settled, false)
+  assert.equal(supervisor.request.sessionId, 'chat-a')
+  assert.equal(supervisor.request.cwd, '/test-project')
+  assert.equal(supervisor.runtime.providerId, 'chosen-provider')
+  assert.equal(supervisor.runtime.modelId, 'chosen-model')
+  assert.equal(supervisor.runtime.systemPrompt, 'Selected project instructions')
+  assert.equal(supervisor.runtime.tools[0].execute, undefined)
+  supervisor.finish({ status: 'completed', result: 'Cited conclusion' })
+  assert.equal(await result, 'Cited conclusion')
+})
+
+test('rejects ambiguous entries, missing chat owner, unknown workflow, and unsafe file inputs', async () => {
+  const { host } = integration()
+  const tool = host.chatTools('chat-a').find((tool) => tool.name === 'workflow_run')
+  await assert.rejects(tool.execute({ name: 'research', path: '/work/a.ts', input: 'x' }), /exactly one/)
+  for (const sessionId of ['', 'default', 'workflow:parent:child']) {
+    await assert.rejects(host.startWorkflow({ sessionId, entry: { kind: 'builtin', name: 'research' }, input: 'x' }), /explicit chat/)
+  }
+  await assert.rejects(host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'builtin', name: 'unknown' }, input: 'x' }), /Unknown/)
+  await assert.rejects(host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'file', path: '../relative.ts' }, input: 'x' }), /absolute/)
+  assert.equal((await host.listWorkflows()).length, 6)
+})
+
+test('host tool cancellation waits for the real resource to stop, with a separate per-agent context', async () => {
+  const controller = new AbortController()
+  let release
+  let receivedSignal
+  let owner
+  let parent
+  const { supervisor } = integration((signal, onApproval, sessionId) => [{
+    name: 'web_fetch', description: 'fetch', params: [],
+    execute: async () => {
+      receivedSignal = signal; owner = context.currentAgentSessionKey(); parent = sessionId
+      onApproval(true)
+      await new Promise((resolve) => { release = resolve })
+      return 'late result'
+    }
+  }])
+  let settled = false
+  const task = supervisor.deps.executeTool({ sessionId: 'chat-a', runId: 'run-a', agentId: 'agent-b', callId: 'call-c', toolName: 'web_fetch', args: {} }, controller.signal)
+  const observed = task.finally(() => { settled = true })
+  await tick()
+  controller.abort(new DOMException('Stopped', 'AbortError'))
+  await tick()
+  assert.equal(settled, false)
+  assert.equal(receivedSignal, controller.signal)
+  assert.equal(owner, 'workflow:run-a:agent-b')
+  assert.equal(parent, 'chat-a')
+  assert.deepEqual(supervisor.status, ['chat-a', 'run-a', 'agent-b', 'approval', 'Awaiting approval: web_fetch'])
+  release()
+  await assert.rejects(observed, { name: 'AbortError' })
+  assert.equal(context.currentAgentSessionKey(), undefined)
+})
+
+test('unsupported host actions cannot bypass the workflow capability boundary', async () => {
+  let ran = false
+  const { host, supervisor } = integration(() => [{ name: 'browser_exec', description: '', params: [], execute: async () => { ran = true; return '' } }])
+  await assert.rejects(supervisor.deps.executeTool({ sessionId: 'chat-a', runId: 'run-a', agentId: 'agent-b', callId: 'c', toolName: 'browser_exec', args: {} }, new AbortController().signal), /unavailable or cannot be cancelled/)
+  assert.equal(ran, false)
+  await host.stopAgent({ sessionId: 'chat-a', runId: 'run-a', agentId: 'agent-b' })
+  assert.deepEqual(supervisor.stops, [['chat-a', 'run-a', 'agent-b']])
+})
+
+test('cancel one approval while another remains live in the same parent chat', async () => {
+  const shared = load(bl ? 'src/shared/maestro/task.api.ts' : 'src/shared/task.api.ts')
+  const { taskRegistry } = load(bl ? 'src/main/maestro/tasks/taskRegistry.service.ts' : 'src/main/tasks/taskRegistry.service.ts', {
+    'electron-xpc/main': { xpcMain: { broadcast() {} } },
+    '@main/agent/runtime/agentSessionContext': context,
+    [bl ? '@maestro-shared/task.api' : '@shared/task.api']: shared
+  })
+  const ctl = new AbortController()
+  const first = context.runInAgentSession('workflow:run:a', () => taskRegistry.askOperator({ sessionId: 'chat-a', signal: ctl.signal, title: 'First' }))
+  const second = context.runInAgentSession('workflow:run:b', () => taskRegistry.askOperator({ sessionId: 'chat-a', title: 'Second' }))
+  const tasks = taskRegistry.list()
+  assert.deepEqual(tasks.map((task) => task.sessionId), ['chat-a', 'chat-a'])
+  ctl.abort()
+  assert.equal(await first, false)
+  const live = taskRegistry.list().find((task) => task.state.title === 'Second')
+  assert.equal(live.state.status, 'running')
+  assert.ok(live.state.pendingConfirm)
+  taskRegistry.resolveConfirm({ taskId: live.id, confirmId: live.state.pendingConfirm.id, confirm: true })
+  assert.equal(await second, true)
+  const count = taskRegistry.list().length
+  await assert.rejects(taskRegistry.askOperator({ title: 'Already stopped', signal: ctl.signal }), { name: 'AbortError' })
+  assert.equal(taskRegistry.list().length, count)
+})
+
+for (const api of ['search', 'fetch']) test(`${api} AbortSignal reaches HTTP and rejects as cancellation`, async () => {
+  let signal
+  let aborted = false
+  const fetch = async (_url, options) => {
+    signal = options.signal
+    return new Promise((_resolve, reject) => signal.addEventListener('abort', () => { aborted = true; reject(signal.reason) }, { once: true }))
+  }
+  const modules = { undici: { fetch } }
+  let call
+  if (api === 'search') {
+    modules['@main/auth/customerSession.service'] = { customerSessionService: { current: { baseUrl: 'https://test.invalid', token: 'test-only' } } }
+    modules['@main/networking/clients/relay.client'] = { resolveAiCrmsRelayRoot: () => ({ baseUrl: 'https://test.invalid', region: 'TEST' }) }
+    modules['@shared/session.api'] = { isCompleteAuthSession: () => true }
+    const entry = load(bl ? 'src/main/net/webSearch.api.ts' : 'src/main/networking/api/webSearch.api.ts', modules)
+    call = (signal) => (entry.searchWebThroughCore || entry.searchWebThroughRelay)({ query: 'test', signal, session: { jwt_token: 'test-only', iid: 1 } })
+  } else {
+    modules['@main/logging/moduleLog'] = { moduleLog: () => ({ info() {}, warn() {} }) }
+    modules['@main/net/fetchPolicy'] = { assertFetchableUrl: (url) => new URL(url), narrowForLog: (value) => value }
+    modules['@main/net/articleExtract'] = { extractArticle() { throw Error('must not reach extraction') } }
+    call = (signal) => load('src/main/net/webFetch.ts', modules).fetchWebPage('https://test.invalid', 1000, signal)
+  }
+  const ctl = new AbortController()
+  const promise = call(ctl.signal)
+  assert.ok(signal)
+  ctl.abort(new DOMException('Stopped', 'AbortError'))
+  await assert.rejects(promise, { name: 'AbortError' })
+  assert.equal(aborted, true)
+})
+
+function chatDao(options = {}) {
+  const mutations = []
+  let stops = 0
+  const workflows = {
+    stopSession: async () => { stops++; return options.stop ? options.stop() : { ok: true } },
+    listRuns: async () => 'snapshot' in options ? options.snapshot : { runs: [], revision: 1 }
+  }
+  const db = {
+    prepare: (sql) => ({ get: () => options.hasMessages, run: () => mutations.push(sql) }),
+    transaction: (fn) => fn
+  }
+  const entries = load(bl ? 'src/preload/maestro/sqlite/maestroChat.dao.ts' : 'src/preload/sqlite/cowork_chat.dao.ts', {
+    'electron-xpc/preload': { XpcPreloadHandler: class {}, createXpcPreloadEmitter: () => workflows },
+    './sqliteManager': { sqliteManager: { db } }
+  })
+  return { dao: entries.maestroChatDao || entries.coworkChatDao, mutations, stops: () => stops }
+}
+
+test('chat deletion waits for confirmed workflow cleanup before SQL, and refuses incomplete cleanup', async () => {
+  let release
+  const pending = chatDao({ stop: () => new Promise((resolve) => { release = resolve }) })
+  const deleted = pending.dao.deleteSession({ id: 'chat-a' })
+  await tick()
+  assert.equal(pending.mutations.length, 0)
+  release({ ok: true })
+  assert.deepEqual(await deleted, { ok: true })
+  assert.equal(pending.mutations.length, 2)
+  for (const options of [
+    { stop: async () => null }, { snapshot: null },
+    { snapshot: { runs: [{ status: 'stopping' }], revision: 1 } }
+  ]) {
+    const failed = chatDao(options)
+    await assert.rejects(failed.dao.deleteSession({ id: 'chat-a' }), /chat was kept/)
+    assert.equal(failed.mutations.length, 0)
+  }
+  const nonEmpty = chatDao({ hasMessages: true })
+  assert.deepEqual(await nonEmpty.dao.deleteSession({ id: 'chat-a', onlyIfEmpty: true }), { ok: false })
+  assert.equal(nonEmpty.stops(), 0)
+})
+
+test('stopping a chat fences startup while runtime configuration is still loading', async () => {
+  let release
+  const { host, supervisor } = integration(() => [], () => new Promise((resolve) => { release = resolve }))
+  const pending = host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'builtin', name: 'mini-demo' }, input: 'x' })
+  const rejected = assert.rejects(pending, { name: 'AbortError' })
+  const stopped = host.stopSession({ sessionId: 'chat-a' })
+  await assert.rejects(host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'builtin', name: 'mini-demo' }, input: 'x' }), /stopping/)
+  release({ cwd: '/test-project', providerId: 'chosen', modelId: 'model', thinkingLevel: 'low', authPath: '/test-auth', systemPrompt: '' })
+  await rejected
+  assert.deepEqual(await stopped, { ok: true })
+  assert.equal(supervisor.request, undefined)
+  await host.dispose()
+  await assert.rejects(host.startWorkflow({ sessionId: 'chat-b', entry: { kind: 'builtin', name: 'mini-demo' }, input: 'x' }), /stopping/)
+})
+
+
+test('shortcut startup uses host admission before and after runtime, with no renderer cwd override', async () => {
+  const checks = []
+  let receivedCwd
+  const { host, supervisor } = integration(undefined, async (sessionId, cwd) => {
+    receivedCwd = cwd
+    return { cwd: '/host-selected-project', providerId: 'selected', modelId: 'selected-model' }
+  }, (id, others) => checks.push({ id, others }))
+  await host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'builtin', name: 'mini-demo' }, input: 'task', origin: 'shortcut', cwd: '/renderer-override' })
+  assert.equal(checks.length, 2)
+  assert.equal(receivedCwd, undefined)
+  assert.equal(supervisor.request.cwd, '/host-selected-project')
+  assert.equal(supervisor.runtime.providerId, 'selected')
+})
+
+test('busy and duplicate shortcut starts are rejected without starting extra workers', async () => {
+  const blocked = integration(undefined, undefined, () => { throw Error('chat busy') })
+  await assert.rejects(blocked.host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'builtin', name: 'mini-demo' }, input: 'task', origin: 'shortcut' }), /chat busy/)
+  assert.equal(blocked.supervisor.request, undefined)
+  // Natural-language tool execution belongs to its existing root turn and skips the manual-start gate.
+  const tool = blocked.host.chatTools('chat-a').find(tool => tool.name === 'workflow_run')
+  const result = tool.execute({ name: 'mini-demo', input: 'task' })
+  await tick()
+  blocked.supervisor.finish({ status: 'completed', result: 'done' })
+  assert.equal(await result, 'done')
+  let release
+  const slow = integration(undefined, () => new Promise(resolve => { release = () => resolve({ cwd: '/host-project', providerId: 'selected', modelId: 'selected-model' }) }), () => {})
+  const request = { sessionId: 'chat-a', entry: { kind: 'builtin', name: 'mini-demo' }, input: 'task', origin: 'shortcut' }
+  const first = slow.host.startWorkflow(request)
+  await tick()
+  await assert.rejects(slow.host.startWorkflow(request), /already starting/)
+  release()
+  await first
+})
+
+test('workflow shortcut handler always supplies the authoritative shortcut origin', () => {
+  const source = fs.readFileSync(path.join(root, 'src/main/xpc/workflow.handler.ts'), 'utf8')
+  assert.match(source, /startWorkflow\(\{ \.\.\.params, origin: 'shortcut' \}\)/)
+})

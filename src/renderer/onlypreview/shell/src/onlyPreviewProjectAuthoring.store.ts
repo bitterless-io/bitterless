@@ -18,6 +18,7 @@ import type {
 } from '@shared/onlypreview/onlyPreview.types';
 import { onlyPreviewClient } from '../../common/onlyPreviewClient';
 import { onlyPreviewI18n } from '../../common/onlyPreviewI18n';
+import { describeOnlyPreviewError } from './onlyPreviewErrorDetail.store';
 import {
   resolveOnlyPreviewEditCommit,
   type OnlyPreviewEditState
@@ -25,6 +26,8 @@ import {
 import { isOnlyPreviewPathRemoved } from '@shared/onlypreview/onlyPreviewDeleteSelection.shared';
 import { getOnlyPreviewParentPath } from './onlyPreviewTree.service';
 import { onlyPreviewShellStore } from './onlyPreviewShell.store';
+import { copyOnlyPreviewTreeSelection } from './onlyPreviewTreeSelection.store';
+import type { OnlyPreviewBrowseProjectionResult } from './onlyPreviewBrowseProjection.service';
 
 /**
  * The slice of the shell store this controller needs.
@@ -40,6 +43,7 @@ export interface OnlyPreviewProjectAuthoringHost {
   selectedRelativePath: string;
   focusedRelativePath: string;
   treeSelectedRelativePath: string | null;
+  collapseTreeSelection(): void;
   errorMessage: string;
   refreshIndex(): Promise<void>;
   /**
@@ -47,6 +51,11 @@ export interface OnlyPreviewProjectAuthoringHost {
    * here rather than behind a store method because the shell store sits on its 800-line budget.
    */
   browseProjection: {
+    reloadParentListings(
+      relativePaths: readonly string[],
+      workspaceId: string,
+      expandedPaths: Set<string>
+    ): Promise<OnlyPreviewBrowseProjectionResult>;
     removeDeletedPaths(
       relativePaths: readonly string[],
       workspaceId: string,
@@ -65,6 +74,7 @@ export interface OnlyPreviewProjectAuthoringHost {
 export class OnlyPreviewProjectAuthoringController {
   editing: OnlyPreviewEditState | null = null;
   busy = false;
+  private revealRevision = 0;
 
   constructor(private readonly host: OnlyPreviewProjectAuthoringHost) {}
 
@@ -75,15 +85,44 @@ export class OnlyPreviewProjectAuthoringController {
    * confirmed, so by the time this runs the folder exists on disk. All that is left is to make its
    * row appear and select it — there is no editor to open and no failure to report here.
    */
-  async revealCreatedFolder(relativePath: string): Promise<void> {
-    if (this.busy) return;
-    this.busy = true;
+  async revealCreatedFolder(relativePath: string, workspaceId: string): Promise<void> {
+    await this.revealCreatedEntries([
+      { relativePath, name: relativePath.split('/').at(-1) ?? relativePath, nodeKind: 'directory' }
+    ], workspaceId);
+  }
+
+  async revealCreatedEntries(entries: OnlyPreviewProjectEntry[], workspaceId: string): Promise<void> {
+    const workspace = this.host.workspace;
+    if (!workspace || workspace.workspaceId !== workspaceId || !entries.length) return;
+    const revision = ++this.revealRevision;
+    const isCurrent = (): boolean => this.host.workspace === workspace;
     try {
-      const parentRelativePath = getOnlyPreviewParentPath(relativePath);
-      if (parentRelativePath) this.host.expandedPaths.add(parentRelativePath);
-      await this.settle({ relativePath, name: relativePath.split('/').at(-1) ?? relativePath });
-    } finally {
-      this.busy = false;
+      const result = await this.host.browseProjection.reloadParentListings(
+        entries.map((entry) => entry.relativePath), workspaceId, this.host.expandedPaths
+      );
+      if (!isCurrent()) return;
+      if (result.changed) this.host.index = result.index;
+      if (result.error) throw result.error;
+      if (!result.loaded || revision !== this.revealRevision) return;
+      for (const entry of entries) {
+        let parent = getOnlyPreviewParentPath(entry.relativePath);
+        while (parent) {
+          this.host.expandedPaths.add(parent);
+          parent = getOnlyPreviewParentPath(parent);
+        }
+      }
+      const entry = entries.find((created) =>
+        this.host.index?.entries.some((item) => item.relativePath === created.relativePath)
+      );
+      if (!entry) return;
+      this.host.collapseTreeSelection();
+      this.host.treeSelectedRelativePath = entry.relativePath;
+      this.host.selectedRelativePath = entry.relativePath;
+      this.host.focusedRelativePath = entry.relativePath;
+    } catch (error) {
+      if (isCurrent() && revision === this.revealRevision) {
+        this.host.errorMessage = describeOnlyPreviewError(error);
+      }
     }
   }
 
@@ -221,7 +260,8 @@ const isHostEvent = (value: unknown): value is { hostId: string; workspaceId: st
   typeof value === 'object' &&
   typeof (value as { hostId?: unknown }).hostId === 'string' &&
   typeof (value as { workspaceId?: unknown }).workspaceId === 'string' &&
-  (value as { hostId: string }).hostId === onlyPreviewEnv.hostId;
+  (value as { hostId: string }).hostId === onlyPreviewEnv.hostId &&
+  (value as { workspaceId: string }).workspaceId === onlyPreviewShellStore.workspace?.workspaceId;
 
 /**
  * Project intents that originate in Main.
@@ -234,7 +274,7 @@ export const subscribeOnlyPreviewProjectIntents = (): void => {
   xpcRenderer.subscribe(ONLY_PREVIEW_PROJECT_NEW_FOLDER_EVENT, ({ params }) => {
     const event = params as OnlyPreviewProjectNewFolderEvent;
     if (!isHostEvent(event) || !event.relativePath) return;
-    void onlyPreviewProjectAuthoring.revealCreatedFolder(event.relativePath);
+    void onlyPreviewProjectAuthoring.revealCreatedFolder(event.relativePath, event.workspaceId);
   });
   xpcRenderer.subscribe(ONLY_PREVIEW_PROJECT_RENAME_EVENT, ({ params }) => {
     const event = params as OnlyPreviewProjectRenameEvent;
@@ -249,10 +289,6 @@ export const subscribeOnlyPreviewProjectIntents = (): void => {
   xpcRenderer.subscribe(ONLY_PREVIEW_COPY_PROJECT_ITEM_EVENT, ({ params }) => {
     const event = params as OnlyPreviewCopyProjectItemEvent;
     if (!isCopyIntent(event)) return;
-    // The tree selection is what the shortcut has always acted on; the root row is the empty path.
-    void onlyPreviewShellStore.copyProjectItem(
-      onlyPreviewShellStore.treeSelectedRelativePath ?? onlyPreviewShellStore.selectedRelativePath,
-      event.copyKind
-    );
+    void copyOnlyPreviewTreeSelection(event.copyKind);
   });
 };

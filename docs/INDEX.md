@@ -36,7 +36,7 @@
   keep the existing task running while creating/selecting a fresh conversation.
 
 - [Explicit browser-use lifecycle and favicon animation](plan/tasks/browseruse-lifecycle-002.md) — implemented; code-verified; human testing pending;
-  start/end host tools, task-scoped activity and ordinary/drill cleanup using the existing orbit animation.
+  start/end host tools, task-scoped activity and ordinary/drill cleanup; expanding/contracting halo added and compiled.
 
 - [Browseruse and drill isolation repair](plan/tasks/browseruse-isolation-001.md) — implemented; code-verified; human testing pending;
   review fixes, explicit drill membership and recording boundaries.
@@ -378,9 +378,13 @@ design document.
   with centered Tabler SVG glyphs; [review 1](plan/reviews/maestro-tab-iconbtn-controls-078-1.md)
   passed.
 - [Maestro compact address row](issues/maestro-address-row-too-tall.md) - implemented; owner
-  verification pending: reduce the address row to 42px, align navigation and address at 28px, and
-  keep Main's first-frame native-view offset synchronized at 78px;
+  verification pending: reduce the address row to 42px and keep Main's first-frame native-view
+  offset synchronized at 78px; internal control dimensions now follow Cowork (entry below);
   [review 1](plan/reviews/maestro-address-row-compact-082-1.md) passed.
+- [Maestro address row matches Cowork spacing and icons](issues/maestro-address-row-cowork-spacing.md) -
+  implemented; owner testing pending: match Cowork's actual 13px-root spacing, 26px buttons and
+  SVG sizes; preserve the 42px outer row and 78px native-view offset. Geometry 3/3 and four
+  static Chromium layout comparisons passed.
 - [Maestro Control entries and Arco theme](issues/maestro-control-connector-demo-and-arco-blue.md) -
   implemented; owner verification pending: retire the empty Control Connector and visible Demo
   entries while restoring the canonical Royal Blue theme for Maestro Arco Buttons.

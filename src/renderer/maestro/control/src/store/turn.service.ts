@@ -679,7 +679,8 @@ export class TurnService extends CommonService<MessageStoreState> {
     try {
       await this.finishReply(session, turn, reply)
     } finally {
-      if (session.turn?.id === turn.id) {
+      // An abort owns finalization until main confirms that all resources have stopped.
+      if (session.turn?.id === turn.id && !turn.aborting) {
         turnDiagnostics.emit('send-terminal', {
           turnId: turn.id,
           outcome: 'failure',
@@ -711,7 +712,7 @@ export class TurnService extends CommonService<MessageStoreState> {
   }
 
   private async finishReply(session: MessageSession, turn: Turn, reply: AgentReply): Promise<void> {
-    if (session.turn?.id !== turn.id) return
+    if (session.turn?.id !== turn.id || turn.aborting) return
     const store = this._state
     // Drain the RAF tail before choosing the final segment. A reply text is the whole logical Turn,
     // while the timeline may already contain sealed segments; never copy that whole payload into
@@ -795,14 +796,17 @@ export class TurnService extends CommonService<MessageStoreState> {
   async stop(sessionId: string): Promise<void> {
     const session = this._state.getSession(sessionId)
     const turn = session?.turn
-    if (!session || session.archivedAt || !turn || turn.aborting) return
+    if (!session || session.archivedAt || !turn || (turn.aborting && !turn.stopError)) return
     turn.aborting = true
+    turn.stopError = undefined
     try {
-      await coach.abortAgent({ sessionId: session.id, turnId: turn.id })
-    } catch {
-      /* best effort */
+      const reply = await coach.abortAgent({ sessionId: session.id, turnId: turn.id })
+      if (reply?.ok !== true) throw new Error(i18nHelper.workflow.stopError)
+      this.forceStop(session, turn.id)
+    } catch (error) {
+      if (session.turn?.id !== turn.id) return
+      turn.stopError = error instanceof Error ? error.message : String(error)
     }
-    this.forceStop(session, turn.id)
   }
 
   /** 收尾一个回合。`turnId` 对不上说明它已被别处收尾,直接放行。 */

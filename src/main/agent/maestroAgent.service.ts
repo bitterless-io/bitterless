@@ -1,3 +1,9 @@
+import { SessionIoInitialization } from './sessionIoInitialization'
+import { WorkflowHostIntegration } from './workflowEngine/hostIntegration'
+import { buildWebSearchTools } from './tools/webSearchTools'
+import { buildWebFetchTools } from './tools/webFetchTools'
+import { readProjectInstructions } from './prompt/projectInstructions'
+import { isAbsolute } from 'node:path'
 import { clipboard, dialog, shell } from 'electron'
 import type { BrowserWindow } from 'electron'
 import { createXpcMainEmitter, xpcMain } from 'electron-xpc/main'
@@ -225,6 +231,7 @@ export interface MaestroAgentInstances {
 }
 
 interface ActiveAgentTurn extends AgentTurnSnapshot {
+  abortOperation?: Promise<{ ok: true }>
   continuationOf?: string
   generation: number
   rootStarted: boolean
@@ -265,6 +272,56 @@ const DRILL_BUILTIN_SKILL: AgentSkillBrief = {
 
 @injectable()
 export class MaestroAgentService extends CommonService<MaestroAgentServiceState> {
+  private workflowHost: WorkflowHostIntegration | null = null
+
+  getWorkflowHost(): WorkflowHostIntegration {
+    this.assertAgentRuntimeActive()
+    if (!this.workflowHost) this.workflowHost = new WorkflowHostIntegration({
+      broadcast: (snapshot) => xpcMain.broadcast('agent/workflows', snapshot),
+      assertCanStartShortcut: (sessionId, otherWorkflowSessions) => {
+        this.assertAgentRuntimeActive()
+        if (this.activeAgentTurns.has(sessionId)) throw new Error('This chat is busy. Wait for its current turn to finish or stop it first.')
+        if (new Set([...this.activeAgentTurns.keys(), ...otherWorkflowSessions]).size >= MAX_CONCURRENT_AGENT_TURNS) throw new Error('All chat execution slots are busy. Wait for one to finish.')
+      },
+      runtime: async (sessionId, requestedCwd) => {
+        await this.loadHostToolPolicies()
+        const cwd = requestedCwd || this._state.projectRootForSession(sessionId)
+        if (!cwd || !isAbsolute(cwd)) throw new Error('Select a project workspace before starting a workflow.')
+        if (!statSync(cwd).isDirectory()) throw new Error('The selected workflow workspace is not a directory.')
+        const providerId = this.activeLlmProvider
+        const modelId = this.activeLlmModel
+        if (!providerId || !modelId) throw new Error('Select a provider and model before starting a workflow.')
+        return {
+          cwd, providerId, modelId, thinkingLevel: this.activeLlmEffort === 'default' ? 'low' : this.activeLlmEffort,
+          authPath: maestroAuthPath(), modelsPath: maestroModelsPath(), agentDir: maestroAgentDir(),
+          systemPrompt: [BASE_SYSTEM_PROMPT, await readProjectInstructions(cwd), A7_DISCIPLINE,
+            'You are a workflow subagent inside Bitterless. Report verifiable findings for your assigned task. Browser, recorded-skill, and integration tools are unavailable in this workflow runtime; report missing evidence explicitly.']
+            .filter(Boolean).join('\n\n')
+        }
+      },
+      tools: (signal, onApproval, sessionId) => {
+        const registry = new HostToolRegistry({
+          scope: 'cowork', policies: this.hostToolPolicies,
+          onConfirm: async (request) => {
+            onApproval?.(true)
+            try { return await this.confirmHostToolCall(request, signal, sessionId) }
+            finally { onApproval?.(false) }
+          }
+        })
+        registry.add(...buildWebSearchTools(signal), ...buildWebFetchTools(undefined, signal).filter((tool) => tool.name === 'web_fetch'))
+        return registry.toRuntimeTools()
+      }
+    })
+    return this.workflowHost
+  }
+
+  workflowTools(sessionId: string): PiToolSpec[] { return this.getWorkflowHost().chatTools(sessionId) }
+
+  async shutdownWorkflows(): Promise<void> {
+    await this.workflowHost?.dispose()
+    this.workflowHost = null
+  }
+
   private pi: MaestroAgent | null = null
   private piDelegate: DelegateAgent | null = null
   private piGen: BaseAgent | null = null
@@ -462,6 +519,16 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       activeTurn.reservationTimer = undefined
       activeTurn.resolveRootStart(false)
       this.broadcastAgentTurn({ turn: this.agentTurnSnapshot(activeTurn) })
+    }
+    try {
+      await this.shutdownWorkflows()
+    } catch (error) {
+      this.shuttingDown = false
+      for (const activeTurn of activeTurns) {
+        activeTurn.stopError = error instanceof Error ? error.message : String(error)
+        this.broadcastAgentTurn({ turn: this.agentTurnSnapshot(activeTurn) })
+      }
+      throw error
     }
     const agents = new Set(
       [
@@ -858,7 +925,8 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       generation: turn.generation,
       rootText: turn.rootText,
       startedAt: turn.startedAt,
-      state: turn.state
+      state: turn.state,
+      stopError: turn.stopError
     }
   }
 
@@ -887,6 +955,8 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     reply?: AgentReply
   ): void {
     if (this.activeAgentTurns.get(turn.sessionId) !== turn) return
+    // Root completion can race resource cleanup. Only confirmed cleanup may finish a stopped turn.
+    if (reason === 'completed' && turn.state === 'aborting') return
     const snapshot = this.agentTurnSnapshot(turn)
     if (turn.reservationTimer) clearTimeout(turn.reservationTimer)
     turn.reservationTimer = undefined
@@ -917,21 +987,29 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     }
   }
 
-  /**
-   * `/copy_session_path` —— 把这个会话的模型 I/O jsonl **目录**绝对路径写进剪贴板。
-   *
-   * 为什么是目录而不是文件:一个会话的 io 按 `part-NNN.jsonl` 分卷,给单个文件名只交出其中一段。
-   *
-   * 为什么不需要 runtime 活着:`modelIoLog.dirForSession()` 活桶优先、拿不到就按目录名后缀
-   * 在盘上找最近的一个 —— 所以**重启之后翻旧会话也能拿到路径**。这正是它作为取证工具的价值,
-   * 因此这里**故意不调** `assertAgentRuntimeActive()`(`copyNextTurnContext` 需要它,
-   * 因为那条要读活着的 runtime 上下文;这条只问盘上的路径)。
-   *
-   * 不新建审计子系统:`modelIoLog` 本来就在往那儿写,这里只是把位置说出来。
-   */
-  async copySessionIoPath(params: { sessionId: string }): Promise<SessionIoPathResult> {
+  /** Saved evidence is read unchanged; new/missing chats receive a clearly labelled configuration snapshot. */
+  private readonly sessionIoInitialization = new SessionIoInitialization()
+
+  async ensureSessionIo(params: { sessionId: string; workspace?: WorkspaceRef }, source: 'new-chat' | 'missing-history' = 'new-chat'): Promise<SessionIoPathResult> {
     try {
-      const dir = await this.resolveSessionIoDirectory(params?.sessionId)
+      const path = await this.sessionIoInitialization.ensure(params?.sessionId, source, async () => {
+        const key = this.agentSessionKey(params.sessionId)
+        const existing = key === 'default' ? this.pi : this.maestroAgents.get(key)
+        const agent = existing || this.getMaestroAgent(key)
+        const workspace = params.workspace?.path || this._state.projectRootForSession(key)
+        // A running agent owns its prompt; inspection must never mutate it.
+        if (!existing) await agent.setProjectRoot(workspace)
+        return { ...agent.sessionIoConfiguration(), workspace }
+      })
+      return { ok: true, path }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  async copySessionIoPath(params: { sessionId: string; workspace?: WorkspaceRef }): Promise<SessionIoPathResult> {
+    try {
+      const dir = await this.resolveSessionIoDirectory(params?.sessionId, params.workspace)
       clipboard.writeText(dir)
       return { ok: true, path: dir }
     } catch (error) {
@@ -939,12 +1017,12 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     }
   }
 
-  private async resolveSessionIoDirectory(sessionId: string): Promise<string> {
+  private async resolveSessionIoDirectory(sessionId: string, workspace?: WorkspaceRef): Promise<string> {
     const id = typeof sessionId === 'string' ? sessionId.trim() : ''
     if (!id) throw new Error('A chat session is required.')
-    const dir = await modelIoLog.dirForSession(this.agentSessionKey(id))
-    if (!dir) throw new Error(i18nHelper.getMessages().maestroControl.chat.sessionLogMissing)
-    return dir
+    const result = await this.ensureSessionIo({ sessionId: id, workspace }, 'missing-history')
+    if (!result.ok) throw new Error(result.error)
+    return result.path
   }
 
   async openSessionIoDirectory(params: { sessionId: string }): Promise<SessionIoPathResult> {
@@ -1322,14 +1400,16 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     return { ok: true }
   }
 
-  async abortAgent(params: { sessionId: string; turnId: string }): Promise<void> {
+  async abortAgent(params: { sessionId: string; turnId: string }): Promise<{ ok: true }> {
     const sessionKey = this.agentSessionKey(params.sessionId)
     const turn = this.activeTurnFor(sessionKey, params.turnId)
     for (const record of this.recentFinishedAgentTurns.values()) {
       if (record.finished.turn.sessionId === sessionKey) record.continuationBlocked = true
     }
-    if (!turn || turn.state === 'aborting') return
+    if (!turn) return { ok: true }
+    if (turn.abortOperation) return turn.abortOperation
     turn.state = 'aborting'
+    turn.stopError = undefined
     turn.steeringInbox.cancel('Stopped before this message was delivered.')
     if (turn.reservationTimer) clearTimeout(turn.reservationTimer)
     turn.reservationTimer = undefined
@@ -1337,11 +1417,24 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     this.broadcastAgentTurn({ turn: this.agentTurnSnapshot(turn) })
     this.hydratedMaestroAgentSessions.delete(sessionKey)
     taskRegistry.cancelSessionTasks({ sessionId: sessionKey, reason: 'active turn stopped' })
-    try {
-      await this.getExistingMaestroAgent(params.sessionId)?.abort()
-    } finally {
+    turn.abortOperation = Promise.resolve().then(async () => {
+      // Join both operations before allowing a retry, including when cleanup fails.
+      const results = await Promise.allSettled([
+        this.workflowHost?.stopSession({ sessionId: sessionKey }),
+        this.getExistingMaestroAgent(params.sessionId)?.abort()
+      ])
+      const failure = results.find((result) => result.status === 'rejected')
+      if (failure?.status === 'rejected') throw failure.reason
       this.finishAgentTurn(turn, 'stopped')
-    }
+      return { ok: true as const }
+    }).catch((error) => {
+      turn.stopError = error instanceof Error ? error.message : String(error)
+      this.broadcastAgentTurn({ turn: this.agentTurnSnapshot(turn) })
+      throw error
+    }).finally(() => {
+      turn.abortOperation = undefined
+    })
+    return turn.abortOperation
   }
 
   async abortDelegate(params?: { sessionId?: string }): Promise<void> {
@@ -1978,7 +2071,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     return registry.toRuntimeTools()
   }
 
-  private async confirmHostToolCall(request: HostToolConfirmRequest): Promise<boolean> {
+  private async confirmHostToolCall(request: HostToolConfirmRequest, signal?: AbortSignal, sessionId?: string): Promise<boolean> {
     const argsSummary = summarizeApprovalArgs(request.args)
     const detail = clipHostApprovalDetail(
       JSON.stringify(
@@ -2012,7 +2105,12 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       },
       ts: Date.now()
     })
+    if (signal?.aborted) {
+      await this.resolveHostApprovalEvent(eventId, 'denied')
+      signal.throwIfAborted()
+    }
     const allowed = await taskRegistry.askOperator({
+      signal, sessionId,
       name: 'tool-approval',
       title: `Allow the agent to run ${request.toolName}?`,
       detail,

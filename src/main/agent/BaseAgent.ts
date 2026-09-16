@@ -5,6 +5,8 @@ import { readProjectInstructions } from './prompt/projectInstructions'
 import { TurnSteeringInbox } from './steering/turnSteeringInbox'
 import { inputBudget } from './runtime/inputBudget'
 import { modelIoLog } from './runtime/modelIoLog'
+import { resolveRuntimeSystemPrompt } from './runtime/runtimeSystemPrompt'
+import type { SessionIoConfiguration } from './sessionIoInitialization'
 import type { AgentActivityStep, AgentThinkingState, CodexDebugEvent, LlmEffort } from './runtime/runtime.types'
 import type {
   AgentRuntimeAdapter,
@@ -235,6 +237,16 @@ export class BaseAgent {
    */
   composedSystemPrompt(): string {
     return this.fullSystemPrompt()
+  }
+
+  /** Configuration only: does not create a runtime, read credentials, or send a model request. */
+  sessionIoConfiguration(): SessionIoConfiguration {
+    const providerId = this.resolveProvider()
+    const prompt = resolveRuntimeSystemPrompt({ systemPrompt: this.composedSystemPrompt(), cwd: this.opts.cwd })
+    return {
+      systemPrompt: prompt.finalSystemPrompt, cwd: prompt.cwd,
+      providerId, modelId: this.resolveModel(providerId), thinkingLevel: this.resolveThinkingLevel()
+    }
   }
 
   /** Switch the LLM backend live. Drops the session so the next turn rebuilds it. */
@@ -569,7 +581,8 @@ export class BaseAgent {
     // 而那个数字是用来判断"该不该压缩/拆分"的,串味等于判据失效。
     inputBudget.reset()
     // 同时开一份新的 io 目录:一份 jsonl 对应一个会话,查的时候不用在一堆行里分辨"这是哪一轮的"。
-    void modelIoLog.openSession(this.opts.scope || 'agent')
+    // Initial target configuration has no prior conversation to rotate. The first evidence write opens its bucket.
+    if (existing) void modelIoLog.openSession(this.opts.scope || 'agent')
     if (existing) void existing.then((session) => session.abort()).catch(() => undefined)
   }
 

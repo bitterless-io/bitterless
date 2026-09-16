@@ -1,6 +1,6 @@
 import { watch } from 'node:fs';
 
-import { WATCH_TRAILING_MS } from './constants.mjs';
+import { MAX_WATCH_CHANGE_PATHS, WATCH_TRAILING_MS } from './constants.mjs';
 import { isWorkspaceConfigWatchPath } from './workspace-config.mjs';
 
 const MAX_RECONCILE_RETRY_MS = 30_000;
@@ -8,6 +8,7 @@ const MAX_RECONCILE_RETRY_MS = 30_000;
 export const createWorkspaceWatchController = ({
   rootPath,
   onReconcile,
+  onBrowseChange,
   onError,
   onConfigChange,
   onConfigProbe,
@@ -31,6 +32,10 @@ export const createWorkspaceWatchController = ({
   );
   const pendingPaths = new Set();
   const pendingRenamePaths = new Set();
+  const pendingBrowsePaths = new Set();
+  let browseFull = false;
+  let browseTimer;
+  let browseRunning;
   let fullReconcile = false;
   let retryFullReconcile = false;
   let trailingTimer;
@@ -72,6 +77,28 @@ export const createWorkspaceWatchController = ({
     } catch {
       // Error reporting must not break watcher or reconcile recovery.
     }
+  };
+
+  // File names and visible rows must keep moving while a content reconcile is busy. Coalesce this
+  // small metadata-only read independently; it never opens files or waits for the reconcile queue.
+  const flushBrowse = () => {
+    clearTimeout(browseTimer);
+    browseTimer = undefined;
+    if (closed || browseRunning || typeof onBrowseChange !== 'function') return;
+    if (!browseFull && pendingBrowsePaths.size === 0) return;
+    const change = { full: browseFull, paths: [...pendingBrowsePaths] };
+    browseFull = false;
+    pendingBrowsePaths.clear();
+    browseRunning = Promise.resolve().then(() => onBrowseChange(change)).catch(reportError).finally(() => {
+      browseRunning = undefined;
+      if (!closed && (browseFull || pendingBrowsePaths.size)) scheduleBrowse();
+    });
+  };
+
+  const scheduleBrowse = () => {
+    if (closed || browseTimer || typeof onBrowseChange !== 'function') return;
+    browseTimer = setTimeout(flushBrowse, 50);
+    browseTimer.unref?.();
   };
 
   const probeConfig = () => {
@@ -196,6 +223,7 @@ export const createWorkspaceWatchController = ({
         if (filename === null || filename === undefined) {
           probeConfig();
           fullReconcile = true;
+          browseFull = true;
         } else {
           const relativePath = String(filename).replaceAll('\\', '/');
           if (isWorkspaceConfigWatchPath(relativePath)) {
@@ -203,9 +231,17 @@ export const createWorkspaceWatchController = ({
             return;
           }
           pendingPaths.add(relativePath);
+          if (!browseFull) {
+            pendingBrowsePaths.add(relativePath);
+            if (pendingBrowsePaths.size > MAX_WATCH_CHANGE_PATHS) {
+              pendingBrowsePaths.clear();
+              browseFull = true;
+            }
+          }
           if (eventType === 'rename') pendingRenamePaths.add(relativePath);
         }
         schedule();
+        scheduleBrowse();
       });
       if (!attachedWatcher || typeof attachedWatcher.on !== 'function') {
         throw new TypeError('Recursive watch did not return an event source');
@@ -215,6 +251,8 @@ export const createWorkspaceWatchController = ({
       watcherRetryAttempt = 0;
       clearWatcherRetryTimer();
       clearFallbackTimer();
+      clearTimeout(browseTimer);
+      pendingBrowsePaths.clear();
       fallbackEligible = false;
       if (recoveryReconcileNeeded) {
         recoveryReconcileNeeded = false;
@@ -249,7 +287,7 @@ export const createWorkspaceWatchController = ({
       const activeWatcher = watcher;
       watcher = undefined;
       activeWatcher?.close?.();
-      if (drain) await running;
+      if (drain) await Promise.all([running, browseRunning]);
       retryFullReconcile = false;
       fallbackEligible = false;
       recoveryReconcileNeeded = false;

@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.web.json",
+  "include": [
+    "../../src/env.d.ts",
+    "../../src/renderer/maestro/control/src/WorkflowTaskBar.vue",
+    "../../src/renderer/maestro/control/src/workflow.*.ts",
+    "../../src/renderer/maestro/control/src/store/workflow.store.ts",
+    "../../src/renderer/maestro/control/src/ChatPanel.vue",
+    "../../src/renderer/maestro/control/src/ResponseStatus.vue",
+    "../../src/renderer/maestro/env.d.ts"
+  ],
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true
+  }
+}

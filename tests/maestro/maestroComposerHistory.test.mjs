@@ -21,6 +21,7 @@ const fixture = {
   messageStore: vue.reactive({
     sessionListItems: [],
     refreshHistory: async () => undefined,
+    pushLocalNote: (id, text) => fixture.calls.push(['note', id, text]),
     turnService: {
       activeTurn: () => fixture.activeTurn,
       send: async () => { fixture.calls.push('send'); return { text: 'ok' }; }
@@ -56,6 +57,8 @@ after(() => {
 });
 const icons = /import \{ ([^}]+) \} from '@tabler\/icons-vue'/.exec(source)[1].split(',').map((name) => name.trim());
 const mocks = {
+  './store/workflow.store': 'export const workflowStore = { runs: [] };',
+  './workflow.command': 'export const executeWorkflowCommand = async (text, context) => globalThis.__historyFixture.workflowCommand(text, context);',
   vue: `const v = globalThis.__historyVue; export const ${['ref', 'computed', 'nextTick', 'defineComponent', 'reactive', 'watch'].map((name) => `${name} = v.${name}`).join(', ')};
     export const onMounted = (callback) => globalThis.__historyFixture.mounts.push(callback);
     export const onBeforeUnmount = (callback) => globalThis.__historyFixture.unmounts.push(callback);`,
@@ -70,7 +73,7 @@ const mocks = {
   }, readContextGraph: params => {
     globalThis.__historyFixture.calls.push(['graph', params]); return globalThis.__historyFixture.readContextGraph(params);
   } });`,
-  '@renderer/common/i18n/i18n.helper': `export const i18nHelper = { maestroControl: { chat: {
+  '@renderer/common/i18n/i18n.helper': `export const i18nHelper = { workflow: { commandHint: 'List workflows' }, maestroControl: { chat: {
     stopUsingWorkspaceTitle: 'Clear?', stopUsingWorkspaceContent: 'Clear {name}?', stopUsingWorkspace: 'Clear', keepWorkspace: 'Keep',
     slashClear: 'Start a fresh chat; keep this conversation', slashViewContext: 'Copy model context and pending input',
     slashCopied: 'Copied {chars} / {entries}', newChatUnavailable: 'The source chat is inactive or archived.',
@@ -108,6 +111,7 @@ const harness = (t, archivedAt) => {
   fixture.confirmations.length = 0;
   fixture.notices.length = 0;
   fixture.copyContext = async () => ({ ok: true, chars: 123, entries: 4 });
+  fixture.workflowCommand = async text => { fixture.calls.push(['workflow', text]); };
   fixture.copySessionPath = async () => ({ ok: true, path: '/tmp/session-io' });
   fixture.readContextGraph = async () => ({ ok: true, graph: { sessionId: 'b', systemChars: 10, systemPreview: 'S', blocks: [], turns: 0, totalChars: 10, byType: [], pending: { chars: 0 }, noHistory: true } });
   fixture.listeners.clear();
@@ -212,10 +216,10 @@ test('slash menu triggers only at a line start, filters predictably and wraps it
   await draft(ui, '/clear/file', 6);
   assert.equal(ui.slashVisible.value, false);
   await draft(ui, 'Question\n/');
-  assert.deepEqual(ui.shortcutStore.matches.map(item => item.name), ['/clear', '/copy_session_path', '/test_show_error', '/view_context', '/view_context_graph']);
+  assert.deepEqual(ui.shortcutStore.matches.map(item => item.name), ['/clear', '/copy_session_path', '/test_show_error', '/view_context', '/view_context_graph', '/workflow']);
   assert.equal(ui.shortcutStore.active.name, '/clear');
   composerKey(ui, 'ArrowUp');
-  assert.equal(ui.shortcutStore.active.name, '/view_context_graph');
+  assert.equal(ui.shortcutStore.active.name, '/workflow');
   composerKey(ui, 'ArrowDown');
   assert.equal(ui.shortcutStore.active.name, '/clear');
   await draft(ui, '/CONTEXT');
@@ -353,4 +357,36 @@ test('an export error remains visible without replacing a newer draft', async (t
   await pending;
   assert.equal(ui.input.value, 'Keep my new draft');
   assert.equal(fixture.notices.at(-1).text, 'Clipboard unavailable');
+});
+
+
+test('/workflow command is deterministic and never reaches ordinary chat send', async (t) => {
+  const { ui } = harness(t);
+  await draft(ui, '/workflow demo');
+  await ui.send();
+  assert.deepEqual(fixture.calls, [['workflow', '/workflow demo']]);
+  assert.equal(ui.input.value, '');
+  await draft(ui, '/workflow');
+  await ui.commitShortcut();
+  assert.deepEqual(fixture.calls[1], ['workflow', '/workflow']);
+});
+
+test('workflow startup rejects duplicate sends, retains a failed draft, and preserves later edits', async (t) => {
+  const { ui } = harness(t);
+  let release;
+  let starts = 0;
+  fixture.workflowCommand = async () => { starts++; await new Promise(resolve => { release = resolve; }); };
+  await draft(ui, '/workflow demo');
+  const pending = ui.send();
+  await ui.send();
+  assert.equal(starts, 1);
+  await draft(ui, 'next task');
+  release();
+  await pending;
+  assert.equal(ui.input.value, 'next task');
+  fixture.workflowCommand = async () => { throw Error('workflow login required'); };
+  await draft(ui, '/workflow research evidence');
+  await ui.send();
+  assert.equal(ui.input.value, '/workflow research evidence');
+  assert.equal(fixture.notices.at(-1).text, 'workflow login required');
 });

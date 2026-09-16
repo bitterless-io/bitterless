@@ -1,6 +1,6 @@
 {
   "_name": "Bitterless",
-  "_version": "0.0.108",
+  "_version": "0.0.112",
   "anydoc_version": "0.2.4",
   "bun_version": "1.3.14",
   "fd_version": "10.5.0",
@@ -183,6 +183,7 @@
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.85.1",
     "@electron-toolkit/utils": "^4.0.0",
+    "@kimchi-dev/kimchi-workflows": "0.0.9",
     "@sapphire/snowflake": "^3.5.5",
     "@seald-io/nedb": "^4.1.2",
     "better-sqlite3-multiple-ciphers": "12.11.1",
@@ -196,6 +197,7 @@
     "fs-extra": "^11.3.4",
     "https-proxy-agent": "^7.0.6",
     "inversify": "^7.11.0",
+    "jiti": "2.7.0",
     "marked": "18.0.7",
     "moment": "^2.30.1",
     "node-fetch": "2",
@@ -204,6 +206,7 @@
     "postman-request": "^2.88.1-postman.48",
     "protobufjs": "^7.2.6",
     "reflect-metadata": "^0.2.2",
+    "typebox": "^1.2.3",
     "undici": "8.3.0",
     "yaml": "^2.9.0",
     "zod": "^3.25.0"
@@ -279,7 +282,6 @@
     "stream-monaco": "^0.0.18",
     "tailwindcss": "^4.3.0",
     "tar": "^7.5.13",
-    "typebox": "^1.2.3",
     "typescript": "^5.9.3",
     "unpdf": "^1.6.2",
     "uuid": "^11.0.3",
@@ -305,7 +307,7 @@
     "rigs/*",
     "rig_dev/*"
   ],
-  "name": "Bitterless_PREVIEW",
-  "version": "0.0.108",
-  "version_code": "260915130242"
+  "name": "Bitterless_DEBUG_PROD",
+  "version": "0.0.112",
+  "version_code": "260916114215"
 }

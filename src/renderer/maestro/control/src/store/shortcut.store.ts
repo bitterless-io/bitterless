@@ -49,6 +49,9 @@ export class ShortcutStore {
       // 那种写法在加第三条命令的那一刻就会静默跑错一条,而且不会有任何类型错误。
       // 现在漏接一条的表现是 `unknown command`(可见的失败),不是跑错。
       switch (item.name) {
+        case '/workflow':
+          await context.listWorkflows()
+          return { ok: true }
         case '/clear':
           return { ok: await context.newChat() }
         case '/view_context':

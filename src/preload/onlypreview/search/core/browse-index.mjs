@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, resolve } from 'node:path';
 
 import { classifySearchMediaType, mediaTypeToPreviewHint } from './classification.mjs';
 import { pathIsWithin } from './workspace-config.mjs';
+import { isWorkspaceSearchPathWithinDepth } from './traversal.mjs';
 
 const naturalCollator = new Intl.Collator('und', { numeric: true, sensitivity: 'base' });
 
@@ -69,6 +70,9 @@ export class OnlyPreviewBrowseIndex {
     this.pathByToken = new Map();
     this.tokenByPath = new Map();
     this.listedPaths = new Set();
+    this.listings = new Map();
+    this.listRevisionByPath = new Map();
+    this.listRevision = 0;
     this.rootDirectoryToken = this.issueDirectoryToken('');
   }
 
@@ -76,6 +80,8 @@ export class OnlyPreviewBrowseIndex {
     this.pathByToken.clear();
     this.tokenByPath.clear();
     this.listedPaths.clear();
+    this.listings.clear();
+    this.listRevisionByPath.clear();
     this.rootDirectoryToken = this.issueDirectoryToken('');
   }
 
@@ -117,6 +123,22 @@ export class OnlyPreviewBrowseIndex {
     return [...this.listedPaths];
   }
 
+  // Directory names and file names are known as soon as their parent is listed. They do not need
+  // the full-content index. Most recently refreshed parents supply the first search candidates.
+  *searchEntries() {
+    for (const entries of [...this.listings.values()].reverse()) {
+      for (const entry of entries) {
+        const directory = entry.nodeKind === 'directory';
+        if (entry.nodeKind !== 'file' && !directory) continue;
+        if (!isWorkspaceSearchPathWithinDepth(entry.relativePath, { isDirectory: directory })) continue;
+        if (this.resolveAncestorBlocked(entry.parentRelativePath)) continue;
+        if (directory ? this.searchPolicy.isExcludedDirectoryPath(entry.relativePath)
+          : this.searchPolicy.isExcludedFilePath(entry.relativePath)) continue;
+        yield entry;
+      }
+    }
+  }
+
   async rootListing({ workspaceId, generation }) {
     return await this.list({
       workspaceId,
@@ -129,6 +151,8 @@ export class OnlyPreviewBrowseIndex {
     const capability = this.pathByToken.get(directoryToken);
     if (capability === undefined) throw new TypeError('Browse directory capability is stale');
     const { relativePath, ancestorBlocked } = capability;
+    const revision = ++this.listRevision;
+    this.listRevisionByPath.set(relativePath, revision);
     const absolutePath = relativePath
       ? resolve(this.rootPath, ...relativePath.split('/'))
       : this.rootPath;
@@ -219,6 +243,23 @@ export class OnlyPreviewBrowseIndex {
       }
     }
     this.listedPaths.add(relativePath);
+    if (this.pathByToken.get(directoryToken) !== capability) {
+      throw new TypeError('Browse directory capability was superseded');
+    }
+    if (this.listRevisionByPath.get(relativePath) === revision) {
+      const directories = new Set(entries.filter((entry) => entry.nodeKind === 'directory')
+        .map((entry) => entry.relativePath));
+      for (const previous of this.listings.get(relativePath) ?? []) {
+        if (previous.nodeKind !== 'directory' || directories.has(previous.relativePath)) continue;
+        for (const cached of this.listings.keys()) {
+          if (cached === previous.relativePath || cached.startsWith(`${previous.relativePath}/`)) {
+            this.listings.delete(cached);
+          }
+        }
+      }
+      this.listings.delete(relativePath);
+      this.listings.set(relativePath, entries);
+    }
     return { workspaceId, generation, directoryToken, relativePath, entries };
   }
 

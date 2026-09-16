@@ -1,6 +1,7 @@
 import { app, session, webContents } from 'electron'
 import type { WebContents } from 'electron'
 import { MAESTRO_PARTITION } from '@maestro-main/data/maestroDataRoot'
+import { dispatchApplicationFindCommand } from '@main/menu/applicationFindMenu.service'
 
 export interface ShortcutActions {
   newTab: () => void
@@ -42,7 +43,7 @@ export const guardWindowCloseShortcut = (contents: WebContents): void => {
 }
 
 const runShortcut = (key: string, actions: ShortcutActions, contents: WebContents): boolean => {
-  if (key === 'f') return actions.searchSessions()
+  if (key === 'f') return dispatchApplicationFindCommand('find-in-file') || actions.searchSessions()
   if (key !== 't' && key !== 'w') return false
   const now = Date.now()
   const last = lastShortcutAt.get(key) || 0
@@ -88,6 +89,7 @@ const installShortcutsForWebContents = (contents: WebContents, actions: Shortcut
     // A terminal owns Cmd+W outright: let the key through untouched so its own handler closes a
     // pane. Cmd+T is still ours — the terminal has no use for it.
     const key = String(input.key || '').toLowerCase()
+    if (key === 'f' && event.defaultPrevented) return
     if (key === 'f' && input.isAutoRepeat) { event.preventDefault(); return }
     if (key === 'w' && terminalKeyboardOwners.has(contents)) return
     if (runShortcut(key, actions, contents)) event.preventDefault()

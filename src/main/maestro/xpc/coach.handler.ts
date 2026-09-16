@@ -254,6 +254,10 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
     return await maestroWindowHelper.readContextGraph(params)
   }
 
+  async ensureSessionIo(params: Parameters<CoachXpcContract['ensureSessionIo']>[0]): Promise<SessionIoPathResult> {
+    return maestroWindowHelper.ensureSessionIo(params)
+  }
+
   async copySessionIoPath(params: { sessionId: string }): Promise<SessionIoPathResult> {
     return await maestroWindowHelper.copySessionIoPath(params)
   }

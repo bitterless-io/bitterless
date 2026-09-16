@@ -23,11 +23,42 @@ Ral subsequently requested a targeted review of the previous nine fixes and sync
 - Drill member acquisition begins use. This persists across automatic continuation turns until explicit end or drill pause/end/abort/main loss; membership updates must not accidentally re-light explicitly ended unchanged members. A subsequent explicit selection or actual operation may re-start use. Removing/closing/crashing/replacing a member releases its marker; all run markers release on terminal cleanup.
 - The two tools share the same current-task active-use owner as automatic use; do not create a second drill marker which makes the end tool ineffective. Independent temporary work such as deep_fetch keeps its own reference. Ending one task cannot extinguish another task's work.
 - A use marker alone does not establish popup attribution. Ordinary popups retain the existing in-flight source-owner rule; drill popups retain active-member/run attribution. Do not infer an ordinary popup owner from historical targets or the marker set. Clear unconsumed ordinary-turn popup notices at completion so they cannot become the next turn's action results.
-- Reuse the existing fixed 16px core-and-orbit favicon animation; controlled precedes loading, favicon returns afterwards, reduced-motion retains a static indicator. No new visual design or foreground switching.
+- Keep the fixed 16px core-and-orbit favicon indicator and add the expanding/contracting halo requested on 2026-09-15 below; controlled precedes loading, favicon returns afterwards, reduced-motion retains a static indicator. No foreground switching.
 - Preserve background A/B/D operation while human C stays visible; dynamic takeover, same-URL distinct identity, member-source popup inclusion, unrelated recording exclusion and prior cleanup/retry/interception fixes remain intact.
 - A drill run's mutable state belongs to its initiating task. Other tasks must not implicitly mutate that run through explore_session/visit/record; return an explicit ownership error. This protects run state only: ordinary browser tools and start/end remain free to use the same tab in another task. Keep the existing singleton/busy behavior rather than adding an ownership-transfer workflow.
 
 ## Implementation path
+
+### Halo addition — 2026-09-15
+
+Ral requested a soft circular halo whose radius repeatedly expands and contracts while
+the agent operates a tab, synchronized between Bitterless and CoWork.
+
+```text
+tab: [ (core + orbit + breathing halo)  page title                  × ]
+       <------ fixed 16px slot ------>
+halo: small radius → large radius → small radius (2.4s, ease-in-out)
+```
+
+- Preserve the current blue palette, core, satellite and all controlled-state logic.
+- Add one decorative radial-gradient halo on the controlled wrapper; use opacity and
+  transform only for motion. At full expansion its 20px paint area extends 2px beyond
+  the slot without reflow, hit-target changes or covering the title/close control.
+- Animate scale from 0.6 to 1 and back over 2.4 seconds; keep it visible throughout
+  the cycle, with softer opacity at the widest radius. Do not reset via a one-way ripple.
+- Respect prefers-reduced-motion with a static visible halo. Do not add JS timers,
+  configuration, dependencies or changes to loading/favicon restoration.
+- Verify both actual Vue/CSS styles compile and the scoped diff is clean. This is a
+  reversible visual change: no new test suite or Electron launch. Ral checks the live
+  animation in both applications during browser work, and its disappearance on completion.
+
+Implemented in the controlled wrapper's ::before pseudo-element. Both products use
+the same gradient, scale, opacity and timing; no template/state changes were needed.
+Actual Vue template and scoped style compilation passed in both products; Bitterless's
+imported Less also passed less.render. Scoped git diff --check passed. No new test suite,
+Electron/E2E or live UI run; human visual acceptance remains pending.
+
+### Lifecycle implementation
 
 Session active-use state and host tool registration/catalog/prompt; browser controlled output separated from retention; ordinary and drill lifecycle hooks; close/crash/view replacement cleanup; existing renderer channel and favicon animation; focused behavioral tests. No exclusive chat/tab locking.
 

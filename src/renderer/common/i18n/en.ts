@@ -1,7 +1,9 @@
+import { workflowEn } from '../../maestro/control/src/workflow.messages';
 import { enCoin } from './enCoin';
 import { enTrench } from './enTrench';
 
 export const en = {
+  workflow: workflowEn,
   auth: {
     navigationFailed: 'Signed in, but the page could not open. Please try again.',
     passwordSetupTitle: 'Set login password',
@@ -24,6 +26,9 @@ export const en = {
     quit: 'Quit',
     show: 'Show',
     quitConfirmTitle: 'Quit Application',
+    quitCleanupFailedTitle: 'Unable to finish quitting',
+    quitCleanupFailedMessage: 'Workflow cleanup could not be confirmed. The app remains open. Retry Stop in the chat, then quit again.',
+    quitCleanupFailedOk: 'Keep open',
     quitConfirmMessage: 'Are you sure you want to quit?',
     quitConfirmOk: 'Quit',
     quitConfirmCancel: 'Cancel',

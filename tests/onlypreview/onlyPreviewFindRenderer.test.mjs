@@ -530,7 +530,7 @@ test('Main shortcut predicates reserve Shift+CommandOrControl+F for Global Searc
   assert.match(findMenu, /accelerator: 'Command\+F'/);
   assert.match(findMenu, /accelerator: 'Shift\+Command\+F'/);
   assert.match(findMenu, /process\.platform !== 'darwin'/);
-  assert.match(findMenu, /if \(handled\) return;\s*forwardToFocusedContents/);
+  assert.match(findMenu, /if \(handled\) return;\s*if \(command === 'find-in-file' && sessionSearchDispatch\?\.\(window\)\) return;\s*forwardToFocusedContents/);
   for (const path of [
     'src/main/miniapps/onlypreview/views/onlyPreviewFind.service.ts',
     'src/main/miniapps/onlypreview/views/onlyPreviewGlobalSearchView.service.ts',

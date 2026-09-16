@@ -2,6 +2,11 @@
 
 Status: implemented; owner verification pending
 
+2026-09-15 amendment: the 42px outer row and 78px native offset remain current. The historical
+28px input/group and 24px navigation-button dimensions below are superseded by
+[Cowork spacing and icon alignment](maestro-address-row-cowork-spacing.md): 26px controls with
+1.625px navigation-group padding, producing a 29.25px group.
+
 ## Observed behavior
 
 The Maestro top chrome keeps a compact 36px tab strip but follows it with a 48px address row.

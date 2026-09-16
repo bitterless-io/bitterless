@@ -101,34 +101,30 @@
   height: 42px;
   flex-shrink: 0;
   align-items: center;
-  gap: 8px;
+  gap: 6.5px;
   border-bottom: 1px solid #e5e7eb;
   background: linear-gradient(to bottom, #f7f9fb, #edf2f6);
-  padding: 0 12px;
+  padding: 0 9.75px;
 }
 
-.maestro-menu-bar__navigation { display: flex; height: 28px; flex-shrink: 0; align-items: center; gap: 2px; border-radius: 10px; background: rgba(0, 0, 0, 0.05); padding: 2px; }
+.maestro-menu-bar__navigation { display: flex; height: 29.25px; flex-shrink: 0; align-items: center; gap: 1.625px; border-radius: 10px; background: rgba(0, 0, 0, 0.05); padding: 1.625px; }
 
 .maestro-menu-bar__nav-button,
 .maestro-menu-bar__snapshot {
   display: flex;
-  width: 32px;
-  height: 32px;
+  width: 26px;
+  height: 26px;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
+  padding: 0;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: #4b5563;
-  font-size: 16px;
+  font-size: 13px;
   transition: background-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
   -webkit-app-region: no-drag;
-}
-
-.maestro-menu-bar__navigation .maestro-menu-bar__nav-button {
-  width: 24px;
-  height: 24px;
 }
 
 .maestro-menu-bar__nav-button:hover,
@@ -144,13 +140,13 @@
 
 .maestro-menu-bar__address {
   min-width: 160px;
-  height: 28px;
+  height: 26px;
   flex: 1;
   border: 1px solid #d1d5db;
   border-radius: 8px;
   outline: none;
   background: #ffffff;
-  padding: 0 10px;
+  padding: 0 8.125px;
   font-size: 13px;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
@@ -159,8 +155,8 @@
 .maestro-menu-bar__address:focus { border-color: #165dff; box-shadow: 0 0 0 2px rgba(22, 93, 255, 0.2); }
 .maestro-menu-bar__address:disabled { cursor: not-allowed; border-color: #d1d5db; background: #f3f4f6; color: #9ca3af; }
 
-.maestro-menu-bar__actions { display: flex; flex-shrink: 0; align-items: center; gap: 4px; }
-.maestro-menu-bar__actions-divider { width: 1px; height: 20px; flex-shrink: 0; background: rgba(0, 0, 0, 0.15); }
+.maestro-menu-bar__actions { display: flex; flex-shrink: 0; align-items: center; gap: 3.25px; }
+.maestro-menu-bar__actions-divider { width: 1px; height: 16.25px; flex-shrink: 0; background: rgba(0, 0, 0, 0.15); }
 .maestro-menu-bar__snapshot { color: #165dff; }
 .maestro-menu-bar__snapshot:hover { background: rgba(22, 93, 255, 0.1); }
 .maestro-menu-bar__snapshot:active { background: rgba(22, 93, 255, 0.15); }
@@ -169,14 +165,14 @@
 .maestro-menu-bar__update {
   position: relative;
   display: flex;
-  height: 28px;
+  height: 22.75px;
   flex-shrink: 0;
   align-items: center;
   overflow: hidden;
   border: 0;
   border-radius: 999px;
   background: #165dff;
-  padding: 0 14px;
+  padding: 0 11.375px;
   color: #ffffff;
   font-size: 13px;
   font-weight: 500;
@@ -213,10 +209,8 @@
 
 // ── agent 正在驱动这个 tab ──────────────────────────────────────────────────
 //
-// 形态是**一颗核心 + 一颗绕行的卫星**,不是脉冲也不是转圈。三个理由:
-//   · 和 loading 的转圈必须一眼分得开 —— agent 驱动时页面本来就常在加载,两者会同时出现;
-//   · 脉冲(纯缩放)在 16px 上读起来像"加载中"的另一种写法,信息量为零;
-//   · 绕行有**方向**和**周期**,它说的是"有东西在围着这一页转",那正是此刻发生的事。
+// 核心与绕行卫星保留,外围增加半径反复扩张、收缩的柔和光晕。
+// 绕行动效继续区分 agent 驱动和 loading,光晕只在固定槽位外绘制,不改变布局。
 //
 // 尺寸锁死 16px:favicon 槽恒定 16px,chip 不许因为它重排(与 loading 换图同一约束)。
 // 无边框(全仓 Borderless UI 规则),深度靠光晕不靠描边。
@@ -228,6 +222,18 @@
   justify-content: center;
   width: 16px;
   height: 16px;
+}
+
+.maestro-menu-bar__controlled::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(circle closest-side, transparent 52%, oklch(0.72 0.17 264 / 0.12) 62%, oklch(0.72 0.17 264 / 0.5) 74%, oklch(0.72 0.17 264 / 0.12) 86%, transparent 100%);
+  transform: scale(0.8);
+  opacity: 0.6;
+  animation: maestro-controlled-halo 2.4s ease-in-out infinite;
 }
 
 // 核心:这一页本身。呼吸比绕行慢半拍,于是两者永远不同相 —— 同相会让整个图标看起来在"跳"。
@@ -246,8 +252,7 @@
   animation: maestro-controlled-orbit 1.6s linear infinite;
 }
 
-// 卫星:绕到核心"后面"时淡下去 —— 这一点深度暗示是整个动画唯一的修饰,
-// 也是它不像一个 CSS 练习的原因。
+// 卫星绕到核心"后面"时淡下去,保留轨道的深度变化。
 .maestro-menu-bar__controlled-orbit::before {
   content: '';
   position: absolute;
@@ -276,12 +281,25 @@
   50% { opacity: 0.4; transform: scale(0.78); }
 }
 
+@keyframes maestro-controlled-halo {
+  0%, 100% { transform: scale(0.6); opacity: 0.85; }
+  50% { transform: scale(1); opacity: 0.45; }
+}
+
 // 减动偏好:停下来,但**仍然要能看出这个 tab 被控制着** —— 直接 display:none 会把状态也一起关掉。
 @media (prefers-reduced-motion: reduce) {
+  .maestro-menu-bar__controlled::before { animation: none; }
   .maestro-menu-bar__controlled-core { animation: none; }
   .maestro-menu-bar__controlled-orbit { animation: none; }
   .maestro-menu-bar__controlled-orbit::before { animation: none; opacity: 0.7; }
 }
 
 .maestro-menu-bar__history.arco-btn { border: 0; background: transparent; }
+.maestro-menu-bar__address-row .maestro-menu-bar__history.icon-btn.arco-btn {
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  padding: 0;
+}
 .maestro-menu-bar__history-error { color: var(--color-text-3); font-size: 11px; max-width: 160px; }

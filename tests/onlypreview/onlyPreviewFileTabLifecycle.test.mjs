@@ -98,6 +98,10 @@ const surfaceHarness = (t) => {
     '@main/miniapps/onlypreview/host/onlyPreviewFileTab.service',
     { stubs: freshStubs({
       electron: { View, WebContentsView },
+      '@main/menu/applicationFindMenu.service': {
+        registerApplicationFindDispatch: () => () => {},
+        isApplicationFindFocusWithin: () => true
+      },
       '@shared/onlypreview/onlyPreview.types': { ONLY_PREVIEW_FIND_FOCUS_EVENT: 'onlypreview/findFocus' },
       'electron-xpc/main': { xpcMain: { broadcast() {} } },
       '@maestro-main/common/shortcutsHelper/shortcuts.helper': { enrollMaestroShortcutContents() {} },

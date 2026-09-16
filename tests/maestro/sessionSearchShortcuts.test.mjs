@@ -152,6 +152,7 @@ const harness = (platform = 'darwin') => {
   const app = new EventEmitter();
   const partition = {};
   const calls = [];
+  let findHandled = false;
   let focused = null;
   let menu = null;
   const windows = { getFocusedWindow: () => focused, getAllWindows: () => [] };
@@ -170,6 +171,9 @@ const harness = (platform = 'darwin') => {
     exports, process: { platform }, Date, WeakSet, Map,
     require: (id) => {
       if (id === 'electron') return stub;
+      if (id.includes('applicationFindMenu')) return {
+        dispatchApplicationFindCommand: () => { if (!findHandled) return false; calls.push('preview'); return true; }
+      };
       if (id.includes('maestroDataRoot')) return { MAESTRO_PARTITION: 'maestro' };
       if (id.includes('nativeMessages')) return { getNativeMessages: () => ({ searchSessions: 'Search sessions' }) };
       if (id.includes('applicationLanguage')) return { onApplicationLanguageChanged: () => {} };
@@ -198,6 +202,7 @@ const harness = (platform = 'darwin') => {
     return event.defaultPrevented;
   };
   return { contents, press, calls, exports, get menu() { return menu; },
+    setFindHandled(value) { findHandled = value; },
     setAllowed(value) { allowed = value; }, setFocused(value) { focused = value; } };
 };
 
@@ -220,11 +225,23 @@ test('unclaimed Find remains available to the focused surface', () => {
   assert.equal(h.press(h.contents()), false);
   assert.deepEqual(h.calls, []);
 });
-test('standalone preview is untouched, but an enrolled preview tab receives Find', () => {
+test('standalone preview is untouched, and an enrolled preview tab uses file Find', () => {
   const h = harness();
   const preview = h.contents(false);
   assert.equal(h.press(preview), false);
   h.exports.enrollMaestroShortcutContents(preview);
+  h.setFindHandled(true);
   assert.equal(h.press(preview), true);
-  assert.deepEqual(h.calls, ['search']);
+  assert.deepEqual(h.calls, ['preview']);
+});
+
+test('a consumed Preview Find is never also dispatched to Session search', () => {
+  const h = harness();
+  const wc = h.contents();
+  wc.prependListener('before-input-event', (event) => {
+    h.calls.push('local-preview');
+    event.preventDefault();
+  });
+  assert.equal(h.press(wc), true);
+  assert.deepEqual(h.calls, ['local-preview']);
 });

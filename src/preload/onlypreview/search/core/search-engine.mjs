@@ -358,6 +358,11 @@ export class OnlyPreviewSearchEngine {
       watchFactory: this.watchFactory,
       onConfigChange: () => configReconciler.markChanged(),
       onConfigProbe: () => configReconciler.probe(),
+      onBrowseChange: async (change) => {
+        if (this.watchRevision !== watchRevision) return;
+        if (change.full) await this.emitOpenBrowseListings();
+        else await this.watchReconciler.emitBrowseListingsForChangedPaths(this, change.paths);
+      },
       onReconcile: (change) =>
         this.enqueue(async () => {
           if (this.watchRevision !== watchRevision) return;

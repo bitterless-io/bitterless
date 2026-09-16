@@ -22,7 +22,7 @@ await build({
   alias: { electron: join(projectRoot, 'tests/onlypreview/fixtures/electronMenu.stub.mjs') }
 });
 
-const { buildApplicationFindMenuTemplate, setApplicationFindDispatch, setApplicationSessionSearchDispatch } = await import(
+const { buildApplicationFindMenuTemplate, setApplicationFindDispatch, setApplicationSessionSearchDispatch, isApplicationFindFocusWithin, registerApplicationFindDispatch, dispatchApplicationFindCommand } = await import(
   pathToFileURL(bundlePath).href
 );
 const { state, resetElectronMenuStub } = await import(
@@ -122,24 +122,42 @@ test('a chord with nothing focused is dropped instead of throwing', () => {
   assert.doesNotThrow(() => findItem('Command+F').click());
 });
 
-test('Maestro session search owns Find only in its own window, leaving project Find intact', () => {
-  const maestro = {};
-  const preview = {};
-  const searches = [];
-  const previewCommands = [];
-  setApplicationSessionSearchDispatch((window) => {
-    if (window !== maestro) return false;
-    searches.push(window);
+
+test('Preview and Chat in the same window own mutually exclusive Find commands', () => {
+  const window = {};
+  const chat = createContents();
+  const preview = createContents();
+  const owned = new WeakSet([preview]);
+  const calls = [];
+  setApplicationSessionSearchDispatch((target) => {
+    if (target !== window) return false;
+    calls.push('session');
     return true;
   });
-  setApplicationFindDispatch((command) => { previewCommands.push(command); return true; });
-  state.focusedWindow = maestro;
+  setApplicationFindDispatch((command, target) => {
+    if (target !== window || !isApplicationFindFocusWithin(window, owned)) return false;
+    calls.push(command);
+    return true;
+  });
+  state.focusedWindow = window;
+  state.focusedWebContents = preview;
   findItem('Command+F').click();
-  assert.equal(searches.length, 1);
-  assert.deepEqual(previewCommands, []);
+  assert.deepEqual(calls, ['find-in-file']);
+  assert.deepEqual(preview.events, []);
+  state.focusedWebContents = chat;
+  findItem('Command+F').click();
+  assert.deepEqual(calls, ['find-in-file', 'session']);
+  assert.deepEqual(chat.events, []);
+  state.focusedWebContents = preview;
   findItem('Shift+Command+F').click();
-  state.focusedWindow = preview;
-  findItem('Command+F').click();
-  assert.deepEqual(previewCommands, ['focus-search', 'find-in-file']);
-  assert.equal(searches.length, 1);
+  assert.deepEqual(calls, ['find-in-file', 'session', 'focus-search']);
+});
+
+test('a file tab registers its Find owner only for its lifetime', () => {
+  const calls = [];
+  const release = registerApplicationFindDispatch((command) => { calls.push(command); return true; });
+  assert.equal(dispatchApplicationFindCommand('find-in-file'), true);
+  release();
+  assert.equal(dispatchApplicationFindCommand('find-in-file'), false);
+  assert.deepEqual(calls, ['find-in-file']);
 });

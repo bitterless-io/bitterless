@@ -106,13 +106,16 @@ CLI 回退路径 `kill-session` + `delete-session` 并轮询确认。**全程不
 
 Ral:「bl 的 menubar__pagetype__button 应该像 cowork 那样的尺寸」。
 
-两边按钮容器均为 32×32 CSS px；实际差异是 BL 显式指定了 18×18、stroke 1.8 的 IconApps，
-Cowork 使用 Tabler 默认 24×24、stroke 2。沿用既有配色、无边框透明背景、居中布局与交互，
-只让 BL 此按钮的图标使用 Cowork 同样的尺寸与线宽，并补齐同名 BEM class。
-通过 Vue 模板编译、图标渲染属性和编译后的 Less 核对；人工对比两边地址栏按钮。
+首次修改把 BL 显式指定的 18×18、stroke 1.8 IconApps 改成了与 Cowork 相同的 Tabler
+默认 24×24、stroke 2，并补齐同名 BEM class。
+
+后续整行对齐纠正：此前“两边按钮容器均为 32×32”的判断不准确。Cowork 根字号为 13px，
+所以 `h-8/w-8` 实际为 26×26；BL 当时仍是 32×32，且默认按钮内边距会挤压图标。
+现在按[整行尺寸契约](../issues/maestro-address-row-cowork-spacing.md)将 BL 按钮设为 26×26，
+清除内边距，让 24×24 图标完整居中；沿用既有配色、无边框背景与交互。
 
 Status: implemented; code-verified, human testing pending.
 
-Vue script/template 编译通过；实际 Tabler SSR 属性为 24×24、stroke 2，两边参数一致。
-编译后的 MenuBar Less 确认容器为 32×32、border 0、透明背景和双向居中。
-未启动 Electron/E2E，视觉比较由 Ral 完成。
+首次修改通过了 Vue script/template 编译与 Tabler SSR 属性核对，但仅核对 BL 的 Less，
+没有验证 Cowork 的 rem 计算或浏览器布局。整行改动的实际矩形验证记录见上方尺寸契约。
+未启动 Electron/E2E，最终应用视觉比较由 Ral 完成。

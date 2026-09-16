@@ -1,5 +1,5 @@
 import { BaseWindow, Menu, webContents } from 'electron';
-import type { MenuItemConstructorOptions } from 'electron';
+import type { MenuItemConstructorOptions, WebContents } from 'electron';
 
 export type ApplicationFindCommand = 'find-in-file' | 'focus-search';
 
@@ -8,11 +8,46 @@ export interface ApplicationFindDispatch {
 }
 
 let dispatch: ApplicationFindDispatch | null = null;
+const fileTabDispatches = new Set<ApplicationFindDispatch>();
 let sessionSearchDispatch: ((window: BaseWindow | null) => boolean) | null = null;
 let installedMenu: Menu | null = null;
 
 export const setApplicationFindDispatch = (next: ApplicationFindDispatch | null): void => {
   dispatch = next;
+};
+
+export const registerApplicationFindDispatch = (next: ApplicationFindDispatch): (() => void) => {
+  fileTabDispatches.add(next);
+  return () => {
+    fileTabDispatches.delete(next);
+  };
+};
+
+/** Both native key events and the menu must choose a single foreground search owner. */
+export const dispatchApplicationFindCommand = (
+  command: ApplicationFindCommand,
+  window: BaseWindow | null = BaseWindow.getFocusedWindow() ?? null
+): boolean => {
+  for (const target of fileTabDispatches) {
+    if (target(command, window)) return true;
+  }
+  return dispatch?.(command, window) ?? false;
+};
+
+/** Call only for an active surface. Explicit Chat/other-view focus overrides the active tab. */
+export const isApplicationFindFocusWithin = (
+  window: BaseWindow,
+  ownedContents: WeakSet<WebContents>
+): boolean => {
+  const focused = webContents.getFocusedWebContents();
+  if (!focused || focused.isDestroyed()) return true;
+  // Browser chrome (or no first responder yet) delegates to its active content.
+  if ('webContents' in window && window.webContents === focused) return true;
+  // Chromium's PDF viewer can hold focus in a guest of the preview's WebContents.
+  for (let current: WebContents | null = focused; current; current = current.hostWebContents) {
+    if (ownedContents.has(current)) return true;
+  }
+  return false;
 };
 
 export const setApplicationSessionSearchDispatch = (
@@ -31,12 +66,12 @@ export const setApplicationSessionSearchDispatch = (
 const runFindCommand = (command: ApplicationFindCommand): void => {
   const window = BaseWindow.getFocusedWindow() ?? null;
   const focused = webContents.getFocusedWebContents() ?? null;
-  if (command === 'find-in-file' && sessionSearchDispatch?.(window)) return;
-  const handled = dispatch?.(command, window) ?? false;
+  const handled = dispatchApplicationFindCommand(command, window);
   console.info(
     `[onlypreview] event=menu-find command=${command} window=${window ? 'focused' : 'none'} focus=${focused ? 'view' : 'none'} handled=${handled}`
   );
   if (handled) return;
+  if (command === 'find-in-file' && sessionSearchDispatch?.(window)) return;
   forwardToFocusedContents(command, focused);
 };
 

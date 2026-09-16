@@ -27,6 +27,7 @@ import SessionsDrawer from './SessionsDrawer.vue'
 import SessionSearchModal from './SessionSearchModal.vue'
 import { sessionActions } from './store/sessionActions.store'
 import ResponseStatus from './ResponseStatus.vue'
+import WorkflowTaskBar from './WorkflowTaskBar.vue'
 import ChatConfirmSheet from './task/ChatConfirmSheet.vue'
 import { channelStore } from './store/channel.store'
 import { messageStore } from './store/message.store'
@@ -475,6 +476,7 @@ onMounted(async () => {
       >
         <template #before-composer>
           <ChatConfirmSheet :session="activeSession" />
+          <WorkflowTaskBar :session-id="activeSession.id" />
           <ResponseStatus :session="activeSession" />
           <div
             v-if="llmConfig && !activeLlmProviderAllowed"

@@ -1,6 +1,6 @@
 import { BrowserWindow } from 'electron';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { isAbsolute, join } from 'node:path';
+import { basename, isAbsolute, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { is } from '@electron-toolkit/utils';
 import { createXpcMainEmitter } from 'electron-xpc/main';
@@ -488,6 +488,30 @@ export class FileSearchWindowService {
       workspaceId: params.workspaceId,
       workspaceGeneration: params.workspaceGeneration,
       relativePath: params.parentRelativePath ? `${params.parentRelativePath}/${name}` : name
+    });
+  }
+
+  async pasteProjectItems(params: {
+    workspaceId: string;
+    workspaceGeneration: number;
+    parentRelativePath: string;
+    sourcePaths: string[];
+  }): Promise<OnlyPreviewFileAuthorityTarget[]> {
+    const value = await this.callProjectAuthority<unknown>(
+      (client, identity) => client.pasteItems({ ...identity, ...params }),
+      30 * 60 * 1000
+    );
+    const sourcePaths = [...new Set(params.sourcePaths)];
+    if (!Array.isArray(value) || value.length !== sourcePaths.length) {
+      return this.rejectProjectProtocol('Project paste response is invalid.');
+    }
+    return value.map((item, index) => {
+      const name = requireProjectEntryName(basename(sourcePaths[index]));
+      return this.validateProjectTarget(item, {
+        workspaceId: params.workspaceId,
+        workspaceGeneration: params.workspaceGeneration,
+        relativePath: params.parentRelativePath ? `${params.parentRelativePath}/${name}` : name
+      });
     });
   }
 

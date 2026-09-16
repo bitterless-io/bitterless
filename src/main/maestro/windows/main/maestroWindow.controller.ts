@@ -1068,6 +1068,10 @@ class MaestroWindowController
     return await this.agentService.readContextGraph(params)
   }
 
+  async ensureSessionIo(params: Parameters<MaestroAgentService['ensureSessionIo']>[0]): Promise<SessionIoPathResult> {
+    return this.agentService.ensureSessionIo(params)
+  }
+
   async copySessionIoPath(params: { sessionId: string }): Promise<SessionIoPathResult> {
     return await this.agentService.copySessionIoPath(params)
   }
@@ -1107,10 +1111,10 @@ class MaestroWindowController
   // Stop a chat channel's in-flight turn (the Stop button): aborts the live pi session so the
   // pending turn resolves with any partial output, then BaseAgent drops that session so aborted
   // output is not carried into later model context. No-op when idle / not yet created.
-  async abortAgent(params: { sessionId: string; turnId: string }): Promise<void> {
+  async abortAgent(params: { sessionId: string; turnId: string }): Promise<{ ok: true }> {
     const active = this.agentService.getActiveAgentTurn().turns.find((turn) => turn.sessionId === params.sessionId && turn.turnId === params.turnId)
     if (active && this.drillTrio?.run.ownerSessionId === params.sessionId) this.drillTrio.run.stopByOperator(params.sessionId)
-    await this.agentService.abortAgent(params)
+    return await this.agentService.abortAgent(params)
   }
 
   async abortDelegate(params?: { sessionId?: string }): Promise<void> {
@@ -1331,6 +1335,7 @@ class MaestroWindowController
     const sessionKey = opts.sessionKey || 'default'
     return this.agentService.wrapHostTools('cowork', [
       this.agentService.buildHostToolCatalogTool('cowork'),
+      ...this.agentService.workflowTools(sessionKey),
       ...buildFileTools(this.workspaceFile, sessionKey),
       ...buildArchiveTools(this.workspaceFile, sessionKey),
       // 联网三级(见 docs/features/agent-web-tools.md):web_search 找 URL(走 bitterless-private

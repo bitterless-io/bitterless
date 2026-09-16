@@ -107,7 +107,7 @@ const CHARS_PARAM = {
  * @param surface deep_fetch 用来渲染的载体。bl 传**真实 tab**(与浏览器共用 session,
  *   登录过的站点直接可读,且 tab chip 上有动画表明它正被驱动);不传则退回隐藏窗口。
  */
-export const buildWebFetchTools = (surface?: DeepFetchSurface): AgentToolSpec[] => [
+export const buildWebFetchTools = (surface?: DeepFetchSurface, signal?: AbortSignal): AgentToolSpec[] => [
   {
     name: 'web_fetch',
     description: [
@@ -134,9 +134,10 @@ export const buildWebFetchTools = (surface?: DeepFetchSurface): AgentToolSpec[] 
     execute: async (args) => {
       try {
         const maxChars = clampChars(args.max_chars)
-        const result = await fetchWebPage(String(args.url ?? ''), maxChars)
+        const result = await fetchWebPage(String(args.url ?? ''), maxChars, signal)
         return formatFetchResult({ ...result, via: 'web_fetch' })
       } catch (err) {
+        signal?.throwIfAborted()
         logFailure('web_fetch', args.url, err)
         return describeFailure(err, 'web_fetch')
       }

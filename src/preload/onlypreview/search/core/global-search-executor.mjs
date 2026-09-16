@@ -169,6 +169,18 @@ const priorityAuthorityIsEligible = (authority, searchPolicy) =>
     ? !searchPolicy.isExcludedDirectoryPath(authority.relativePath)
     : !searchPolicy.isExcludedFilePath(authority.relativePath));
 
+const filesWithRecentListings = function* (context, entries, searchPolicy) {
+  const seen = new Set();
+  for (const entry of context.browseIndex?.searchEntries?.() ?? []) {
+    if (!priorityAuthorityIsEligible(entry, searchPolicy)) continue;
+    seen.add(entry.relativePath);
+    yield entry;
+  }
+  for (const entry of entries) {
+    if (!seen.has(entry.relativePath)) yield entry;
+  }
+};
+
 const runSnapshotPhase = async ({
   context,
   lease,
@@ -194,7 +206,7 @@ const runSnapshotPhase = async ({
   };
   const filesPromise = runBranch(async (isBranchCancelled) => {
     const rawOutcome = await searchOnlyPreviewGlobalFiles({
-      entries: lease.treeEntries,
+      entries: filesWithRecentListings(context, lease.treeEntries, lease.searchPolicy),
       query,
       scope: { kind: 'project' },
       maxResults: cap,
@@ -352,6 +364,18 @@ export const executeOnlyPreviewGlobalSearch = async (context, params) => {
       context.treeEntries,
       (relativePath) => context.browseIndex?.hasDirectory(relativePath) === true
     );
+    if (typeof context.browseIndex?.searchEntries === 'function') {
+      // Publish verified names before any metadata, content-build or promotion gate. The terminal
+      // phase merges the same listings, so a new row cannot disappear when an older build finishes.
+      const recent = await searchOnlyPreviewGlobalFiles({
+        entries: context.browseIndex.searchEntries(), query, scope: { kind: 'project' },
+        maxResults: cap, isCancelled
+      });
+      if (recent.cancelled || isCancelled()) throw cancelledError();
+      for (const authority of recent.authorities) emitAuthority({
+        ...authority, searchPolicy: context.searchPolicy, identity: context.identity
+      });
+    }
     const pendingPromotion = context.promotionPromise;
     if (pendingPromotion) {
       const gateStartedAt = diagnostics.now();
@@ -389,7 +413,7 @@ export const executeOnlyPreviewGlobalSearch = async (context, params) => {
           });
           if (!metadata) return;
           const files = await searchOnlyPreviewGlobalFiles({
-            entries: metadata.treeEntries,
+            entries: filesWithRecentListings(context, metadata.treeEntries, metadata.searchPolicy),
             query,
             scope: { kind: 'project' },
             maxResults: cap,

@@ -138,7 +138,7 @@ const hosts = (value: unknown): string[] =>
     .map((part) => part.trim())
     .filter(Boolean)
 
-export const buildWebSearchTools = (): AgentToolSpec[] => [
+export const buildWebSearchTools = (signal?: AbortSignal): AgentToolSpec[] => [
   {
     name: 'web_search',
     get description() {
@@ -160,6 +160,7 @@ export const buildWebSearchTools = (): AgentToolSpec[] => [
     timeoutMs: TOOL_TIMEOUT_MS,
     timeoutHint: 'searching the web',
     execute: async (args) => {
+      signal?.throwIfAborted()
       try {
         const response = await searchWebThroughCore({
           query: String(args.query ?? ''),
@@ -167,10 +168,12 @@ export const buildWebSearchTools = (): AgentToolSpec[] => [
           includeDomains: hosts(args.include_domains),
           excludeDomains: hosts(args.exclude_domains),
           publishedAfter: args.published_after ? String(args.published_after) : undefined,
-          timeoutMs: innerDeadlineMs()
+          timeoutMs: innerDeadlineMs(),
+          signal
         })
         return formatWebSearchResults(response)
       } catch (err) {
+        signal?.throwIfAborted()
         if (err instanceof WebSearchError) return describeFailure(err)
         return `ERROR: web_search failed: ${err instanceof Error ? err.message : String(err)}. ${SEARCH_FALLBACK_GUIDANCE}`
       }

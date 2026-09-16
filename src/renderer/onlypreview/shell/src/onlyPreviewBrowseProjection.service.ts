@@ -56,6 +56,7 @@ export class OnlyPreviewBrowseProjectionService {
   private readonly excludedPaths = new Set<string>();
   private requestRevision = 0;
   private projection: OnlyPreviewIndex | null = null;
+  private context: OnlyPreviewBrowseProjectionContext | null = null;
 
   get ready(): boolean {
     return this.entriesByPath.has('');
@@ -72,6 +73,7 @@ export class OnlyPreviewBrowseProjectionService {
     this.excludedPaths.clear();
     expandedPaths.clear();
     this.projection = null;
+    this.context = null;
   }
 
   applyListing(
@@ -115,6 +117,7 @@ export class OnlyPreviewBrowseProjectionService {
       this.directoryTokenByPath.set(entry.relativePath, entry.directoryToken);
     }
     this.entriesByPath.set(listing.relativePath, [...listing.entries]);
+    this.context = { ...context };
     this.rebuild(context.workspaceId);
     return {
       changed: true,
@@ -128,11 +131,12 @@ export class OnlyPreviewBrowseProjectionService {
   async loadDirectory(
     relativePath: string,
     context: OnlyPreviewBrowseProjectionContext,
-    expandedPaths: Set<string>
+    expandedPaths: Set<string>,
+    force = false
   ): Promise<OnlyPreviewBrowseProjectionResult> {
     const directoryToken = this.directoryTokenByPath.get(relativePath);
     if (!directoryToken) return unchangedResult(this.projection);
-    if (this.entriesByPath.has(relativePath)) return unchangedResult(this.projection, true);
+    if (!force && this.entriesByPath.has(relativePath)) return unchangedResult(this.projection, true);
     const requestRevision = ++this.requestRevision;
     this.requestRevisionByToken.set(directoryToken, requestRevision);
     try {
@@ -161,6 +165,43 @@ export class OnlyPreviewBrowseProjectionService {
         this.requestRevisionByToken.delete(directoryToken);
       }
     }
+  }
+
+  /** Re-read completed mutations directly; the search build and its watch queue are independent. */
+  async reloadParentListings(
+    relativePaths: readonly string[],
+    workspaceId: string,
+    expandedPaths: Set<string>
+  ): Promise<OnlyPreviewBrowseProjectionResult> {
+    const context = this.context;
+    if (!context || context.workspaceId !== workspaceId || !this.ready) {
+      return unchangedResult(this.projection);
+    }
+    const isCurrent = (): boolean =>
+      this.context?.hostToken === context.hostToken &&
+      this.context.workspaceId === context.workspaceId &&
+      this.context.generation === context.generation;
+    const parents = new Set(relativePaths.map(getOnlyPreviewParentPath));
+    const directories = new Set<string>();
+    for (const parent of parents) {
+      let path = parent;
+      directories.add(path);
+      while (path) {
+        path = getOnlyPreviewParentPath(path);
+        directories.add(path);
+      }
+    }
+    let changed = false;
+    for (const path of [...directories].sort((left, right) =>
+      left.split('/').length - right.split('/').length || left.localeCompare(right)
+    )) {
+      if (!isCurrent()) return unchangedResult(this.projection);
+      const result = await this.loadDirectory(path, context, expandedPaths, parents.has(path));
+      if (!isCurrent()) return unchangedResult(this.projection);
+      changed ||= result.changed;
+      if (!result.loaded) return { ...result, changed, index: this.projection };
+    }
+    return { ...unchangedResult(this.projection, true), changed };
   }
 
   async loadSelectedParentListings(

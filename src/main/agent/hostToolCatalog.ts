@@ -2,6 +2,16 @@ import type { HostToolCatalogEntry, HostToolCatalogResult, HostToolPolicyMap, Ho
 
 export const HOST_TOOL_CATALOG: HostToolCatalogEntry[] = [
   {
+    name: 'workflow_list', scopes: ['cowork'], category: 'observe', risk: 'read',
+    summary: 'List available TypeScript agent workflows.', useWhen: 'Before selecting a multi-agent workflow.',
+    safety: 'Read-only; reports the supported workflow tool capabilities.'
+  },
+  {
+    name: 'workflow_run', scopes: ['cowork'], category: 'act', risk: 'write',
+    summary: 'Run a built-in or local TypeScript workflow in this chat.', useWhen: 'When a task benefits from coordinated independent agents.',
+    safety: 'Local code executes with user permissions. Subagents are individually stoppable; external file paths must be explicitly requested.'
+  },
+  {
     name: 'host_tool_catalog',
     scopes: ['cowork'],
     category: 'observe',

@@ -28,6 +28,7 @@ import {
   onlyPreviewFileAuthorityRuntimeHandlerName,
   type OnlyPreviewFileAuthorityDeleteGrantRequest,
   type OnlyPreviewFileAuthorityCreateDirectoryRequest,
+  type OnlyPreviewFileAuthorityPasteRequest,
   type OnlyPreviewFileAuthorityItemRequest,
   type OnlyPreviewFileAuthorityRenameRequest,
   type OnlyPreviewFileAuthorityRuntimePrivateApi,
@@ -466,6 +467,27 @@ export class OnlyPreviewFileAuthorityRuntime
           params.name
         )
       );
+    } catch (error) {
+      return onlyPreviewFailure(error);
+    }
+  }
+
+  async pasteItems(params: OnlyPreviewFileAuthorityPasteRequest) {
+    try {
+      if (!isRecord(params) || !hasExactKeys(params, [
+        'capability', 'parentRelativePath', 'runtimeInstanceId', 'sourcePaths',
+        'workspaceGeneration', 'workspaceId'
+      ]) || typeof params.parentRelativePath !== 'string' || !Array.isArray(params.sourcePaths) ||
+        !params.sourcePaths.length || params.sourcePaths.length > 200 ||
+        params.sourcePaths.some((path) => typeof path !== 'string')) {
+        throw new TypeError('Project paste request is invalid.');
+      }
+      requireProjectAuthorityIdentity(params.capability, params.runtimeInstanceId);
+      const workspace = requireProjectWorkspaceRef(params);
+      return onlyPreviewSuccess(await projectAuthority.pasteItems(
+        runtimeInstanceId, workspace.workspaceId, workspace.workspaceGeneration,
+        params.parentRelativePath, params.sourcePaths
+      ));
     } catch (error) {
       return onlyPreviewFailure(error);
     }

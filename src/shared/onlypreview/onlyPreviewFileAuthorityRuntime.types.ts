@@ -67,6 +67,11 @@ export interface OnlyPreviewFileAuthorityRenameRequest extends OnlyPreviewFileAu
   name: string;
 }
 
+export interface OnlyPreviewFileAuthorityPasteRequest extends OnlyPreviewFileAuthorityWorkspaceRef {
+  parentRelativePath: string;
+  sourcePaths: string[];
+}
+
 export interface OnlyPreviewFileAuthorityDeleteGrant {
   runtimeInstanceId: string;
   workspaceId: string;
@@ -116,6 +121,9 @@ export interface OnlyPreviewFileAuthorityRuntimePrivateApi {
   renameEntry(
     request: OnlyPreviewFileAuthorityRenameRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewFileAuthorityTarget>>;
+  pasteItems(
+    request: OnlyPreviewFileAuthorityPasteRequest
+  ): Promise<OnlyPreviewResult<OnlyPreviewFileAuthorityTarget[]>>;
   prepareDelete(
     request: OnlyPreviewFileAuthorityItemRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewFileAuthorityDeleteGrant>>;

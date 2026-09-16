@@ -8,8 +8,9 @@ import {
 import { unwrapOnlyPreviewResult } from '@shared/onlypreview/onlyPreview.contract';
 import { onlyPreviewClient } from '../../common/onlyPreviewClient';
 import { onlyPreviewEnv } from '../../common/contextBridge/onlyPreviewEnv.bridge';
-import { getOnlyPreviewErrorMessage } from '../../common/onlyPreviewI18n';
+import { describeOnlyPreviewError } from './onlyPreviewErrorDetail.store';
 import { onlyPreviewShellStore } from './onlyPreviewShell.store';
+import type { OnlyPreviewProjectItemCopyKind } from '@shared/onlypreview/onlyPreview.types';
 
 export interface OnlyPreviewTreeSelectionHost {
   visibleRows: readonly { entry: { relativePath: string; nodeKind: string } }[];
@@ -148,6 +149,34 @@ export const onlyPreviewTreeSelection = reactive(
  */
 onlyPreviewShellStore.collapseTreeSelection = () => onlyPreviewTreeSelection.clear();
 
+export const copyOnlyPreviewTreeSelection = async (
+  copyKind: OnlyPreviewProjectItemCopyKind
+): Promise<void> => {
+  const selection = onlyPreviewTreeSelection.entries();
+  if (selection.length <= 1) {
+    await onlyPreviewShellStore.copyProjectItem(
+      selection[0]?.relativePath ?? onlyPreviewShellStore.treeSelectedRelativePath ??
+        onlyPreviewShellStore.selectedRelativePath,
+      copyKind
+    );
+    return;
+  }
+  const hostToken = onlyPreviewEnv.hostToken;
+  const workspaceId = onlyPreviewShellStore.workspace?.workspaceId;
+  if (!hostToken || !workspaceId) return;
+  try {
+    unwrapOnlyPreviewResult(await onlyPreviewClient.copyProjectItem({
+      hostToken,
+      workspaceId,
+      relativePath: selection[0].relativePath,
+      copyKind,
+      selection
+    }));
+  } catch (error) {
+    onlyPreviewShellStore.errorMessage = describeOnlyPreviewError(error);
+  }
+};
+
 /**
  * Open the Project row menu, carrying the selection.
  *
@@ -177,6 +206,6 @@ export const showOnlyPreviewTreeContextMenu = async (entry: {
       })
     );
   } catch (error) {
-    onlyPreviewShellStore.errorMessage = getOnlyPreviewErrorMessage(error);
+    onlyPreviewShellStore.errorMessage = describeOnlyPreviewError(error);
   }
 };

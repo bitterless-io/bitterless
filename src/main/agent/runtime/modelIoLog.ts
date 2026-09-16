@@ -217,7 +217,7 @@ class ModelIoLog {
    * 追加一行。**同步返回,异步落盘** —— 这条在模型调用的热路径上,不能让磁盘拖慢回合。
    * 写失败只报一次(failed 闸),不然一次磁盘满会刷屏。
    */
-  append(line: Omit<ModelIoLine, 'ts' | 'bytes'> & { bytes?: number }): void {
+  append(line: Omit<ModelIoLine, 'ts' | 'bytes'> & { bytes?: number }): Promise<boolean> {
     // **惰性开目录。** 原来只在 reset() 里 openSession,于是"应用起来后第一个回合还没 reset 过"
     // 这条路径上一个字都不会落盘 —— 而那恰恰是最需要证据的第一轮。
     // 现在 append 自己保证有目录:没有就开一个,并把这一行排在开目录之后。
@@ -240,6 +240,7 @@ class ModelIoLog {
     // 而那正是这份日志要解决的问题。
     const payload = JSON.stringify(row) + '\n'
     const bytes = Buffer.byteLength(payload, 'utf8')
+    let written = false
     h.queue = h.queue
       .then(async () => {
         if (h.opening) await h.opening.catch(() => undefined)
@@ -254,12 +255,15 @@ class ModelIoLog {
         }
         await appendFile(join(dir, `part-${String(h.part).padStart(3, '0')}.jsonl`), payload, 'utf8')
         h.partBytes += bytes
+        written = true
       })
       .catch((err) => {
         if (h.failed) return
         h.failed = true
         console.warn('[model-io] 写入失败(后续不再报):', (err as Error).message)
       })
+    // Existing hot-path callers ignore this; initialization can confirm this exact evidence line.
+    return h.queue.then(() => written)
   }
 
   /** 一个会话目录占多少字节。读不到算 0 —— 清理不该因为一个坏目录整体罢工。 */

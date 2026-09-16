@@ -8,6 +8,7 @@ import { initUpdateHandler } from './update.handler';
 // 放在根 xpc 树而不是 maestro 那棵:三个已迁入的模块按 `main/xpc/compaction.handler.ts` 这个
 // 路径引用它(runtime.types / compactionRun / piRuntimeAdapter),挪走会当场让那三处注释变成谎。
 import './compaction.handler';
+import './workflow.handler';
 import './pluginTest.handler';
 import './todoWindow.handler';
 import './eyesOnAgentsWindow.handler';

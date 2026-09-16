@@ -9,6 +9,7 @@ import {
   ONLY_PREVIEW_AGENT_SKILL_VERSION_CODE
 } from '@shared/onlypreview/onlyPreviewAgentSkillVersion.shared';
 import { onlyPreviewEnv } from '../../common/contextBridge/onlyPreviewEnv.bridge';
+import { onlyPreviewAgentGuideMode } from '../../host/onlyPreviewAgentGuide';
 import { onlyPreviewGuideClient } from './onlyPreviewGuide.client';
 
 type OnlyPreviewGuideStatus = 'pending' | 'ready' | 'restart-required';
@@ -42,6 +43,7 @@ const isExactGuideInfo = (value: unknown): value is OnlyPreviewAgentSkillGuideIn
 };
 
 class OnlyPreviewGuideStore {
+  readonly mode = onlyPreviewAgentGuideMode;
   status: OnlyPreviewGuideStatus = 'pending';
   feedback: OnlyPreviewGuideFeedback = '';
   info: OnlyPreviewAgentSkillGuideInfo | null = null;
@@ -53,6 +55,10 @@ class OnlyPreviewGuideStore {
     const hostToken = onlyPreviewEnv.hostToken;
     if (!hostToken || onlyPreviewEnv.mode !== 'guide') {
       this.status = 'restart-required';
+      return;
+    }
+    if (this.mode === 'builtin') {
+      this.status = 'ready';
       return;
     }
     try {

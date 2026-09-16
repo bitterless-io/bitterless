@@ -402,6 +402,8 @@ const cleanupResources = (): Promise<void> => {
   isShutdownStarted = true;
   cleanupPromise = (async () => {
     try { console.log('[app] Cleaning up resources...'); } catch {}
+    // Keep windows, SQLite and bridges alive if workflow ownership cannot be released.
+    await maestroWindowHandler.destroyForHostQuit();
     try { snipingSessionService.clearCurrent(); } catch {}
 
     try { await optionalIntegrationsLifecycle.fenceAndJoin(); } catch {
@@ -419,7 +421,6 @@ const cleanupResources = (): Promise<void> => {
       );
     } catch {}
     try { await coinWindowHandler.destroyForHostQuit(); } catch {}
-    try { await maestroWindowHandler.destroyForHostQuit(); } catch {}
     try { await eyesOnAgentsWindowHandler.destroyForHostQuit(); } catch {}
     try { await submodulesWindowHandler.destroyForHostQuit(); } catch {}
     try { omniWindowHelper.destroy(); } catch {}
@@ -440,7 +441,11 @@ const cleanupResources = (): Promise<void> => {
     try { trayHelper.destroy(); } catch {}
 
     try { console.log('[app] Cleanup complete'); } catch {}
-  })();
+  })().catch((error) => {
+    cleanupPromise = null;
+    isShutdownStarted = false;
+    throw error;
+  });
   return cleanupPromise;
 };
 
@@ -661,48 +666,45 @@ if (isLegacyCodingAgentHookHelperMode) {
   });
 }
 
-app.on('before-quit', async (event) => {
+const quitAfterCleanup = async (): Promise<void> => {
+  try {
+    await cleanupResources();
+    isQuitting = true;
+    if (updateService.isUpdating) updateService.installAfterCleanup();
+    else app.quit();
+  } catch (error) {
+    isQuitting = false;
+    hasShownQuitDialog = false;
+    updateService.isUpdating = false;
+    console.error('[app] Quit blocked: resource cleanup was not confirmed', error);
+    await dialogHelper.showQuitCleanupFailedDialog().catch(() => undefined);
+  }
+};
+
+let quitAttempt: Promise<void> | null = null;
+app.on('before-quit', (event) => {
   if (isQuitting) return;
   event.preventDefault();
-
-  if (isHelperMode) {
-    isQuitting = true;
-    app.quit();
-    return;
-  }
-
-  if (isE2E) {
-    await cleanupResources();
-    isQuitting = true;
-    app.quit();
-    return;
-  }
-
-  if (updateService.isUpdating) {
-    await cleanupResources();
-    isQuitting = true;
-    updateService.installAfterCleanup();
-    return;
-  }
-
-  if (process.platform === 'darwin' && !hasShownQuitDialog) {
-    initializeApplicationLanguageFallback();
-    hasShownQuitDialog = true;
-
-    const shouldQuit = await dialogHelper.showQuitConfirmDialog();
-    if (shouldQuit) {
-      await cleanupResources();
+  if (quitAttempt) return;
+  quitAttempt = (async () => {
+    if (isHelperMode) {
       isQuitting = true;
       app.quit();
-    } else {
-      hasShownQuitDialog = false;
+      return;
     }
-    return;
-  }
-
-  await cleanupResources();
-  isQuitting = true;
-  app.quit();
+    if (!isE2E && !updateService.isUpdating && process.platform === 'darwin' && !hasShownQuitDialog) {
+      initializeApplicationLanguageFallback();
+      hasShownQuitDialog = true;
+      if (!await dialogHelper.showQuitConfirmDialog()) {
+        hasShownQuitDialog = false;
+        return;
+      }
+    }
+    await quitAfterCleanup();
+  })().catch((error) => {
+    hasShownQuitDialog = false;
+    console.error('[app] Quit request failed', error);
+  }).finally(() => { quitAttempt = null; });
 });
 
 app.on('will-quit', () => {

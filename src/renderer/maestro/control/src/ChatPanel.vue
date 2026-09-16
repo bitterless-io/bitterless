@@ -22,6 +22,9 @@ import { channelStore } from './store/channel.store'
 import { messageStore } from './store/message.store'
 import type { ChatAttachment, MessageSession } from './store/message.type'
 import { isRejection } from './store/turn.service'
+import { parseWorkflowCommand } from '@shared/agentWorkflow.api'
+import { workflowStore } from './store/workflow.store'
+import { executeWorkflowCommand } from './workflow.command'
 import './ChatPanel.less'
 
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
@@ -42,7 +45,8 @@ const shortcutStore = reactive(new ShortcutStore([
   { name: '/view_context', get hint() { return i18nHelper.maestroControl.chat.slashViewContext } },
   { name: '/copy_session_path', get hint() { return i18nHelper.maestroControl.chat.slashCopySessionPath } },
   { name: '/test_show_error', get hint() { return i18nHelper.maestroControl.chat.slashTestShowError } },
-  { name: '/view_context_graph', get hint() { return i18nHelper.maestroControl.chat.slashViewContextGraph } }
+  { name: '/view_context_graph', get hint() { return i18nHelper.maestroControl.chat.slashViewContextGraph } },
+  { name: '/workflow', get hint() { return i18nHelper.workflow.commandHint } }
 ]))
 const slashToken = computed(() => slashTokenAt(input.value, composerCaret.value))
 const slashVisible = computed(() => shortcutStore.open && shortcutStore.matches.length > 0)
@@ -51,6 +55,7 @@ const contextGraph = ref<ContextGraphView | null>(null)
 let draftRevision = 0
 let composerDisposed = false
 let newChatPending = false
+const workflowCommandPending = ref(false)
 watch(input, () => { draftRevision += 1 }, { flush: 'sync' })
 watch([input, selectedFiles], () => {
   props.session.detail.draft = { text: input.value, files: selectedFiles.value.slice() }
@@ -86,7 +91,8 @@ function resetComposerHeight(): void {
 }
 
 async function send(): Promise<void> {
-  if (shortcutStore.pending) return
+  if (shortcutStore.pending || workflowCommandPending.value) return
+  if (parseWorkflowCommand(input.value)) { await submitWorkflowCommand(); return }
   if (slashVisible.value) { await commitShortcut(); return }
   const message = input.value.trim()
   // Text is REQUIRED to send, even when files are attached.
@@ -121,6 +127,42 @@ async function send(): Promise<void> {
     content: i18nHelper.maestroControl.chat.messageNotSentContent,
     okText: i18nHelper.maestroControl.chat.gotIt
   })
+}
+
+async function runWorkflowCommand(text: string): Promise<void> {
+  const session = props.session
+  await executeWorkflowCommand(text, {
+    sessionId: session.id,
+    hasAttachments: selectedFiles.value.length > 0,
+    assertCanStart: () => {
+      if (composerDisposed || props.session.id !== session.id || props.sendDisabled || session.archivedAt || session.turn || messageStore.turnService.busyElsewhere(session.id) || workflowStore.runs.some(run => run.sessionId === session.id && (run.status === 'running' || run.status === 'stopping'))) {
+        throw new Error(i18nHelper.workflow.commandBusy)
+      }
+    },
+    refreshWorkspace: async () => { await messageStore.refreshWorkspace(session.id); return session.detail.workspace?.path },
+    note: text => messageStore.pushLocalNote(session.id, text)
+  })
+}
+
+async function submitWorkflowCommand(): Promise<void> {
+  if (workflowCommandPending.value) return
+  const draft = input.value
+  const sessionId = props.session.id
+  const revision = draftRevision
+  workflowCommandPending.value = true
+  shortcutStore.close()
+  try {
+    await runWorkflowCommand(draft)
+    if (!composerDisposed && props.session.id === sessionId && draftRevision === revision) {
+      input.value = ''
+      await nextTick()
+      resetComposerHeight()
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    messageStore.pushLocalNote(sessionId, message)
+    Message.error(message)
+  } finally { workflowCommandPending.value = false }
 }
 
 function pickFiles(): void {
@@ -308,6 +350,7 @@ async function commitShortcut(): Promise<void> {
   const sessionId = props.session.id
   const draft = input.value.slice(0, token.start) + input.value.slice(token.end)
   const result = await shortcutStore.commit({
+    listWorkflows: () => runWorkflowCommand('/workflow'),
     newChat: startNewChat,
     // 路径**同时**进剪贴板与时间线(Ral 2026-09-09:「复制到剪贴板,并在消息中回复这个路径」)。
     // 只发 toast 不够:toast 会消失,而这个路径正是要拿去 audit 的东西,得留在会话里可选中。
@@ -622,9 +665,9 @@ async function stopUsingWorkspace(): Promise<void> {
             name="maestro__composer__stop"
             class="chat-panel__stop-button"
             :class="{ 'chat-panel__stop-button--aborting': session.turn?.aborting }"
-            :disabled="session.turn?.aborting"
-            :title="session.turn?.aborting ? i18nHelper.maestroControl.chat.stopping : i18nHelper.maestroControl.chat.stop"
-            :aria-label="session.turn?.aborting ? i18nHelper.maestroControl.chat.stopping : i18nHelper.maestroControl.chat.stop"
+            :disabled="session.turn?.aborting && !session.turn?.stopError"
+            :title="session.turn?.stopError ? i18nHelper.workflow.retry : session.turn?.aborting ? i18nHelper.maestroControl.chat.stopping : i18nHelper.maestroControl.chat.stop"
+            :aria-label="session.turn?.stopError ? i18nHelper.workflow.retry : session.turn?.aborting ? i18nHelper.maestroControl.chat.stopping : i18nHelper.maestroControl.chat.stop"
             @click="stop"
           >
             <IconPlayerStop class="chat-panel__button-icon" :size="15" stroke="1.8" />

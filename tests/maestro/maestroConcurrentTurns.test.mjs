@@ -34,7 +34,7 @@ const members = new Set([
   'activeTurnFor', 'broadcastAgentTurn', 'finishAgentTurn', 'agentTurnKey', 'pruneFinishedAgentTurns',
   'abortAgent', 'agentSessionKey', 'agentTurnIdentity', 'broadcastActiveAgentActivity', 'broadcastModelRetry',
   'routeAgentMessage', 'sendAgentMessage', 'recordAgentArtifact', 'buildMessagePrompt',
-  'shutdown', 'assertAgentRuntimeActive', 'shuttingDown', 'maestroAgents', 'delegateAgents', 'attachedPaths', 'pi', 'piDelegate', 'piGen'
+  'shutdown', 'shutdownWorkflows', 'assertAgentRuntimeActive', 'shuttingDown', 'maestroAgents', 'delegateAgents', 'attachedPaths', 'pi', 'piDelegate', 'piGen'
 ]);
 const classSource = `class Harness { ${agentClass.members.filter(node => members.has(node.name?.getText(ast))).map(node => node.getText(ast)).join('\n')} } exports.Harness = Harness;`;
 const deferred = () => {
@@ -128,6 +128,7 @@ test('shutdown drains every active chat and rejects new claims while aborting', 
   const stopping = agent.shutdown();
   assert.deepEqual(agent.getActiveAgentTurn().turns.map(turn => turn.state), ['aborting', 'aborting']);
   assert.throws(() => claim('C'), /shutting down/);
+  await setImmediate();
   assert.deepEqual(aborted, ['A', 'B']);
   drain.resolve(); await stopping;
   assert.deepEqual(agent.getActiveAgentTurn().turns, []);

@@ -1,4 +1,6 @@
-import { XpcPreloadHandler } from 'electron-xpc/preload'
+import { XpcPreloadHandler, createXpcPreloadEmitter } from 'electron-xpc/preload'
+import type { WorkflowApi } from '@shared/agentWorkflow.api'
+const workflows = createXpcPreloadEmitter<WorkflowApi>('WorkflowHandler')
 import type {
   MaestroChatApi,
   MaestroChatDetail,
@@ -243,6 +245,14 @@ export class MaestroChatDao extends XpcPreloadHandler implements MaestroChatApi 
 
   async deleteSession(params: { id: string; onlyIfEmpty?: boolean }): Promise<{ ok: boolean }> {
     const db = sqliteManager.db
+    if (params.onlyIfEmpty && db.prepare('SELECT 1 FROM cowork_chat_message WHERE session_id = ? LIMIT 1').get(params.id)) return { ok: false }
+    // Stop owned workers and host calls before removing their chat; recheck emptiness in the transaction.
+    const stopped = await workflows.stopSession({ sessionId: params.id })
+    if (!stopped?.ok) throw new Error('Workflow cleanup was not acknowledged; the chat was kept.')
+    const snapshot = await workflows.listRuns({ sessionId: params.id })
+    if (!snapshot || snapshot.runs.some((run) => run.status === 'running' || run.status === 'stopping')) {
+      throw new Error('Workflow cleanup did not finish; the chat was kept.')
+    }
     return db.transaction(() => {
       if (params.onlyIfEmpty && db.prepare('SELECT 1 FROM cowork_chat_message WHERE session_id = ? LIMIT 1').get(params.id)) {
         return { ok: false }

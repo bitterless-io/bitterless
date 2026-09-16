@@ -94,7 +94,8 @@ const isChallenge = (status: number, headers: any, body: string): boolean => {
   return /anomaly-modal|challenge-form|cf-browser-verification|Just a moment\.\.\./.test(body.slice(0, 4000))
 }
 
-export const fetchWebPage = async (rawUrl: string, maxChars: number): Promise<WebFetchResult> => {
+export const fetchWebPage = async (rawUrl: string, maxChars: number, signal?: AbortSignal): Promise<WebFetchResult> => {
+  signal?.throwIfAborted()
   const startedAt = Date.now()
   const start = assertFetchableUrl(rawUrl) // 抛 FetchPolicyError,调用方翻译
   let current = start
@@ -109,9 +110,10 @@ export const fetchWebPage = async (rawUrl: string, maxChars: number): Promise<We
         // 手动跟随:每一跳都要重新过目的地策略,否则一个 302 就能把请求带进私网。
         redirect: 'manual',
         headers: { ...BASE_HEADERS, 'user-agent': usedHonestUa ? HONEST_UA : CHROME_UA },
-        signal: AbortSignal.timeout(TIMEOUT_MS)
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(TIMEOUT_MS)]) : AbortSignal.timeout(TIMEOUT_MS)
       })
     } catch (err) {
+      signal?.throwIfAborted()
       const name = (err as Error)?.name
       if (name === 'TimeoutError' || name === 'AbortError') {
         throw new WebFetchError('timeout', `the page did not respond within ${TIMEOUT_MS / 1000}s`)

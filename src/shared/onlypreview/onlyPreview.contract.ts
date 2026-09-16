@@ -21,6 +21,7 @@ import type {
   OnlyPreviewProjectItemCopyRequest,
   OnlyPreviewProjectRootCopyRequest,
   OnlyPreviewCreateProjectFolderRequest,
+  OnlyPreviewPasteProjectItemsRequest,
   OnlyPreviewProjectRootRequest,
   OnlyPreviewRenameProjectItemRequest,
   OnlyPreviewSettings
@@ -184,7 +185,7 @@ export const parseOnlyPreviewProjectItemCopyRequest = (
   value: unknown
 ): OnlyPreviewProjectItemCopyRequest => {
   const record = expectRecord(value, 'Project item copy request');
-  expectExactKeys(record, ['hostToken', 'workspaceId', 'relativePath', 'copyKind']);
+  expectExactKeys(record, ['hostToken', 'workspaceId', 'relativePath', 'copyKind'], ['selection']);
   if (
     record.copyKind !== 'item' &&
     record.copyKind !== 'absolute-path' &&
@@ -193,11 +194,31 @@ export const parseOnlyPreviewProjectItemCopyRequest = (
   ) {
     throw new OnlyPreviewContractError('INVALID_INPUT', 'Project item copy kind is invalid.');
   }
-  return {
+  const request: OnlyPreviewProjectItemCopyRequest = {
     hostToken: expectBoundedToken(record.hostToken, 'Host capability'),
     ...parseOnlyPreviewFileRef(record),
     copyKind: record.copyKind
   };
+  if (record.selection !== undefined) {
+    if (!Array.isArray(record.selection) || !record.selection.length || record.selection.length > 1000) {
+      throw new OnlyPreviewContractError('INVALID_INPUT', 'Project copy selection is invalid.');
+    }
+    request.selection = record.selection.map((value) => {
+      const entry = expectRecord(value, 'Project copy selection entry');
+      expectExactKeys(entry, ['relativePath', 'nodeKind']);
+      if (entry.nodeKind !== 'file' && entry.nodeKind !== 'directory') {
+        throw new OnlyPreviewContractError('INVALID_INPUT', 'Project copy entry kind is invalid.');
+      }
+      return {
+        relativePath: normalizeOnlyPreviewRelativePath(entry.relativePath),
+        nodeKind: entry.nodeKind
+      };
+    });
+    if (!request.selection.some((entry) => entry.relativePath === request.relativePath)) {
+      throw new OnlyPreviewContractError('INVALID_INPUT', 'Project copy target is not selected.');
+    }
+  }
+  return request;
 };
 
 export const parseOnlyPreviewProjectRootRequest = (
@@ -221,6 +242,18 @@ export const parseOnlyPreviewCreateProjectFolderRequest = (
     workspaceId: expectBoundedToken(record.workspaceId, 'Workspace capability'),
     // An empty parent is the Project root, which normalizes to the empty string.
     parentRelativePath: normalizeOnlyPreviewRelativePath(record.parentRelativePath ?? '')
+  };
+};
+
+export const parseOnlyPreviewPasteProjectItemsRequest = (
+  value: unknown
+): OnlyPreviewPasteProjectItemsRequest => {
+  const record = expectRecord(value, 'Project paste request');
+  expectExactKeys(record, ['hostToken', 'workspaceId', 'parentRelativePath']);
+  return {
+    hostToken: expectBoundedToken(record.hostToken, 'Host capability'),
+    workspaceId: expectBoundedToken(record.workspaceId, 'Workspace capability'),
+    parentRelativePath: normalizeOnlyPreviewRelativePath(record.parentRelativePath, { allowEmpty: true })
   };
 };
 

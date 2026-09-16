@@ -516,9 +516,12 @@ import { handleOnlyPreviewProjectDeleteShortcut } from './onlyPreviewProjectDele
 import { onlyPreviewProjectWidthPersistence } from './onlyPreviewProjectWidthPersistence.service';
 import type { OnlyPreviewIndexEntry } from '@shared/onlypreview/onlyPreview.types';
 import { onlyPreviewShellStore } from './onlyPreviewShell.store';
-import { onlyPreviewErrorDetail } from './onlyPreviewErrorDetail.store';
+import { describeOnlyPreviewError, onlyPreviewErrorDetail } from './onlyPreviewErrorDetail.store';
+import { onlyPreviewClient } from '../../common/onlyPreviewClient';
+import { OnlyPreviewProjectPasteController, resolveOnlyPreviewPasteShortcut } from './onlyPreviewProjectPaste.service';
 import {
   onlyPreviewTreeSelection,
+  copyOnlyPreviewTreeSelection,
   showOnlyPreviewTreeContextMenu
 } from './onlyPreviewTreeSelection.store';
 import { onlyPreviewEditInputWidthCh } from './onlyPreviewProjectAuthoring.service';
@@ -820,15 +823,32 @@ const handleProjectItemCopyShortcut = (event: KeyboardEvent): boolean => {
   });
   if (decision.kind === 'ignore') return false;
   event.preventDefault();
-  void onlyPreviewShellStore.copyProjectItem(decision.relativePath, 'item');
+  void copyOnlyPreviewTreeSelection('item');
   return true;
 };
+
+const projectPaste = new OnlyPreviewProjectPasteController(
+  onlyPreviewShellStore, onlyPreviewClient, onlyPreviewEnv.hostToken,
+  (entries, workspaceId) => onlyPreviewProjectAuthoring.revealCreatedEntries(entries, workspaceId),
+  describeOnlyPreviewError
+);
 
 const handleShellKeydown = (event: KeyboardEvent): void => {
   if (handleOnlyPreviewProjectDeleteShortcut(
     event, onlyPreviewRecentsStore.activePanel === 'project' && !onlyPreviewProjectAuthoring.editing
   )) return;
   if (handleProjectItemCopyShortcut(event)) return;
+  if (resolveOnlyPreviewPasteShortcut(event, {
+    isMac,
+    active: onlyPreviewRecentsStore.activePanel === 'project',
+    editing: Boolean(onlyPreviewProjectAuthoring.editing),
+    targetIsEditable: event.target instanceof HTMLElement &&
+      Boolean(event.target.closest(ONLY_PREVIEW_EDITABLE_TARGET_SELECTOR))
+  })) {
+    event.preventDefault();
+    void projectPaste.paste();
+    return;
+  }
   if (event.altKey && event.code === 'Digit1') {
     event.preventDefault();
     focusProjectTree();

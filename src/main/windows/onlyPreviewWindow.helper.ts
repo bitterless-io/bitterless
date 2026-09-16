@@ -10,7 +10,10 @@ import {
   type Rectangle
 } from 'electron';
 import { join } from 'node:path';
-import { setApplicationFindDispatch } from '@main/menu/applicationFindMenu.service';
+import {
+  isApplicationFindFocusWithin,
+  setApplicationFindDispatch
+} from '@main/menu/applicationFindMenu.service';
 import { is } from '@electron-toolkit/utils';
 import type {
   OnlyPreviewBounds,
@@ -242,6 +245,7 @@ export class OnlyPreviewWindowHelper {
   // The host, behind the seam. The composite asks this for its extent, its window and its chrome
   // capability, and never reads geometry off `baseWindow` again.
   private standaloneMount: OnlyPreviewMount | null = null;
+  private shortcutContents = new WeakSet<Electron.WebContents>();
   // The overlay owners are started after the window is shown, so the first frames lay out the shell
   // before anything exists to receive an overlay rect. Without this the startup path would fan a
   // layout out to services that would refuse the host token they have not been given yet.
@@ -281,13 +285,14 @@ export class OnlyPreviewWindowHelper {
     host: OnlyPreviewHostCapability,
     origin: OnlyPreviewShortcutOrigin
   ): void {
+    this.shortcutContents.add(webContents);
     // Recorded per view, because "no shortcut record at all" has two very different causes: the
     // handler was never installed on the view that had focus, or it was installed and the keystroke
     // never arrived. This line separates them.
     console.info(`[onlypreview] event=shortcut-bound origin=${origin}`);
     webContents.on('before-input-event', (event, input) => {
-      // Embedded previews share the host's session search; standalone previews keep file Find.
-      if (isCurrentFileFindShortcut(input) && this.standaloneMount?.kind === 'cowork') return;
+      if (event.defaultPrevented) return;
+      if (this.standaloneMount?.kind === 'cowork' && !this.surfaceContainer?.getVisible()) return;
       const command = this.resolveNativeCommand(host, input);
       // The one measurement that separates "Main never saw the key" from "Main saw it and did
       // nothing". Both `Cmd+F` and `Shift+Cmd+F` reach Main only through this handler, bound on the
@@ -378,9 +383,7 @@ export class OnlyPreviewWindowHelper {
     }
   }
 
-  // The macOS menu path. `window` is whichever BaseWindow is key, so a Command+F pressed while
-  // EyesOnAgents or the main window is focused resolves to `false` here and is replayed to that
-  // window instead of reaching OnlyPreview.
+  // A shared host window is insufficient: Chat and other tabs have their own Find commands.
   runMenuFindCommand(
     command: 'find-in-file' | 'focus-search',
     window: BaseWindow | null
@@ -389,6 +392,8 @@ export class OnlyPreviewWindowHelper {
     const host = this.getStandaloneHost();
     if (!baseWindow || baseWindow.isDestroyed() || !host) return false;
     if (window !== baseWindow) return false;
+    if (this.standaloneMount?.kind === 'cowork' && !this.surfaceContainer?.getVisible()) return false;
+    if (!isApplicationFindFocusWithin(baseWindow, this.shortcutContents)) return false;
     const focused = electronWebContents.getFocusedWebContents() ?? null;
     const opener =
       focused && !focused.isDestroyed() ? focused : (this.shellView?.webContents ?? null);
@@ -901,6 +906,7 @@ export class OnlyPreviewWindowHelper {
     this.baseWindow = null;
     this.surfaceContainer = null;
     this.standaloneMount = null;
+    this.shortcutContents = new WeakSet();
     this.shellView = null;
     this.baseWindowState = null;
     this.stopSearchRuntimeUnlessPreserved();
@@ -1347,6 +1353,7 @@ export class OnlyPreviewWindowHelper {
     // The alert view deliberately gets no native shortcuts. A dialog is modal, so Cmd+F or
     // Shift+Cmd+F while it is up would open Find or Global Search *underneath* it, and the dialog
     // already owns Enter and Escape itself.
+    this.shortcutContents.add(view.webContents);
     if (mode !== 'alert') {
       this.bindNativeShortcuts(
         view.webContents,

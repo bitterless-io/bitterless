@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { expectOnlyPreviewError, runtime, source } from './onlyPreviewCoreTest.helper.mjs';
 
@@ -179,8 +183,7 @@ test('a multi-selection copies as a list rather than as its first row', async ()
   assert.equal(commands.length, 1);
   // Paths still travel as argv, never interpolated into the script text.
   assert.deepEqual(commands[0].args.slice(-2), ['/w/docs', '/w/notes/one.md']);
-  assert.match(commands[0].args.join('\n'), /repeat with argument in argv/);
-  assert.match(commands[0].args.join('\n'), /set the clipboard to items/);
+  assert.deepEqual(commands[0].args.slice(0, 2), ['-l', 'JavaScript']);
 
   await mac.copyProjectItems(items, 'absolute-path');
   await mac.copyProjectItems(items, 'relative-path');
@@ -205,4 +208,74 @@ test('an empty or oversized selection is refused instead of truncated', async ()
   );
   // A silently truncated paste is worse than a refused one: nothing on screen says what was dropped.
   await assert.rejects(mac.copyProjectItems(tooMany, 'absolute-path'));
+});
+
+test('macOS copy helper compiles and writes native file URLs to an isolated private pasteboard', {
+  skip: process.platform !== 'darwin'
+}, () => {
+  const directory = mkdtempSync(join(tmpdir(), 'onlypreview-native-clipboard-'));
+  try {
+    const paths = [join(directory, '中文 a & b "quoted".txt'), join(directory, '目录 空格')];
+    writeFileSync(paths[0], 'clipboard fixture');
+    mkdirSync(paths[1]);
+    const command = runtime.createOnlyPreviewClipboardCommand('darwin', paths);
+    const script = command.args[command.args.indexOf('-e') + 1];
+    const scriptFile = join(directory, 'copy.js');
+    writeFileSync(scriptFile, script);
+    execFileSync('/usr/bin/osacompile', ['-l', 'JavaScript', '-o', join(directory, 'copy.scpt'), scriptFile], {
+      encoding: 'utf8', timeout: 10_000
+    });
+
+    // Run the actual writer against a uniquely named pasteboard. The user's general pasteboard is
+    // never read or written; only this test's private native resource is released afterwards.
+    const privateWriter = script
+      .replace('function run(argv)', 'function copyFixture(argv)')
+      .replace('$.NSPasteboard.generalPasteboard', 'testPasteboard');
+    assert.notEqual(privateWriter, script);
+    assert(!privateWriter.includes('generalPasteboard'));
+    const fixture = [
+      'let testPasteboard;', privateWriter,
+      'function run(argv) {',
+      '  testPasteboard = $.NSPasteboard.pasteboardWithUniqueName;',
+      '  try {',
+      '    copyFixture(argv);',
+      '    const restored = testPasteboard.readObjectsForClassesOptions($([$.NSURL]), $.NSDictionary.dictionary);',
+      '    const paths = [];',
+      '    for (let index = 0; index < restored.count; index++) paths.push(ObjC.unwrap(restored.objectAtIndex(index).path));',
+      '    return JSON.stringify({ paths, types: ObjC.deepUnwrap(testPasteboard.types) });',
+      '  } finally { testPasteboard.releaseGlobally; }',
+      '}'
+    ].join('\n');
+    const result = JSON.parse(execFileSync(command.executable, ['-l', 'JavaScript', '-e', fixture, '--', ...paths], {
+      ...command.options, timeout: 10_000
+    }));
+    assert.deepEqual(result.paths, paths);
+    assert(result.types.includes('public.file-url'));
+    assert(result.types.includes('NSFilenamesPboardType'));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('copy errors preserve their cause and safe helper diagnostics without exposing target paths', async () => {
+  const cause = Object.assign(new Error(`command failed with private argv: ${item.realPath}`), {
+    code: 1,
+    signal: 'SIGTERM',
+    stderr: `execution error: cannot copy ${item.realPath}. (-10006)\n`
+  });
+  const service = new runtime.OnlyPreviewClipboardService({
+    platform: 'darwin', executeCommand: async () => { throw cause; },
+    textClipboard: { writeText: () => assert.fail('text clipboard must not be used') }
+  });
+  await assert.rejects(service.copyProjectItem(item, 'item'), (error) => {
+    assert.equal(expectOnlyPreviewError('OPERATION_FAILED')(error), true);
+    assert.equal(error.cause, cause);
+    assert.match(error.message, /code=1/);
+    assert.match(error.message, /signal=SIGTERM/);
+    assert.match(error.message, /script=-10006/);
+    assert(!error.message.includes(item.realPath));
+    assert(!Object.keys(error).includes('cause'));
+    assert(!JSON.stringify(error).includes(item.realPath));
+    return true;
+  });
 });

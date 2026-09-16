@@ -134,6 +134,7 @@ const harness = async (origin = 'chrome') => {
   // Avoid constructing a real window/runtime; exercise the real methods installed on all views.
   const helper = Object.create(OnlyPreviewWindowHelper.prototype);
   helper.standaloneHost = host;
+  helper.shortcutContents = new WeakSet();
   const commands = [];
   helper.commandHandler = (command) => commands.push(command);
   windowService.start({

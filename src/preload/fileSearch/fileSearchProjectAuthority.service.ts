@@ -25,6 +25,7 @@ import {
   OnlyPreviewContractError
 } from '@shared/onlypreview/onlyPreview.contract';
 import { validateOnlyPreviewEntryName } from '@shared/onlypreview/onlyPreviewEntryName.shared';
+import { pasteOnlyPreviewProjectFiles } from './fileSearchProjectPaste.service';
 import type {
   OnlyPreviewFileAuthorityDeleteGrant,
   OnlyPreviewFileAuthorityDeleteResult,
@@ -435,6 +436,36 @@ export class FileSearchProjectAuthority {
     }
   }
 
+  async pasteItems(
+    runtimeInstanceId: string,
+    workspaceId: string,
+    workspaceGeneration: number,
+    parentRelativePath: string,
+    sourcePaths: string[]
+  ): Promise<OnlyPreviewFileAuthorityTarget[]> {
+    try {
+      const operation = this.authorityOperation;
+      const workspace = this.requireWorkspace(workspaceId, workspaceGeneration);
+      const parent = await this.resolveDirectory(workspace, parentRelativePath, operation);
+      const parentIdentity = await this.fileOperations.lstat(parent.canonicalPath);
+      const names = await pasteOnlyPreviewProjectFiles(sourcePaths, parent.canonicalPath, async () => {
+        const current = await this.resolveDirectory(workspace, parentRelativePath, operation);
+        const currentIdentity = await this.fileOperations.lstat(current.canonicalPath);
+        if (currentIdentity.dev !== parentIdentity.dev || currentIdentity.ino !== parentIdentity.ino) {
+          throw new OnlyPreviewContractError('WORKSPACE_ACCESS_DENIED', 'The paste destination changed.');
+        }
+      });
+      const targets: OnlyPreviewFileAuthorityTarget[] = [];
+      for (const name of names) {
+        const item = await this.resolveItem(workspace, joinRelativePath(parent.relativePath, name), operation);
+        targets.push(this.toTarget(runtimeInstanceId, workspace, item));
+      }
+      return targets;
+    } catch (error) {
+      return toSafeProjectError(error, 'author');
+    }
+  }
+
   async renameEntry(
     runtimeInstanceId: string,
     workspaceId: string,
@@ -700,7 +731,7 @@ export class FileSearchProjectAuthority {
     if (typeof parentRelativePath !== 'string') {
       throw new OnlyPreviewContractError('INVALID_INPUT', 'The parent folder is invalid.');
     }
-    if (!normalizeOnlyPreviewRelativePath(parentRelativePath)) {
+    if (!normalizeOnlyPreviewRelativePath(parentRelativePath, { allowEmpty: true })) {
       await this.requireCurrentRoot(workspace, operation);
       this.requireActiveWorkspace(workspace, operation);
       return { relativePath: '', canonicalPath: workspace.rootRealPath };

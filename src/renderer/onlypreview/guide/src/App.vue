@@ -1,8 +1,27 @@
 <template>
   <div name="onlypreview__guideApp" class="onlypreview-guide">
     <main name="onlypreview__guideContent" class="onlypreview-guide__content">
-      <p class="onlypreview-guide__eyebrow">{{ onlyPreviewI18n.guide.eyebrow }}</p>
-      <h1>{{ onlyPreviewI18n.guide.title }}</h1>
+      <p v-if="onlyPreviewGuideStore.mode === 'mcp'" class="onlypreview-guide__eyebrow">
+        {{ onlyPreviewI18n.guide.eyebrow }}
+      </p>
+      <h1>{{ guideTitle }}</h1>
+
+      <section
+        v-if="onlyPreviewGuideStore.mode === 'builtin' && onlyPreviewGuideStore.status === 'ready'"
+        name="onlypreview__guideBuiltin"
+        class="onlypreview-guide__builtin"
+      >
+        <p>{{ onlyPreviewI18n.guide.builtinHint }}</p>
+        <p class="onlypreview-guide__example">{{ onlyPreviewI18n.guide.builtinExample }}</p>
+        <p>{{ onlyPreviewI18n.guide.builtinTargetHint }}</p>
+      </section>
+      <p
+        v-else-if="onlyPreviewGuideStore.mode === 'builtin' && onlyPreviewGuideStore.status === 'restart-required'"
+        class="onlypreview-guide__status onlypreview-guide__status--error"
+        role="alert"
+      >
+        {{ onlyPreviewI18n.guide.builtinUnavailable }}
+      </p>
 
       <div
         v-if="onlyPreviewGuideStore.info && onlyPreviewGuideStore.info.kind !== 'production'"
@@ -15,6 +34,7 @@
       </div>
 
       <section
+        v-if="onlyPreviewGuideStore.mode === 'mcp'"
         name="onlypreview__guideCompleteSetup"
         class="onlypreview-guide__copy-card"
       >
@@ -74,6 +94,12 @@ import { interpolateOnlyPreview } from '../../common/onlyPreviewFormat';
 import { onlyPreviewI18n } from '../../common/onlyPreviewI18n';
 import { onlyPreviewGuideStore } from './onlyPreviewGuide.store';
 
+const guideTitle = computed(() =>
+  onlyPreviewGuideStore.mode === 'builtin'
+    ? onlyPreviewI18n.guide.builtinTitle
+    : onlyPreviewI18n.guide.title
+);
+
 // 品牌名从 i18n 的 `appName` 注入,**文案里只有 `{app}`** —— 这样把这份渲染层搬到别的宿主时,
 // re-vendor 不可能把上一个产品名再带回来(Ral 2026-09-10:cowork 里不该有 bitterless 品牌表达)。
 const restartRequiredTitle = computed(() =>
@@ -113,7 +139,7 @@ onMounted(() => {
 });
 
 watchEffect(() => {
-  document.title = onlyPreviewI18n.guide.title;
+  document.title = guideTitle.value;
 });
 </script>
 

@@ -66,3 +66,9 @@
 
 `copyNextTurnContext()` 仍未向 `pending.workspace` 传值，因此独立的 `workspace:` 头可能为
 `(none)`；这与日志入口无关，本次不修改。
+
+## 2026-09-16 追加：New chat 与 workflow 的未覆盖入口
+
+9月15日修复覆盖普通 BaseAgent 回合的日志落点，但新建聊天只存在 renderer、workflow 子 Agent 使用独立内存 Pi 会话，这两条路径不会经过普通 prompt 日志。用户要求 New chat 即可复制路径，因此当前契约扩展为：新建时保存真实当前系统提示与配置快照；复制缺失旧日志时创建明确标记历史缺失的当前快照，不假装恢复旧输入。已有日志目录只读返回，不重置已有模型会话。
+
+Workflow 通过 agent.io 事件把完整诊断归入所属 chat；停止过程的消息也保留。BaseAgent 没有实际 runtime 时的配置 reset 不再创建无归属日志目录。此前章节中“缺失即提示再发送、不创建目录”的限制保留为9月15日历史行为，以本节与最新 feature 文档为准。
