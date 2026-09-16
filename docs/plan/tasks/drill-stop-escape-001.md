@@ -37,3 +37,12 @@ Actual implementation regression coverage for the issue contract. Record command
 ## Native parity follow-up
 
 Verify and fix the same early normal Stop receipt in Maestro BaseAgent under the issue contract. Add actual BaseAgent cancellation regressions, preserve existing ACP runtime/socket integration, rerun focused chat types/tests and full build, then independent review and sync `release/2608` again.
+
+- Original failure reproduced with the actual `BaseAgent` module before source edits: while its raw model promise was deferred, Stop acknowledged, a replacement was admitted, two runtime sessions existed, and the old turn still delivered text/tool activity (`events: 3`, `streams: 1`, `activity: 1`). The same regression now passes.
+- Native implementation reuses the cancellation generation and prompt/disposal ownership. Stop invalidates synchronously, shares concurrent cleanup, waits for actual initialization, raw model promises and already-started host tools, then drops the old session. Late events/results and subsequent tool dispatch are suppressed. Native abort errors remain errors after the model drains. Existing timeout wrappers cannot serve as proof that the underlying work ended.
+- `yarn test:agent-stop` — PASS, 8 behavior tests executing the complete actual BaseAgent class. Cases cover the reproduced failure, 500 ms/1500 ms former cutoffs, repeated/idle Stop, cleanup failure, model/startup timeout races, late tool rejection, active tool drain, fresh turns and disposal.
+- `yarn typecheck:agent-stop` — PASS, strict TypeScript (`noCheck: false`) over actual BaseAgent and transitive runtime dependencies.
+- `yarn typecheck:acp && yarn test:acp` — PASS, strict host/core types, 13 real protocol/socket/helper subprocess regressions and the actual native Maestro/SQLite/shipping-helper integration.
+- `yarn typecheck:chat && yarn test:chat-escape && yarn check:chat-composer` — PASS, focused chat types, 8 mounted chat behaviors and existing composer checks.
+- `yarn build` — PASS, complete Electron main/preload/renderer build (22.20 s). No packaging/signing/upload performed.
+- Limits: model/network adapter and Electron boundaries are synthetic. Native Stop tests use real timers and module code, without a live model or GUI session. They prove that already-started effects are drained, not rolled back. Independent review and the follow-up merge/Git synchronization remain pending.

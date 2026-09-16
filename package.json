@@ -52,6 +52,8 @@
     "check:maestro": "node scripts/maestro/check-maestro.mjs",
     "check:chat-composer": "node scripts/maestro/check-chat-composer.mjs",
     "test:chat-escape": "node --test scripts/maestro/chat-escape.test.mjs",
+    "test:agent-stop": "node --test scripts/maestro/agent-stop.test.mjs",
+    "typecheck:agent-stop": "tsc -p scripts/maestro/tsconfig.agent-stop.json",
     "typecheck:chat": "vue-tsc --noEmit -p scripts/maestro/tsconfig.chat.json",
     "mcp:todo:smoke": "node scripts/mcp/todo-smoke.mjs",
     "mcp:todo:smoke:debug": "node scripts/mcp/todo-smoke.mjs --profile debug",

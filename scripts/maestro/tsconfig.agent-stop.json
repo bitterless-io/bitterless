@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.node.json",
+  "include": [
+    "../../src/main/maestro/agent/BaseAgent.ts"
+  ],
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "noCheck": false,
+    "strict": true,
+    "noImplicitAny": true,
+    "noImplicitReturns": true
+  }
+}

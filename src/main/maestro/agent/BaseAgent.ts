@@ -97,6 +97,10 @@ export class BaseAgent {
   private disposed = false
   private disposePromise: Promise<void> | null = null
   private activePromptDrain: Promise<void> | null = null
+  private abortPromise: Promise<void> | null = null
+  private managedPrompts = new Set<Promise<unknown>>()
+  private pendingTools = new Set<Promise<string>>()
+  private sessionAborts = new WeakMap<AgentRuntimeSession, Promise<void>>()
   private activeOneShotRuns = new Set<Promise<AgentTurnReply>>()
   private activeOneShotSessions = new Set<AgentRuntimeSession>()
   private pendingSessionCreations = new Set<Promise<AgentRuntimeSession>>()
@@ -215,12 +219,19 @@ export class BaseAgent {
   // while the event loop is blocked.
   private withToolTimeout(spec: PiToolSpec): PiToolSpec {
     const ms = toolTimeoutMs()
+    const generation = this.abortGeneration
     return {
       ...spec,
       execute: async (args: Record<string, unknown>): Promise<string> => {
+        const pending = Promise.resolve().then(() => {
+          if (this.disposed || generation !== this.abortGeneration) throw new Error('Agent turn cancelled')
+          return spec.execute(args)
+        })
+        this.pendingTools.add(pending)
+        void pending.finally(() => this.pendingTools.delete(pending)).catch(() => undefined)
         try {
           return await withTimeout(
-            Promise.resolve(spec.execute(args)),
+            pending,
             ms,
             `tool "${spec.name}" timed out after ${Math.round(ms / 1000)}s — it may be reading a very large file or scanning a huge directory. Try a narrower path or a specific file.`
           )
@@ -241,7 +252,9 @@ export class BaseAgent {
     options?: BaseAgentPromptOptions
   ): Promise<AgentTurnReply> {
     if (this.disposed) return { ok: false, text: '', error: 'agent has been disposed' }
-    if (this.busy) return { ok: false, text: '', error: 'agent is already handling a message' }
+    if (this.busy || this.abortPromise || this.managedPrompts.size || this.pendingTools.size || this.pendingSessionAborts.size) {
+      return { ok: false, text: '', error: 'agent is already handling a message' }
+    }
     this.busy = true
     const abortGeneration = this.abortGeneration
     let resolvePromptDrain: () => void = () => undefined
@@ -267,7 +280,12 @@ export class BaseAgent {
         throw err
       }
       if (abortGeneration !== this.abortGeneration) throw new Error('Agent turn cancelled')
-      const turn = await this.runPrompt(session, this.withSystemPreamble({ text: message, media: options?.media, images: options?.images }), timeoutMs)
+      const turn = await this.runPrompt(session, {
+        message: this.withSystemPreamble({ text: message, media: options?.media, images: options?.images }),
+        timeoutMs,
+        abortGeneration
+      })
+      if (abortGeneration !== this.abortGeneration) throw new Error('Agent turn cancelled')
       this.debug(turn.errorMessage ? 'agent-turn-error' : 'agent-turn-complete', turn.errorMessage ? 'warn' : 'info', 'agent runtime turn completed.', {
         durationMs: Date.now() - startedAt,
         outputChars: turn.text.length,
@@ -325,7 +343,7 @@ export class BaseAgent {
       )
       this.activeOneShotSessions.add(session)
       if (this.disposed) return { ok: false, text: '', error: 'agent has been disposed' }
-      const turn = await this.runPrompt(session, { text: prompt }, timeoutMs)
+      const turn = await this.runPrompt(session, { message: { text: prompt }, timeoutMs })
       this.debug(turn.errorMessage ? 'agent-oneshot-error' : 'agent-oneshot-complete', turn.errorMessage ? 'warn' : 'info', 'agent runtime one-shot completed.', {
         durationMs: Date.now() - startedAt,
         outputChars: turn.text.length,
@@ -378,35 +396,58 @@ export class BaseAgent {
       ...(this.activePromptDrain ? [this.activePromptDrain] : []),
       ...this.activeOneShotRuns
     ]
-    await Promise.allSettled(drains)
+    await Promise.allSettled([...drains, ...this.managedPrompts, ...this.pendingTools])
     await Promise.allSettled([...this.pendingSessionAborts])
     this.activeOneShotSessions.clear()
     this.busy = false
   }
 
-  private trackSessionAbort(creation: Promise<AgentRuntimeSession>): void {
-    const abort = creation.then((session) => session.abort()).catch(() => undefined)
+  private abortSession(session: AgentRuntimeSession): Promise<void> {
+    const existing = this.sessionAborts.get(session)
+    if (existing) return existing
+    const abort = Promise.resolve().then(() => session.abort())
+    this.sessionAborts.set(session, abort)
+    void abort.catch(() => this.sessionAborts.delete(session))
+    return abort
+  }
+
+  private trackSessionAbort(creation: Promise<AgentRuntimeSession>): Promise<void> {
+    const abort = creation.then((session) => this.abortSession(session), () => undefined)
     this.pendingSessionAborts.add(abort)
-    void abort.then(() => this.pendingSessionAborts.delete(abort))
+    void abort.finally(() => this.pendingSessionAborts.delete(abort)).catch(() => undefined)
+    return abort
   }
 
   /**
-   * Stop the in-flight turn (if any): tell the live runtime session to abort and go idle, which
-   * resolves the pending prompt() so the turn ends with whatever partial output it has. Then drop
-   * the session so aborted output is never reused as later model context. No-op when idle.
+   * Invalidate the managed turn immediately, then join its native initialization, model and tools.
+   * Already-streamed UI output remains visible; late events/results and new tool dispatch are
+   * suppressed. Already-started effects must finish; stopping cannot undo them. No-op when idle.
    */
   async abort(): Promise<void> {
+    if (this.abortPromise) return await this.abortPromise
+    if (!this.busy && !this.activePromptDrain && !this.managedPrompts.size && !this.pendingSessionAborts.size && !this.pendingTools.size) return
     this.abortGeneration += 1
-    if (!this.busy || !this.sessionPromise) return
-    try {
-      const session = await Promise.race([this.sessionPromise, sleep(500).then(() => null)])
-      if (session) await Promise.race([session.abort(), sleep(1500)])
-    } catch {
-      /* best effort — the turn may already be resolving */
-    } finally {
-      this.reset()
-      this.busy = false
-    }
+    const managed = this.sessionPromise
+    const drain = this.activePromptDrain
+    const pendingAborts = [...this.pendingSessionAborts]
+    const stopping = Promise.resolve().then(async () => {
+      // A runtime's abort may only send a signal. Neither its return nor a timeout means
+      // the original model/tool work has stopped; retain admission until every owner settles.
+      const results = await Promise.allSettled([
+        ...pendingAborts,
+        ...(managed ? [this.trackSessionAbort(managed)] : []),
+        ...(drain ? [drain] : []),
+        ...this.managedPrompts
+      ])
+      while (this.pendingTools.size) await Promise.allSettled([...this.pendingTools])
+      if (this.sessionPromise === managed) { this.sessionPromise = null; this.primed = false }
+      const failure = results.find((result) => result.status === 'rejected')
+      if (failure?.status === 'rejected') throw failure.reason
+    }).finally(() => {
+      if (this.abortPromise === stopping) this.abortPromise = null
+    })
+    this.abortPromise = stopping
+    await stopping
   }
 
   // Prepend the system prompt to the FIRST message of a session (once); later turns rely on
@@ -418,7 +459,8 @@ export class BaseAgent {
     return sys ? { ...message, text: `${sys}\n\n${message.text}` } : message
   }
 
-  private async runPrompt(session: AgentRuntimeSession, message: AgentRuntimePrompt, timeoutMs: number): Promise<PiTurnResult> {
+  private async runPrompt(session: AgentRuntimeSession, options: { message: AgentRuntimePrompt; timeoutMs: number; abortGeneration?: number }): Promise<PiTurnResult> {
+    const { message, timeoutMs } = options
     let streamed = ''
     let finalText = ''
     let stopReason = ''
@@ -432,6 +474,7 @@ export class BaseAgent {
       this.opts.onThinking?.({ active, ts: Date.now() })
     }
     const unsubscribe = session.subscribe((event: AgentRuntimeEvent) => {
+      if (this.disposed || (options.abortGeneration !== undefined && options.abortGeneration !== this.abortGeneration)) return
       this.opts.onRuntimeEvent?.(event)
       const type = event?.type
       if (type === 'text_delta') {
@@ -476,10 +519,15 @@ export class BaseAgent {
       }
     })
     try {
-      await withTimeout(session.prompt(message), timeoutMs, `pi agent turn timed out after ${Math.round(timeoutMs / 1000)}s`)
+      const running = session.prompt(message)
+      if (options.abortGeneration !== undefined) {
+        this.managedPrompts.add(running)
+        void running.finally(() => this.managedPrompts.delete(running)).catch(() => undefined)
+      }
+      await withTimeout(running, timeoutMs, `pi agent turn timed out after ${Math.round(timeoutMs / 1000)}s`)
     } catch (err) {
       if (isTimeoutError(err)) {
-        await Promise.race([session.abort(), sleep(1500)]).catch(() => undefined)
+        await Promise.race([this.abortSession(session), sleep(1500)]).catch(() => undefined)
       }
       throw err
     } finally {
