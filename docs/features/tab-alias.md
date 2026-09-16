@@ -4,6 +4,10 @@ Status: implemented — owner testing pending(2026-09-14,Ral:「tab 需要支持
 按钮 Alias 点击弹出 alert view 是一个 form 可以编辑 alias。有 alias 的 tab 优先展示 alias 而不是
 页面 title。另外 alias 清空并保存,就能展示回页面的 title 了。固有 tab 不能被 edit alias」)。
 
+> bl 侧 2026-09-16 Ral 报「alias 无效」(cowork 正常)。排查与修复见
+> [maestro-tab-alias-does-nothing.md](../issues/maestro-tab-alias-does-nothing.md) —— 本文的设计
+> 一条没改,改的是 bl 那一层覆盖层的加载方式与失败收场。
+
 ## #0 目标
 
 | # | 目标 | 判据 |

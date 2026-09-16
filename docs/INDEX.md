@@ -1,5 +1,11 @@
 # Bitterless Documentation
 
+- [A blank New tab paints black instead of the Bitterless splash](issues/maestro-blank-new-tab-paints-black.md) — fixed; owner verification pending;
+  the prewarmed `about:blank` document covered the host splash (near-black in macOS dark mode), so a blank tab keeps its view hidden until a real document commits.
+
+- [`Alias…` 点了没反应](issues/maestro-tab-alias-does-nothing.md) — repaired against the cowork implementation; owner verification pending;
+  the dialog renderer mounts statically instead of through a `file://`-fragile dynamic import, and the layer now fails open with named diagnostics.
+
 - [Background workflows and active tasks](features/background-workflow-tasks.md) — implemented and code-verified; concurrent chat, pause/resume, Tasks history modal, completion delivery.
 
 - [Windows locale pruning drops Chinese and English](issues/windows-locale-pruning-drops-chinese-and-english.md) — **open, not fixed**;
