@@ -29,3 +29,7 @@ Implement the approved list/detail/flowchart and safe institution workflow synch
 ## verification
 
 Follow the feature contract: real API/storage/parser/UI wiring, focused tests, typecheck/build, rendered visual review, independent source review and verified sample Kimchi execution. No unapproved desktop distribution/restart required.
+
+## Approved scope expansion (2026-09-16)
+
+Implement the Shared and institution scopes section for both Skill and Workflow storage, Workbench lists/details and real Agent discovery/reference resolution. Include the canonical offline demo in the shared workflow catalog, plus explicit local shared package import. Final merge, commit and push target is dev/next; parent will send BotAndI completion notice. Expanded code paths include existing skill sync/storage/catalog/prompt/tool routing and their focused tests.
