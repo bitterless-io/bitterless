@@ -1,68 +1,96 @@
-# `Alias…` 点了没反应 —— 别名表单在打包版里起不来
+# `Alias…` 点了没反应 —— 菜单到表单那一调丢了 `this`
 
-Status: repaired against the proven cowork implementation; owner verification pending (2026-09-16)
+Status: root cause proven and fixed; owner verification pending (2026-09-16)
 
 Related: [Tab 别名(Alias)](../features/tab-alias.md),
-micromeet-cowork `apps/cowork/src/main/modules/window-manager/windows/main/shellAlertView.service.ts`
-(同一个功能在 cowork 的落地,Ral 确认是好的)
+micromeet-cowork `apps/cowork/src/main/modules/browser/browser.controller.ts`(同一个功能在 cowork
+的落地,Ral 确认是好的)
 
 ## Report
 
-Ral 2026-09-16: 「alias 无效」，同一个功能在 micromeet-cowork 里是好的。他跑的是打包的
-**Bitterless Preview**(`version_code` 260916131737，日志见 `~/Library/Logs/Bitterless_PREVIEW/main.log`)。
+Ral 2026-09-16:「alias 无效」，同一个功能在 micromeet-cowork 里是好的。第一轮修复之后他再次确认
+**仍然无效**。他跑的是打包的 Bitterless Preview（`version_code` 260916131737）。
 
-## 已经排除的
+## Confirmed cause
 
-逐条对着运行中的那个包核过，不是这些：
+`MaestroBrowserViewService.promptTabAlias`（菜单项 `Alias…` 的落点）把 controller 的方法**摘进局部
+变量再调**：
 
-| 怀疑 | 证据 |
+```ts
+const request = this._state.requestTabAlias   // ← 摘出来,丢了 this
+if (!request) return
+const answer = await request({ ... }).catch((err) => { emitTrace(...); return null })
+```
+
+`this._state` 就是 `MaestroWindowController`（`setState(this)` 传的是 controller 本人），而
+`requestTabAlias` 是一个普通类方法，第一行就是 `this.historyView.hide()`。ES module 是严格模式，
+摘出来的函数被裸调时 `this === undefined`，于是这一调**同步抛**：
+
+```
+TypeError: Cannot read properties of undefined (reading 'historyView')
+```
+
+三件事叠在一起，让它成为一个**完全无声**的失败：
+
+| 环节 | 后果 |
 |---|---|
-| 代码没进包 | `app.asar` 里有 `MaestroTabAliasXpcHandler`(未被压缩改名，且 `new` 过)、`Alias…` 菜单项、`/out/renderer/maestro/tabAlias/index.html`、`maestroTabAlias-*.js`、`TabAliasApp-*.js`、`TabAliasApp-*.css`、`/out/preload/maestroCoach.js` |
-| XPC 通道名对不上 | 主进程 `class MaestroTabAliasXpcHandler`,渲染层 `createXpcRendererEmitter("MaestroTabAliasXpcHandler")`,两边字面量一致 |
-| `alias` 列没迁移 | 他这台机器的 `cowork/config/config.db` 建于 2026-09-01,账本停在那时的 version_code,`260914120000` 那条迁移会跑;`TabsDao` 读写两侧本来也按列在不在降级 |
-| 菜单项被置灰 | 判据是 `!isDefaultHomeTab(tab)`,普通网页 tab 恒为可点 |
-| 布局矩形没喂进去 | `layout()` 与 `applyContentBounds()` 两条路都调 `tabAliasView.setBounds(content)`,开窗时就跑过 |
+| 抛发生在**求值调用表达式**时 | 挂在调用**结果**上的 `.catch()` 根本没机会挂上 —— 那个 `catch` 里的 `emitTrace` 从来没执行过 |
+| `promptTabAlias` 是 async | 同步抛变成一个 rejected promise |
+| 菜单项写的是 `click: () => void this.promptTabAlias(tab.id)` | `void` 把它丢掉 ⇒ unhandled rejection，没有任何 handler 记录 |
 
-日志里也没有 `[maestro] event=tab-alias-blocked gate=…` —— 但那行是 `console.info`,electron-log
-只收自己那一路，所以**它的缺席不构成证据**(这一点本身要修，见下)。
+所以：点 `Alias…` → 什么都不发生 → 表单从来没有被请求过 → 覆盖层那一侧的每一行日志（包括
+`gate=…`）当然也不会出现。**这解释了为什么日志里一片空白**，也解释了为什么第一轮针对覆盖层的
+加固（静态 import、失败闩、`setVisible` 配对）一点用都没有 —— 它们修的是后半条链，而执行根本走不
+到那里。
 
-## 与 cowork 那份能用的实现的结构差异
+cowork 没这个 bug，因为它调的是模块单例：`shellAlertViewService.requestPrompt({...})` —— 方法调用，
+`this` 天然绑住。
 
-同一个需求、同一份设计文档，cowork 的 `ShellAlertViewService` 与 bl 的
-`MaestroTabAliasViewService` 在四处不一样，每一处都是 cowork 的注释里明写过的坑：
+### 证据
 
-1. **表单入口用了动态 `import()`。** `tabAlias.ts` 是全仓**唯一**一个
-   `await import('./TabAliasApp.vue')` 才挂载的 maestro 渲染入口(home / localHome / workbench /
-   history / control 全是静态 import)。打包后这条路要走 Vite 的 `__vitePreload`：它给拆出去的
-   `TabAliasApp-*.css` 建一个 `<link rel="stylesheet" crossorigin>` 并**等它的 load/error**,
-   失败就整条 `import()` 抛错。页面是 `file://` 且带 `default-src 'self'` 的 CSP —— 这条链上任何
-   一环拒掉，`bootstrap()` 就在 `createApp().mount()` 之前抛出，而 `loadFile` 的 Promise 早已
-   resolve(HTML 本身加载成功)。于是主进程认定「表单已就绪」，挂上一张**什么都没画的透明覆盖层**：
-   点 `Alias…` 看不到任何东西，一行错误都没有。**这是首位嫌疑。**
-2. **没有失败闩。** `ensureView()` 对一个已经加载失败、但 webContents 还活着的 view 直接复用，
-   `ready` 永远停在 `false`;于是下一次 `requestAlias` 存下 `settle` 后**再也没人结掉它**,
-   而此后每一次点 `Alias…` 都因为 `this.dialog` 还占着直接返回 `null` —— 菜单项照样可点，点了
-   什么也不发生。cowork 为此专门有 `unavailable` + `failOpen()`,注释写的就是这个症状。
-3. **渲染进程崩了没人收场。** 同 2 的形状，触发点不同。
-4. **从不 `setVisible`。** cowork 建完 `setVisible(false)`,`addChildView` 之后 `setVisible(true)`,
-   摘下时再 `setVisible(false)`。bl 只挂/摘。
+用**真实源码**拼出那条缝跑一遍（`promptTabAlias` + `MaestroWindowController.requestTabAlias`，
+按生产方式接线）：
 
-另外 bl 是**点开菜单那一刻**才建 view 并加载(cowork 在开窗时就预建预载)，所以第一次弹窗必须
-靠加载完成后的那次补挂 —— 链路更长，失败面更大。
+| 代码 | 结果 |
+|---|---|
+| 修复前（摘进局部变量） | `UNHANDLED REJECTION → TypeError: Cannot read properties of undefined (reading 'historyView')`；`historyView.hide` / `requestAlias` **一次都没被调用**；trace 为空 |
+| 修复后（调在 `this._state` 上） | `historyView.hide` → `requestAlias` → 写回 `tab.alias` → `broadcastTabs`，三行日志齐全 |
+
+这条缝现在是 `tests/maestro/maestroTabAliasDialog.test.mjs` 里的一条回归用例，并且已经验证它在
+旧代码上**会红**（同一个 TypeError）。
+
+## 第一轮的误判（留档）
+
+第一轮把嫌疑定在 `tabAlias.ts` 的 `await import('./TabAliasApp.vue')` 上（打包后走 Vite 的
+`__vitePreload`，`file://` ＋ CSP 下可能整条 `import()` 抛掉，而 `loadFile` 已经 resolve，于是主进程
+挂上一张什么都没画的透明层）。那条推理本身成立，但**它不是这次的原因** —— 执行连覆盖层都没走到。
+排查时缺的那一环是：没有先证明「表单到底有没有被请求过」。改成静态 import 的那一条保留（每个
+兄弟渲染入口都是静态的，且去掉了一个真实的 `file://` 失败面），但它是加固，不是修复。
 
 ## Fix contract
 
-- `tabAlias.ts` 改成**静态 import** `TabAliasApp.vue`,与其余每一个 maestro 渲染入口一致。
-  「先拉快照再挂载」这条意图由 `await tabAliasStore.init()` 保证，与动态 import 无关。
-- 覆盖层对齐 cowork 那份已验证的实现：开窗时预建预载;`unavailable` 失败闩 ＋ `failOpen()`,
-  加载失败与渲染进程消失都**当场按「什么都不改」结掉**,绝不留一个谁也结不掉的 Promise;
-  `setVisible` 在挂/摘两侧成对。
-- 诊断要能被看见:闸门与失败都走 `console.error`/`console.info` 之外的既有诊断通路
-  (`emitTrace`),这样下一次「点了没反应」在 trace 里是有名有姓的一行。
+- `promptTabAlias` **调在 `this._state` 上**，不摘进局部变量。这一条不是风格问题：摘出来就丢 `this`。
+- 菜单项的 `click` 带 `.catch()`，任何一次抛都落一行日志与一条 trace —— fire-and-forget 的 handler
+  不许再有无声路径。
+- **整条线补日志**（Ral 2026-09-16:「有日志么,没日志补一下,看下哪里失效了」），统一走
+  `moduleLog('tab-alias')`，一次改名的所有步骤在一条 grep 里连起来：
+
+  | 行 | 出处 | 它证明什么 |
+  |---|---|---|
+  | `menu clicked` | browserView | 菜单项确实点到了这个 tab |
+  | `dialog requested` | 覆盖层 | 请求到达了覆盖层（本次失败就断在这一行之前） |
+  | `layer preload requested` / `layer loaded` / `layer load failed` | 覆盖层 | 渲染进程建起来了没有 |
+  | `renderer bootstrap start` / `renderer mounted` | 表单渲染层 | 表单真的挂载了 |
+  | `snapshot pulled` | XPC handler | 渲染层确实在跟 main 说话 |
+  | `not attached gate=…` / `dialog attached` | 覆盖层 | 挂没挂上、被哪道闸拦下 |
+  | `answer received` / `dialog answered` / `alias applied` | 覆盖层 ＋ browserView | 答复回来了、写回了 |
+
+- `/maestro/tabAlias/index.html` 补进 `logPolicy.service.ts` 的第一方渲染进程表。不在那张表里时，
+  这个渲染进程自己报的任何错都**到不了日志文件** —— 与 Zellij 那条注释记录的是同一个坑。
 
 ## Acceptance
 
 - 普通网页 tab 右键 → `Alias…` → 表单弹出，预填当前别名。
-- 填名字保存 → chip 立刻显示别名;清空保存 → 回到页面标题;Escape / 取消 → 一个字不改。
-- 连点两次 `Alias…`:第二次不排队，也不会把功能卡死。
-- 表单起不来的极端情况:菜单项仍可点，每次点都在 trace 里留一行，且 alias 一个字都不会被改。
+- 保存 → chip 立刻显示别名；清空保存 → 回到页面标题；Escape / 取消 → 一个字不改。
+- `grep '"scope":"tab-alias"' ~/Library/Logs/<profile>/main.log` 能看到从 `menu clicked` 到
+  `alias applied` 的完整一串；任何一步断掉时，最后一行就是断点。

@@ -74,7 +74,11 @@ const stubSources = {
     export const iocHelper = { bind: ({ controller }) => controller };
   `,
   '../window.helper': 'export class WindowHelper { browserWindow = null; }',
-  './maestroControlLinkPolicy': 'export const installControlLinkPolicy = () => {};'
+  './maestroControlLinkPolicy': 'export const installControlLinkPolicy = () => {};',
+  // 日志是这里的边界,但**必须可调用**:两个 service 都在模块作用域就调了 `moduleLog('tab-alias')`,
+  // 而默认桩是 `export class moduleLog {}` —— bundle 一 import 就抛
+  // 「Class constructor cannot be invoked without 'new'」,整个文件一条测试都注册不上。
+  '@main/logging/moduleLog': 'export const moduleLog = () => ({ info() {}, warn() {}, error() {} });'
 };
 
 const bundle = await build({

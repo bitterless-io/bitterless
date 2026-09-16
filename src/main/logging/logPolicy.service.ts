@@ -30,6 +30,10 @@ const FIRST_PARTY_RENDERER_ENTRIES = [
   { path: '/maestro/home/index.html', process: 'renderer:maestroHome' },
   { path: '/maestro/control/index.html', process: 'renderer:maestroControl' },
   { path: '/maestro/workbench/index.html', process: 'renderer:maestroWorkbench' },
+  // 同 Zellij 那条的理由,而且已经付过一次代价:别名表单不在这张表里时,它自己报的任何错
+  // ——包括「挂载失败」——都到不了日志文件,于是「点了 Alias… 没反应」在日志里是一片空白,
+  // 只能读源码猜(docs/issues/maestro-tab-alias-does-nothing.md)。
+  { path: '/maestro/tabAlias/index.html', process: 'renderer:maestroTabAlias' },
   { path: '/maestro/sqlite/index.html', process: 'renderer:maestroSqlite' }
 ] as const;
 

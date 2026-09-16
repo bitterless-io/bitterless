@@ -1,10 +1,16 @@
 # Bitterless Documentation
 
+- [OnlyPreview background index corruption](issues/onlypreview-corrupt-project-index.md) — recovery extended; code verified, owner testing pending;
+  SQLite corruption first reached during warm reconciliation gets one clean rebuild with the suspect database preserved.
+
+- [Development CSP blocks Maestro dialog hot reload](issues/dev-csp-blocks-maestro-dialog-hmr.md) — implemented; code verified, owner testing pending;
+  Tab Alias and History need the existing serve-only localhost WebSocket CSP allowance.
+
 - [A blank New tab paints black instead of the Bitterless splash](issues/maestro-blank-new-tab-paints-black.md) — fixed; owner verification pending;
   the prewarmed `about:blank` document covered the host splash (near-black in macOS dark mode), so a blank tab keeps its view hidden until a real document commits.
 
-- [`Alias…` 点了没反应](issues/maestro-tab-alias-does-nothing.md) — repaired against the cowork implementation; owner verification pending;
-  the dialog renderer mounts statically instead of through a `file://`-fragile dynamic import, and the layer now fails open with named diagnostics.
+- [`Alias…` 点了没反应](issues/maestro-tab-alias-does-nothing.md) — root cause proven and fixed; owner verification pending;
+  the menu handler called the controller seam unbound, so it threw synchronously and died as an unhandled rejection; the whole path now logs under scope `tab-alias`.
 
 - [Background workflows and active tasks](features/background-workflow-tasks.md) — implemented and code-verified; concurrent chat, pause/resume, Tasks history modal, completion delivery.
 

@@ -36,3 +36,42 @@ Storage note: a read-only capacity check found about11GiB available on the data 
 the approximately4.8GB damaged cache means the new index needs additional space; no project files
 or existing caches were deleted to make room. The cause of the original database corruption is
 not established by these logs; the confirmed failure is its unhandled restoration error.
+
+## 2026-09-16: corruption first observed during background reconciliation
+
+Status: recovery extended; code verified, owner runtime testing pending.
+
+Ral's copied error at 09:14:53.395Z matches DEBUG_PROD diagnostics: warm SQLite open and root
+listing succeed, `candidate-backup mode=backup` finishes at 09:14:49.850Z, then initialization
+fails at 09:14:52.794Z with `phase=rebuild sqliteCode=11`. The background failure is generalized
+to `OPERATION_FAILED`. The precise damaged table and original cause of corruption are not yet
+known. This is independent of the Tab Alias Vite CSP failure reported in the same session.
+
+The current recovery wrapper covers SQLite open and tree restoration only. Backup/candidate
+open/reconciliation run outside that wrapper, so corruption first accessed there is never repaired.
+
+Extend recovery narrowly: an explicit SQLite corruption error during a warm candidate build may
+retry once with a fresh candidate. Keep the current seed untouched until the fresh candidate has
+completed. Under the existing reader-drain/promotion gate, preserve the suspect previous database
+in quarantine instead of removing it. Quarantine failure must use the existing promotion rollback;
+a failed fresh build, cancellation, ordinary I/O error or promotion failure must propagate without
+another recovery attempt. Preserve healthy warm reconciliation and user project/configuration data.
+
+Verify with a real small SQLite fixture whose tree is readable but content reconciliation is
+corrupt, plus failure/cancellation/rollback tests. Keep the identical CoWork core aligned after
+checking its current state. Do not repair a running user profile directly or launch Electron/E2E.
+
+The implemented candidate retry covers backup, candidate open and traversal only. Promotion
+errors do not retry. Recovery moves any surviving SQLite sidecars with the suspect database and
+uses a `.recovery-<UUID>` predecessor outside ordinary interrupted-candidate cleanup, then
+quarantines it after the replacement validates. A failed rebuild leaves the seed in place.
+
+Verification: BL's focused corruption/recovery and query/promotion lifecycle suites pass (44
+tests); the mirrored CoWork corruption/recovery suites pass (19 tests). The four corresponding
+core/test files remain identical. Syntax checks and `git diff --check` pass. No live search-index
+database was changed, and Electron/E2E was not run.
+
+Ral's acceptance: restart `yarn dev:prod`, reopen the previously failing Project, wait for indexing
+to finish, then search for a known filename and known file content and open a result. Confirm no
+`OPERATION_FAILED` banner; on another restart confirm the healthy index is reused without another
+corruption recovery. A full rebuild's duration depends on that Project's size and contents.

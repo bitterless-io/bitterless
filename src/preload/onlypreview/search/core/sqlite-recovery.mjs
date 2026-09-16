@@ -1,4 +1,4 @@
-import { lstat, mkdtemp, rename, rmdir } from 'node:fs/promises';
+import quarantineIo from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
 import { OnlyPreviewSqliteIndex } from './sqlite-index.mjs';
@@ -11,7 +11,6 @@ const CORRUPTION_CODES = new Map([
   ['SQLITE_NOTADB', 26]
 ]);
 const SQLITE_SUFFIXES = ['', '-wal', '-shm', '-journal'];
-const quarantineIo = { lstat, mkdtemp, rename, rmdir };
 
 export const sqlitePrimaryErrorCode = (error) => {
   if (Number.isSafeInteger(error?.errcode) && error.errcode > 0) return error.errcode & 0xff;
@@ -23,8 +22,7 @@ export const isSqliteCorruption = (error) => {
   return code === 11 || code === 26;
 };
 
-// Same-volume rename only: a multi-GB cache must never be copied or deleted during startup.
-export const quarantineSqliteIndex = async (databasePath, io = quarantineIo) => {
+const readSqliteArtifacts = async (databasePath, io) => {
   const sources = [];
   for (const suffix of SQLITE_SUFFIXES) {
     const source = `${databasePath}${suffix}`;
@@ -40,15 +38,23 @@ export const quarantineSqliteIndex = async (databasePath, io = quarantineIo) => 
     }
     sources.push(source);
   }
-  const quarantinePath = await io.mkdtemp(`${databasePath}.quarantine-`);
+  return sources;
+};
+
+const moveSqliteArtifacts = async (sources, destinationFor, io) => {
   const moved = [];
   try {
     for (const source of sources) {
-      const destination = join(quarantinePath, basename(source));
+      const destination = destinationFor(source);
+      try {
+        await io.lstat(destination);
+        throw Object.assign(new Error('Search index destination is occupied'), { code: 'EEXIST' });
+      } catch (error) {
+        if (error?.code !== 'ENOENT') throw error;
+      }
       await io.rename(source, destination);
       moved.push({ source, destination });
     }
-    return quarantinePath;
   } catch (error) {
     const rollbackErrors = [];
     for (const { source, destination } of moved.reverse()) {
@@ -67,9 +73,34 @@ export const quarantineSqliteIndex = async (databasePath, io = quarantineIo) => 
       }
     }
     if (rollbackErrors.length) {
-      // Leave every remaining artifact recoverable in quarantine, never overwrite a new index.
-      throw new AggregateError([error, ...rollbackErrors], 'Search index quarantine rollback failed');
+      // Leave every remaining artifact recoverable at its destination, never overwrite a new index.
+      throw new AggregateError([error, ...rollbackErrors], 'Search index artifact rollback failed');
     }
+    throw error;
+  }
+};
+
+export const renameSqliteIndexArtifacts = async (
+  databasePath,
+  destinationPath,
+  io = quarantineIo
+) => {
+  const sources = await readSqliteArtifacts(databasePath, io);
+  await moveSqliteArtifacts(
+    sources,
+    (source) => `${destinationPath}${source.slice(databasePath.length)}`,
+    io
+  );
+};
+
+// Same-volume rename only: a multi-GB cache must never be copied or deleted during startup.
+export const quarantineSqliteIndex = async (databasePath, io = quarantineIo) => {
+  const sources = await readSqliteArtifacts(databasePath, io);
+  const quarantinePath = await io.mkdtemp(`${databasePath}.quarantine-`);
+  try {
+    await moveSqliteArtifacts(sources, (source) => join(quarantinePath, basename(source)), io);
+    return quarantinePath;
+  } catch (error) {
     await io.rmdir(quarantinePath).catch(() => undefined);
     throw error;
   }

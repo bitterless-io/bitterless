@@ -19,7 +19,13 @@ import { createOnlyPreviewSearchDiagnostics } from '../../../../shared/onlyprevi
 import { executeOnlyPreviewGlobalSearch } from './global-search-executor.mjs';
 import { previewOnlyPreviewGlobalSearchResult } from './global-search-preview.mjs';
 import { reclaimInterruptedSqliteArtifacts } from './sqlite-artifacts.mjs';
-import { openRecoverableSqliteIndex, sqlitePrimaryErrorCode } from './sqlite-recovery.mjs';
+import {
+  isSqliteCorruption,
+  openRecoverableSqliteIndex,
+  quarantineSqliteIndex,
+  renameSqliteIndexArtifacts,
+  sqlitePrimaryErrorCode
+} from './sqlite-recovery.mjs';
 import {
   loadOnlyPreviewWorkspaceConfig,
   readOnlyPreviewWorkspaceConfigSignature,
@@ -461,24 +467,39 @@ export class OnlyPreviewSearchEngine {
     diagnostic ??= { tag: this.diagnostics.nextTag('i'), startedAt: this.diagnostics.now() };
     const candidatePath = `${this.databasePath}.candidate-${randomUUID()}`;
     let candidate;
-    try {
-      await removeSqliteArtifacts(candidatePath);
+    const buildCandidate = async (reconcileCandidate) => {
       const backupStartedAt = this.diagnostics.now();
-      if (reconcileExisting) await backup(seedIndex.database, candidatePath);
+      if (reconcileCandidate) await backup(seedIndex.database, candidatePath);
       this.diagnostics.emit('candidate-backup', {
         tag: diagnostic.tag,
-        mode: reconcileExisting ? 'backup' : 'fresh',
+        mode: reconcileCandidate ? 'backup' : 'fresh',
         elapsedMs: this.diagnostics.elapsed(backupStartedAt)
       });
       candidate = new OnlyPreviewSqliteIndex(candidatePath);
-      const candidateTreeEntries = await this.runTraversal({
+      await this.runTraversal({
         targetIndex: candidate,
-        reconcileExisting,
+        reconcileExisting: reconcileCandidate,
         buildRevision,
         total,
         buildEpoch,
         diagnostic
       });
+    };
+    try {
+      await removeSqliteArtifacts(candidatePath);
+      let corruptionCode = 0;
+      try {
+        await buildCandidate(reconcileExisting);
+      } catch (error) {
+        if (buildEpoch !== this.buildEpoch) throw cancelledError();
+        if (!reconcileExisting || !isSqliteCorruption(error)) throw error;
+        candidate?.close();
+        candidate = undefined;
+        await removeSqliteArtifacts(candidatePath);
+        corruptionCode = sqlitePrimaryErrorCode(error);
+        // One fresh attempt only; the seed stays untouched until successful promotion.
+        await buildCandidate(false);
+      }
       if (buildEpoch !== this.buildEpoch) throw cancelledError();
       const promotedCandidate = candidate;
       candidate = undefined;
@@ -487,7 +508,8 @@ export class OnlyPreviewSearchEngine {
         candidatePath,
         seedIndex,
         diagnostic,
-        buildRevision
+        buildRevision,
+        corruptionCode
       );
     } finally {
       closeIndex(candidate);
@@ -547,10 +569,18 @@ export class OnlyPreviewSearchEngine {
     };
   }
 
-  async promoteCandidate(candidate, candidatePath, seedIndex, diagnostic, buildRevision) {
+  async promoteCandidate(
+    candidate,
+    candidatePath,
+    seedIndex,
+    diagnostic,
+    buildRevision,
+    corruptionCode = 0
+  ) {
     const promotionWaitStartedAt = this.diagnostics.now();
     const writer = await this.acquireSearchSnapshotWriter();
-    const previousPath = `${this.databasePath}.previous-${randomUUID()}`;
+    // Recovery artifacts must survive the ordinary interrupted-candidate cleanup after a crash.
+    const previousPath = `${this.databasePath}.${corruptionCode ? 'recovery' : 'previous'}-${randomUUID()}`;
     const hadActiveIndex = this.index !== undefined;
     const previousActiveSearchPolicy = this.activeSearchPolicy;
     const previousActiveIdentity = this.activeIdentity;
@@ -558,6 +588,7 @@ export class OnlyPreviewSearchEngine {
     let installedCandidate = false;
     let promotedIndex;
     let promotionCommitted = false;
+    let previousQuarantined = false;
     try {
       this.diagnostics.emit('promotion-wait', {
         tag: diagnostic.tag,
@@ -566,12 +597,19 @@ export class OnlyPreviewSearchEngine {
       const promotionCommitStartedAt = this.diagnostics.now();
       this.selectedFilePriority.revoke();
       this.globalSearchSession.revoke();
-      closeIndex(candidate);
-      closeIndex(this.index);
-      if (seedIndex !== this.index) closeIndex(seedIndex);
+      if (corruptionCode) {
+        candidate.close();
+        this.index?.close();
+        if (seedIndex !== this.index) seedIndex?.close();
+      } else {
+        closeIndex(candidate);
+        closeIndex(this.index);
+        if (seedIndex !== this.index) closeIndex(seedIndex);
+      }
       this.index = undefined;
       try {
-        await rename(this.databasePath, previousPath);
+        if (corruptionCode) await renameSqliteIndexArtifacts(this.databasePath, previousPath);
+        else await rename(this.databasePath, previousPath);
         movedPrevious = true;
       } catch (error) {
         if (error?.code !== 'ENOENT') throw error;
@@ -582,6 +620,14 @@ export class OnlyPreviewSearchEngine {
       const promotedTree = promotedIndex.readTreeSnapshot({ searchPolicy: this.searchPolicy });
       if (!promotedTree.treeMetadataReady) {
         throw new TypeError('Promoted Search tree snapshot is not ready');
+      }
+      if (corruptionCode && movedPrevious) {
+        await quarantineSqliteIndex(previousPath);
+        previousQuarantined = true;
+        this.diagnostics.emit('sqlite-recovery', {
+          tag: diagnostic.tag,
+          sqliteCode: corruptionCode
+        });
       }
       this.index = promotedIndex;
       promotedIndex = undefined;
@@ -604,7 +650,8 @@ export class OnlyPreviewSearchEngine {
       let restoredPrevious = false;
       if (movedPrevious) {
         try {
-          await rename(previousPath, this.databasePath);
+          if (corruptionCode) await renameSqliteIndexArtifacts(previousPath, this.databasePath);
+          else await rename(previousPath, this.databasePath);
           restoredPrevious = true;
         } catch {
           restoredPrevious = false;
@@ -633,7 +680,7 @@ export class OnlyPreviewSearchEngine {
       this.activeIdentity = this.index ? previousActiveIdentity : undefined;
       throw error;
     } finally {
-      if (promotionCommitted && movedPrevious) {
+      if (promotionCommitted && movedPrevious && !previousQuarantined) {
         await removeSqliteArtifacts(previousPath).catch(() => undefined);
       }
       writer.release();

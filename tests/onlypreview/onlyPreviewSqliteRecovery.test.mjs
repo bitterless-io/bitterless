@@ -8,9 +8,11 @@ import {
   isSqliteCorruption,
   openRecoverableSqliteIndex,
   quarantineSqliteIndex,
+  renameSqliteIndexArtifacts,
   sqlitePrimaryErrorCode
 } from '../../src/preload/onlypreview/search/core/sqlite-recovery.mjs';
 import { createOnlyPreviewSearchDiagnostics } from '../../src/shared/onlypreview/onlyPreviewSearchDiagnostics.mjs';
+import { reclaimInterruptedSqliteArtifacts } from '../../src/preload/onlypreview/search/core/sqlite-artifacts.mjs';
 
 const io = { lstat, mkdtemp, rename, rmdir };
 const suffixes = ['', '-wal', '-shm', '-journal'];
@@ -124,6 +126,36 @@ test('rollback never overwrites a replacement file and retains quarantined data 
   assert.equal(await readFile(join(directory, quarantined, 'index.sqlite'), 'utf8'), 'original');
   assert.equal(await readFile(databasePath, 'utf8'), 'replacement');
   assert.equal(await readFile(`${databasePath}-wal`, 'utf8'), 'original-wal');
+});
+
+test('recovery promotion renames and restores the database with every exact sidecar', async (t) => {
+  const { directory, databasePath } = await fixture(t, true);
+  const previousPath = `${databasePath}.recovery-11111111-2222-4333-8444-555555555555`;
+  await renameSqliteIndexArtifacts(databasePath, previousPath);
+  await reclaimInterruptedSqliteArtifacts(databasePath);
+  for (const suffix of suffixes) {
+    assert.equal(await readFile(`${previousPath}${suffix}`, 'utf8'), `original${suffix}`);
+    await assert.rejects(lstat(`${databasePath}${suffix}`), { code: 'ENOENT' });
+  }
+  await renameSqliteIndexArtifacts(previousPath, databasePath);
+  assert.deepEqual(
+    (await readdir(directory)).sort(),
+    suffixes.map((suffix) => `index.sqlite${suffix}`).sort()
+  );
+  for (const suffix of suffixes)
+    assert.equal(await readFile(`${databasePath}${suffix}`, 'utf8'), `original${suffix}`);
+});
+
+test('recovery artifact rename rolls back partial moves and refuses an occupied destination', async (t) => {
+  const { databasePath } = await fixture(t, true);
+  const previousPath = `${databasePath}.previous-fixture`;
+  await writeFile(`${previousPath}-shm`, 'occupied');
+  await assert.rejects(renameSqliteIndexArtifacts(databasePath, previousPath), { code: 'EEXIST' });
+  for (const suffix of suffixes)
+    assert.equal(await readFile(`${databasePath}${suffix}`, 'utf8'), `original${suffix}`);
+  await assert.rejects(lstat(previousPath), { code: 'ENOENT' });
+  await assert.rejects(lstat(`${previousPath}-wal`), { code: 'ENOENT' });
+  assert.equal(await readFile(`${previousPath}-shm`, 'utf8'), 'occupied');
 });
 
 test('warm tree restore failure closes its handle before one cold reopen, preserving open diagnostics', async (t) => {
