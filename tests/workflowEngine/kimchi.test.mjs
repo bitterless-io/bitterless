@@ -184,3 +184,25 @@ test('documented external Kimchi demo loads and completes through the public aut
  const h=fixture(definition,{start(a,c){c.result(a.id,a.turnId,completed(['one','two','three']))}})
  const result=await h.run();assert.equal(result.status,'completed',result.error);assert.equal(result.output.partial,false);assert.equal(h.attempts.size,2)
 })
+
+test('paused Agent freezes remaining timeout and holds completed result before dependent step',async()=>{
+ let started,dependent=false
+ const wf=createWorkflow({name:'pause'}).then(task('agent',{timeoutMs:45})).then(createStep({name:'after',run:()=>{dependent=true;return 'done'}})).commit()
+ const h=fixture(wf,{start(a){started=a}})
+ const running=h.run();await tick();assert(started)
+ h.host.handle({type:'agent.pause',agentId:'1'});h.host.handle({type:'agent.pause.state',agentId:'1',paused:true})
+ h.result(started.id,started.turnId,completed('kept result'))
+ await delay(80);assert.equal(dependent,false);assert.equal(h.events.some(x=>x.type==='attempt.cancel'),false)
+ h.host.handle({type:'agent.resume',agentId:'1'})
+ assert.equal((await running).output,'done');assert.equal(h.attempts.size,1)
+})
+test('stopping a paused Agent wakes the result gate and lets siblings continue',async()=>{
+ let started
+ const wf=createWorkflow({name:'paused-stop'}).then(task('agent')).commit()
+ const h=fixture(wf,{start(a){started=a}})
+ const running=h.run();await tick()
+ h.host.handle({type:'agent.pause',agentId:'1'});h.host.handle({type:'agent.pause.state',agentId:'1',paused:true})
+ h.result(started.id,started.turnId,completed('must not leak'))
+ await tick();h.host.stopAgent('1')
+ assert.equal((await running).output.status,'stopped')
+})

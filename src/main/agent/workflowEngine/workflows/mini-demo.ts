@@ -8,7 +8,7 @@ const roles = [
 ] as const
 export default createWorkflow({ name: 'mini-demo', description: '三个真实 Pi Agent 并行分析，再由独立 Agent 汇总；停止的分支明确列为缺失。', input: Type.String(), maxConcurrency: 3 })
   .parallel(roles.map(([name, label, task]) => createAgentTask({ name, label, input: Type.String(), output: Type.Array(Type.String()), tools: [], retries: 0, thinkingLevel: 'low', prompt: ({ input }) => `需求：${input.trim() || '设计一个可新增、勾选完成和删除待办的最小清单'}\n${task}，用中文简短回答。只分析，不执行文件、命令或外部工具；分析完成后必须调用 workflow_submit_result 提交结果。` })), { name: 'analysis' })
-  .then(createAgentTask({ name: 'synthesize', label: '汇总', output: Type.String(), tools: [], retries: 0, thinkingLevel: 'low', prompt: ({ ctx }) => `用中文汇总以下独立 Agent 结果。只使用 status=completed 的 output；逐个说明 stopped/failed 的分支，不能补写缺失结论。\n${JSON.stringify(ctx.getStepResult('analysis'))}` }))
+  .then(createAgentTask({ name: 'synthesize', label: '汇总', output: Type.String(), tools: [], retries: 0, thinkingLevel: 'low', prompt: ({ ctx }) => `原始需求：${ctx.getInitData<string>()}\n角色分工：implementation=实现建议，acceptance=验收标准，risks=边界风险；它们是互补视角，不代表三方共识。只分析，不执行文件、命令或外部工具。\n用中文在 350 字内给出简短建议、验收和风险。只使用 status=completed 的 output；逐个说明 stopped/failed 的分支，不能补写缺失结论或虚构共识。必须调用 workflow_submit_result 提交字符串结果。\n${JSON.stringify(ctx.getStepResult('analysis'))}` }))
   .then(createStep({ name: 'report', run: ({ ctx }) => {
     const analysis = ctx.getStepResult<Record<string, AgentOutcome<string[]>>>('analysis') ?? {}
     const synthesis = ctx.getStepResult<AgentOutcome<string>>('synthesize')

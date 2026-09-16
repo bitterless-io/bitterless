@@ -86,6 +86,9 @@ export type WorkerCommand =
   | { type: 'agent.turn'; turnId: string; prompt: string }
   | { type: 'abort' }
   | { type: 'agent.stop'; agentId: string }
+  | { type: 'agent.pause' | 'agent.resume'; agentId: string }
+  | { type: 'agent.steer'; agentId: string; message: string }
+  | { type: 'agent.pause.state'; agentId: string; paused: boolean }
   | { type: 'attempt.turn.result'; id: string; turnId: string; result?: AgentTurnResult; error?: WireError }
   // This is a cleanup acknowledgement, emitted only after the supervisor confirms resource release.
   | { type: 'attempt.result'; id: string; result?: unknown; error?: WireError }
@@ -99,6 +102,7 @@ export type WorkerEvent =
   | { type: 'agent.turn.done'; turnId: string; result?: AgentTurnResult; error?: WireError }
   | { type: 'attempt.done'; result?: unknown; error?: WireError }
   | { type: 'agent.action'; action: string; log?: string }
+  | { type: 'agent.pause.state'; agentId: string; paused: boolean }
   | { type: 'agent.io'; line: WorkflowIoLine }
   | { type: 'usage'; label: string; phase?: string; messages: readonly unknown[] }
   | { type: 'tool.request'; request: WorkflowHostToolRequest }

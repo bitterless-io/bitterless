@@ -1,3 +1,4 @@
+import { workflowCompletionId, workflowCompletionContext } from './workflowEngine/completion'
 import { SessionIoInitialization } from './sessionIoInitialization'
 import { WorkflowHostIntegration } from './workflowEngine/hostIntegration'
 import { buildWebSearchTools } from './tools/webSearchTools'
@@ -278,10 +279,14 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     this.assertAgentRuntimeActive()
     if (!this.workflowHost) this.workflowHost = new WorkflowHostIntegration({
       broadcast: (snapshot) => xpcMain.broadcast('agent/workflows', snapshot),
+      onRunSettled: async run => {
+        const agent = this.getExistingMaestroAgent(run.sessionId)
+        agent?.retainBackgroundContext(workflowCompletionId(run), workflowCompletionContext(run))
+      },
       assertCanStartShortcut: (sessionId, otherWorkflowSessions) => {
         this.assertAgentRuntimeActive()
-        if (this.activeAgentTurns.has(sessionId)) throw new Error('This chat is busy. Wait for its current turn to finish or stop it first.')
-        if (new Set([...this.activeAgentTurns.keys(), ...otherWorkflowSessions]).size >= MAX_CONCURRENT_AGENT_TURNS) throw new Error('All chat execution slots are busy. Wait for one to finish.')
+        // Background workflows do not reserve an ordinary chat turn.
+        void sessionId; void otherWorkflowSessions
       },
       runtime: async (sessionId, requestedCwd) => {
         await this.loadHostToolPolicies()
@@ -294,7 +299,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         return {
           cwd, providerId, modelId, thinkingLevel: this.activeLlmEffort === 'default' ? 'low' : this.activeLlmEffort,
           authPath: maestroAuthPath(), modelsPath: maestroModelsPath(), agentDir: maestroAgentDir(),
-          systemPrompt: [BASE_SYSTEM_PROMPT, await readProjectInstructions(cwd), A7_DISCIPLINE,
+          systemPrompt: ['You are a workflow Agent. Complete only your assigned task with the enabled tools. Do not recursively delegate. Report evidence and limitations concisely.', await readProjectInstructions(cwd), A7_DISCIPLINE,
             'You are a workflow subagent inside Bitterless. Report verifiable findings for your assigned task. Browser, recorded-skill, and integration tools are unavailable in this workflow runtime; report missing evidence explicitly.']
             .filter(Boolean).join('\n\n')
         }
@@ -1890,6 +1895,12 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     this.lastAgentArtifacts = []
     this.tabsOpenedThisTurn = []
     const turnMedia = options?.mediaInput || { note: '' }
+    if (agent === this.getExistingMaestroAgent(options?.sessionKey)) {
+      const completedWorkflows = (await this.getWorkflowHost().listRuns({ sessionId: this.agentSessionKey(options?.sessionKey) })).runs
+      for (const run of completedWorkflows) if (run.status !== 'running' && run.status !== 'stopping') {
+        agent.retainBackgroundContext(workflowCompletionId(run), workflowCompletionContext(run))
+      }
+    }
     const runPrompt = async (): Promise<Awaited<ReturnType<BaseAgent['prompt']>>> =>
       await agent.prompt(
         buildTurnPrompt(Boolean(options?.includeConversationMemory)) + turnMedia.note,

@@ -41,7 +41,6 @@
   &__category-chevron--closed { transform: rotate(-90deg); }
   &__empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 22px 12px; color: #7c8799; font-size: 11px; text-align: center; }
   &__empty p { margin: 0; }
-  &__footer { flex-shrink: 0; padding: 6px 5px 2px; color: #8d96a7; font-size: 9.5px; text-align: right; }
   &__notice { display: flex; gap: 8px; align-items: center; padding: 3px 5px; color: #b23b44; font-size: 11px; }
   &__notice button { border: 0; border-radius: 5px; background: var(--workflow-soft); color: var(--workflow-accent); padding: 3px 7px; cursor: pointer; }
   &__error { color: #b23b44; }
@@ -62,3 +61,5 @@
 @keyframes workflow-taskbar-spin {
   to { transform: rotate(360deg); }
 }
+
+.workflow-taskbar--history { margin-bottom: 0; .workflow-taskbar__popover { position: relative; bottom: auto; box-shadow: none; } }

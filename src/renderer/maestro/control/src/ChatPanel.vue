@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { IconFolderOpen, IconFolderSearch, IconListDetails, IconPaperclip, IconPlayerStop, IconPlus, IconSend2, IconX } from '@tabler/icons-vue'
+import { IconDotsVertical, IconFolderOpen, IconFolderSearch, IconListDetails, IconPaperclip, IconPlayerStop, IconPlus, IconSend2, IconX } from '@tabler/icons-vue'
 import AttachmentCard from './AttachmentCard.vue'
-import { Button, Message, Modal, Tooltip } from '@arco-design/web-vue'
+import { Button, Dropdown, Doption, Message, Modal, Tooltip } from '@arco-design/web-vue'
 import { createXpcRendererEmitter } from 'electron-xpc/renderer'
 import { CONTEXT_GRAPH_MATCH_HEAD_CHARS } from '@maestro-shared/coach.api'
 import { MAESTRO_ONLY_PREVIEW_APP_NAME } from '@maestro-shared/compositeTab.identity'
@@ -10,6 +10,7 @@ import type { AgentReply } from '@maestro-shared/coach.api'
 import type { CoachXpcContract } from '@maestro-shared/coach.api'
 import type { ContextGraphView } from '@maestro-shared/coach.api'
 import ContextGraphModal from './ContextGraphModal.vue'
+import WorkflowTaskBar from './WorkflowTaskBar.vue'
 import AgentBrowserTabs from './AgentBrowserTabs.vue'
 import { sessionActions } from './store/sessionActions.store'
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
@@ -27,6 +28,7 @@ import { workflowStore } from './store/workflow.store'
 import { executeWorkflowCommand } from './workflow.command'
 import './ChatPanel.less'
 
+const tasksVisible = ref(false)
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
 const props = defineProps<{ session: MessageSession; sendDisabled?: boolean }>()
 const emit = defineEmits<{ sent: [reply: AgentReply] }>()
@@ -135,7 +137,7 @@ async function runWorkflowCommand(text: string): Promise<void> {
     sessionId: session.id,
     hasAttachments: selectedFiles.value.length > 0,
     assertCanStart: () => {
-      if (composerDisposed || props.session.id !== session.id || props.sendDisabled || session.archivedAt || session.turn || messageStore.turnService.busyElsewhere(session.id) || workflowStore.runs.some(run => run.sessionId === session.id && (run.status === 'running' || run.status === 'stopping'))) {
+      if (composerDisposed || props.session.id !== session.id || props.sendDisabled || session.archivedAt) {
         throw new Error(i18nHelper.workflow.commandBusy)
       }
     },
@@ -513,24 +515,18 @@ async function stopUsingWorkspace(): Promise<void> {
         </span>
       </div>
       <AgentBrowserTabs :session-id="session.id" :running="Boolean(session.turn)" />
+      <Dropdown trigger="click" position="br">
+        <IconBtn name="maestro__tasks-menu" class="chat-panel__tasks-menu" :aria-label="i18nHelper.workflow.tasks"><IconDotsVertical :size="16" /></IconBtn>
+        <template #content><Doption @click="tasksVisible = true">{{ i18nHelper.workflow.tasks }}</Doption></template>
+      </Dropdown>
       <Tooltip :content="shortcut('N')" position="bottom" mini>
-        <Button
-        name="maestro__new_chat"
-        class="chat-panel__new-chat"
-        type="text"
-        size="mini"
-        :disabled="Boolean(session.archivedAt)"
-        :aria-label="i18nHelper.maestroControl.chat.newChat"
-        @click="startNewChat"
-      >
-        <template #icon>
-          <IconPlus class="chat-panel__button-icon" :size="15" stroke="1.8" />
-        </template>
-        {{ i18nHelper.maestroControl.chat.newChat }}
-      </Button>
+        <IconBtn name="maestro__new_chat" class="chat-panel__new-chat" :disabled="Boolean(session.archivedAt)" :aria-label="i18nHelper.maestroControl.chat.newChat" @click="startNewChat"><IconPlus :size="16" stroke="1.8" /></IconBtn>
       </Tooltip>
     </div>
     <MessageList :messages="session.messages" />
+    <Modal v-model:visible="tasksVisible" :title="i18nHelper.workflow.tasks" :footer="false" :width="620" :mask-closable="true" :unmount-on-close="true" modal-class="chat-panel__tasks-modal">
+      <WorkflowTaskBar :session-id="session.id" history @close="tasksVisible = false" />
+    </Modal>
 
     <div class="chat-panel__composer">
       <slot name="before-composer"></slot>

@@ -44,21 +44,20 @@ function integration(tools = () => [], runtime, assertCanStartShortcut) {
 }
 const tick = () => new Promise((resolve) => setImmediate(resolve))
 
-test('workflow_run waits for final output and preserves selected session, model, and project', async () => {
+test('workflow_run returns a background receipt and preserves selected session, model, and project', async () => {
   const { host, supervisor } = integration(() => [{ name: 'web_search', description: 'search', params: [], execute: async () => '' }])
   const tool = host.chatTools('chat-a').find((tool) => tool.name === 'workflow_run')
   let settled = false
   const result = tool.execute({ name: 'research', input: 'Verify these claims' }).then((value) => { settled = true; return value })
   await tick()
-  assert.equal(settled, false)
+  assert.equal(settled, true)
   assert.equal(supervisor.request.sessionId, 'chat-a')
   assert.equal(supervisor.request.cwd, '/test-project')
   assert.equal(supervisor.runtime.providerId, 'chosen-provider')
   assert.equal(supervisor.runtime.modelId, 'chosen-model')
   assert.equal(supervisor.runtime.systemPrompt, 'Selected project instructions')
   assert.equal(supervisor.runtime.tools[0].execute, undefined)
-  supervisor.finish({ status: 'completed', result: 'Cited conclusion' })
-  assert.equal(await result, 'Cited conclusion')
+  assert.deepEqual(JSON.parse(await result), { runId: 'run-1', status: 'running', background: true })
 })
 
 test('rejects ambiguous entries, missing chat owner, unknown workflow, and unsafe file inputs', async () => {
@@ -70,7 +69,7 @@ test('rejects ambiguous entries, missing chat owner, unknown workflow, and unsaf
   }
   await assert.rejects(host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'builtin', name: 'unknown' }, input: 'x' }), /Unknown/)
   await assert.rejects(host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'file', path: '../relative.ts' }, input: 'x' }), /absolute/)
-  assert.equal((await host.listWorkflows()).length, 6)
+  assert.equal((await host.listWorkflows()).length, 7)
 })
 
 test('host tool cancellation waits for the real resource to stop, with a separate per-agent context', async () => {
@@ -109,6 +108,7 @@ test('unsupported host actions cannot bypass the workflow capability boundary', 
   const { host, supervisor } = integration(() => [{ name: 'browser_exec', description: '', params: [], execute: async () => { ran = true; return '' } }])
   await assert.rejects(supervisor.deps.executeTool({ sessionId: 'chat-a', runId: 'run-a', agentId: 'agent-b', callId: 'c', toolName: 'browser_exec', args: {} }, new AbortController().signal), /unavailable or cannot be cancelled/)
   assert.equal(ran, false)
+  supervisor.list = () => ({ runs: [{ id: 'run-a', sessionId: 'chat-a', status: 'running', agents: [{ id: 'agent-b' }] }], revision: 1 })
   await host.stopAgent({ sessionId: 'chat-a', runId: 'run-a', agentId: 'agent-b' })
   assert.deepEqual(supervisor.stops, [['chat-a', 'run-a', 'agent-b']])
 })
@@ -236,24 +236,17 @@ test('shortcut startup uses host admission before and after runtime, with no ren
   assert.equal(supervisor.runtime.providerId, 'selected')
 })
 
-test('busy and duplicate shortcut starts are rejected without starting extra workers', async () => {
-  const blocked = integration(undefined, undefined, () => { throw Error('chat busy') })
-  await assert.rejects(blocked.host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'builtin', name: 'mini-demo' }, input: 'task', origin: 'shortcut' }), /chat busy/)
-  assert.equal(blocked.supervisor.request, undefined)
-  // Natural-language tool execution belongs to its existing root turn and skips the manual-start gate.
-  const tool = blocked.host.chatTools('chat-a').find(tool => tool.name === 'workflow_run')
-  const result = tool.execute({ name: 'mini-demo', input: 'task' })
-  await tick()
-  blocked.supervisor.finish({ status: 'completed', result: 'done' })
-  assert.equal(await result, 'done')
-  let release
-  const slow = integration(undefined, () => new Promise(resolve => { release = () => resolve({ cwd: '/host-project', providerId: 'selected', modelId: 'selected-model' }) }), () => {})
+test('same-chat workflows start concurrently without reserving ordinary chat turns', async () => {
+  const releases = []
+  const h = integration(undefined, () => new Promise(resolve => releases.push(() => resolve({ cwd: '/host-project', providerId: 'selected', modelId: 'selected-model' }))), () => {})
   const request = { sessionId: 'chat-a', entry: { kind: 'builtin', name: 'mini-demo' }, input: 'task', origin: 'shortcut' }
-  const first = slow.host.startWorkflow(request)
+  const first = h.host.startWorkflow(request)
+  const second = h.host.startWorkflow(request)
   await tick()
-  await assert.rejects(slow.host.startWorkflow(request), /already starting/)
-  release()
-  await first
+  assert.equal(releases.length, 2)
+  for (const release of releases) release()
+  assert.equal((await first).status, 'running')
+  assert.equal((await second).status, 'running')
 })
 
 test('workflow shortcut handler always supplies the authoritative shortcut origin', () => {
@@ -304,4 +297,31 @@ test('stop during retry lookup fences launch and waits for the pending retry', a
   release({ sessionId: 'chat-a', entry: { kind: 'builtin', name: 'mini-demo' }, input: 'original', origin: 'shortcut' })
   await rejected; await stopping
   assert.equal(supervisor.request, undefined)
+})
+
+test('structured task controls require exact chat-owned identifiers and additional tasks start independently', async () => {
+  const { host, supervisor } = integration()
+  const row = { id: 'parent', sessionId: 'chat-a', name: 'mini-demo', status: 'running', input: 'original', agents: [{ id: '1', status: 'paused' }] }
+  supervisor.list = (sessionId) => ({ runs: sessionId === 'chat-a' ? [row] : [], revision: 1 })
+  const controls = []
+  supervisor.pauseAgent = (...args) => controls.push(['pause', ...args])
+  supervisor.resumeAgent = (...args) => controls.push(['resume', ...args])
+  supervisor.steerAgent = (...args) => controls.push(['steer', ...args])
+  const tool = name => host.chatTools('chat-a').find(tool => tool.name === name)
+  for (const name of ['workflow_pause', 'workflow_resume', 'workflow_stop_agent', 'workflow_steer']) {
+    await assert.rejects(tool(name).execute({runId:'parent', message:'change scope'}), /Exact/)
+    await assert.rejects(tool(name).execute({runId:'foreign', agentId:'1', message:'change scope'}), /does not belong/)
+  }
+  await tool('workflow_pause').execute({runId:'parent',agentId:'1'})
+  await tool('workflow_resume').execute({runId:'parent',agentId:'1'})
+  await tool('workflow_steer').execute({runId:'parent',agentId:'1',message:'read-only, concise'})
+  assert.deepEqual(controls.map(call => call[0]), ['pause','resume','steer'])
+  assert.ok(controls.every(call => call[1] === 'chat-a' && call[2] === 'parent' && call[3] === '1'))
+  await assert.rejects(tool('workflow_add_task').execute({input:'research',parentRunId:'foreign'}), /does not belong/)
+  const added = JSON.parse(await tool('workflow_add_task').execute({input:'research',parentRunId:'parent'}))
+  assert.equal(added.background, true)
+  assert.equal(supervisor.request.entry.name, 'agent-task')
+  assert.match(supervisor.request.input, /Related workflow \(context only\)/)
+  assert.equal(row.agents.length, 1, 'adding work does not mutate the existing graph')
+  await assert.rejects(host.pauseWorkflowAgent({sessionId:'chat-b',runId:'parent',agentId:'1'}), /does not belong/)
 })

@@ -102,59 +102,22 @@ test('explicit absolute file passes unchanged and all commands stay ahead of ord
   assert.ok(send.indexOf('parseWorkflowCommand(input.value)') < send.indexOf('turnService.send('))
   assert.match(source, /workflowCommandPending/)
   const ui = readFileSync(new URL(`${renderer}WorkflowTaskBar.vue`, root), 'utf8')
-  assert.match(ui, /workflow-taskbar__run-result/)
-  assert.match(ui, /run\.error/)
-  assert.match(ui, /run\.result/)
+  assert.doesNotMatch(ui, /workflow-taskbar__run-result/)
+  assert.match(ui, /task\.error/)
+  assert.match(ui, /task\.output/)
 })
-test('a failure before the first Agent stays visible in the original chat and is reported once', async () => {
-  const h = harness()
-  const originalChatNotes = []
-  await h.execute('/workflow demo', { note: text => originalChatNotes.push(text) })
-  assert.equal(h.subscriptions.active, 1)
-  h.store.runs = [runSnapshot({ sessionId: 'chat-b', status: 'failed', error: 'other chat error' })]
-  assert.equal(originalChatNotes.length, 1)
-  h.store.runs = [runSnapshot({ status: 'failed', error: 'Cannot load workflow module' })]
-  assert.match(originalChatNotes[1], /mini-demo · Failed\n\nCannot load workflow module/)
-  assert.equal(h.subscriptions.active, 0)
-  h.store.runs = [runSnapshot({ status: 'failed', error: 'Cannot load workflow module' })]
-  assert.equal(originalChatNotes.length, 2)
-  assert.equal(h.notes.length, 0)
-})
-test('a workflow with no Agents reports its terminal result or stop state, then detaches', async () => {
-  for (const patch of [{ status: 'completed', result: '42' }, { status: 'stopped' }]) {
+test('commands leave all terminal publication to the durable completion projection', async () => {
+  for (const status of ['completed', 'failed', 'stopped']) {
     const h = harness()
     await h.execute('/workflow demo')
-    h.store.runs = [runSnapshot(patch)]
-    assert.match(h.notes[1], patch.status === 'completed' ? /Completed\n\n42/ : /Stopped/)
+    h.store.runs = [runSnapshot({ status, result: 'result', error: status === 'failed' ? 'failure' : undefined })]
+    assert.equal(h.notes.length, 1)
     assert.equal(h.subscriptions.active, 0)
   }
 })
-test('the first Agent hands subsequent results to the task bar without duplicate chat notes', async () => {
-  const h = harness()
-  await h.execute('/workflow demo')
-  h.store.runs = [runSnapshot()]
-  h.store.runs[0].agents.push({ id: 'agent' })
-  assert.equal(h.subscriptions.active, 0)
-  h.store.runs = [runSnapshot({ agents: [{ id: 'agent' }], status: 'completed', result: 'task bar result' })]
-  assert.equal(h.notes.length, 1)
-})
-test('a terminal start reply or faster terminal broadcast never prints a misleading Started notice', async () => {
+test('a terminal start reply never prints a misleading Started notice', async () => {
   const failed = harness({ start: async () => runSnapshot({ status: 'failed', error: 'load failed' }) })
   await failed.execute('/workflow demo')
-  assert.equal(failed.notes.length, 1)
-  assert.match(failed.notes[0], /Failed\n\nload failed/)
-  assert.doesNotMatch(failed.notes[0], /Started/)
+  assert.equal(failed.notes.length, 0)
   assert.equal(failed.subscriptions.active, 0)
-
-  let finishStart
-  const fast = harness({ start: () => new Promise(resolve => { finishStart = resolve }) })
-  const starting = fast.execute('/workflow demo')
-  while (!finishStart) await Promise.resolve()
-  fast.store.runs = [runSnapshot({ status: 'completed', result: 'finished before reply' })]
-  finishStart(runSnapshot())
-  await starting
-  assert.equal(fast.notes.length, 1)
-  assert.match(fast.notes[0], /Completed\n\nfinished before reply/)
-  assert.doesNotMatch(fast.notes[0], /Started/)
-  assert.equal(fast.subscriptions.active, 0)
 })

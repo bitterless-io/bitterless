@@ -8,6 +8,7 @@ import { WorkflowSupervisor } from './supervisor'
 import type { WorkflowRuntimeConfig, WorkflowHostToolRequest } from './protocol'
 
 export const WORKFLOW_DESCRIPTORS: WorkflowDescriptor[] = [
+  { name: 'agent-task', description: 'One independent additional Agent task in this chat; does not change an existing workflow graph.' },
   { name: 'mini-demo', description: 'Three parallel analysis agents followed by an independent synthesis agent.' },
   { name: 'code-review', description: 'Review a PR, branch diff, ref range, or focused code target.' },
   { name: 'refactor-scout', description: 'Find small, defensible refactors without broad rewrites.' },
@@ -18,6 +19,7 @@ export const WORKFLOW_DESCRIPTORS: WorkflowDescriptor[] = [
 
 export interface WorkflowHostOptions {
   broadcast: ConstructorParameters<typeof WorkflowSupervisor>[0]['broadcast']
+  onRunSettled?(run: WorkflowRunSnapshot): Promise<void>
   assertCanStartShortcut?(sessionId: string, otherWorkflowSessions: string[]): void
   runtime(sessionId: string, cwd?: string): Promise<Omit<WorkflowRuntimeConfig, 'tools'> & { cwd: string }>
   tools(signal?: AbortSignal, onApproval?: (waiting: boolean) => void, sessionId?: string): AgentToolSpec[]
@@ -46,7 +48,10 @@ export class WorkflowHostIntegration implements WorkflowApi {
       workflowWorkerPath: join(__dirname, 'workflow-engine.worker.mjs'),
       agentWorkerPath: join(__dirname, 'workflow-agent.worker.mjs'),
       storageDir: join(app.getPath('userData'), 'workflow-runs'),
-      broadcast: options.broadcast,
+      broadcast: snapshot => {
+        options.broadcast(snapshot)
+        this.deliverSettled(snapshot.runs)
+      },
       recordIo: (sessionId, line) => {
         // Resource ownership uses workflow:<run>:<agent>; diagnostics belong to the chat.
         void runInAgentSession(sessionId, async () => modelIoLog.append(line)).catch(() => undefined)
@@ -78,22 +83,22 @@ export class WorkflowHostIntegration implements WorkflowApi {
     const existing = this.retrying.get(key)
     if (existing) return existing
     if (this.closed || this.stopping.has(sessionId)) throw new Error('The workflow host or chat is stopping.')
-    if (this.starting.has(sessionId)) throw new Error('A workflow is already starting in this chat.')
     const pending = this.supervisor.retryRequest(sessionId, params.runId).then(request => this.startInSession(request))
     this.retrying.set(key, pending)
-    const starts = new Set([pending])
+    const starts = this.starting.get(sessionId) || new Set<Promise<WorkflowRunSnapshot>>()
+    starts.add(pending)
     this.starting.set(sessionId, starts)
     try { return await pending }
     finally {
       if (this.retrying.get(key) === pending) this.retrying.delete(key)
-      if (this.starting.get(sessionId) === starts) this.starting.delete(sessionId)
+      starts.delete(pending)
+      if (!starts.size) this.starting.delete(sessionId)
     }
   }
 
   async startWorkflow(request: WorkflowStartRequest): Promise<WorkflowRunSnapshot> {
     const sessionId = assertWorkflowSession(request.sessionId)
     if (this.closed || this.stopping.has(sessionId)) throw new Error('The workflow host or chat is stopping.')
-    if (request.origin === 'shortcut' && this.starting.has(sessionId)) throw new Error('A workflow is already starting in this chat.')
     const pending = this.startInSession({ ...request, sessionId })
     const starts = this.starting.get(sessionId) || new Set<Promise<WorkflowRunSnapshot>>()
     starts.add(pending)
@@ -128,14 +133,46 @@ export class WorkflowHostIntegration implements WorkflowApi {
     if (!this.options.assertCanStartShortcut) throw new Error('Workflow shortcuts are unavailable in this host.')
     const snapshot = await this.supervisor.list()
     const live = snapshot.runs.filter(run => run.status === 'running' || run.status === 'stopping')
-    if (live.some(run => run.sessionId === sessionId)) throw new Error('A workflow is already running or stopping in this chat.')
     const others = [...new Set([...live.map(run => run.sessionId), ...this.starting.keys()])].filter(id => id !== sessionId)
     this.options.assertCanStartShortcut(sessionId, others)
   }
 
-  async listRuns(params?: { sessionId?: string }) { return this.supervisor.list(params?.sessionId) }
+  private deliverSettled(runs: WorkflowRunSnapshot[]): void {
+    for (const run of runs) if (run.status !== 'running' && run.status !== 'stopping') {
+      // Persisted terminal snapshots are the durable outbox. The consumer deduplicates by run ID.
+      void this.options.onRunSettled?.(structuredClone(run)).catch(error => console.warn('[workflow] completion delivery deferred', run.id, String(error)))
+    }
+  }
+  async listRuns(params?: { sessionId?: string }) {
+    const snapshot = await this.supervisor.list(params?.sessionId)
+    this.deliverSettled(snapshot.runs)
+    return snapshot
+  }
+  private async requireAgent(params: { sessionId: string; runId: string; agentId: string }): Promise<void> {
+    assertWorkflowSession(params.sessionId)
+    if (!params.runId?.trim() || !params.agentId?.trim()) throw new Error('Exact runId and agentId are required.')
+    const snapshot = await this.supervisor.list(params.sessionId)
+    if (!snapshot.runs.some(run => run.id === params.runId && run.agents.some(agent => agent.id === params.agentId))) throw new Error('Agent does not belong to this chat.')
+  }
+  async pauseWorkflowAgent(params: { sessionId: string; runId: string; agentId: string }) {
+    await this.requireAgent(params)
+    await this.supervisor.pauseAgent(params.sessionId, params.runId, params.agentId)
+    return { ok: true as const }
+  }
+  async resumeWorkflowAgent(params: { sessionId: string; runId: string; agentId: string }) {
+    await this.requireAgent(params)
+    await this.supervisor.resumeAgent(params.sessionId, params.runId, params.agentId)
+    return { ok: true as const }
+  }
   async listWorkflows() { return WORKFLOW_DESCRIPTORS.map((workflow) => ({ ...workflow })) }
+  async steerWorkflowAgent(params: { sessionId: string; runId: string; agentId: string; message: string }) {
+    await this.requireAgent(params)
+    if (!params.message?.trim()) throw new Error('A steering instruction is required.')
+    await this.supervisor.steerAgent(params.sessionId, params.runId, params.agentId, params.message.trim())
+    return { ok: true as const }
+  }
   async stopAgent(params: { sessionId: string; runId: string; agentId: string }) {
+    await this.requireAgent(params)
     await this.supervisor.stopAgent(assertWorkflowSession(params.sessionId), params.runId, params.agentId)
     return { ok: true as const }
   }
@@ -171,13 +208,13 @@ export class WorkflowHostIntegration implements WorkflowApi {
       },
       {
         name: 'workflow_run',
-        description: 'Run a built-in workflow or an explicitly requested local TypeScript workflow file in this chat. Waits for the final result while agent tasks appear in the task bar and can be stopped individually. Supply exactly one of name or path. Available host tools: web_search/web_fetch; browser, skill, and integration actions are unavailable. Workflow subagents cannot recursively start workflows.',
+        description: 'Start a built-in workflow or an explicitly requested local TypeScript workflow file in the background. Returns a run receipt immediately; completion is delivered into this chat automatically. The user may continue talking and run other workflows concurrently. Supply exactly one of name or path. Available host tools: web_search/web_fetch; browser, skill, and integration actions are unavailable. Workflow subagents cannot recursively start workflows.',
         params: [
           { name: 'name', description: 'mini-demo, code-review, refactor-scout, diagnose, perf-review, or research.' },
           { name: 'path', description: 'Absolute path to a local .ts or .mts workflow file explicitly requested by the user.' },
           { name: 'input', required: true, description: 'Workflow task, target, and success criteria.' }
         ],
-        timeoutMs: 130 * 60_000,
+        timeoutMs: 60_000,
         execute: async (args) => {
           if (Boolean(args.name) === Boolean(args.path)) throw new Error('Supply exactly one of workflow name or path.')
           const run = await this.startWorkflow({
@@ -185,9 +222,42 @@ export class WorkflowHostIntegration implements WorkflowApi {
             entry: args.path ? { kind: 'file', path: String(args.path) } : { kind: 'builtin', name: String(args.name) as WorkflowDescriptor['name'] },
             input: String(args.input ?? '')
           })
-          const finished = await this.supervisor.waitForRun(run.id)
-          if (finished.status !== 'completed') throw new Error(`Workflow ${finished.status}: ${finished.error || finished.name}`)
-          return finished.result || JSON.stringify(finished)
+          return JSON.stringify({ runId: run.id, name: run.name, status: run.status, background: true })
+        }
+      },
+      {
+        name: 'workflow_tasks', description: 'List every Agent task in this chat, including exact runId and agentId, current work and status. Use these identifiers before controlling an Agent; never guess IDs.', params: [],
+        execute: async () => JSON.stringify((await this.listRuns({ sessionId })).runs.map(run => ({ runId: run.id, name: run.name, status: run.status, agents: run.agents })))
+      },
+      {
+        name: 'workflow_steer', description: 'Update the instructions of one exact active Agent in this chat. Preserves its conversation and delivers at a safe model/tool boundary; while paused the instruction waits until resume. List tasks first and route the user intent to the relevant task.',
+        params: [{ name: 'runId', required: true }, { name: 'agentId', required: true }, { name: 'message', required: true }],
+        execute: async args => JSON.stringify(await this.steerWorkflowAgent({ sessionId, runId: String(args.runId ?? ''), agentId: String(args.agentId ?? ''), message: String(args.message ?? '') }))
+      },
+      ...(['pause', 'resume', 'stop_agent'] as const).map(action => ({
+        name: 'workflow_' + action,
+        description: action === 'pause' ? 'Cooperatively pause one exact Agent, preserving its conversation. Pausing waits for an active model request or tool to finish, then no further model/tool/dependent step runs until resumed. Does not instantly suspend an external command.' : action === 'resume' ? 'Resume the same paused Agent conversation and remaining timeout budget.' : 'Stop one exact Agent in this chat. Other Agents and the main chat continue.',
+        params: [{ name: 'runId', required: true }, { name: 'agentId', required: true }],
+        execute: async (args: Record<string, unknown>) => {
+          const target = { sessionId, runId: String(args.runId ?? ''), agentId: String(args.agentId ?? '') }
+          const result = action === 'pause' ? await this.pauseWorkflowAgent(target) : action === 'resume' ? await this.resumeWorkflowAgent(target) : await this.stopAgent(target)
+          return JSON.stringify(result)
+        }
+      })),
+      {
+        name: 'workflow_add_task', description: 'Start one additional independent Agent task in this chat and return immediately. Optionally reference an existing run as context. This creates a separate single-Agent run and does not modify the executing workflow graph; its result is delivered into the main chat.',
+        params: [{ name: 'input', required: true, description: 'Specific task, constraints, evidence and expected result.' }, { name: 'parentRunId', description: 'Optional exact run ID in this chat to use as context.' }],
+        execute: async (args) => {
+          const input = String(args.input ?? '').trim()
+          if (!input) throw new Error('An additional Agent task requires input.')
+          let context = ''
+          if (args.parentRunId) {
+            const parent = (await this.supervisor.list(sessionId)).runs.find(run => run.id === args.parentRunId)
+            if (!parent) throw new Error('Parent workflow does not belong to this chat.')
+            context = '\nRelated workflow (context only): ' + parent.name + ' (' + parent.id + ')\nOriginal task: ' + parent.input
+          }
+          const run = await this.startWorkflow({ sessionId, entry: { kind: 'builtin', name: 'agent-task' }, input: input + context })
+          return JSON.stringify({ runId: run.id, name: run.name, status: run.status, background: true })
         }
       }
     ]

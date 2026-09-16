@@ -1,3 +1,4 @@
+import { BackgroundContextInbox } from './steering/backgroundContextInbox'
 import { homedir } from 'os'
 import { join } from 'path'
 import { A7_DISCIPLINE, BASE_SYSTEM_PROMPT } from './prompt/sysPrompt'
@@ -148,6 +149,7 @@ export class BaseAgent {
   private readonly runtime: AgentRuntimeAdapter
   private busy = false
   private activeSteeringInbox?: TurnSteeringInbox
+  private readonly backgroundContext = new BackgroundContextInbox()
   private steeringSequence = 0
   private projectInstructions = ''
   // Runtime overrides set by the UI provider switch; take precedence over env/opts.
@@ -447,6 +449,7 @@ export class BaseAgent {
         this.sessionPromise = null
         throw err
       }
+      this.backgroundContext.flush(session.context)
       const turn = await this.runPrompt(session, { text: message, media: options?.media, images: options?.images, messageId: options?.messageId, turnId: options?.turnId }, timeoutMs, steeringInbox)
       // 上下文归因(Ral 2026-08-20:「我得知道是什么太大导致的,然后才能让 agent 制定拆分的方案」)。
       // **每回合都记**,不是只在出错时记 —— 撑爆上下文是累积的结果,只在爆掉那一刻看一眼,
@@ -493,8 +496,21 @@ export class BaseAgent {
     } finally {
       steeringInbox.cancel('The turn ended before this message was delivered.')
       if (this.activeSteeringInbox === steeringInbox) this.activeSteeringInbox = undefined
+      // Let delivery acknowledgements settle before appending unconsumed background results.
+      await Promise.resolve()
+      const finalSession = this.sessionPromise
+      if (finalSession) {
+        try {
+          const settled = await finalSession
+          if (this.sessionPromise === finalSession) this.backgroundContext.flush(settled.context)
+        } catch { /* retained for the next turn */ }
+      }
       this.busy = false
     }
+  }
+
+  retainBackgroundContext(id: string, text: string): void {
+    this.backgroundContext.retain(id, text, this.busy ? this.activeSteeringInbox : undefined)
   }
 
   /** Additional text belongs to the current owned run, including its startup window. */
@@ -574,6 +590,7 @@ export class BaseAgent {
 
   /** Drop the current conversation; the next prompt starts a fresh session. */
   reset(): void {
+    this.backgroundContext.reset()
     this.activeSteeringInbox?.cancel('The turn was reset before this message was delivered.')
     const existing = this.sessionPromise
     this.sessionPromise = null

@@ -1,3 +1,4 @@
+import { PauseGate } from './pauseGate'
 import { Type } from 'typebox'
 import { Value } from 'typebox/value'
 import type { AgentSession, AgentSessionEvent, ToolDefinition } from '@earendil-works/pi-coding-agent'
@@ -7,8 +8,8 @@ import type { AgentTurnResult, WorkerCommand, WorkflowIoLine } from './protocol'
 export const WORKFLOW_SUBMIT_RESULT = 'workflow_submit_result'
 type AgentStart = Extract<WorkerCommand, { type: 'agent.start' }>
 export type PiSession = Pick<AgentSession, 'messages' | 'prompt' | 'subscribe' | 'abort' | 'dispose' | 'getLastAssistantText' | 'setAutoRetryEnabled'>
-  & Partial<Pick<AgentSession, 'systemPrompt' | 'getActiveToolNames' | 'getAllTools'>>
-export type PiSessionFactory = (start: AgentStart, customTools: ToolDefinition[], signal: AbortSignal) => Promise<PiSession>
+  & Partial<Pick<AgentSession, 'systemPrompt' | 'getActiveToolNames' | 'getAllTools' | 'steer' | 'clearQueue'>>
+export type PiSessionFactory = (start: AgentStart, customTools: ToolDefinition[], signal: AbortSignal, gate?: PauseGate) => Promise<PiSession>
 interface Callbacks {
   action(action: string, log?: string): void
   usage(messages: readonly unknown[]): void
@@ -28,7 +29,7 @@ const assistants = (messages: readonly unknown[]): AssistantMessage[] => message
 const messageOf = (error: unknown): string => error instanceof Error ? error.message : String(error)
 
 /** The production boundary is injected in tests; no model is called by the unit suite. */
-export const createWorkflowPiSession: PiSessionFactory = async (start, customTools, signal) => {
+export const createWorkflowPiSession: PiSessionFactory = async (start, customTools, signal, gate) => {
   signal.throwIfAborted()
   const { createAgentSession, getAgentDir, DefaultResourceLoader, ModelRuntime, ModelRegistry, SessionManager, SettingsManager } = await import('@earendil-works/pi-coding-agent')
   signal.throwIfAborted()
@@ -72,7 +73,7 @@ export const createWorkflowPiSession: PiSessionFactory = async (start, customToo
   const tools = [...new Set([...selected, ...customTools.filter(tool => tool.name === WORKFLOW_SUBMIT_RESULT).map(tool => tool.name)])]
   const loader = new DefaultResourceLoader({
     cwd, agentDir: runtime.agentDir ?? getAgentDir(), noExtensions: true, noSkills: true,
-    noPromptTemplates: true, noThemes: true, noContextFiles: true, systemPrompt: runtime.systemPrompt
+    noPromptTemplates: true, noThemes: true, noContextFiles: true, systemPrompt: `${runtime.systemPrompt}\n\nEnabled tools for this specific Agent: ${tools.join(', ')}. Only these tools exist; do not claim access to other tools or attempt unavailable tools.`
   })
   await loader.reload()
   signal.throwIfAborted()
@@ -82,6 +83,16 @@ export const createWorkflowPiSession: PiSessionFactory = async (start, customToo
   })
   // Kimchi owns the output-repair budget. A rejected submission must not start an
   // unbounded Pi tool loop before Kimchi can count the failed turn.
+  if (gate) {
+    const transform = session.agent.transformContext
+    const before = session.agent.beforeToolCall
+    const after = session.agent.afterToolCall
+    session.agent.toolExecution = 'sequential'
+    session.agent.transformContext = async (messages, abort) => { await gate.enter(); try { return transform ? await transform(messages, abort) : messages } catch (error) { gate.leave(); throw error } }
+    session.agent.beforeToolCall = async (context, abort) => { await gate.enter(); try { const result = await before?.(context, abort); if (result?.block) gate.leave(); return result } catch (error) { gate.leave(); throw error } }
+    session.agent.afterToolCall = async (context, abort) => { try { return await after?.(context, abort) } finally { gate.leave() } }
+    session.subscribe(event => { if (event.type === 'message_end' && event.message.role === 'assistant') gate.leave() })
+  }
   session.agent.shouldStopAfterTurn = ({ toolResults }) => toolResults.some(result => result.toolName === WORKFLOW_SUBMIT_RESULT)
   return session
 }
@@ -98,9 +109,10 @@ export class WorkflowPiSession {
   private submissionError?: string
   private terminalMessages: AssistantMessage[] = []
   private turnIndex = 0
+  private steering: string[] = []
   private toolArguments = new Map<string, unknown>()
 
-  constructor(private start: AgentStart, private signal: AbortSignal, private callbacks: Callbacks, hostTools: ToolDefinition[], factory: PiSessionFactory = createWorkflowPiSession) {
+  constructor(private start: AgentStart, private signal: AbortSignal, private callbacks: Callbacks, hostTools: ToolDefinition[], factory: PiSessionFactory = createWorkflowPiSession, private gate = new PauseGate(signal)) {
     this.opening = this.open(hostTools, factory)
     // A worker can be cancelled before its initial turn is dispatched.
     void this.opening.catch(() => undefined)
@@ -138,13 +150,26 @@ export class WorkflowPiSession {
         return { content: [{ type: 'text', text: 'Workflow result recorded.' }], details: {}, terminate: true }
       }
     })
-    const session = await factory(this.start, tools, this.signal)
+    const session = await factory(this.start, tools, this.signal, this.gate)
     this.session = session
     session.setAutoRetryEnabled(false)
     this.unsubscribe = session.subscribe(event => this.onEvent(event))
   }
 
+  async steer(message: string): Promise<void> {
+    if (this.closed || this.signal.aborted) throw new Error('Workflow Agent is closing')
+    this.steering.push(message)
+    await this.opening
+    await this.session?.steer?.(message)
+  }
+
   private onEvent(event: AgentSessionEvent): void {
+    if (event.type === 'message_start' && event.message.role === 'user') {
+      const content = event.message.content
+      const text = typeof content === 'string' ? content : content.filter(part => part.type === 'text').map(part => part.text).join('')
+      const index = this.steering.indexOf(text)
+      if (index >= 0) this.steering.splice(index, 1)
+    }
     if (event.type === 'message_end') {
       const messages = assistants([event.message])
       this.terminalMessages.push(...messages)
@@ -203,6 +228,7 @@ export class WorkflowPiSession {
 
   private async executeTurn(prompt: string): Promise<AgentTurnResult> {
     await this.opening
+    await this.gate.checkpoint()
     this.signal.throwIfAborted()
     if (this.closed) throw new Error('Workflow Agent is closing')
     const session = this.session!
@@ -218,7 +244,19 @@ export class WorkflowPiSession {
       }
     })
     let promptError: unknown
-    try { await session.prompt(prompt) } catch (error) { promptError = error }
+    try {
+      await session.prompt(prompt)
+      if (!this.signal.aborted) await this.gate.checkpoint()
+      while (!this.signal.aborted && this.steering.length) {
+        // A final submission can end Pi before its steering queue is consumed.
+        // Continue this exact session after the pause gate, preserving all prior messages.
+        session.clearQueue?.()
+        const pending = this.steering.splice(0).join('\n\n')
+        this.submitted = undefined; this.submissionError = undefined
+        await session.prompt(pending)
+        if (!this.signal.aborted) await this.gate.checkpoint()
+      }
+    } catch (error) { promptError = error }
     const recorded = assistants(session.messages.slice(offset))
     const messages = recorded.length ? recorded : this.terminalMessages
     this.callbacks.usage(messages.map(({ role, provider, model, usage }) => ({ role, provider, model, usage })))

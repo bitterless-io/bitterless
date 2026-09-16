@@ -146,6 +146,7 @@ async function loadAgentWorker(close=async()=>{}) {
  const code=ts.transpileModule(await readFile(join(root,'src/main/agent/workflowEngine/agent.worker.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText
  let command;const calls={session:0,turn:0,toolResult:0},events=[]
  const mocks={
+  './pauseGate':await jiti.import(join(root,'src/main/agent/workflowEngine/pauseGate.ts')),
   './workerPort':{onCommand(listener){command=listener},send(event){events.push(event)}},
   './ownedProcesses':{trackOwnedProcesses(){}},
   './protocol':{wireError:error=>({name:error.name,message:error.message})},
@@ -335,5 +336,41 @@ for(const prior of ['failed-agent','stopped-chat'])test(`a fresh workflow isolat
   assert.equal(complete.agents[0].error,undefined);assert.equal(engine.exited,true);assert.equal(worker.exited,true)
   const retained=(await h.supervisor.list()).runs.find(run=>run.id===h.run.id)
   assert.equal(retained.agents[0].status,prior==='failed-agent'?'failed':'stopped')
+ }finally{await h.close()}
+})
+
+test('pause acknowledgement, resume, exact ownership and Stop while paused preserve one attempt',async()=>{
+ const h=await harness()
+ try{
+  h.children[0].message({type:'ready'});const child=h.addAgent();child.message({type:'ready'})
+  await assert.rejects(h.supervisor.pauseAgent('foreign',h.run.id,'1'),/belong/)
+  await assert.rejects(h.supervisor.pauseAgent('chat',h.run.id,'missing'),/Unknown/)
+  await h.supervisor.pauseAgent('chat',h.run.id,'1')
+  assert.equal((await h.supervisor.list()).runs[0].agents[0].status,'pausing')
+  child.message({type:'agent.pause.state',agentId:'1',paused:true})
+  child.message({type:'agent.action',action:'Thinking'})
+  h.children[0].message({type:'agent.update',agent:{...h.agent,status:'running'}})
+  assert.equal((await h.supervisor.list()).runs[0].agents[0].status,'paused')
+  await h.supervisor.steerAgent('chat',h.run.id,'1','Use the narrower target')
+  assert.equal(child.commands.at(-1).type,'agent.steer')
+  await h.supervisor.resumeAgent('chat',h.run.id,'1')
+  assert.equal(h.children.length,2)
+  assert.equal(child.commands.filter(x=>x.type==='agent.start').length,1)
+  await h.supervisor.pauseAgent('chat',h.run.id,'1');child.message({type:'agent.pause.state',agentId:'1',paused:true})
+  await h.supervisor.stopAgent('chat',h.run.id,'1')
+  assert.equal((await h.supervisor.list()).runs[0].agents[0].status,'stopped')
+  await assert.rejects(h.supervisor.steerAgent('chat',h.run.id,'1','too late'),/Only an active/)
+ }finally{await h.close()}
+})
+test('pause and steering before worker ready are delivered ahead of initial model turn',async()=>{
+ const h=await harness()
+ try{
+  h.children[0].message({type:'ready'});const child=h.addAgent()
+  await h.supervisor.pauseAgent('chat',h.run.id,'1')
+  await h.supervisor.steerAgent('chat',h.run.id,'1','New constraint')
+  child.message({type:'ready'})
+  const types=child.commands.map(x=>x.type)
+  assert(types.lastIndexOf('agent.pause')<types.indexOf('agent.start'))
+  assert(types.indexOf('agent.steer')<types.indexOf('agent.start'))
  }finally{await h.close()}
 })

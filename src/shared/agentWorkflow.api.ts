@@ -1,7 +1,7 @@
 /** Shared workflow presentation contract. No Electron, Pi, or credentials cross this boundary. */
-export type WorkflowBuiltinName = 'mini-demo' | 'code-review' | 'refactor-scout' | 'diagnose' | 'perf-review' | 'research'
+export type WorkflowBuiltinName = 'mini-demo' | 'code-review' | 'refactor-scout' | 'diagnose' | 'perf-review' | 'research' | 'agent-task'
 export type WorkflowEntry = { kind: 'builtin'; name: WorkflowBuiltinName } | { kind: 'file'; path: string }
-export type WorkflowAgentStatus = 'queued' | 'running' | 'waiting' | 'approval' | 'retrying' | 'stopping' | 'completed' | 'failed' | 'stopped'
+export type WorkflowAgentStatus = 'queued' | 'running' | 'waiting' | 'approval' | 'retrying' | 'pausing' | 'paused' | 'stopping' | 'completed' | 'failed' | 'stopped'
 export type WorkflowRunStatus = 'running' | 'stopping' | 'completed' | 'failed' | 'stopped'
 export interface WorkflowLogEntry { ts: number; text: string }
 export interface WorkflowAgentTask {
@@ -42,6 +42,9 @@ export interface WorkflowApi {
   listWorkflows(): Promise<WorkflowDescriptor[]>
   startWorkflow(params: WorkflowStartRequest): Promise<WorkflowRunSnapshot>
   retryWorkflow(params: { sessionId: string; runId: string }): Promise<WorkflowRunSnapshot>
+  pauseWorkflowAgent(params: { sessionId: string; runId: string; agentId: string }): Promise<{ ok: true }>
+  resumeWorkflowAgent(params: { sessionId: string; runId: string; agentId: string }): Promise<{ ok: true }>
+  steerWorkflowAgent(params: { sessionId: string; runId: string; agentId: string; message: string }): Promise<{ ok: true }>
   stopAgent(params: { sessionId: string; runId: string; agentId: string }): Promise<{ ok: true }>
   stopWorkflow(params: { sessionId: string; runId: string }): Promise<{ ok: true }>
   stopSession(params: { sessionId: string }): Promise<{ ok: true }>
@@ -53,7 +56,10 @@ export type WorkflowIpcApi = Omit<WorkflowApi, 'startWorkflow' | 'retryWorkflow'
   retryWorkflow(params: { sessionId: string; runId: string }): Promise<WorkflowStartReply>
 }
 export const isWorkflowAgentLive = (status: WorkflowAgentStatus): boolean =>
-  status === 'queued' || status === 'running' || status === 'waiting' || status === 'approval' || status === 'retrying' || status === 'stopping'
+  status === 'queued' || status === 'running' || status === 'waiting' || status === 'approval' || status === 'retrying' || status === 'pausing' || status === 'paused' || status === 'stopping'
+
+/** A paused Agent stays live and stoppable, but does not occupy the active task bar. */
+export const isWorkflowAgentActive = (status: WorkflowAgentStatus): boolean => isWorkflowAgentLive(status) && status !== 'paused'
 
 export type WorkflowCommand =
   | { kind: 'list' }

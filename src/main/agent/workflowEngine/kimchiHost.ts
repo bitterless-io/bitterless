@@ -1,3 +1,4 @@
+import { PauseGate } from './pauseGate'
 import { describeSchemaViolations, parsePath, type AgentRequest, type AgentSession, type HostPort, type RunEvent } from '@kimchi-dev/kimchi-workflows/engine'
 import type { AgentStep, WorkflowDefinition, WorkflowNode } from '@kimchi-dev/kimchi-workflows/flow'
 import type { WorkflowAgentTask, WorkflowRunSnapshot, WorkflowStartRequest } from '../../../shared/agentWorkflow.api'
@@ -21,6 +22,8 @@ interface Attempt {
   ended: boolean
   timedOut: boolean
   timer?: ReturnType<typeof setTimeout>
+  remainingMs: number
+  timerStartedAt?: number
 }
 interface HostSession { row: WorkflowAgentTask; close: () => Promise<void> }
 const outcomeTurn = (outcome: AgentOutcome): AgentTurnResult => ({ text: '', submitted: { tool: 'workflow_submit_result', arguments: { result: outcome } } })
@@ -38,6 +41,8 @@ export class KimchiHost implements HostPort {
   private readonly attempts = new Map<string, Attempt>()
   private readonly sessions = new Set<HostSession>()
   private readonly stopped = new Set<string>()
+  private readonly pauses = new Map<string, PauseGate>()
+  private readonly pauseRequested = new Set<string>()
   private readonly pathCleanup = new Map<string, Promise<void>>()
   private readonly submissionErrors = new Map<string, string>()
   constructor(
@@ -118,11 +123,37 @@ export class KimchiHost implements HostPort {
       row.endedAt = Date.now(); this.publish(row)
     }
   }
+  private pauseGate(id: string): PauseGate {
+    let gate = this.pauses.get(id)
+    if (!gate) { gate = new PauseGate(this.signal); this.pauses.set(id, gate) }
+    return gate
+  }
+  private armTimeout(attempt: Attempt): void {
+    if (attempt.closing || attempt.ended || attempt.timer) return
+    attempt.timerStartedAt = Date.now()
+    attempt.timer = setTimeout(() => { attempt.timedOut = true; void this.closeAttempt(attempt) }, Math.max(1, attempt.remainingMs))
+  }
+  private freezeTimeout(attempt: Attempt): void {
+    if (!attempt.timer) return
+    clearTimeout(attempt.timer); attempt.timer = undefined
+    attempt.remainingMs = Math.max(1, attempt.remainingMs - (Date.now() - (attempt.timerStartedAt ?? Date.now())))
+  }
   stopAgent(id: string): void {
+    this.pauseRequested.delete(id); this.pauseGate(id).resume()
     this.stopped.add(id)
     for (const session of this.sessions) if (session.row.id === id) void session.close()
   }
   handle(message: WorkerCommand): void {
+    if (message.type === 'agent.pause') { this.pauseRequested.add(message.agentId); this.pauseGate(message.agentId).pause(); return }
+    if (message.type === 'agent.resume') {
+      this.pauseRequested.delete(message.agentId); this.pauseGate(message.agentId).resume()
+      for (const attempt of this.attempts.values()) if (attempt.row.id === message.agentId) this.armTimeout(attempt)
+      return
+    }
+    if (message.type === 'agent.pause.state') {
+      if (message.paused && this.pauseRequested.has(message.agentId)) for (const attempt of this.attempts.values()) if (attempt.row.id === message.agentId) this.freezeTimeout(attempt)
+      return
+    }
     if (message.type === 'agent.stop') { this.stopAgent(message.agentId); return }
     if (message.type !== 'attempt.turn.result' && message.type !== 'attempt.result') return
     const attempt = this.attempts.get(message.id)
@@ -183,6 +214,7 @@ export class KimchiHost implements HostPort {
       await this.pathCleanup.get(request.path)
       firstPrompt ??= prompt
       for (;;) {
+        await this.pauseGate(row.id).checkpoint()
         if (stopSignal.aborted) { await close(); return { text: '', cancelled: true } }
         if (cancelled()) return unavailable('stopped', 'Agent stopped by user; result unavailable')
         try {
@@ -193,10 +225,9 @@ export class KimchiHost implements HostPort {
             const model = request.model?.split('/')
             const providerId = model?.shift() || this.runtime.providerId
             const modelId = model?.join('/') || this.runtime.modelId
-            current = { id: `${row.id}:${++this.attemptSequence}`, row, closed: deferred<void>(), closing: false, ended: false, timedOut: false }
+            current = { id: `${row.id}:${++this.attemptSequence}`, row, closed: deferred<void>(), closing: false, ended: false, timedOut: false, remainingMs: options?.timeoutMs ?? 600_000 }
             this.attempts.set(current.id, current)
-            const thisAttempt = current
-            current.timer = setTimeout(() => { thisAttempt.timedOut = true; void this.closeAttempt(thisAttempt) }, options?.timeoutMs ?? 600_000)
+            this.armTimeout(current)
             row.status = 'running'; row.startedAt ??= Date.now(); row.currentAction = 'Thinking…'; row.prompt ||= firstPrompt; this.publish(row)
             current.turn = deferred<AgentTurnResult>(); current.turnId = `${current.id}:1`; turns = 1; pending = current.turn.promise
             this.send({ type: 'attempt.start', attempt: { id: current.id, rowId: Number(row.id), turnId: current.turnId, prompt: usedRetries ? firstPrompt : prompt, opts: { label: row.label, phase: row.phase, tools: options?.tools, thinkingLevel: options?.thinkingLevel, outputSchema: request.outputSchema, asks: request.asks }, providerId, modelId } })
@@ -206,6 +237,7 @@ export class KimchiHost implements HostPort {
             this.send({ type: 'attempt.turn', id: current.id, turnId: current.turnId, prompt: submissionError ? `${prompt}\n\nThe previous workflow_submit_result call was rejected:\n${submissionError}` : prompt })
           }
           const result = await pending
+          await this.pauseGate(row.id).checkpoint()
           if (result.submissionError) this.submissionErrors.set(request.path, result.submissionError)
           else this.submissionErrors.delete(request.path)
           conversation = result.conversation ?? conversation

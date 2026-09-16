@@ -1,3 +1,5 @@
+import { workflowCompletionId, workflowCompletionText } from '@shared/workflowCompletion'
+import type { WorkflowIpcApi, WorkflowSnapshot, WorkflowRunSnapshot } from '@shared/agentWorkflow.api'
 import { markRaw, nextTick, reactive } from 'vue'
 import { inject, injectable } from 'inversify'
 import { countTokens } from 'gpt-tokenizer'
@@ -39,6 +41,7 @@ import { TurnService, type SendResult } from './turn.service'
 import { turnDiagnostics } from './turnDiagnostics.service'
 import { buildErrorCard } from './errorCard.service'
 
+const workflowApi = createXpcRendererEmitter<WorkflowIpcApi>('WorkflowHandler')
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
 const maestroChat = createXpcRendererEmitter<MaestroChatApi>('MaestroChatDao')
 /**
@@ -298,6 +301,39 @@ export class MessageStoreState {
     await this.restoreActiveTurnSessions()
     await this.refreshDefaultWorkspace()
     await this.refreshHistory()
+    xpcRenderer.subscribe('agent/workflows', payload => { void this.applyWorkflowCompletions(payload.params as WorkflowSnapshot) })
+    const workflows = await workflowApi.listRuns({}).catch(() => null)
+    if (workflows) await this.applyWorkflowCompletions(workflows)
+  }
+
+  private readonly workflowUnsaved = markRaw(new Set<string>())
+  private readonly workflowDeliveries = markRaw(new Map<string, Promise<void>>())
+  private async applyWorkflowCompletions(snapshot: WorkflowSnapshot): Promise<void> {
+    if (!Array.isArray(snapshot?.runs)) return
+    await Promise.all(snapshot.runs.filter(run => run.status !== 'running' && run.status !== 'stopping').map(run => {
+      const key = workflowCompletionId(run)
+      const existing = this.workflowDeliveries.get(key)
+      if (existing) return existing
+      const pending = this.applyWorkflowCompletion(run).finally(() => this.workflowDeliveries.delete(key))
+      this.workflowDeliveries.set(key, pending)
+      return pending
+    }))
+  }
+  private async applyWorkflowCompletion(run: WorkflowRunSnapshot): Promise<void> {
+    const session = await this.loadPersistedSession(run.sessionId)
+    if (!session) return // The persisted run remains replayable when this chat is available.
+    const id = workflowCompletionId(run)
+    if (session.messages.some(message => message.id === id)) {
+      if (this.workflowUnsaved.has(id) && await this.persistSession(session)) this.workflowUnsaved.delete(id)
+      return
+    }
+    this.workflowUnsaved.add(id)
+    session.messages.push(this.withTokenCount({ id, source: 'cowork', role: 'ai', content: workflowCompletionText(run), streaming: false,
+      // Main inserts this result into its own context, independently of the renderer's hydration.
+      promptExcluded: true, ts: run.endedAt ?? run.createdAt }))
+    if (await this.persistSession(session)) this.workflowUnsaved.delete(id)
+    if (this.activeSessionId === session.id) this.scrollToBottom()
+
   }
 
   createSession(options: SessionOptions): MessageSession {

@@ -1,6 +1,6 @@
 # Background workflows, active tasks, and conversation control
 
-Status: implementing (2026-09-16). Owner request authorizes implementation and code sync.
+Status: implemented; code verification complete (2026-09-16). Human Electron testing pending.
 
 ## User contract
 
@@ -33,3 +33,12 @@ Use current typography/theme tokens and Tabler icons, borderless controls, backg
 - Main Agent tools: immediate workflow receipt, exact task control, additional task receipt; validate missing and foreign identifiers.
 - Renderer tests: active-only count/zero height, Tasks history modal/menu, plus-only header, removed workflow-status/footer rows, pause/resume actions, concurrent workflows and status bar independence.
 - Focused typecheck and existing affected suites. No Electron E2E or live model calls; hand over exact human test prompts. No independent review agent requested.
+
+## Implementation and verification
+
+- Host tools return background receipts, preserve exact chat/run/Agent ownership, and provide task list, cooperative pause/resume, steer, stop and independent added tasks. Two workflows and an ordinary main chat turn can coexist.
+- Pause holds the same Pi session at model/tool/result boundaries; paused time is excluded from the remaining Agent budget. Stop drains paused waits. Main chat steers its active turn through its existing inbox, and can route follow-up intent to a particular task with `workflow_steer`.
+- Persisted terminal run snapshots are the completion outbox. Renderer projects stable `workflow-result:<runId>` messages and retries failed saves; main Agent queues or safely appends matching context exactly once per runtime. Reopened chats replay persisted results without replaying the user request.
+- Additional tasks use read-only `agent-task`; they do not rewrite another workflow graph. Per-task detail keeps the workflow name and short run ID. Task history remains accessible from the vertical-dots menu when the bottom active count reaches zero.
+- Verification: 117 workflow engine/host/UI tests; 37 actual message store/SQLite fixture tests; focused Vue and strict engine/inbox typechecks passed. Root also verified compiled Vue + Less in an isolated headless browser. No Electron E2E or live-model calls.
+- Broader main-surface check currently has 64 diagnostics outside the newly added implementation, including an existing SessionIoPathResult narrowing error in MaestroAgentService. Focused changed engine/inbox and renderer checks pass.

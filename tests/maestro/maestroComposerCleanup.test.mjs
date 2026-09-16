@@ -8,7 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 const root = resolve(import.meta.dirname, '../..');
 const greeting = 'Hi — how can I help you today?';
 const mocks = {
-  'electron-xpc/preload': 'export class XpcPreloadHandler {}',
+  'electron-xpc/preload': 'export class XpcPreloadHandler {} export const createXpcPreloadEmitter = () => ({ stopSession: async () => ({ok:true}), listRuns: async () => ({runs:[]}) });',
   './sqliteManager': 'export const sqliteManager = { get db() { return globalThis.__sessionTitleDb } };',
   inversify: `
     export const injectable = () => (target) => target;
@@ -108,6 +108,7 @@ const createHarness = (useActualTurnService = false) => {
   };
   fixture.routes = {
     CoachXpcHandler: {
+      ensureSessionIo: async () => ({ ok: true, path: '/fixture/session-io' }),
       getActiveAgentTurn: async () => fixture.recovery,
       ackAgentTurnFinished: async () => ({ ok: true }),
       generateSessionTitle: async () => ({ ok: false }),
@@ -706,7 +707,7 @@ test('new chat is genuinely empty, retaining context defaults, attachments and i
     'new sessions clone the default workspace'
   );
   assert.equal(store.getSession(session.id).id, session.id);
-  assert.deepEqual(fixture.calls, [], 'creating an empty local draft does not write history');
+  assert.deepEqual(fixture.calls.filter(call => call.handler === 'MaestroChatDao'), [], 'creating an empty local draft does not write chat history');
 });
 
 test('reserved recovery injects no greeting, retains turn ownership and is not discarded while active', async () => {
@@ -1032,4 +1033,30 @@ test('concurrent session loads reuse the first in-memory identity', async () => 
   assert.equal(store.sessions.length, 1);
   assert.equal(loaded[0].id, loaded[1].id);
   assert.equal(store.getSession(stored.id).messages.length, 1);
+});
+
+const workflowRun = (sessionId, id, status) => ({ id, sessionId, name: 'mini-demo', status, createdAt: 1, endedAt: 2, input: 'task', agents: [], result: status === 'completed' ? 'evidence' : undefined, error: status === 'failed' ? 'failure' : undefined });
+test('workflow completion projects once into its owned chat without closing a live assistant, then survives reload', async () => {
+  const { store, fixture } = createHarness();
+  const a = store.createSession(ordinaryChat), b = store.createSession(ordinaryChat);
+  a.messages.push({ ...message('stream', 'ai', 'working'), streaming: true });
+  const snapshot = { revision: 1, runs: [workflowRun(a.id, 'done', 'completed'), workflowRun(a.id, 'fail', 'failed'), workflowRun(a.id, 'stop', 'stopped')] };
+  await Promise.all([store.applyWorkflowCompletions(snapshot), store.applyWorkflowCompletions(snapshot)]);
+  assert.equal(a.messages.filter(m => m.id.startsWith('workflow-result:')).length, 3);
+  assert.equal(a.messages.find(m => m.id === 'stream').streaming, true);
+  assert.equal(b.messages.some(m => m.id.startsWith('workflow-result:')), false);
+  assert.equal(a.messages.find(m => m.id === 'workflow-result:done').localOnly, undefined);
+  assert.equal(a.messages.find(m => m.id === 'workflow-result:done').promptExcluded, true, 'main delivers authoritative custom context separately');
+  const saved = fixture.saved.filter(s => s.id === a.id).at(-1);
+  const reloaded = createHarness(); reloaded.fixture.persisted.set(saved.id, saved);
+  await reloaded.store.applyWorkflowCompletions(snapshot);
+  assert.equal(reloaded.store.getSession(a.id).messages.filter(m => m.id.startsWith('workflow-result:')).length, 3);
+});
+test('a failed chat save is retried on a later persisted run snapshot without duplicate messages', async () => {
+  const { store, fixture } = createHarness(); const session = store.createSession(ordinaryChat);
+  let saved = false; fixture.routes.MaestroChatDao.saveSession = async () => ({ok:saved});
+  const snapshot = {revision:1, runs:[workflowRun(session.id, 'result', 'completed')]};
+  await store.applyWorkflowCompletions(snapshot); assert.equal(store.workflowUnsaved.size, 1);
+  saved = true; await store.applyWorkflowCompletions(snapshot);
+  assert.equal(store.workflowUnsaved.size, 0); assert.equal(session.messages.filter(m => m.id === 'workflow-result:result').length, 1);
 });

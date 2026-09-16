@@ -41,6 +41,8 @@ interface LiveRun {
   engine: WorkerHandle
   attempts: Map<string, Attempt>
   stoppedAgents: Set<string>
+  pausedAgents: Set<string>
+  steering: Map<string, string[]>
   closing: boolean
   stopRequested: boolean
   finishing?: Promise<void>
@@ -167,7 +169,7 @@ export class WorkflowSupervisor {
         const live = this.live.get(run.id)
         if (live && !live.finishing) this.observe(this.finishRun(run.id, undefined, { name: 'WorkerExitError', message: 'Workflow process exited unexpectedly' }), run.id)
       })
-      this.live.set(run.id, { request, runtime, engine, attempts: new Map(), stoppedAgents: new Set(), closing: false, stopRequested: false })
+      this.live.set(run.id, { request, runtime, engine, attempts: new Map(), stoppedAgents: new Set(), pausedAgents: new Set(), steering: new Map(), closing: false, stopRequested: false })
     } catch (error) {
       run.status = 'failed'; run.error = wireError(error).message; run.endedAt = Date.now()
       this.recordIo(run, { kind: 'note', name: 'workflow-end', turn: 0, subject: run.name, text: run.error, detail: { status: run.status } })
@@ -208,7 +210,15 @@ export class WorkflowSupervisor {
         spawned()
         if (handle.ready) return
         handle.ready = true; clearTimeout(handle.startTimer)
-        if (!handle.stopRequested) this.post(handle, initial)
+        if (!handle.stopRequested) {
+          if (initial.type === 'agent.start' && this.live.get(initial.runId)?.pausedAgents.has(String(initial.attempt.rowId))) this.post(handle, { type: 'agent.pause', agentId: String(initial.attempt.rowId) })
+          if (initial.type === 'agent.start') {
+            const live = this.live.get(initial.runId), id = String(initial.attempt.rowId)
+            for (const message of live?.steering.get(id) ?? []) this.post(handle, { type: 'agent.steer', agentId: id, message })
+            live?.steering.delete(id)
+          }
+          this.post(handle, initial)
+        }
       } else onEvent(event)
     })
     return handle
@@ -279,7 +289,8 @@ export class WorkflowSupervisor {
         if (JSON.stringify(existing.logs) !== JSON.stringify(logs)) { existing.logs = logs; this.publish() }
         return
       }
-      const row = { ...event.agent, prompt: limit(event.agent.prompt), output: event.agent.output ? limit(event.agent.output) : undefined, logs }
+      const paused = live.pausedAgents.has(event.agent.id) && existing && (existing.status === 'pausing' || existing.status === 'paused')
+      const row = { ...event.agent, ...(paused ? { status: existing.status, currentAction: existing.currentAction } : {}), prompt: limit(event.agent.prompt), output: event.agent.output ? limit(event.agent.output) : undefined, logs }
       if (existing) Object.assign(existing, row); else run.agents.push(row)
       this.publish()
     } else if (event.type === 'attempt.start') {
@@ -327,7 +338,13 @@ export class WorkflowSupervisor {
     if (event.type === 'agent.io') { this.recordIo(run, event.line, attempt.request, attempt.activeTurnId); return }
     if (event.type === 'tool.cancel') { attempt.calls.get(event.callId)?.controller.abort(); return }
     if (attempt.closing || live.closing) return
-    if (event.type === 'agent.turn.done') {
+    if (event.type === 'agent.pause.state') {
+      const agentId = String(attempt.request.rowId)
+      if (event.agentId !== agentId || !live.pausedAgents.has(agentId)) return
+      const agent = run.agents.find(item => item.id === agentId)
+      if (event.paused && agent && agent.status === 'pausing') { agent.status = 'paused'; agent.currentAction = '已暂停'; this.publish() }
+      this.post(live.engine, { type: 'agent.pause.state', agentId, paused: event.paused })
+    } else if (event.type === 'agent.turn.done') {
       if (event.turnId !== attempt.activeTurnId) return
       attempt.activeTurnId = undefined
       this.post(live.engine, { type: 'attempt.turn.result', id: attemptId, turnId: event.turnId, result: event.result, error: event.error })
@@ -335,7 +352,7 @@ export class WorkflowSupervisor {
     else if (event.type === 'usage') this.post(live.engine, { ...event, type: 'usage.record' })
     else if (event.type === 'agent.action') {
       const agent = run.agents.find(item => item.id === String(attempt.request.rowId))
-      if (!agent || !isWorkflowAgentLive(agent.status) || agent.status === 'stopping' || agent.status === 'approval') return
+      if (!agent || !isWorkflowAgentLive(agent.status) || agent.status === 'stopping' || agent.status === 'approval' || agent.status === 'pausing' || agent.status === 'paused') return
       agent.currentAction = limit(event.action)
       if (event.log) agent.logs = mergeLogs(agent.logs, [{ ts: Date.now(), text: limit(event.log) }])
       this.publish()
@@ -420,13 +437,49 @@ export class WorkflowSupervisor {
   }
   setAgentStatus(sessionId: string, runId: string, agentId: string, status: 'approval' | 'waiting' | 'running', currentAction: string): void {
     const run = this.requireRun(sessionId, runId), agent = run.agents.find(item => item.id === agentId)
-    if (!agent || !isWorkflowAgentLive(agent.status) || agent.status === 'stopping' || terminalRun(run)) return
+    if (!agent || !isWorkflowAgentLive(agent.status) || agent.status === 'stopping' || agent.status === 'pausing' || agent.status === 'paused' || terminalRun(run)) return
     agent.status = status; agent.currentAction = currentAction; this.publish()
+  }
+  async steerAgent(sessionId: string, runId: string, agentId: string, message: string): Promise<void> {
+    await this.initialized
+    const run = this.requireRun(sessionId, runId), live = this.live.get(runId), agent = run.agents.find(item => item.id === agentId)
+    if (!message?.trim()) throw new Error('A steering message is required')
+    if (!live || !agent || !isWorkflowAgentLive(agent.status) || agent.status === 'stopping') throw new Error('Only an active or paused Agent can receive an update')
+    const attempt = [...live.attempts.values()].find(item => String(item.request.rowId) === agentId && !item.closing)
+    if (attempt?.worker.ready) this.post(attempt.worker, { type: 'agent.steer', agentId, message: message.trim() })
+    else live.steering.set(agentId, [...live.steering.get(agentId) ?? [], message.trim()])
+    agent.logs = mergeLogs(agent.logs, [{ ts: Date.now(), text: `补充任务：${message.trim()}` }]); this.publish(); await this.flush()
+  }
+  async pauseAgent(sessionId: string, runId: string, agentId: string): Promise<void> {
+    await this.initialized
+    const run = this.requireRun(sessionId, runId), live = this.live.get(runId), agent = run.agents.find(item => item.id === agentId)
+    if (!agent) throw new Error('Unknown Agent in this workflow')
+    if (!live || !isWorkflowAgentLive(agent.status) || agent.status === 'stopping') throw new Error('Only an active Agent can be paused')
+    if (live.pausedAgents.has(agentId)) return
+    live.pausedAgents.add(agentId)
+    const attempts = [...live.attempts.values()].filter(attempt => String(attempt.request.rowId) === agentId && !attempt.closing)
+    agent.status = attempts.length ? 'pausing' : 'paused'; agent.currentAction = attempts.length ? '等待当前操作结束后暂停…' : '已暂停'
+    this.post(live.engine, { type: 'agent.pause', agentId })
+    for (const attempt of attempts) this.post(attempt.worker, { type: 'agent.pause', agentId })
+    this.publish(); await this.flush()
+  }
+  async resumeAgent(sessionId: string, runId: string, agentId: string): Promise<void> {
+    await this.initialized
+    const run = this.requireRun(sessionId, runId), live = this.live.get(runId), agent = run.agents.find(item => item.id === agentId)
+    if (!agent) throw new Error('Unknown Agent in this workflow')
+    if (!live || !live.pausedAgents.has(agentId)) throw new Error('This Agent is not paused')
+    live.pausedAgents.delete(agentId)
+    agent.status = agent.startedAt ? 'running' : 'queued'; agent.currentAction = '继续运行…'
+    this.post(live.engine, { type: 'agent.resume', agentId })
+    for (const attempt of live.attempts.values()) if (String(attempt.request.rowId) === agentId) this.post(attempt.worker, { type: 'agent.resume', agentId })
+    this.publish(); await this.flush()
   }
   async stopAgent(sessionId: string, runId: string, agentId: string): Promise<void> {
     await this.initialized
     const run = this.requireRun(sessionId, runId), live = this.live.get(runId), agent = run.agents.find(item => item.id === agentId)
-    if (!live || !agent || !isWorkflowAgentLive(agent.status)) return
+    if (!agent) throw new Error('Unknown Agent in this workflow')
+    if (!live || !isWorkflowAgentLive(agent.status)) return
+    live.pausedAgents.delete(agentId)
     live.stoppedAgents.add(agentId); agent.status = 'stopping'; agent.currentAction = '正在停止…'; this.publish()
     this.post(live.engine, { type: 'agent.stop', agentId })
     await Promise.all([...live.attempts.values()].filter(attempt => String(attempt.request.rowId) === agentId).map(attempt => this.finishAttempt(runId, attempt.request.id)))

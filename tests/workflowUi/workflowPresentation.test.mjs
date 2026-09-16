@@ -43,3 +43,13 @@ test('all busy states remain active and a new run before its first Agent is stil
   assert.equal(newestWorkflowRuns([current, empty])[0].id, 'starting')
   assert.equal(newestWorkflowRuns([current, { ...empty, createdAt: current.createdAt }])[0].id, 'starting')
 })
+
+test('paused work remains available in history but only active task states count in the bar', async () => {
+  const { isWorkflowAgentActive, isWorkflowAgentLive } = await jiti.import(fileURLToPath(new URL('src/shared/agentWorkflow.api.ts', root)))
+  const current = run('parallel', 'running', 1, ['running', 'pausing', 'paused', 'completed', 'failed', 'stopped'])
+  assert.equal(current.agents.filter(agent => isWorkflowAgentActive(agent.status)).length, 2)
+  assert.equal(isWorkflowAgentLive('paused'), true)
+  assert.equal(isWorkflowAgentActive('paused'), false)
+  assert.equal(groupWorkflowTasks([current]).find(group => group.category === 'paused').tasks.length, 1)
+  assert.deepEqual(groupWorkflowTasks([current]).filter(group => group.tasks.length).map(group => group.category), ['active', 'completed', 'paused', 'failed', 'stopped'])
+})

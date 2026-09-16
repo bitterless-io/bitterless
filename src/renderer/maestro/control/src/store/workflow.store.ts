@@ -58,6 +58,14 @@ class WorkflowStore {
     catch { if (this.revision === revision) this.loadFailed = true }
     finally { this.loading = false }
   }
+  async pauseAgent(sessionId: string, runId: string, agentId: string): Promise<void> {
+    const reply = await api.pauseWorkflowAgent({ sessionId, runId, agentId })
+    if (reply?.ok !== true) throw new Error('Workflow pause was not acknowledged')
+  }
+  async resumeAgent(sessionId: string, runId: string, agentId: string): Promise<void> {
+    const reply = await api.resumeWorkflowAgent({ sessionId, runId, agentId })
+    if (reply?.ok !== true) throw new Error('Workflow resume was not acknowledged')
+  }
   async stopAgent(sessionId: string, runId: string, agentId: string): Promise<void> {
     const reply = await api.stopAgent({ sessionId, runId, agentId })
     if (reply?.ok !== true) throw new Error('Workflow stop was not acknowledged')
