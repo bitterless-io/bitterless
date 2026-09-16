@@ -135,4 +135,4 @@ surgically preserving that exact Electron pin and all unrelated hunks.
 
 ## Local ACP integration (2026-09-16)
 
-Ral explicitly requested isolated worktrees. Task [acp-local-001](tasks/acp-local-001.md) follows [local ACP contract](../features/local-acp.md) on codex/acp-local-socket; after independent verification, merge into attached branch release/2608 per Ral's follow-up; do not deploy.
+Task [acp-local-001](tasks/acp-local-001.md) implements the [local ACP contract](../features/local-acp.md). Completed in an isolated worktree, independently verified, and merged into the original attached `release/2608` branch on 2026-09-16. Git synchronization follows Ral's request; no application deployment is included.

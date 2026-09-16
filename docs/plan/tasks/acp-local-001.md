@@ -1,7 +1,7 @@
 ---
 id: acp-local-001
 scope: Maestro local ACP server and client bridges
-status: in-progress
+status: done
 depends-on: []
 verify: strict types, socket and stdio integration, runtime wiring, independent review
 ---
@@ -29,12 +29,10 @@ All acceptance checks in docs/features/local-acp.md. Record exact commands and l
 
 ## evidence
 
-Pending.
-
 Verification completed before independent review:
 
 - `yarn typecheck:acp`: strict host, execution-context, lifecycle, transport, helper and core test types passed.
-- `yarn test:acp`: 12 real socket/stdio/MCP tests plus native host integration passed. Native integration executes MaestroAgentService → MaestroAgent → BaseAgent and the existing SQLite DAO against an on-disk database. Only model/network output, Electron/XPC and the SQLite driver boundary are substituted. Tests cover exact-once reload hydration, session isolation, allow/deny tool effects, cancellation, GUI overlap, logout with pending permission, and provider/transport errors.
+- `yarn test:acp`: 13 real socket/stdio/MCP tests plus native host integration passed. Native integration executes MaestroAgentService → MaestroAgent → BaseAgent and the existing SQLite DAO against an on-disk database. Only model/network output, Electron/XPC and the SQLite driver boundary are substituted. Tests cover exact-once reload hydration, session isolation, allow/deny tool effects, cancellation, GUI overlap, logout with pending permission, and provider/transport errors.
 - `yarn build`: main, all preloads, all renderers and standalone Node ACP helpers passed.
 - `node scripts/maestro/check-ai-crms-runtime.mjs`, `node --test scripts/auth/customer-authentication.test.mjs` (20 tests), `node scripts/startup/core-gated-startup.test.mjs`: passed.
 - `node scripts/maestro/check-maestro.mjs`: blocked by 9 existing forbidden host-alias usages in unchanged window/renderer files. `check-agent-runtime.mjs`: existing test reads `@earendil-works/pi-ai/dist/providers/openai-completions.js`, which is absent from the project's pinned 0.80.10 package. Neither failure is caused by ACP source changes.
@@ -43,4 +41,6 @@ Dependency verification used a disposable Yarn environment with the existing pac
 
 Additional shipping-path verification passed: the native integration copies both built `.cjs` helpers into a temporary directory outside the repository, launches them with ordinary Node and no local `node_modules`, and reaches the real socket server → MaestroAcpHost → MaestroAgentService/BaseAgent → SQLite DAO. Both stdio ACP and MCP run a native turn; the built MCP path closes/reloads the session and verifies replay plus persisted output. `yarn test:acp` builds these shipping helpers automatically before running the suites.
 
-Independent-review auth-race fix: external turns now register for cancellation before the first DAO await and remain registered through final persistence. Access checks snapshot the invalidation generation and recheck after asynchronous preparation and immediately before native execution. Deterministic native tests delay initial read, initial save and final save, perform logout plus immediate re-login, and assert no model/tool invocation and no streaming row left behind. An already-cancelled request and logout during provider preparation are also covered. `yarn typecheck:acp` and `yarn test:acp` passed again (12 core tests plus native/shipping-helper integration).
+Independent-review auth-race fix: external turns now register for cancellation before the first DAO await and remain registered through final persistence. Access checks snapshot the invalidation generation and recheck after asynchronous preparation and immediately before native execution. Deterministic native tests delay initial read, initial save and final save, perform logout plus immediate re-login, and assert no model/tool invocation and no streaming row left behind. An already-cancelled request and logout during provider preparation are also covered. `yarn typecheck:acp` and `yarn test:acp` passed again (13 core tests plus native/shipping-helper integration).
+
+Final independent acceptance: PASS at `eb683f9f`, including core admission fix `ee74c9fe`. The real socket → native host → SQLite regression proves logout waits for the first durable read, cancels the old prompt across fast relogin, and starts zero model calls. Strict types, all 13 shared protocol tests, the complete native/built-helper test and the final `yarn build` passed. Merged into the original attached `release/2608` branch on 2026-09-16; the same merged source tree is checked from the isolated worktree because the original checkout has no installed dependencies.

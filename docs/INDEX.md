@@ -1,6 +1,6 @@
 # Bitterless Documentation
 
-- [Local ACP agent access](features/local-acp.md) — local socket, stdio and Codex MCP integration; implementation in progress.
+- [Local ACP agent access](features/local-acp.md) — local socket, stdio and Codex MCP integration; implemented and independently verified.
 
 This directory is the entry point for current Bitterless design and delivery documents.
 Older implementation notes remain under `doc/` and are reference-only unless linked from a current

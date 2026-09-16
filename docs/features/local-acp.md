@@ -1,6 +1,6 @@
 # Local ACP agent access
 
-Status: implementation in progress. Requested by Ral on 2026-09-16.
+Status: implemented, independently verified, and merged into `release/2608`. Requested by Ral on 2026-09-16.
 
 ## Objective
 
@@ -58,7 +58,7 @@ Derive environment-specific endpoint from existing app userData/runtime director
 
 ## Delivery evidence
 
-To be completed after implementation and independent verification.
+Independent native and shared-protocol review passed at `eb683f9f`. Both reported lifecycle/replay findings were fixed and reverified; the final full Electron build passed. The implementation was merged into the original attached `release/2608` branch on 2026-09-16. See the delivery task for commands and verification limits.
 
 ## Usage
 
@@ -95,7 +95,7 @@ Supported baseline: ACP v1 initialization/authentication, persistent new/list/lo
 
 Only one shared Maestro turn runs at a time across external clients, GUI chat, trainer/delegate and direct skill replay. Overlap returns an explicit busy error. Cancellation/disconnect stops the model and denies pending permissions. A host tool already executing cannot undo its effects; turn ownership is retained until underlying tool execution drains, including a tool whose model-facing timeout has expired. Logout cancels external turns and waits for final persistence before closing SQLite. Streamed transcript checkpoints are saved at most once per second and flushed on normal completion/cancellation; an abrupt process crash can lose the latest checkpoint interval.
 
-Current verification: strict ACP TypeScript, 12 transport/helper integration tests, native Maestro/SQLite integration, full Electron build, customer-auth regressions and startup checks passed. See the [delivery task](../plan/tasks/acp-local-001.md) for exact commands, pre-existing Maestro test failures and environment limits. No live provider call or signed installer was required for this implementation; Windows-specific runtime/ACL behavior still needs a Windows execution environment.
+Current verification: strict ACP TypeScript, 13 transport/helper integration tests, native Maestro/SQLite integration, full Electron build, customer-auth regressions and startup checks passed. See the [delivery task](../plan/tasks/acp-local-001.md) for exact commands, pre-existing Maestro test failures and environment limits. No live provider call or signed installer was required for this implementation; Windows-specific runtime/ACL behavior still needs a Windows execution environment.
 
 Large MCP transcripts are paginated. `acp_session_load` returns the first `history` page with `replayId`, `cursor`, and `hasMore`; continue with `acp_session_history({replayId,cursor})` while `hasMore` is true. Likewise continue polling event pages even after a run completes. Oversized updates appear as `eventReferences`: follow `acp_event_read({eventId,offset})`, concatenate decoded base64 fragments using `nextOffset`, then parse the resulting UTF-8 JSON. Merge normal entries and references by their absolute indices. Replay retention is bounded; an overflow is an explicit tool error, and the stdio bridge can stream larger histories directly.
 
