@@ -1,7 +1,7 @@
 ---
 id: drill-stop-escape-001
 scope: Maestro chat Escape stop parity
-status: done
+status: in-progress
 depends-on: []
 verify: behavioral regressions, focused types, build, independent review
 ---
@@ -33,3 +33,7 @@ Actual implementation regression coverage for the issue contract. Record command
 - `yarn check:chat-composer` — PASS; existing composer, attachment, voice and shared-control checks retained.
 - Test limits: JSDOM supplies focus/visibility/layout boundaries; Electron XPC and message rendering are stubbed. No model/network calls or production data were used. This verifies renderer action parity and existing store persistence, not native model cancellation timing. The unchanged Stop runtime chain already calls `BaseAgent.abort()`.
 - Independent review PASS at `89efa8e7`: all eight behavioral tests, focused types and existing composer guards passed. Root `yarn build` passed for the complete Electron application. Merged into the original attached `release/2608` branch; regression checks rerun on the identical merged source tree in the isolated dependency environment.
+
+## Native parity follow-up
+
+Verify and fix the same early normal Stop receipt in Maestro BaseAgent under the issue contract. Add actual BaseAgent cancellation regressions, preserve existing ACP runtime/socket integration, rerun focused chat types/tests and full build, then independent review and sync `release/2608` again.
