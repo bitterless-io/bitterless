@@ -130,6 +130,7 @@ const requestIdOf = (row: Row | undefined): string => {
 export const workbenchPanes: WorkbenchPane[] = [
   'recording',
   'skills',
+  'workflows',
   'injections',
   'tools',
   'models',

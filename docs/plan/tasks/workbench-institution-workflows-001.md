@@ -33,3 +33,18 @@ Follow the feature contract: real API/storage/parser/UI wiring, focused tests, t
 ## Approved scope expansion (2026-09-16)
 
 Implement the Shared and institution scopes section for both Skill and Workflow storage, Workbench lists/details and real Agent discovery/reference resolution. Include the canonical offline demo in the shared workflow catalog, plus explicit local shared package import. Final merge, commit and push target is dev/next; parent will send BotAndI completion notice. Expanded code paths include existing skill sync/storage/catalog/prompt/tool routing and their focused tests.
+
+## Workflow implementation checkpoint (2026-09-16)
+
+Workflow library and Workbench are implemented; Skills expansion and independent review remain in progress. Shared packages include the byte-exact canonical offline sample and explicit local ZIP import. Institution installs use `<library>/<backend-account-sha256>/<institution_id>/<workflow-id>-<uuid>` with immutable directories and an atomic catalog. JSON previews never import TypeScript. Main resolves qualified `shared:<id>` / `institution:<institution_id>:<id>` references and rechecks managed-path authorization before and after preparing the execution runtime. Existing Kimchi builtins remain shared catalog entries.
+
+Verification:
+
+- `yarn test:workflow-library`: 16/16, covering ZIP/manifest bounds, no-execution preview, rollback, logout/institution races, shared preservation, separate literal institution parents, same-name runtime references, direct-path revocation, 60-second polling/disposal, real SFC/Less compilation and renderer state fences.
+- `yarn typecheck:workflow-library` and `yarn tsc -p tests/workflowEngine/tsconfig.json`: passed.
+- `yarn node --test --test-skip-pattern='both apps ship the same summary service and contract' tests/workflowEngine/*.test.mjs tests/workflowUi/*.test.mjs tests/workflowHost/*.test.cjs`: 152/152 executed tests passed. The excluded legacy parity test hardcodes the other repository's old release checkout, which has no Kimchi source; no unrelated checkout was switched.
+- Independent adversarial ZIP fixture set: all 31 cases met their expected acceptance/rejection, including rejection of inconsistent local/central sizes and preview of a deliberately throwing TypeScript entry without execution.
+- `yarn electron-vite build`: passed with a local synthetic release_prod profile containing only public endpoint/mode values. No Rig deployment, credential copy, running-app restart or desktop publication.
+- `yarn node tests/workflowLibrary/visual.mjs`: real Workbench view, store and flow component rendered with explicitly labelled fixture data. Keyboard node selection, zoom/fit and Details passed. Desktop 1260×780 and constrained 660×860 screenshots in `tmp/workflow-visual/{desktop,narrow}-{light,dark}.png`; inspected visually and corrected constrained-width institution selector visibility.
+
+The host's existing explicit execution permissions remain unchanged. Immutable old revisions are retained so active runs keep their files; removing a cloud item removes only its active catalog mapping. Shared installation is explicit and never inferred from institutional downloads.

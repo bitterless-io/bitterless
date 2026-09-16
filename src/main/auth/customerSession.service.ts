@@ -13,16 +13,26 @@ import type { CustomerSessionPayload } from '@shared/auth/auth.type';
  */
 class CustomerSessionService {
   private session: CustomerSessionPayload | null = null;
+  private listeners = new Set<() => void>();
 
   set(payload: CustomerSessionPayload): void {
     const token = String(payload?.token || '').trim();
     const baseUrl = String(payload?.baseUrl || '').trim().replace(/\/+$/, '');
     // 半个会话比没有会话更难排查:缺任一件都当作未登录。
-    this.session = token && baseUrl ? { token, baseUrl } : null;
+    const next = token && baseUrl ? { token, baseUrl } : null;
+    const changed = next?.token !== this.session?.token || next?.baseUrl !== this.session?.baseUrl;
+    this.session = next;
+    if (changed) for (const listener of this.listeners) listener();
   }
 
   clear(): void {
     this.session = null;
+    for (const listener of this.listeners) listener();
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
   }
 
   get current(): CustomerSessionPayload | null {

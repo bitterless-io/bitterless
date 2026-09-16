@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { isAbsolute, join } from 'node:path'
-import type { WorkflowApi, WorkflowDescriptor, WorkflowRunSnapshot, WorkflowSnapshot, WorkflowStartRequest } from '../../../shared/agentWorkflow.api'
+import type { WorkflowApi, WorkflowBuiltinName, WorkflowDescriptor, WorkflowRunSnapshot, WorkflowSnapshot, WorkflowStartRequest } from '../../../shared/agentWorkflow.api'
+import { workflowLibraryRuntime } from '../../workflowLibrary/workflowLibraryRuntime'
 import type { AgentToolSpec } from '../runtime/agentRuntime.types'
 import { runInAgentSession } from '../runtime/agentSessionContext'
 import { modelIoLog } from '../runtime/modelIoLog'
@@ -118,6 +119,7 @@ export class WorkflowHostIntegration implements WorkflowApi {
   }
 
   private async startInSession(request: WorkflowStartRequest): Promise<WorkflowRunSnapshot> {
+    if (request.entry?.kind === 'library') request = { ...request, entry: await workflowLibraryRuntime.resolve(request.entry.ref) }
     const sessionId = request.sessionId
     if (!request.input?.trim()) throw new Error('Workflow input is required.')
     const entry = request.entry
@@ -127,11 +129,13 @@ export class WorkflowHostIntegration implements WorkflowApi {
       if (!isAbsolute(request.entry.path) || !/\.(?:ts|mts)$/.test(request.entry.path)) {
         throw new Error('Workflow file must be an absolute .ts or .mts path.')
       }
+      await workflowLibraryRuntime.assertPath(request.entry.path)
     } else throw new Error('A built-in name or workflow file is required.')
     if (request.origin === 'shortcut') await this.assertShortcutAvailable(sessionId)
     const { cwd, ...runtime } = await this.options.runtime(sessionId, request.origin === 'shortcut' ? undefined : request.cwd)
     if (request.origin === 'shortcut') await this.assertShortcutAvailable(sessionId)
     if (this.closed || this.stopping.has(sessionId)) throw new DOMException('Workflow stopped before startup completed.', 'AbortError')
+    if (request.entry.kind === 'file') await workflowLibraryRuntime.assertPath(request.entry.path)
     const tools = this.options.tools().map(({ name, description, params, timeoutMs }) => ({ name, description, params, timeoutMs }))
     return this.supervisor.start({ ...request, sessionId, cwd }, { ...runtime, tools })
   }
@@ -190,7 +194,7 @@ export class WorkflowHostIntegration implements WorkflowApi {
     await this.supervisor.resumeAgent(params.sessionId, params.runId, params.agentId)
     return { ok: true as const }
   }
-  async listWorkflows() { return WORKFLOW_DESCRIPTORS.map((workflow) => ({ ...workflow })) }
+  async listWorkflows() { return [...WORKFLOW_DESCRIPTORS.map((workflow) => ({ ...workflow, scope: 'shared' as const, ref: `shared:builtin:${workflow.name}` })), ...await workflowLibraryRuntime.list()] }
   async steerWorkflowAgent(params: { sessionId: string; runId: string; agentId: string; message: string }) {
     await this.requireAgent(params)
     if (!params.message?.trim()) throw new Error('A steering instruction is required.')
@@ -237,7 +241,7 @@ export class WorkflowHostIntegration implements WorkflowApi {
         name: 'workflow_run',
         description: 'Start a built-in workflow or an explicitly requested local TypeScript workflow file in the background. Returns a run receipt immediately; completion is delivered into this chat automatically. The user may continue talking and run other workflows concurrently. Supply exactly one of name or path. Available host tools: web_search/web_fetch; browser, skill, and integration actions are unavailable. Workflow subagents cannot recursively start workflows.',
         params: [
-          { name: 'name', description: 'mini-demo, code-review, refactor-scout, diagnose, perf-review, or research.' },
+          { name: 'name', description: 'A built-in name or exact shared:<id> / institution:<institution_id>:<id> reference from workflow_list. Never guess scope or choose between duplicate display names.' },
           { name: 'path', description: 'Absolute path to a local .ts or .mts workflow file explicitly requested by the user.' },
           { name: 'input', required: true, description: 'Workflow task, target, and success criteria.' }
         ],
@@ -246,7 +250,7 @@ export class WorkflowHostIntegration implements WorkflowApi {
           if (Boolean(args.name) === Boolean(args.path)) throw new Error('Supply exactly one of workflow name or path.')
           const run = await this.startWorkflow({
             sessionId,
-            entry: args.path ? { kind: 'file', path: String(args.path) } : { kind: 'builtin', name: String(args.name) as WorkflowDescriptor['name'] },
+            entry: args.path ? { kind: 'file', path: String(args.path) } : String(args.name).startsWith('shared:builtin:') ? { kind: 'builtin', name: String(args.name).slice(15) as WorkflowBuiltinName } : /^(shared|institution):/.test(String(args.name)) ? { kind: 'library', ref: String(args.name) } : { kind: 'builtin', name: String(args.name) as WorkflowBuiltinName },
             input: String(args.input ?? '')
           })
           return JSON.stringify({ runId: run.id, name: run.name, status: run.status, background: true })

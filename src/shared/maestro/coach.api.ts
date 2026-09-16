@@ -321,6 +321,7 @@ export interface AgentBrowserSessionState {
 export type WorkbenchPane =
   | 'recording'
   | 'skills'
+  | 'workflows'
   | 'injections'
   | 'tools'
   | 'models'
