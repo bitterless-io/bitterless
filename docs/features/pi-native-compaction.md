@@ -41,6 +41,18 @@ The shipped configuration preserves the existing four Codex budgets:20% reserve 
 
 The configuration follow-up is code-verified:14 policy cases plus the existing native/harness cases pass (35 total), and the scoped runtime TypeScript check passes. No live provider or Electron test was run for this change; see the task record for exact commands.
 
+## Budget reference verification — 2026-09-17
+
+The owner's follow-up reaffirms the already implemented code policy: current Codex models reserve 20% of their actual window and retain approximately 20,000 recent tokens. Both fields support absolute values or host ratios. The companion compaction.html now includes an interactive calculation and a table of the other Pi context controls. The owner explicitly waived opening OnlyPreview for this round; no additional settings UI or runtime implementation is needed.
+
+At contextWindow 272,000, the resolved reserve is 54,400 and the native strict-greater-than threshold is 217,600. History/prefix summary request options are respectively 43,520 and 27,200. These are SDK request budgets: installed pi-ai's openai-codex-responses adapter does not put maxTokens into its final payload, so they are not enforced Codex wire output caps. Codex sends reasoning effort, not numerical thinkingBudgets. Generic simple provider options can shrink output by estimated input and a 4,096-token margin; that is not an exact request-size guarantee.
+
+Use the actual pi-coding-agent/core import path as the source of truth. Its branch-summary output request is min(4096, model.maxTokens), independently verified through the exported function in both products. The separate pi-agent-core/harness implementation's 2048 value is not the active path. Neither branchSummary.reserveTokens nor system/skills/tool-size limits are additional partitions of the main compaction reserve.
+
+Pi 0.85.1 accepts absolute compaction settings only. The official latest documentation's modelOverrides feature belongs to upstream Unreleased; host modelOverrides and ratio resolution remain necessary without an SDK upgrade. Actual chat uses SettingsManager.inMemory through piRuntimeAdapter. Legacy piCompactionSettings.service.ts and compressionRemainingPercent are not sources for these native budgets.
+
+Sources: [stable settings](https://github.com/earendil-works/pi/blob/v0.85.1/packages/coding-agent/src/core/settings-manager.ts), [branch summary](https://github.com/earendil-works/pi/blob/v0.85.1/packages/coding-agent/src/core/compaction/branch-summarization.ts), [Codex payload](https://github.com/earendil-works/pi/blob/v0.85.1/packages/ai/src/api/openai-codex-responses.ts), [simple options](https://github.com/earendil-works/pi/blob/v0.85.1/packages/ai/src/api/simple-options.ts).
+
 ## Manual command
 
 Ral explicitly requested `/compact` and then `/compact [instructions]` on 2026-09-17. Match the exact command boundary, allowing an optional instruction suffix; paths or longer names remain ordinary input. Intercept this command in the chat composer as a host control action. Use the same native Pi compaction, append the per-call instructions to the persisted/default compactPrompt and snapshot both before asynchronous work. Never persist the per-call addition or reuse it next time. Display start/result/error/cancellation, do not send the literal command as a user task, and do not race an active turn. Clearly reject unsupported AI-CRMS.
