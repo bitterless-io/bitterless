@@ -66,3 +66,13 @@ Validation rejects invalid absolute/ratio values without coercion and validates 
 - PASS: scoped `git diff --check` for this policy, its tests and these feature/task documents.
 
 Only the policy, policy test and these two documents changed in this follow-up. No provider calls, app launch, Electron E2E, independent review or Git sync by this worker. The root task owns the requested final sync. Existing owner desktop testing remains the human handoff; this configuration-only change does not add another test requirement.
+
+## Budget display and current-policy revalidation — 2026-09-17
+
+The requested 20% reserve / 20,000 recent-token policy and independent absolute/ratio configuration already exist in the current checkout. Updated the budget reference and provider-limit explanations instead of making a duplicate runtime implementation. The owner waived opening OnlyPreview after its production bridge was unavailable. No additional human handoff or settings UI was added.
+
+- PASS 14/14 policy tests: `node --test tests/maestro/maestroPiCompactionPolicy.test.mjs`.
+- PASS 21/21 actual SDK native/harness tests: `node --test tests/maestro/maestroPiNativeCompaction.test.mjs tests/maestro/maestroPiAutoCompactionTest.test.mjs` (2.930s).
+- PASS scoped types: `yarn tsc -p tests/maestro/tsconfig.pi-compaction.json --pretty false` (2.38s).
+- Offline SDK checks confirmed active exported branch summary requests 4096 tokens and Codex payload omits numerical output/thinking budgets; capture aborted before transport.
+- No runtime source changes, live provider requests, full build or Electron E2E. Build was unnecessary for documentation-only changes; prior broad typecheck limitations remain as recorded above. Requested sync is handled by the root task.
