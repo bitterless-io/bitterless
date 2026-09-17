@@ -1,3 +1,4 @@
+import { ensureDefaultWorkspace } from '@maestro-main/files/defaultWorkspace'
 import { skillCloud } from '@maestro-main/skills/skillCloud.runtime'
 import { onSkillContextChanged, skillScopeContext, assertSkillContext } from '@maestro-main/skills/skillScope.context'
 import { workflowCompletionId, workflowCompletionContext } from './workflowEngine/completion'
@@ -458,6 +459,9 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
           authPath: maestroAuthPath(),
           modelsPath: maestroModelsPath(),
           agentDir: maestroAgentDir(),
+          // Tool-free generation agent: it binds no project and never resolves a relative path, so it
+          // keeps the agent dir like the other short-job workers rather than a workspace.
+          cwd: maestroAgentDir(),
           onDebug: broadcastCodexDebug
         })
       )
@@ -470,6 +474,10 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
           authPath: maestroAuthPath(),
           modelsPath: maestroModelsPath(),
           agentDir: maestroAgentDir(),
+          // No project bound yet -> the one shared default workspace, the same directory the workspace
+          // tools already fall back to. setProjectRoot() overrides it per session. See
+          // docs/features/agent-cwd-follows-workspace.md.
+          cwd: ensureDefaultWorkspace(),
           onDebug: broadcastCodexDebug,
           onActivity: (step) => this.relayAgentActivity('default', step),
           onThinking: (state) => this.relayAgentThinking('default', state),
@@ -489,6 +497,10 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
           authPath: maestroAuthPath(),
           modelsPath: maestroModelsPath(),
           agentDir: maestroAgentDir(),
+          // No project bound yet -> the one shared default workspace, the same directory the workspace
+          // tools already fall back to. setProjectRoot() overrides it per session. See
+          // docs/features/agent-cwd-follows-workspace.md.
+          cwd: ensureDefaultWorkspace(),
           onDebug: broadcastCodexDebug
         })
       )
@@ -1136,13 +1148,16 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         provider: this.activeLlmProvider,
         model: this.activeLlmModel,
         /**
-         * 活实例的组装结果 —— `composedSystemPrompt()` 返回的就是交给运行时的**完整**那份
-         * (表 1 + 表 2),所以导出永远不会和实际跑的漂开。
+         * 活实例的组装结果 —— 用 `sessionIoConfiguration().systemPrompt`,也就是
+         * `resolveRuntimeSystemPrompt()` 的 finalSystemPrompt:表 1 + 表 2 **再加**末尾那行
+         * `Current working directory:`。`composedSystemPrompt()` 不含 cwd 行,拿它导出会让
+         * 查看入口和真实请求在 cwd 上长期漂开 —— 而 cwd 恰恰是要在这里被核对的东西
+         * (docs/features/agent-cwd-follows-workspace.md)。它只读配置,不建运行时、不读凭据。
          *
-         * 还没有 agent 时展示固定 A1–A5 + A7；A6 只在发送回合时读取。
-         * 唯一差别:没有活实例就没有后端事实块(`targetBlock()` 要读活的 provider/model)。
+         * 还没有 agent 时展示固定 A1–A5 + A7(也没有 cwd 行:cwd 属于会话,没有会话就没有取值)。
+         * 另一处差别:没有活实例就没有后端事实块(`targetBlock()` 要读活的 provider/model)。
          */
-        systemPrompt: agent ? agent.composedSystemPrompt() : `${BASE_SYSTEM_PROMPT}\n\n${A7_DISCIPLINE}`,
+        systemPrompt: agent ? agent.sessionIoConfiguration().systemPrompt : `${BASE_SYSTEM_PROMPT}\n\n${A7_DISCIPLINE}`,
         entries: contextEntriesOfSurface(surface),
         ioLogDir: await modelIoLog.dirForSession(sessionKey) ?? undefined,
         pending: { attachments: attachmentPaths, draft: pending },
@@ -1229,7 +1244,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         provider: this.activeLlmProvider,
         model: this.activeLlmModel,
         // No live agent: fixed A1–A5 + A7 only, without loading project instructions.
-        systemPrompt: agent ? agent.composedSystemPrompt() : `${BASE_SYSTEM_PROMPT}\n\n${A7_DISCIPLINE}`,
+        systemPrompt: agent ? agent.sessionIoConfiguration().systemPrompt : `${BASE_SYSTEM_PROMPT}\n\n${A7_DISCIPLINE}`,
         entries: entriesOfSurface(surface),
         pending: {
           // workspace 从入参里的 `WorkspaceRef` 取:渲染层早就把它一起送上来了,不为一行显示字段
@@ -1581,6 +1596,10 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
           authPath: maestroAuthPath(),
           modelsPath: maestroModelsPath(),
           agentDir: maestroAgentDir(),
+          // No project bound yet -> the one shared default workspace, the same directory the workspace
+          // tools already fall back to. setProjectRoot() overrides it per session. See
+          // docs/features/agent-cwd-follows-workspace.md.
+          cwd: ensureDefaultWorkspace(),
           onDebug: broadcastCodexDebug,
           onActivity: (step) => this.relayAgentActivity(key, step),
           onThinking: (state) => this.relayAgentThinking(key, state),
@@ -1607,6 +1626,10 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
           authPath: maestroAuthPath(),
           modelsPath: maestroModelsPath(),
           agentDir: maestroAgentDir(),
+          // No project bound yet -> the one shared default workspace, the same directory the workspace
+          // tools already fall back to. setProjectRoot() overrides it per session. See
+          // docs/features/agent-cwd-follows-workspace.md.
+          cwd: ensureDefaultWorkspace(),
           onDebug: broadcastCodexDebug
         })
       )

@@ -1,5 +1,20 @@
 # Bitterless Documentation
 
+- [Agent cwd follows the workspace](features/agent-cwd-follows-workspace.md) — implementing; code-verified, human testing pending;
+  cwd is resolved per session from the project root (else the shared default workspace), never from process.cwd(); pi gets an in-memory settings manager first.
+
+- [Maestro 控制面板启动报 `An object could not be cloned.`](issues/maestro-control-config-clone-workspace-proxy.md) — 已修并验证；
+  响应式 `workspace` Proxy 过 xpc 边界抛错，卡死 `loadControlConfig`；2026-09-10 修过一次，守卫只扫一个文件，六天后从 `channel.store.ts` 原样复发；
+  守卫改成扫整个 control renderer 并对回归行先判红后转绿，7/7 通过。
+
+- [`getLlmConfig` 会挂住几分钟 —— pi 的 availability refresh 没封顶](issues/maestro-llm-config-unbounded-availability-refresh.md) — 已修并验证；
+  `describeContextWindows` 传 `refreshOnCreate: false` + 调用方封顶，provider 就绪探测改并行封顶；
+  其余 `ModelRuntime.create()` 逐个核过**不跟着改**（跳了会把所有 provider 报成未登录）。
+
+- [更新重启后 Zellij 阻塞半天，新开 tab 报 operation-failed](issues/zellij-update-restart-blocks-and-new-tab-fails.md) — 四条根因已证并已修；
+  `[zellij]` 现在每阶段一行带 `elapsedMs`（之前 80 分钟日志里整个子系统只有 3 行），`code=` 被自己的脱敏器擦成 `***` 的问题一并修掉；
+  瞬态 IPC 失败与所有权审计超时各自自愈一次（Ral 手点 Retry 能恢复的那一类）；更新后认不出自己保留的 session 这条要改信任规则，待 Ral 拍板。
+
 - [Omni Browser window session restore](features/omni-window-session-restore.md) — implemented;
   independent review, 74/74 tests and build passed; restore open/closed intent and saved geometry.
 

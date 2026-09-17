@@ -73,10 +73,16 @@ export interface AgentRuntimeSessionOptions {
   /** pi agent dir (auth/sessions/bin). Cowork passes `<userData>/.pi` so the app is self-contained
    * and the managed ripgrep lands in a path we control; unset falls back to pi's ~/.pi/agent. */
   agentDir?: string
-  /** Working dir for pi's builtin file tools (read/write/grep/find/ls) and relative-path resolution.
-   * Cowork passes `<userData>/skills` — the dir that already has package.json + node_modules
-   * (skills preset), so agent-written scripts can `import axios` and the mjs runner accepts them. */
-  cwd?: string
+  /**
+   * Working dir for pi's builtin file tools (read/write/grep/find/ls), the literal `spawn` cwd for
+   * bash, and the value pi prints as the prompt's trailing `Current working directory:` line.
+   *
+   * REQUIRED — the runtime must never fall back to `process.cwd()`, which made the shipped value
+   * depend on how the app was launched. Chat sessions pass the bound project root (else the shared
+   * default workspace); tool-free workers pass the agent dir.
+   * See docs/features/agent-cwd-follows-workspace.md.
+   */
+  cwd: string
   /** Enable pi's own builtin tools alongside the host tools. Names are allow-listed together with
    * every host tool name, because pi's allowlist filters builtin AND custom tools. */
   builtinTools?: string[]

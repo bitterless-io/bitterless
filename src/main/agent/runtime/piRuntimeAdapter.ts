@@ -19,8 +19,12 @@ import { resolveRuntimeSystemPrompt } from './runtimeSystemPrompt'
  *
  * `allowModelNetwork` 不传 —— 0.85.1 的默认值是 false,与我们一直设的 `PI_OFFLINE=1` 同义。
  */
-const createModelRuntime = async (pi: PiModule, authPath: string, modelsPath?: string) =>
-  await pi.ModelRuntime.create({ authPath, modelsPath })
+const createModelRuntime = async (
+  pi: PiModule,
+  authPath: string,
+  modelsPath?: string,
+  options?: { refreshOnCreate?: boolean }
+) => await pi.ModelRuntime.create({ authPath, modelsPath, ...options })
 
 export class PiRuntimeAdapter implements AgentRuntimeAdapter {
   async checkTarget(params: { providerId: string; modelId: string; authPath: string; modelsPath?: string }): Promise<boolean> {
@@ -41,6 +45,18 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
    *
    * 查不到的目标**不进返回值**,由调用方退 256K
    * (Ral 2026-09-11:「pi 给不出 contextWindow 就默认就是 256k,因为现在一般至少 256k 了」)。
+   *
+   * **`refreshOnCreate: false` 不能省**(Ral 2026-09-17,`renderer-config STUCK after 15000ms`,
+   * 那次 `getLlmConfig` 实测跑了 333,784ms):`ModelRuntime.create()` 默认会跑一趟
+   * availability refresh —— 它对**每个 provider** 调 `models.checkAuth()`(pi 0.85.1
+   * `dist/core/model-runtime.js:100` → `:174-183`),那是网络调用,且**不受 `allowModelNetwork`
+   * 管**;而 create 只在 `refreshFromNetwork && modelRefreshTimeoutMs !== undefined` 时才建
+   * AbortController,所以这条路上既没有 signal 也没有超时,没登录时能挂几分钟。
+   *
+   * 这里跳得掉,是因为 `contextWindow` 是**静态模型数据**,查表不需要 availability 快照
+   * (pi 自己对这个选项的说明:「Static models remain available.」)。
+   * `checkTarget()` / `createSession()` 用的是 `hasConfiguredAuth`,那正是 refresh 填的,
+   * **不能一起跳** —— 跳了会把所有 provider 报成未登录。
    */
   async describeContextWindows(params: {
     authPath: string
@@ -48,7 +64,9 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
     targets: { providerId: string; modelId: string }[]
   }): Promise<Record<string, number>> {
     const pi: PiModule = await import('@earendil-works/pi-coding-agent')
-    const modelRegistry = new pi.ModelRegistry(await createModelRuntime(pi, params.authPath, params.modelsPath))
+    const modelRegistry = new pi.ModelRegistry(
+      await createModelRuntime(pi, params.authPath, params.modelsPath, { refreshOnCreate: false })
+    )
     const windows: Record<string, number> = {}
     for (const target of params.targets) {
       const found = modelRegistry.find(target.providerId, target.modelId)
@@ -89,6 +107,14 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
       customTools,
       // pi adds cwd metadata itself; the host text is passed through without trimming.
       resourceLoader: createPiResourceLoader(pi, () => prompt.hostText),
+      // Without this, pi reads `<cwd>/.pi/settings.json` as TRUSTED project settings
+      // (sdk.js:73 `options.settingsManager ?? SettingsManager.create(cwd, agentDir)`;
+      // settings-manager.js:169 `projectTrusted ?? true`), and that file supplies the bash tool's
+      // shellCommandPrefix + shellPath (agent-session.js:2184-2185 → tools/bash.js:156). Harmless
+      // while cwd was `/`; once cwd follows the workspace, any repository opened here could inject a
+      // shell wrapper into every bash call. The workflow path already does this
+      // (workflowEngine/piAgentSession.ts). See docs/features/agent-cwd-follows-workspace.md.
+      settingsManager: pi.SettingsManager.inMemory(),
       sessionManager: pi.SessionManager.inMemory()
     })
     options.onDebug?.({

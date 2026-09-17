@@ -102,6 +102,58 @@ const loadBaseAgent = () => {
           }
         }
       }
+      // BaseAgent 自 2026-09 起在构造期就 `new BackgroundContextInbox()`。没有这个桩,守卫在
+      // require 阶段就抛 `Cannot find module`,连一条断言都跑不到 —— 而 check-maestro.mjs 会把
+      // 每个 check-*.mjs 都拉起来,所以整条 `yarn check:maestro` 跟着红。
+      // 守卫只关心 BaseAgent 把 cwd/system 提示词传下去,不关心追加消息的行为。
+      if (specifier === './steering/backgroundContextInbox') {
+        return {
+          BackgroundContextInbox: class {
+            flush() {}
+            retain() {}
+            reset() {}
+          }
+        }
+      }
+      // 真实语义的轻桩:cwd 必填这条是本守卫要盯的契约之一,桩里也必须保持,否则
+      // 「BaseAgent 把 cwd 传下去」这类断言会在一个宽松的桩上假绿。
+      if (specifier === './runtime/runtimeSystemPrompt') {
+        return {
+          requireSystemPrompt: (text) => text,
+          resolveRuntimeSystemPrompt: ({ systemPrompt, cwd }) => {
+            if (typeof cwd !== 'string' || !cwd.trim()) {
+              throw new Error('cwd is required — the runtime must never fall back to the process working directory')
+            }
+            return {
+              hostText: systemPrompt,
+              cwd,
+              finalSystemPrompt: `${systemPrompt}\nCurrent working directory: ${cwd}\n`
+            }
+          }
+        }
+      }
+      // 覆盖 BaseAgent.runPrompt 真正调到的整个表面(isClosed / start / pause / next / consume /
+      // cancel / enqueue)。缺任何一个,回合循环会在这个桩上提前断掉,守卫报的就不是它要守的东西了。
+      // 行为取「从不插话」:队列恒空、pause 立即返回,于是回合按正常路径跑完。
+      if (specifier === './steering/turnSteeringInbox') {
+        return {
+          TurnSteeringInbox: class {
+            isClosed = false
+            start() {}
+            async pause() {}
+            next() {
+              return undefined
+            }
+            consume() {}
+            cancel() {
+              this.isClosed = true
+            }
+            async enqueue() {
+              return { ok: false, error: 'steering is stubbed in this guard' }
+            }
+          }
+        }
+      }
       // 静态 system 提示词:守卫只关心 BaseAgent 把它传下去这件事,不关心内容。
       if (specifier === './prompt/projectInstructions') return { readProjectInstructions: async () => '' }
       if (specifier === './prompt/sysPrompt') {
@@ -354,6 +406,7 @@ const agent = new BaseAgent({
   providerId: 'openai-codex',
   modelId: 'gpt-test',
   authPath: '/tmp/coach-auth.json',
+  cwd: '/tmp/coach-fallback-workspace',
   runtime: fakeRuntime,
   describeTarget: () => ({ providerLabel: 'Fixture', modelLabel: 'Test', supplier: 'fixture' }),
   buildTools: () => [{ name: 'read_file', description: 'Read a file', params: [], execute: async () => 'ok' }],
@@ -384,6 +437,32 @@ const oneShot = await agent.oneShot('draft skill', 2_000)
 assert(oneShot.ok && runtimeState.createCalls === 3, 'oneShot should use a throwaway runtime session')
 assert(runtimeState.createOptions[2]?.tools?.length === 0, 'oneShot should not expose conversation tools')
 assert(runtimeState.sessions[1]?.prompts.length === 1, 'oneShot should not reuse or mutate the managed conversation session')
+
+// cwd:未绑项目时用宿主给的兜底,绑了就跟着项目根走。pi 在建会话时把 cwd 冻进 AgentSession._cwd
+// 并烤进内置工具,所以它是**建会话时**读的 —— 这几条就是在钉这个时机。
+// docs/features/agent-cwd-follows-workspace.md
+assert(
+  runtimeState.createOptions[0]?.cwd === '/tmp/coach-fallback-workspace',
+  'BaseAgent should pass the host fallback cwd while no project is bound'
+)
+await agent.setProjectRoot('/tmp/coach-project-root')
+agent.reset()
+await new Promise((resolve) => setTimeout(resolve, 0))
+const boundTurn = await agent.prompt('bound', 2_000)
+assert(boundTurn.ok, 'a turn after binding a project should still complete')
+assert(
+  runtimeState.createOptions.at(-1)?.cwd === '/tmp/coach-project-root',
+  'a session created after setProjectRoot should use the project root as cwd'
+)
+await agent.setProjectRoot(undefined)
+agent.reset()
+await new Promise((resolve) => setTimeout(resolve, 0))
+const unboundTurn = await agent.prompt('unbound', 2_000)
+assert(unboundTurn.ok, 'a turn after unbinding should still complete')
+assert(
+  runtimeState.createOptions.at(-1)?.cwd === '/tmp/coach-fallback-workspace',
+  'unbinding the project should fall back to the host cwd, never to process.cwd()'
+)
 
 if (failures.length) {
   console.error(`[check-agent-runtime] FAILED — ${failures.length} 条`)

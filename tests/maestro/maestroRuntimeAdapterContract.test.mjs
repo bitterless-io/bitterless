@@ -58,6 +58,7 @@ const harness = () => {
     ModelRuntime: { create: async () => { calls.auth++; return {}; } },
     ModelRegistry: class { find() { return { id: 'gpt-test', contextWindow: 1234 }; } hasConfiguredAuth() { return true; } },
     defineTool: spec => spec, createExtensionRuntime: () => ({}), SessionManager: { inMemory: () => ({ memory: true }) },
+    SettingsManager: { inMemory: () => ({ memory: true }) },
     createAgentSession: async args => { calls.sessions.push(args); return { session: native }; }
   };
   const load = loader({
@@ -102,12 +103,37 @@ test('host prompt bytes survive pi resource mapping and match the shared final p
   assert.deepEqual(h.calls.compaction, [true]);
 });
 
-test('cwd defaults, relative paths, home paths and file URLs resolve identically before provider mapping', () => {
-  for (const [cwd, expected] of [[undefined, process.cwd()], ['relative/work', resolve('relative/work')], ['~', homedir()], ['~/work', join(homedir(), 'work')], [pathToFileURL('/tmp/with space').href, '/tmp/with space']]) {
+test('relative paths, home paths and file URLs resolve identically before provider mapping', () => {
+  for (const [cwd, expected] of [['relative/work', resolve('relative/work')], ['~', homedir()], ['~/work', join(homedir(), 'work')], [pathToFileURL('/tmp/with space').href, '/tmp/with space']]) {
     const prompt = resolveRuntimeSystemPrompt({ systemPrompt: '\n HOST \n', cwd });
     assert.equal(prompt.cwd, expected);
     assert.equal(buildSystemPrompt({ customPrompt: prompt.hostText, cwd: prompt.cwd }), prompt.finalSystemPrompt);
   }
+});
+
+// The fallback this replaces made the shipped value depend on how the app was launched: `/` for a
+// Finder-launched .app, the project dir for a terminal `yarn dev`. cwd is the relative-path base for
+// all seven pi builtins and the literal spawn cwd for bash, so a silent default is a silent
+// behaviour change. docs/features/agent-cwd-follows-workspace.md
+test('an absent or blank cwd throws instead of falling back to the process working directory', () => {
+  for (const cwd of [undefined, null, '', '   ']) {
+    assert.throws(
+      () => resolveRuntimeSystemPrompt({ systemPrompt: 'HOST', cwd }),
+      /cwd is required/,
+      `cwd=${JSON.stringify(cwd)} must be rejected`
+    );
+  }
+});
+
+// pi reads `<cwd>/.pi/settings.json` as TRUSTED project settings when the host passes no
+// settingsManager, and that file supplies the bash tool's shellCommandPrefix. Harmless while cwd was
+// `/`; once cwd follows a user-chosen workspace, any opened repository could wrap every bash call.
+test('the pi session is created with an in-memory settings manager so a workspace cannot supply project settings', async () => {
+  const h = harness();
+  await h.adapter.createSession(options({}));
+  const args = h.calls.sessions[0];
+  assert.ok(args.settingsManager, 'a settingsManager must be supplied; omitting it lets pi read <cwd>/.pi/settings.json');
+  assert.equal(args.settingsManager.memory, true);
 });
 
 test('tool policy preserves no-tool, host-only and builtin-plus-host allowlists', async () => {

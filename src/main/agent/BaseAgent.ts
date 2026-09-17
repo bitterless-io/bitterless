@@ -65,8 +65,15 @@ export interface BaseAgentOptions {
   modelsPath?: string
   /** pi agent dir (auth/sessions/managed bin). Cowork passes `<userData>/.pi`. */
   agentDir?: string
-  /** cwd for pi's builtin file tools. Cowork passes `<userData>/skills` (has the preset node_modules). */
-  cwd?: string
+  /**
+   * FALLBACK cwd for pi's builtin file tools, used only while no project is bound. The live value is
+   * the session's project root once `setProjectRoot()` has supplied one — see `resolveCwd()`.
+   * Chat agents pass the shared default workspace; tool-free workers (session title, activity
+   * summary) pass the agent dir, since they never bind a project and need no workspace.
+   * Required: the runtime must never fall back to `process.cwd()`.
+   * See docs/features/agent-cwd-follows-workspace.md.
+   */
+  cwd: string
   /** pi builtin tools to enable (read/bash/edit/write/grep/find/ls). Empty/absent = host tools only. */
   builtinTools?: string[]
   /**
@@ -154,6 +161,8 @@ export class BaseAgent {
   private skillCatalogProvider?: () => Promise<string>
   setSkillCatalogProvider(provider: () => Promise<string>): void { this.skillCatalogProvider = provider }
   private projectInstructions = ''
+  /** The bound project root, or undefined when none. Source of A6 and of the next session's cwd. */
+  private projectRoot?: string
   // Runtime overrides set by the UI provider switch; take precedence over env/opts.
   private providerOverride?: string
   private modelOverride?: string
@@ -218,9 +227,25 @@ export class BaseAgent {
     return [BASE_SYSTEM_PROMPT, projectInstructions, A7_DISCIPLINE, product].filter(Boolean).join('\n\n')
   }
 
+  /**
+   * cwd for the NEXT pi session: the bound project root, else the host-supplied fallback.
+   *
+   * pi freezes cwd at session construction (`AgentSession._cwd`) and bakes it into the builtin tools,
+   * so this is read when the session is created — which is safe because the session is created lazily
+   * inside `prompt()`, after `setProjectRoot()` has already run for the turn. A workspace switch
+   * inside a LIVE chat therefore refreshes A6 but not cwd; changing it would require dropping the
+   * conversation. See docs/features/agent-cwd-follows-workspace.md.
+   */
+  private resolveCwd(): string {
+    return this.projectRoot ?? this.opts.cwd
+  }
+
   /** Read the current project's A6 between turns without replacing conversation or compaction state. */
   async setProjectRoot(projectRoot?: string): Promise<void> {
     if (this.busy) return
+    // Recorded before the unchanged-instructions early return below: two projects can share identical
+    // (or absent) AGENTS.md while still being different working directories.
+    this.projectRoot = projectRoot
     const instructions = await readProjectInstructions(projectRoot)
     if (this.busy || instructions === this.projectInstructions) return
     const live = this.sessionPromise
@@ -246,7 +271,7 @@ export class BaseAgent {
   /** Configuration only: does not create a runtime, read credentials, or send a model request. */
   sessionIoConfiguration(): SessionIoConfiguration {
     const providerId = this.resolveProvider()
-    const prompt = resolveRuntimeSystemPrompt({ systemPrompt: this.composedSystemPrompt(), cwd: this.opts.cwd })
+    const prompt = resolveRuntimeSystemPrompt({ systemPrompt: this.composedSystemPrompt(), cwd: this.resolveCwd() })
     return {
       systemPrompt: prompt.finalSystemPrompt, cwd: prompt.cwd,
       providerId, modelId: this.resolveModel(providerId), thinkingLevel: this.resolveThinkingLevel()
@@ -369,7 +394,7 @@ export class BaseAgent {
       // 默认的 CoworkRuntimeAdapter 和 modelIoLog 都能摸到 electron,check-agent-runtime.mjs:95
       // 正是为此打了 electron 桩。runtime/describeTarget 改必填 + modelIoLog 落点注入之后才成真。)
       agentDir: this.opts.agentDir,
-      cwd: this.opts.cwd,
+      cwd: this.resolveCwd(),
       // Builtins only make sense alongside host tools (a tool-less session is a pure LLM call).
       builtinTools: withTools ? (this.opts.builtinTools ?? DEFAULT_PI_BUILTIN_TOOLS) : undefined,
       /**
