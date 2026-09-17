@@ -15,7 +15,7 @@ User scope addition: `/test_auto_compact [absolute local text path]` with isolat
 
 User scope addition: compaction status bar, queued messages until safe delivery, tool-batch/background-result boundaries, workflow subagent internal compaction disabled.
 
-Completed follow-up: replace the implicit Codex budget formula with explicit Pi-style ordinary/model configuration. Both budget fields independently accept an absolute count or a host `{ ratio }` extension, resolved to integers before native settings. Current effective values are unchanged; focused verification is recorded below.
+Historical configuration follow-up (before the 10% recent policy): replace the implicit Codex budget formula with explicit Pi-style ordinary/model configuration. Both budget fields independently accept an absolute count or a host `{ ratio }` extension, resolved to integers before native settings. Effective values were unchanged at that stage; its focused verification is recorded below.
 
 ## Delivery evidence — 2026-09-17
 
@@ -41,7 +41,7 @@ Verification:
 
 Human test: run /compact after sufficient chat history; verify status, send two additions while it runs, then inspect their order and /view_context after restart. Run /test_auto_compact with Ral's supplied local transcript path, confirm the isolated bounded-window report, and try Stop/failure and a custom/blank compactPrompt. Verify workflow children do not compact. Electron UI interaction remains for Ral.
 
-## Authorized Pi gap follow-up — 2026-09-17 (complete)
+## Historical Pi gap follow-up — 2026-09-17 (complete; before recent ratio)
 
 Implemented: guarded Pi0.85.1 prefix-only split previousSummary compatibility; exact /compact [instructions] with per-call focus appended to the persisted/default focus; native retry callbacks and sanitized status lifecycle; model budget resolver for the four selected Codex presets (floor20% real window, keepRecent20000; unknown models Pi default). The isolated harness resolves the same policy against its capped model and reports effective reserve/keep. No dependency upgrade, provider rerun, overall compaction timeout, Electron E2E or independent review.
 
@@ -55,7 +55,7 @@ The installed SDK tests cover repeatedly produced prefix-only split preparations
 
 PASS: `yarn tsc -p tests/maestro/tsconfig.pi-compaction.json --pretty false` (4.25s). PASS: `yarn vue-tsc -p tests/maestro/tsconfig.pi-compaction-web.json --pretty false` (5.35s; ChatPanel, ControlApp, ResponseStatus, WorkbenchModelsView and their dependencies). The initial temporary Vue scope omitted the existing Maestro env.d.ts ambient declaration and reported fileBridge; the checked-in scope includes it and passes. No provider call, app launch, Electron E2E or independent review in this follow-up. Root owns the authorized repository sync after handoff.
 
-## Explicit absolute/ratio budget configuration — 2026-09-17 (complete)
+## Historical absolute/ratio budget configuration — 2026-09-17 (complete; before recent ratio)
 
 Replaced the implicit model set/formula with exported typed `PI_COMPACTION_CONFIG`: ordinary reserve16384/recent20000 plus exact `provider/model` overrides. Each budget independently falls back from model override to ordinary configuration to native default. Both fields accept non-negative safe-integer absolute counts or the host-only `{ ratio }` form (`0 <= ratio < 1`, floored against the selected model's actual window). Only resolved integers reach Pi. The four current Codex entries override reserve with ratio0.2 and inherit recent20000, preserving current behavior. Existing callsites and the isolated capped-model harness keep using the same resolver; no new UI or dependency changes.
 
@@ -67,7 +67,7 @@ Validation rejects invalid absolute/ratio values without coercion and validates 
 
 Only the policy, policy test and these two documents changed in this follow-up. No provider calls, app launch, Electron E2E, independent review or Git sync by this worker. The root task owns the requested final sync. Existing owner desktop testing remains the human handoff; this configuration-only change does not add another test requirement.
 
-## Budget display and current-policy revalidation — 2026-09-17
+## Historical budget display and policy revalidation — 2026-09-17 (before recent ratio)
 
 The requested 20% reserve / 20,000 recent-token policy and independent absolute/ratio configuration already exist in the current checkout. Updated the budget reference and provider-limit explanations instead of making a duplicate runtime implementation. The owner waived opening OnlyPreview after its production bridge was unavailable. No additional human handoff or settings UI was added.
 
@@ -76,3 +76,17 @@ The requested 20% reserve / 20,000 recent-token policy and independent absolute/
 - PASS scoped types: `yarn tsc -p tests/maestro/tsconfig.pi-compaction.json --pretty false` (2.38s).
 - Offline SDK checks confirmed active exported branch summary requests 4096 tokens and Codex payload omits numerical output/thinking budgets; capture aborted before transport.
 - No runtime source changes, live provider requests, full build or Electron E2E. Build was unnecessary for documentation-only changes; prior broad typecheck limitations remain as recorded above. Requested sync is handled by the root task.
+
+## Recent history follows model window — 2026-09-17
+
+Ral approved 20% trigger reserve and 10% recent-history target for the four configured openai-codex models in both Bitterless and CoWork. Update this project's four model overrides to set keepRecentTokens to { ratio: 0.1 }, floored against the actual selected window; leave reserve at { ratio: 0.2 }, unknown models at Pi defaults16384/20000, absolute/ratio configuration support and disabled child sessions unchanged. Windows272000,128000,65536 must resolve to reserve/recent54400/27200,25600/12800,13107/6553; thresholds stay217600,102400,52429. Native message/turn boundaries still choose the retained tail.
+
+Verification must cover all four presets and window rounding, real SettingsManager/preparation propagation for manual/threshold/overflow paths, changed model selection, the capped isolated test, unknown defaults, configurable absolute values and genuinely invalid budget layouts. The former small-window rejection caused solely by a fixed20000 recent target no longer applies. Preserve historical live evidence above with its original budgets. No provider call or Electron E2E is authorized for this implementation.
+
+Implemented the four recent ratio overrides and updated policy/native/isolated/adapter checks. The existing resolver and runtime callsites required no algorithm change. The policy tests pass resolved settings through installed Pi's real SettingsManager, including a272000→128000 model selection then an unknown-model fallback; native manual/threshold/overflow tests inspect the actual preparation settings, and the isolated test confirms recent6553 with unchanged threshold52429. Small windows now scale both Codex values; explicit conflicting absolute budgets still fail visibly.
+
+- PASS50/50 (policy14, native17, isolated4, adapter15): `node --test tests/maestro/maestroPiCompactionPolicy.test.mjs tests/maestro/maestroPiNativeCompaction.test.mjs tests/maestro/maestroPiAutoCompactionTest.test.mjs tests/maestro/maestroRuntimeAdapterContract.test.mjs` (3.10s).
+- PASS: `yarn tsc -p tests/maestro/tsconfig.pi-compaction.json --pretty false` (2.26s).
+- PASS: scoped `git diff --check`.
+
+No app launch, provider request, Electron E2E or full build was run: this change only adjusts existing typed budget configuration, with the runtime/preparation paths exercised through the installed SDK and simulated responses. Existing owner desktop testing remains as recorded above. Root owns paired CoWork verification, shared budget-reference update and the requested Git sync.

@@ -17,10 +17,10 @@ export const PI_COMPACTION_CONFIG: PiCompactionConfig = {
   reserveTokens: DEFAULT_RESERVE_TOKENS,
   keepRecentTokens: DEFAULT_KEEP_RECENT_TOKENS,
   modelOverrides: {
-    'openai-codex/gpt-6-astra': { reserveTokens: { ratio: 0.2 } },
-    'openai-codex/gpt-5.6-sol': { reserveTokens: { ratio: 0.2 } },
-    'openai-codex/gpt-5.6-terra': { reserveTokens: { ratio: 0.2 } },
-    'openai-codex/gpt-5.6-luna': { reserveTokens: { ratio: 0.2 } },
+    'openai-codex/gpt-6-astra': { reserveTokens: { ratio: 0.2 }, keepRecentTokens: { ratio: 0.1 } },
+    'openai-codex/gpt-5.6-sol': { reserveTokens: { ratio: 0.2 }, keepRecentTokens: { ratio: 0.1 } },
+    'openai-codex/gpt-5.6-terra': { reserveTokens: { ratio: 0.2 }, keepRecentTokens: { ratio: 0.1 } },
+    'openai-codex/gpt-5.6-luna': { reserveTokens: { ratio: 0.2 }, keepRecentTokens: { ratio: 0.1 } },
   },
 };
 

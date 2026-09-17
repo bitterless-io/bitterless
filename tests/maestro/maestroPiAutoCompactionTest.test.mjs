@@ -94,7 +94,7 @@ test('capped known-model policy and native retry progress reach the isolated com
   const result = await runPiAutoCompactionTest({ pi, modelRuntime: runtime, model, cwd: dir, systemPrompt: 'Protected system.', streamFunction, onCompaction: state => states.push(structuredClone(state)) })
   assert.equal(result.ok, true, JSON.stringify(result))
   assert.equal(result.reserveTokens, 13107)
-  assert.equal(result.keepRecentTokens, 20000)
+  assert.equal(result.keepRecentTokens, 6553)
   assert.equal(result.thresholdTokens, 52429)
   assert.equal(result.compactions, 1)
   const waiting = states.findIndex(state => state.retry)

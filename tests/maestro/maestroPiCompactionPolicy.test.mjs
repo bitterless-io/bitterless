@@ -16,11 +16,12 @@ const model = (id = 'gpt-6-astra', contextWindow = 272000, provider = 'openai-co
   provider, id, contextWindow,
 });
 
-test('all four exact Codex presets reserve 20% of their resolved context window', () => {
+test('all four exact Codex presets reserve 20% and retain 10% of their resolved context window', () => {
   for (const id of ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
-    for (const [contextWindow, reserveTokens] of [[272000, 54400], [128000, 25600], [65536, 13107]]) {
+    for (const [contextWindow, reserveTokens, keepRecentTokens] of [[272000, 54400, 27200], [128000, 25600, 12800], [65536, 13107, 6553]]) {
       const settings = resolvePiCompactionSettings(model(id, contextWindow));
-      assert.deepEqual(settings, { enabled: true, reserveTokens, keepRecentTokens: 20000 });
+      assert.deepEqual(settings, { enabled: true, reserveTokens, keepRecentTokens });
+      assert.deepEqual(SettingsManager.inMemory({ compaction: settings }).getCompactionSettings(), settings);
       assert.ok(contextWindow - settings.reserveTokens > settings.keepRecentTokens);
     }
   }
@@ -44,7 +45,7 @@ test('unlisted keys preserve installed Pi defaults with exact case-sensitive mat
 
 test('disabled child sessions remain disabled for known and unknown models', () => {
   assert.deepEqual(resolvePiCompactionSettings(model(), false), {
-    enabled: false, reserveTokens: 54400, keepRecentTokens: 20000,
+    enabled: false, reserveTokens: 54400, keepRecentTokens: 27200,
   });
   assert.deepEqual(resolvePiCompactionSettings(model('fixture'), false), {
     enabled: false, reserveTokens: 16384, keepRecentTokens: 20000,
@@ -59,14 +60,19 @@ test('known models reject invalid context windows without inventing a fallback',
   }
 });
 
-test('small configured windows fail explicitly when the selected budgets consume the threshold', () => {
+test('small Codex windows scale both budgets while invalid custom layouts still fail explicitly', () => {
   for (const contextWindow of [1, 20000, 25000]) {
-    assert.throws(() => resolvePiCompactionSettings(model('gpt-6-astra', contextWindow)), {
+    assert.deepEqual(resolvePiCompactionSettings(model('gpt-6-astra', contextWindow)), {
+      enabled: true, reserveTokens: Math.floor(contextWindow * 0.2), keepRecentTokens: Math.floor(contextWindow * 0.1),
+    });
+    assert.throws(() => resolvePiCompactionSettings(model('gpt-6-astra', contextWindow), true, {
+      modelOverrides: { 'openai-codex/gpt-6-astra': { reserveTokens: { ratio: 0.2 }, keepRecentTokens: 20000 } },
+    }), {
       name: 'RangeError', message: /too small/,
     });
   }
   assert.deepEqual(resolvePiCompactionSettings(model('gpt-6-astra', 25001)), {
-    enabled: true, reserveTokens: 5000, keepRecentTokens: 20000,
+    enabled: true, reserveTokens: 5000, keepRecentTokens: 2500,
   });
 });
 
@@ -75,11 +81,20 @@ test('each resolution is independent when callers update their SettingsManager',
   first.enabled = false;
   first.reserveTokens = 1;
   assert.deepEqual(resolvePiCompactionSettings(model()), {
-    enabled: true, reserveTokens: 54400, keepRecentTokens: 20000,
+    enabled: true, reserveTokens: 54400, keepRecentTokens: 27200,
+  });
+  const manager = SettingsManager.inMemory({ compaction: resolvePiCompactionSettings(model()) });
+  manager.applyOverrides({ compaction: resolvePiCompactionSettings(model('gpt-5.6-sol', 128000)) });
+  assert.deepEqual(manager.getCompactionSettings(), {
+    enabled: true, reserveTokens: 25600, keepRecentTokens: 12800,
+  });
+  manager.applyOverrides({ compaction: resolvePiCompactionSettings(model('fixture')) });
+  assert.deepEqual(manager.getCompactionSettings(), {
+    enabled: true, reserveTokens: 16384, keepRecentTokens: 20000,
   });
 });
 
-test('the shipped explicit config keeps Codex reserve ratios and independently inherited recent defaults', () => {
+test('the shipped explicit config overrides both Codex ratios and preserves ordinary Pi defaults', () => {
   assert.equal(PI_COMPACTION_CONFIG.reserveTokens, 16384);
   assert.equal(PI_COMPACTION_CONFIG.keepRecentTokens, 20000);
   assert.deepEqual(Object.keys(PI_COMPACTION_CONFIG.modelOverrides), [
@@ -87,7 +102,7 @@ test('the shipped explicit config keeps Codex reserve ratios and independently i
     'openai-codex/gpt-5.6-terra', 'openai-codex/gpt-5.6-luna',
   ]);
   for (const override of Object.values(PI_COMPACTION_CONFIG.modelOverrides)) {
-    assert.deepEqual(override, { reserveTokens: { ratio: 0.2 } });
+    assert.deepEqual(override, { reserveTokens: { ratio: 0.2 }, keepRecentTokens: { ratio: 0.1 } });
   }
 });
 

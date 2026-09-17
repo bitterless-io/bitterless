@@ -286,6 +286,7 @@ test('native retry exhaustion and cancellation preserve checkpoint and clear pro
 test('manual threshold and overflow all use the same resolved known-model preparation settings', async t => {
   const {resolvePiCompactionSettings}=load(join(root,'src/main/agent/runtime/piCompactionPolicy.ts'))
   const settings=resolvePiCompactionSettings({provider:'openai-codex',id:'gpt-6-astra',contextWindow:65536})
+  assert.deepEqual(settings,{enabled:true,reserveTokens:13107,keepRecentTokens:6553})
   for(const mode of ['manual','threshold','overflow']) {
     const h=harness({overflow:mode==='overflow',compactionSettings:settings});t.after(()=>h.session.dispose())
     seed(h.manager,mode==='overflow'?4:9);h.sync()

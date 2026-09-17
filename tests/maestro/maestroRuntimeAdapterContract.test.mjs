@@ -306,10 +306,10 @@ test('model selection applies exact Codex compaction policy on every new session
   const h=harness()
   for(const id of ['gpt-6-astra','gpt-5.6-sol','gpt-5.6-terra','gpt-5.6-luna']) {
     await h.adapter.createSession(options({target:{providerId:'openai-codex',modelId:id}}))
-    assert.deepEqual(h.calls.sessions.at(-1).settingsManager.compaction,{enabled:true,reserveTokens:54400,keepRecentTokens:20000})
+    assert.deepEqual(h.calls.sessions.at(-1).settingsManager.compaction,{enabled:true,reserveTokens:54400,keepRecentTokens:27200})
   }
   await h.adapter.createSession(options({target:{providerId:'openai-codex',modelId:'gpt-6-astra'},autoCompaction:false}))
-  assert.deepEqual(h.calls.sessions.at(-1).settingsManager.compaction,{enabled:false,reserveTokens:54400,keepRecentTokens:20000})
+  assert.deepEqual(h.calls.sessions.at(-1).settingsManager.compaction,{enabled:false,reserveTokens:54400,keepRecentTokens:27200})
   await h.adapter.createSession(options())
   assert.deepEqual(h.calls.sessions.at(-1).settingsManager.compaction,{enabled:true,reserveTokens:16384,keepRecentTokens:20000})
 })
