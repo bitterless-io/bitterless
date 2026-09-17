@@ -39,6 +39,44 @@ Native Node fixtures: controlled navigation deadlines, failed and successful Ret
 
 No Electron launch, Electron E2E, live Claude session, process termination, or packaged smoke test was performed. Main/shared typecheck is consolidated with the companion native-recovery change.
 
+### R11 parity 注记（2026-09-17 接手会话）
+
+`micromeet-cowork` 的 R11 移植需要一个 bl **不需要**的条件判断，原因是结构差异，记在这里免得下次
+有人把两边"对齐"成同一段代码：
+
+- 本仓：`surface.load()` 失败会从 `ensureSurface` 抛出去并 `dispose()`，surface 压根没进
+  `this.surfaces`，所以 `setTabActive` 找不到 entry —— `controls-load-*` 那一类天然走不到自动重连，
+  全权归 `zellijSurface.ts` 的 `promptZellijRendererRetry`。
+- Cowork：tab 会**保留在注册表里**并在每次激活时重发原生弹窗，所以它的自动重连必须显式排除
+  `controls-load-*`，否则自动重连会在用户正被弹窗询问时改掉状态。详见
+  `projects/micromeet-cowork/docs/issues/zellij-renderer-load-timeout.md` 的 R11 收尾一节。
+
+本仓本轮复验：`yarn test:zellij` 258 条 **257 通过**，`yarn check:zellij-tab-chrome` ok，
+`yarn typecheck` 106 条诊断中 **zellij 相关 0 条**。唯一红的那条
+（`quit and logout dispose all other terminal hosts before the final Zellij runtime drain`）与 R11 无关，
+是登出拆卸契约的冲突，见下节。
+
+### ⚠ 待 Ral 裁决 —— 登出不再拆 Zellij/Omni，与守卫测试冲突（2026-09-17 发现）
+
+`src/main/xpc/auth.handler.ts` 现在只拆账号绑定的窗口，注释写着「OnlyPreview 和 Zellij 是公共/本地
+窗口，必须保持可用，故意不做全窗口清扫」；`omniWindowHelper.destroy()` 与
+`zellijWindowService.destroy()` 在 `a38a641f`（09-17 19:39 的 sync 提交，随 `requestLogin()` /
+`prepareForAuthShutdown()` 那套改造一起）被移出登出路径。
+
+而 `tests/zellij/zellijGlobalLifecycle.test.mjs:272` 的守卫仍要求 `auth.handler.ts` 里按序出现
+`maestroWindowHandler._destroyForAuth` → `omniWindowHelper.destroy` → `zellijWindowService.destroy`，
+理由是「drain 之后不能再有活着的 terminal host 能接受关闭」。退出路径（`app.main.ts`）仍然齐全、
+仍然通过；**只有登出这一侧对不上**。
+
+两边都有道理，且这是安全形状的取舍（登出后本地终端/Omni 继续可用），不由 agent 单方面定：
+
+- **若新行为为准**：守卫应收窄到「有 drain 的那条路径（退出）」，登出侧改为断言「只拆账号绑定窗口」，
+  并把这条契约写进文档（目前它只活在一行代码注释里，`custom-homepage-tab.md` 只覆盖了
+  `prepareForAuthShutdown` 那一步，没说登出不再拆 Zellij/Omni）。
+- **若守卫为准**：登出需要恢复 drain 这两个 host。
+
+在 Ral 裁决前，本轮**两边都没动**——既没改守卫，也没改登出路径。
+
 ## R10 — stop Chromium from throttling a hidden Zellij tab (2026-09-17)
 
 **Reported by Ral:** an idle-for-a-while Zellij tab, once not displayed for a stretch, needs Retry when reopened. Live evidence from `~/Library/Logs/Bitterless_PREVIEW/main.log`:
