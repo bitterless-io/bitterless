@@ -56,7 +56,7 @@ function fixture(context, snapshot = {}) {
   const module = { exports: {} };
   new Function('require', 'module', 'exports', bundle.outputFiles[0].text)(require, module, module.exports);
   const { HistoryApp, historyStore, Button } = module.exports;
-  historyStore.receive({ revision: 1, sessionId: 'click-session', query: '', entries: [entry], selectedIndex: -1, loading: false, error: false, ...snapshot });
+  historyStore.receive({ session: 1, revision: 1, query: '', entries: [entry], selectedIndex: -1, loading: false, error: false, ...snapshot });
   const container = document.createElement('div');
   document.body.append(container);
   const app = createApp(HistoryApp);
@@ -84,7 +84,7 @@ function fixture(context, snapshot = {}) {
 test('one history-row click accepts its exact URL without an earlier focus action', async context => {
   const f = fixture(context);
   await f.clickOnce(f.find('browser-history__visit').querySelector('.browser-history__title'));
-  assert.deepEqual(f.calls, [{ sessionId: 'click-session', action: 'accept', url: entry.url }]);
+  assert.deepEqual(f.calls, [{ session: 1, revision: 1, action: 'accept', url: entry.url }]);
 });
 
 test('one Google-row click accepts the correctly encoded original query', async context => {
@@ -98,7 +98,7 @@ test('one Google-row click accepts the correctly encoded original query', async 
 test('one remove click only removes its history URL and never accepts the surrounding row', async context => {
   const f = fixture(context);
   await f.clickOnce(f.find('browser-history__remove').querySelector('svg'));
-  assert.deepEqual(f.calls, [{ sessionId: 'click-session', action: 'remove', url: entry.url }]);
+  assert.deepEqual(f.calls, [{ session: 1, revision: 1, action: 'remove', url: entry.url }]);
 });
 
 test('one close click sends close without a preceding focus action', async context => {
@@ -133,7 +133,7 @@ test('Enter and Space on a button keep native activation and do not also accept 
     // jsdom does not synthesize keyboard activation clicks; provide the native-button click here.
     button.click();
     await nextTick();
-    assert.deepEqual(f.calls, [{ sessionId: 'click-session', action: 'accept', url: entry.url }]);
+    assert.deepEqual(f.calls, [{ session: 1, revision: 1, action: 'accept', url: entry.url }]);
   }
 });
 

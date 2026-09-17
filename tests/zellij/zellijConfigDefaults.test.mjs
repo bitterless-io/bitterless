@@ -54,7 +54,7 @@ test('a legacy bindings-only config gains defaults without changing or injecting
   assert.ok(next.startsWith(legacy));
   assert.equal(parse(next).nodes.filter((node) => node.getName() === 'keybinds').length, 1);
   assert.doesNotMatch(next, /\bbind "Super d"/);
-  assert.equal(find(next, 'web_client', 'theme').nodes.length, 19);
+  assert.equal(find(next, 'web_client', 'theme').nodes.length, 22);
   assert.equal(ensureZellijConfigDefaults(next, 'darwin'), next);
 });
 
@@ -75,7 +75,7 @@ test('custom settings, named themes and partial web colors survive completion by
   assert.ok(next.includes('    font "Iosevka" // keep this font\r\n'));
   assert.ok(next.includes('        red "#123456" // custom red\r\n        cursor "#abcdef"\r\n'));
   const palette = find(next, 'web_client', 'theme');
-  assert.equal(palette.nodes.length, 19);
+  assert.equal(palette.nodes.length, 22);
   assert.equal(palette.nodes.find((node) => node.getName() === 'red').getArguments()[0], '#123456');
   assert.equal(find(next, 'themes', 'bitterless').nodes.length, 1);
   assert.equal(ensureZellijConfigDefaults(next, 'darwin'), next);
@@ -90,22 +90,33 @@ test('empty sections gain children while comments and slash-dashed overrides rem
     next.startsWith('// web_client { theme { red "#000000"; }; }\n/- theme "commented-out"\n')
   );
   assert.ok(next.includes('; // retain this comment\n'));
-  assert.equal(find(next, 'web_client', 'theme').nodes.length, 19);
+  assert.equal(find(next, 'web_client', 'theme').nodes.length, 22);
   assert.equal(ensureZellijConfigDefaults(next, 'linux'), next);
 });
 
 test('a section at EOF without a newline receives children before new root defaults', () => {
   for (const source of ['web_client', 'themes', 'web_client { theme; }']) {
     const next = ensureZellijConfigDefaults(source, 'darwin');
-    assert.equal(find(next, 'web_client', 'theme').nodes.length, 19);
+    assert.equal(find(next, 'web_client', 'theme').nodes.length, 22);
     assert.equal(ensureZellijConfigDefaults(next, 'darwin'), next);
   }
 });
 
-test('a complete config is not rewritten, revalidated or backed up on repeated ensure', async () => {
+test('same-version custom native and browser selection colors are not rewritten or backed up', async () => {
   const folder = mkdtempSync(join(directory, 'complete-'));
   const file = join(folder, 'config.kdl');
-  const source = buildZellijDefaultConfig({ platform: 'darwin' });
+  const source = buildZellijDefaultConfig({ platform: 'darwin' })
+    .replace(/(text_selected\s*\{\s*base) [\d ]+\n/, '$1 10 20 30\n')
+    .replace('selection_background "#7aa2f7"', 'selection_background "#123456"')
+    .replace('selection_foreground "#15161e"', 'selection_foreground "#abcdef"')
+    .replace('selection_inactive_background "#6686c2"', 'selection_inactive_background "#654321"');
+  assert.equal(
+    find(source, 'themes', 'bitterless', 'text_selected').nodes[0].getArguments().join(' '),
+    '10 20 30'
+  );
+  assert.ok(source.includes('selection_background "#123456"'));
+  assert.ok(source.includes('selection_foreground "#abcdef"'));
+  assert.ok(source.includes('selection_inactive_background "#654321"'));
   writeFileSync(file, source);
   markCurrent(file);
   const before = statSync(file);
@@ -121,6 +132,43 @@ test('a complete config is not rewritten, revalidated or backed up on repeated e
   assert.equal(statSync(file).ino, before.ino);
   assert.equal(statSync(markerFile(file)).mtimeMs, markerBefore.mtimeMs);
   assert.deepEqual(readdirSync(folder), ['config.kdl', 'config.kdl.bitterless-version.json']);
+});
+
+test('the previous low-contrast palette receives the new semantic theme and a recoverable backup', async () => {
+  const folder = mkdtempSync(join(directory, 'selection-upgrade-'));
+  const file = join(folder, 'config.kdl');
+  const source = 'themes { bitterless { fg 216 222 233; bg 26 27 38; }; }\ntheme "bitterless"\n';
+  writeFileSync(file, source);
+  markCurrent(file, '260914150147');
+  let validations = 0;
+  const config = new ZellijConfigService(file, {
+    platform: 'darwin',
+    validate: async (candidate) => {
+      validations++;
+      const selection = find(
+        readFileSync(candidate, 'utf8'),
+        'themes',
+        'bitterless',
+        'text_selected'
+      );
+      assert.deepEqual(
+        selection.nodes.find((node) => node.getName() === 'background').getArguments(),
+        [122, 162, 247]
+      );
+      assert.equal(readFileSync(file, 'utf8'), source);
+    }
+  });
+  await config.initialize();
+  assert.equal(readFileSync(file, 'utf8'), buildZellijDefaultConfig({ platform: 'darwin' }));
+  assert.equal(
+    JSON.parse(readFileSync(markerFile(file), 'utf8')).versionCode,
+    ZELLIJ_CONFIG_VERSION_CODE
+  );
+  const backups = readdirSync(folder).filter((name) => name.includes('backup-'));
+  assert.equal(backups.length, 1);
+  assert.equal(readFileSync(join(folder, backups[0]), 'utf8'), source);
+  await config.initialize();
+  assert.equal(validations, 1);
 });
 
 test('initialization validates a temporary candidate then backs up the original with private permissions', async () => {
@@ -139,7 +187,7 @@ test('initialization validates a temporary candidate then backs up the original 
         false,
         'version is not committed before native validation'
       );
-      assert.equal(find(readFileSync(candidate, 'utf8'), 'web_client', 'theme').nodes.length, 19);
+      assert.equal(find(readFileSync(candidate, 'utf8'), 'web_client', 'theme').nodes.length, 22);
     }
   });
   await config.initialize();
@@ -261,7 +309,7 @@ test(
         }
       });
       await config.initialize();
-      assert.equal(find(readFileSync(file, 'utf8'), 'web_client', 'theme').nodes.length, 19);
+      assert.equal(find(readFileSync(file, 'utf8'), 'web_client', 'theme').nodes.length, 22);
     }
   }
 );
@@ -295,7 +343,9 @@ test('older, missing and foreign-file markers trigger full template replacement 
 test('same-version custom edits survive later opens and missing defaults are completed once', async () => {
   const folder = mkdtempSync(join(directory, 'version-custom-'));
   const file = join(folder, 'config.kdl');
-  const source = legacy + 'web_sharing "off"\nweb_client { theme { red "#123456"; }; }\n';
+  const source =
+    legacy +
+    'web_sharing "off"\nweb_client { theme { red "#123456"; selection_background "#345678"; }; }\n';
   writeFileSync(file, source);
   markCurrent(file);
   const markerBefore = statSync(markerFile(file));
@@ -311,7 +361,8 @@ test('same-version custom edits survive later opens and missing defaults are com
   assert.ok(next.startsWith(legacy));
   assert.ok(next.includes('web_sharing "off"'));
   assert.ok(next.includes('red "#123456"'));
-  assert.equal(find(next, 'web_client', 'theme').nodes.length, 19);
+  assert.ok(next.includes('selection_background "#345678"'));
+  assert.equal(find(next, 'web_client', 'theme').nodes.length, 22);
   const before = statSync(file);
   await config.initialize();
   assert.equal(validations, 1);

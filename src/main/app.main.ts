@@ -400,6 +400,7 @@ const redirectConsoleToStderr = (): void => {
 const cleanupResources = (): Promise<void> => {
   if (cleanupPromise) return cleanupPromise;
   isShutdownStarted = true;
+  omniWindowHelper.setHostQuitting(true);
   cleanupPromise = (async () => {
     try { console.log('[app] Cleaning up resources...'); } catch {}
     // Keep windows, SQLite and bridges alive if workflow ownership cannot be released.
@@ -444,6 +445,7 @@ const cleanupResources = (): Promise<void> => {
   })().catch((error) => {
     cleanupPromise = null;
     isShutdownStarted = false;
+    omniWindowHelper.setHostQuitting(false);
     throw error;
   });
   return cleanupPromise;
@@ -570,6 +572,9 @@ const startGui = async (): Promise<void> => {
     },
     handleCoreSqliteReady: () => {
       startupDiagnosticsService.clear('core-sqlite');
+      void omniWindowHelper.restoreSession().catch((err: unknown) => {
+        console.warn('[app] Failed to restore Omni Browser session:', err);
+      });
       onlyPreviewRecentDirectoryService.markStorageReady();
       onlyPreviewRecentsService.markStorageReady();
       onlyPreviewBookmarksService.markStorageReady();

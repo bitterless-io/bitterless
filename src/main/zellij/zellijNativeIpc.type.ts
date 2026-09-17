@@ -41,6 +41,8 @@ export interface ZellijNativeClientMessage {
   message?: string;
   connStatus?: Record<string, never>;
   killSession?: Record<string, never>;
+  attachClient?: { isWebClient?: boolean };
+  key?: { rawBytes?: number[]; isKittyKeyboardProtocol?: boolean };
   firstClientConnected?: {
     cliAssets: ZellijNativeFirstClientOptions;
     isWebClient?: boolean;
@@ -49,6 +51,8 @@ export interface ZellijNativeClientMessage {
     action: {
       listPanes?: { outputJson: boolean; showAll?: boolean };
       currentTabInfo?: { outputJson: boolean };
+      copy?: Record<string, never>;
+      queryTabNames?: Record<string, never>;
     };
     isCliClient: boolean;
     terminalId?: number;
@@ -59,6 +63,7 @@ export interface ZellijNativeClientMessage {
 export interface ZellijNativeServerMessage {
   message?: string;
   connected?: Record<string, never>;
+  render?: { content?: string };
   unblockInputThread?: Record<string, never>;
   exit?: { exitReason: number; payload?: string };
   log?: { lines?: string[] };

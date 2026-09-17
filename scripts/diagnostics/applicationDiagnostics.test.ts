@@ -39,6 +39,7 @@ import {
   formatApplicationLogMessage,
   sanitizeApplicationLogMessage
 } from '../../src/main/logging/logSanitizer.service';
+import { browserHistoryError, browserHistoryLog } from '../../src/shared/maestro/browserHistoryDiagnostics.service';
 
 const projectRoot = process.cwd();
 const source = (path: string): string => readFileSync(resolve(projectRoot, path), 'utf8');
@@ -503,6 +504,49 @@ test('Zellij surface queries are permitted only on the exact first-party entry a
     'file:///outside/zellij/index.html?surface=window'
   ])
     assert.equal(resolveFirstPartyRendererProcess(url, base), null);
+});
+
+test('history and Home logging accepts only exact first-party URLs and documented readiness queries', () => {
+  const base = 'http://127.0.0.1:5173';
+  const token = 'c1520320-874d-4f63-914d-c51b3f96bf67';
+  for (const prefix of [base, 'file:///Applications/Bitterless.app/Contents/Resources/app.asar/out/renderer']) {
+    assert.equal(resolveFirstPartyRendererProcess(`${prefix}/maestro/history/index.html`, base), 'renderer:maestroHistory');
+    for (const query of [`maestroReadyToken=${token}`, `maestroReadyToken=${token}&maestroForcePinnedHome=1`, `maestroForcePinnedHome=1&maestroReadyToken=${token}`]) {
+      assert.equal(resolveFirstPartyRendererProcess(`${prefix}/maestro/home/index.html?${query}`, base), 'renderer:maestroHome');
+    }
+    for (const query of [
+      'maestroReadyToken=', 'maestroReadyToken=invalid', 'maestroForcePinnedHome=1',
+      `maestroReadyToken=${token}&maestroReadyToken=${token}`,
+      `maestroReadyToken=${token}&maestroForcePinnedHome=0`,
+      `maestroReadyToken=${token}&maestroForcePinnedHome=1&maestroForcePinnedHome=1`,
+      `maestroReadyToken=${token}&unexpected=1`, `historyToken=${token}`,
+    ]) assert.equal(resolveFirstPartyRendererProcess(`${prefix}/maestro/home/index.html?${query}`, base), null);
+    for (const query of [`historyToken=${token}`, `maestroReadyToken=${token}`, 'query=private']) {
+      assert.equal(resolveFirstPartyRendererProcess(`${prefix}/maestro/history/index.html?${query}`, base), null);
+    }
+  }
+  for (const prefix of ['https://remote.invalid', 'http://127.0.0.1:5174', 'file:///outside', 'http://user:password@127.0.0.1:5173']) {
+    assert.equal(resolveFirstPartyRendererProcess(`${prefix}/maestro/history/index.html`, base), null);
+    assert.equal(resolveFirstPartyRendererProcess(`${prefix}/maestro/home/index.html?maestroReadyToken=${token}`, base), null);
+  }
+});
+
+test('browser history single-string counters survive the actual log formatter with safe error classifications', (context) => {
+  const lines: unknown[][] = [];
+  context.mock.method(console, 'info', (...args: unknown[]) => lines.push(args));
+  browserHistoryLog('main.update.rejected', { reason: 'stale-revision', revision: 50 });
+  browserHistoryLog('sql.search.result', { rows: 10, matches: 2 });
+  browserHistoryLog('dao.search.failure', browserHistoryError(Object.assign(new Error('https://private.invalid/private-query'), { code: 'SQLITE_CORRUPT' })));
+  browserHistoryLog('renderer.bootstrap.failure', browserHistoryError({ name: 'private-name', code: 'private-code', message: 'private-title', stack: 'private-stack' }));
+  for (const data of lines) assert.equal(data.length, 1);
+  const records = lines.map((data) => JSON.parse(formatApplicationLogMessage({ data, variables: { proc: 'renderer:maestroHistory' } })[0]));
+  assert.equal(records[0].scope, 'browser-history');
+  assert.match(records[0].msg, /"reason":"stale-revision","revision":50/);
+  assert.match(records[1].msg, /"rows":10,"matches":2/);
+  assert.match(records[2].msg, /SQLITE_CORRUPT/);
+  assert.match(records[3].msg, /"errorName":"unknown","errorCode":"unknown"/);
+  assert.equal(JSON.stringify(records).includes('private-'), false);
+  assert.equal(JSON.stringify(records).includes('private.invalid'), false);
 });
 
 test('directory contract rejects renderer-provided paths and unknown keys', () => {

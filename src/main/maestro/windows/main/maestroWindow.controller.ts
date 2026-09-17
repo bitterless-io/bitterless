@@ -231,12 +231,6 @@ class MaestroWindowController
 
   dismissBrowserHistory(): void { this.historyView.hide(); }
 
-  async navigateHistory(url: string): Promise<void> {
-    await this.backgroundWorkbenchTab();
-    if (this.browserView.getActiveTab()?.kind === 'browser') await this.navigate({ url });
-    else await this.openTab({ url });
-  }
-
   operationView: WebContentsView | null = null
   capture: DebuggerCapture | null = null
   replayEngine: ReplayEngine | null = null
@@ -575,6 +569,7 @@ class MaestroWindowController
     const homeMountedReady = this.createHomeRendererReadyFence(forcePinnedHome)
     const shellStartedAt = diagnostics?.mark()
     const win = super.create()
+    this.historyView.create(win)
     const shellReady = this.traceOpenStage(
       this.rendererReady,
       diagnostics,

@@ -9,6 +9,7 @@ import {
   prepareZellijTerminal,
   focusZellijTerminal,
   blurZellijTerminal,
+  copyZellijNativeSelection,
   subscribeZellijState,
   subscribeZellijTerminalFailure,
   zellijOrigin,
@@ -209,7 +210,10 @@ export class ZellijTerminalView {
     view.webContents.setIgnoreMenuShortcuts(true);
     // Cmd+W closes a PANE here, not the tab — see shortcuts.helper.
     setTerminalKeyboardOwner(view.webContents);
-    bindZellijKeyBridge(view.webContents);
+    bindZellijKeyBridge(view.webContents, {
+      nativeSelection: (sendMarker, signal) =>
+        copyZellijNativeSelection(this.host.surfaceId, { sendMarker, signal })
+    });
     bindZellijPageKeyPatch(view.webContents);
     bindZellijDevTools(view.webContents);
     // In debug the surface controls already auto-open theirs (`zellijSurface.ts`), but `window.term`

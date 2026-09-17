@@ -73,11 +73,13 @@ const {
 } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
 
 const fixture = (context, path = ':memory:') => {
+  const logs = [];
+  context.mock.method(console, 'info', (...args) => logs.push(args));
   const db = new DatabaseSync(path);
   context.after(() => db.close());
   globalThis.__browserHistoryDb = adapt(db);
   createMaestroSqliteSchema(globalThis.__browserHistoryDb);
-  return { db, dao: new BrowserHistoryDao() };
+  return { db, dao: new BrowserHistoryDao(), logs };
 };
 const rows = (db) => db.prepare('SELECT * FROM browser_history ORDER BY last_visited_at DESC').all();
 
@@ -122,14 +124,34 @@ test('1000-row retention prunes the oldest and a revisit refreshes recency befor
 });
 
 test('visit upsert and retention execute atomically if pruning fails', async (context) => {
-  const { db, dao } = fixture(context);
+  const { db, dao, logs } = fixture(context);
   let time = 2000;
   context.mock.method(Date, 'now', () => time++);
   for (let index = 0; index < 1000; index++) await dao.record({ url: `https://atomic.invalid/${index}` });
   db.exec("CREATE TRIGGER reject_history_prune BEFORE DELETE ON browser_history BEGIN SELECT RAISE(ABORT, 'blocked prune'); END");
+  logs.length = 0;
   await assert.rejects(dao.record({ url: 'https://atomic.invalid/new' }), /blocked prune/);
+  assert.ok(logs.some(([line]) => line.includes('dao.record.failure')));
+  assert.equal(logs.some(([line]) => line.includes('sql.record.committed')), false);
   assert.equal(rows(db).length, 1000);
   assert.equal(db.prepare('SELECT url FROM browser_history WHERE url = ?').get('https://atomic.invalid/new'), undefined);
+});
+
+test('real SQLite diagnostics distinguish rows read from matches without logging browsing content', async (context) => {
+  const { db, dao, logs } = fixture(context);
+  await dao.record({ url: 'https://private-sentinel.invalid/one', title: 'private-title-sentinel', favicon: 'https://private-icon.invalid/icon.png' });
+  await dao.record({ url: 'https://other.invalid/two', title: 'Other' });
+  await dao.updateMetadata({ url: 'https://private-sentinel.invalid/one', title: 'private-title-sentinel' });
+  const result = await dao.search({ query: 'private-title-sentinel' });
+  assert.equal(result.length, 1);
+  assert.ok(logs.some(([line]) => line.includes('sql.record.committed')));
+  assert.ok(logs.some(([line]) => line.includes('sql.metadata.success {"changes":1}')));
+  assert.ok(logs.some(([line]) => line.includes('sql.search.result {"rows":2,"matches":1}')));
+  db.exec('DROP TABLE browser_history');
+  await assert.rejects(dao.search({ query: 'private-title-sentinel' }));
+  assert.ok(logs.some(([line]) => line.includes('dao.search.failure')));
+  for (const args of logs) assert.equal(args.length, 1);
+  for (const sentinel of ['private-sentinel', 'private-title-sentinel', 'private-icon', 'https://']) assert.equal(JSON.stringify(logs).includes(sentinel), false);
 });
 
 test('late metadata updates preserve count/time, ignore unavailable fields and never recreate removed history', async (context) => {

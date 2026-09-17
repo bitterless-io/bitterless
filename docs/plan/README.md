@@ -1,5 +1,17 @@
 # Bitterless Delivery Plan
 
+- [Zellij native selection copy 001](tasks/zellij-native-selection-copy-001.md) — done;
+  attached-client copy, 211/211 regressions, six real native/browser acceptance groups and independent review pass; published Preview 0.0.122 (260917010242).
+
+- [Browser history Cowork alignment 001](tasks/browser-history-popup-reload-001.md) — root cause repaired;
+  single XPC tab subscriber, 70 tests/build/review pass; owner runtime acceptance pending.
+
+- [Omni window session restore 001](tasks/omni-window-session-restore-001.md) — done;
+  explicit open/closed intent, Core-ready geometry restore, 74/74 tests, build and independent review.
+
+- [Zellij selection contrast 001](tasks/zellij-selection-contrast-001.md) — done; blue native/browser
+  selections, visible inactive state, independent review and actual rendered comparison; owner package testing pending.
+
 - [Workbench institution workflows 001](tasks/workbench-institution-workflows-001.md) — done; Shared/institution Workflow and Skill catalogs, safe updates and Kimchi visualization.
 
 - [Zellij session lifecycle 177](tasks/zellij-session-lifecycle-177.md) — done;

@@ -1,5 +1,16 @@
 # Bitterless Documentation
 
+- [Omni Browser window session restore](features/omni-window-session-restore.md) — implemented;
+  independent review, 74/74 tests and build passed; restore open/closed intent and saved geometry.
+
+- [Browser history popup stays closed](issues/browser-history-popup-reload.md) — duplicate XPC tab subscription root cause repaired; 70 tests/build/review pass; owner runtime acceptance pending.
+
+- [Zellij text selection contrast](issues/zellij-selection-contrast.md) — implemented; independent review and actual renderer comparison passed; Zellij 195/195; owner package testing pending.
+
+- [Packaged Zellij cannot find installed commands](issues/zellij-packaged-shell-misses-login-path.md) — fixed; owner confirmed session rebuild restores commands. Existing panes retain their old environment.
+
+- [Zellij native selection Cmd+C](issues/zellij-terminal-cmd-copy-paste.md) — repaired; 211/211 regressions and six real native/browser acceptance groups pass; published Preview 0.0.122 (260917010242), owner package acceptance pending.
+
 - [OnlyPreview 后台索引全量 reconcile 自激,整机被拖慢](issues/onlypreview-index-full-reconcile-runaway.md) — fixed; 源码 + 回归测试已验证,打包重启后由 Ral 实机确认;
   全量 reconcile 的代价随工作区大小走,触发它的兜底轮询(30s)与 FSEvents 溢出升级(400ms)却是固定节奏 ——
   97,914 文件的树上一轮 ≈ 60s,26 小时跑了 238 轮全量;现在按上次实际耗时 × 4 退避,只挡全量不挡增量。

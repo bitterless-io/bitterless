@@ -1,3 +1,4 @@
+- 📋 Fixed Cmd+C copying of Zellij mouse selections, including Chinese, emoji, and multiple lines, while preserving the clipboard when nothing is selected.
 - 🔐 Restored Codex browser login on macOS by covering both IPv4 and IPv6 loopback callbacks.
 - 🔄 Consolidated Todo synchronization into one Refresh control with live progress, last-success time, and failure details.
 - 🧭 Reuses one installation device identity across password and email-code login to keep Snowflake assignment stable.

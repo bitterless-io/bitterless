@@ -1,14 +1,13 @@
 import { XpcMainHandler } from 'electron-xpc/main';
 import { maestroWindowHelper } from '@maestro-main/windows/main/maestroWindow.controller';
-import type { BrowserHistoryPopupApi, BrowserHistoryPopupRequest, BrowserHistoryPopupSnapshot } from '@maestro-shared/browserHistoryPopup.api';
+import type { BrowserHistoryPopupApi, BrowserHistoryPopupSnapshot, BrowserHistoryPopupAction } from '@maestro-shared/browserHistoryPopup.api';
 
 export class BrowserHistoryPopupHandler extends XpcMainHandler implements BrowserHistoryPopupApi {
-  async show(params: BrowserHistoryPopupRequest): Promise<void> { await maestroWindowHelper.historyView.show(params); }
-  async hide(params: { sessionId: string }): Promise<void> { maestroWindowHelper.historyView.hide(params.sessionId); }
-  async addressBlur(params: { sessionId: string }): Promise<void> { maestroWindowHelper.historyView.addressBlur(params.sessionId); }
-  async snapshot(): Promise<BrowserHistoryPopupSnapshot> { return maestroWindowHelper.historyView.snapshot(); }
-  async mounted(params: { token: string }): Promise<void> { maestroWindowHelper.historyView.mounted(params.token); }
-  async action(params: Parameters<BrowserHistoryPopupApi['action']>[0]): Promise<void> { await maestroWindowHelper.historyView.action(params); }
+  async update(params: BrowserHistoryPopupSnapshot): Promise<boolean> { return maestroWindowHelper.historyView.update(params); }
+  async hide(params: { session: number }): Promise<void> { maestroWindowHelper.historyView.hide(params.session); }
+  async blur(): Promise<void> { maestroWindowHelper.historyView.blur(); }
+  async snapshot(): Promise<BrowserHistoryPopupSnapshot | null> { return maestroWindowHelper.historyView.snapshot(); }
+  async action(params: BrowserHistoryPopupAction): Promise<void> { maestroWindowHelper.historyView.action(params); }
 }
 
 export const browserHistoryPopupHandler = new BrowserHistoryPopupHandler();

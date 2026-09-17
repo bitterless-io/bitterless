@@ -1,15 +1,18 @@
 import { googleSearchUrl } from '@maestro-shared/browserAddress.service';
+import { browserHistoryError, browserHistoryLog } from '@maestro-shared/browserHistoryDiagnostics.service';
 import { nextTick, reactive } from 'vue';
 import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer';
 import {
-  BROWSER_HISTORY_FOCUS_EVENT,
-  BROWSER_HISTORY_STATE_EVENT,
-  type BrowserHistoryPopupApi,
-  type BrowserHistoryPopupSnapshot,
+  BROWSER_HISTORY_ACTION_EVENT, BROWSER_HISTORY_CLOSED_EVENT,
+  type BrowserHistoryPopupApi, type BrowserHistoryPopupAction,
 } from '@maestro-shared/browserHistoryPopup.api';
-import type { BrowserHistoryEntry } from '@maestro-shared/browserHistory.api';
+import type { BrowserHistoryApi, BrowserHistoryEntry } from '@maestro-shared/browserHistory.api';
+import type { CoachXpcContract, ViewRect } from '@maestro-shared/coach.api';
 
 const popup = createXpcRendererEmitter<BrowserHistoryPopupApi>('BrowserHistoryPopupHandler');
+const history = createXpcRendererEmitter<BrowserHistoryApi>('BrowserHistoryDao');
+const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler');
+const SUGGEST_DEBOUNCE_MS = 90;
 
 class BrowserHistoryState {
   open = false;
@@ -24,170 +27,200 @@ class BrowserHistoryState {
   }
   private input: HTMLInputElement | null = null;
   private activeTabId = '';
-  private sessionId = '';
-  private requestId = 0;
+  private session = Date.now();
+  private revision = 0;
   private query = '';
-  private revision = -1;
+  private suggestSeq = 0;
+  private suggestTimer: ReturnType<typeof setTimeout> | null = null;
   private focusSuppressed = false;
   private subscribed = false;
   private disposeListeners: Array<() => void> = [];
   private resizeObserver: ResizeObserver | null = null;
+  private anchor: ViewRect | null = null;
 
   bind(input: HTMLInputElement | null): void {
-    this.dispose();
-    this.input = input;
+    this.dispose(); this.input = input;
+    browserHistoryLog('address.bind', { hasInput: Boolean(input) });
     if (!input) return;
     if (!this.subscribed) {
       this.subscribed = true;
-      xpcRenderer.subscribe(BROWSER_HISTORY_STATE_EVENT, (payload) => this.receive(payload.params as BrowserHistoryPopupSnapshot));
-      xpcRenderer.subscribe(BROWSER_HISTORY_FOCUS_EVENT, () => void this.focusInput());
+      xpcRenderer.subscribe(BROWSER_HISTORY_CLOSED_EVENT, (payload) => {
+        if ((payload.params as { session: number }).session === this.session) this.hide('native-dismissal', false);
+      });
+      xpcRenderer.subscribe(BROWSER_HISTORY_ACTION_EVENT, (payload) => void this.action(payload.params as BrowserHistoryPopupAction));
     }
     const outside = (event: PointerEvent): void => {
       const target = event.target;
       if (target instanceof Element && (target === this.input || target.closest('[name="browser-history-toggle"]'))) return;
-      this.hide();
+      this.hide('outside-pointer');
     };
-    const resize = (): void => { if (this.open) void this.publish(); };
-    document.addEventListener('pointerdown', outside, true);
-    window.addEventListener('resize', resize);
+    const resize = (): void => {
+      const rect = this.input?.getBoundingClientRect();
+      if (rect && (!this.anchor || rect.x !== this.anchor.x || rect.y !== this.anchor.y || rect.width !== this.anchor.width || rect.height !== this.anchor.height)) this.publish();
+    };
+    document.addEventListener('pointerdown', outside, true); window.addEventListener('resize', resize);
     this.disposeListeners.push(() => document.removeEventListener('pointerdown', outside, true), () => window.removeEventListener('resize', resize));
-    this.resizeObserver = new ResizeObserver(resize);
-    this.resizeObserver.observe(input);
+    this.resizeObserver = new ResizeObserver(resize); this.resizeObserver.observe(input);
   }
 
   dispose(): void {
-    this.hide();
+    this.hide('dispose');
     for (const dispose of this.disposeListeners.splice(0)) dispose();
-    this.resizeObserver?.disconnect();
-    this.resizeObserver = null;
-    this.input = null;
+    this.resizeObserver?.disconnect(); this.resizeObserver = null; this.input = null; this.anchor = null;
   }
 
   setActiveTab(id: string): void {
-    if (id !== this.activeTabId) this.hide();
+    if (id !== this.activeTabId) this.hide('tab-change');
     this.activeTabId = id;
   }
 
   focus(): void {
-    if (this.focusSuppressed || !this.input || this.input.disabled) return;
-    this.inputChanged();
+    browserHistoryLog('address.focus', { suppressed: this.focusSuppressed, hasInput: Boolean(this.input), disabled: Boolean(this.input?.disabled), open: this.open });
+    if (this.focusSuppressed || !this.input || this.input.disabled || this.open || !this.input.value.trim()) return;
+    this.show(this.input.value, false);
   }
 
   inputChanged(): void {
     const query = this.input?.value ?? '';
-    if (!query.trim()) { this.hide(); return; }
-    if (this.composing) return;
-    this.show(query);
+    browserHistoryLog('address.input', { nonblank: Boolean(query.trim()), composing: this.composing });
+    if (!query.trim() || this.composing) { this.hide('blank-or-composing'); return; }
+    this.show(query, true);
   }
 
-  compositionStart(): void {
-    this.composing = true;
-    this.selectedIndex = -1;
-    this.entries = [];
-  }
-
-  compositionEnd(): void {
-    this.composing = false;
-    this.inputChanged();
-  }
+  compositionStart(): void { this.composing = true; this.hide('composition'); }
+  compositionEnd(): void { this.composing = false; this.inputChanged(); }
 
   toggle(): void {
-    if (this.open) { this.hide(); return; }
-    void this.focusInput();
-    this.show('');
+    browserHistoryLog('address.toggle', { open: this.open, hasInput: Boolean(this.input), hasActiveTab: Boolean(this.activeTabId) });
+    if (this.open) { this.hide('toggle'); return; }
+    void this.focusInput(); this.show('', false);
   }
 
   blur(): void {
-    if (this.open) void popup.addressBlur({ sessionId: this.sessionId }).catch(() => this.hide());
+    browserHistoryLog('address.blur', { open: this.open });
+    if (this.open) void popup.blur().catch((error) => {
+      browserHistoryLog('address.blur.failure', browserHistoryError(error)); this.hide('blur-failure');
+    });
   }
 
-  private show(query: string): void {
-    if (!this.input || !this.activeTabId) return;
-    if (!this.open) this.sessionId = crypto.randomUUID();
-    if (!this.open || query !== this.query) {
-      this.entries = [];
-      this.selectedIndex = -1;
-      this.loading = true;
+  private show(query: string, debounce: boolean): void {
+    if (!this.input || !this.activeTabId) {
+      browserHistoryLog('address.show.rejected', { hasInput: Boolean(this.input), hasActiveTab: Boolean(this.activeTabId) }); return;
     }
-    this.open = true;
-    this.query = query;
-    this.error = false;
-    void this.publish();
+    if (!this.open) { this.session = Math.max(Date.now(), this.session + 1); this.revision = 0; }
+    this.open = true; this.schedule(query, debounce);
   }
 
-  private async publish(): Promise<void> {
-    if (!this.open || !this.input) return;
-    const sessionId = this.sessionId;
-    const requestId = ++this.requestId;
-    const rect = this.input.getBoundingClientRect();
+  private schedule(query: string, debounce: boolean): void {
+    const seq = ++this.suggestSeq;
+    if (this.suggestTimer) clearTimeout(this.suggestTimer);
+    this.suggestTimer = null;
+    this.query = query; this.entries = []; this.selectedIndex = -1; this.loading = true; this.error = false;
+    this.publish();
+    if (debounce) this.suggestTimer = setTimeout(() => { this.suggestTimer = null; void this.runSearch(query, seq); }, SUGGEST_DEBOUNCE_MS);
+    else void this.runSearch(query, seq);
+  }
+
+  private async runSearch(query: string, seq: number): Promise<void> {
+    browserHistoryLog('address.query.begin', { sequence: seq });
     try {
-      await popup.show({ sessionId, requestId, tabId: this.activeTabId, query: this.query, anchor: { x: rect.x, y: rect.y, width: rect.width, height: rect.height } });
-    } catch {
-      if (sessionId !== this.sessionId || requestId !== this.requestId || !this.open) return;
-      this.hide();
+      const entries = await history.search({ query });
+      browserHistoryLog('address.query.result', { sequence: seq, array: Array.isArray(entries), resultCount: Array.isArray(entries) ? entries.length : -1, stale: !this.open || seq !== this.suggestSeq });
+      if (!this.open || seq !== this.suggestSeq) return;
+      if (!Array.isArray(entries)) throw new Error('History storage unavailable');
+      this.entries = entries;
+    } catch (error) {
+      browserHistoryLog('address.query.failure', { sequence: seq, ...browserHistoryError(error) });
+      if (!this.open || seq !== this.suggestSeq) return;
       this.error = true;
     }
+    this.loading = false; this.publish();
   }
 
-  hide(): void {
-    const sessionId = this.sessionId;
-    this.open = false;
-    this.entries = [];
-    this.selectedIndex = -1;
-    this.loading = false;
-    this.sessionId = '';
-    if (sessionId) void popup.hide({ sessionId }).catch(() => undefined);
+  private publish(): void {
+    if (!this.open || !this.input) return;
+    const rect = this.input.getBoundingClientRect();
+    if (rect.width <= 0) { browserHistoryLog('address.dispatch.rejected', { reason: 'empty-anchor' }); return; }
+    const session = this.session;
+    const revision = ++this.revision;
+    this.anchor = { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    browserHistoryLog('address.dispatch.begin', { revision, resultCount: this.entries.length, loading: this.loading, error: this.error });
+    void popup.update({ session, revision, tabId: this.activeTabId, query: this.query,
+      anchor: { ...this.anchor },
+      entries: this.entries.map((entry) => ({ ...entry })), selectedIndex: this.selectedIndex, loading: this.loading, error: this.error,
+    }).then((accepted) => {
+      browserHistoryLog('address.dispatch.result', { revision, accepted: accepted === true });
+      if (!accepted && this.open && session === this.session && revision === this.revision) this.hide('update-rejected');
+    }).catch((error) => {
+      browserHistoryLog('address.dispatch.failure', { revision, ...browserHistoryError(error) });
+      if (this.open && session === this.session && revision === this.revision) { this.hide('update-failure'); this.error = true; }
+    });
   }
 
-  receive(snapshot: BrowserHistoryPopupSnapshot): void {
-    if (snapshot.revision <= this.revision) return;
-    this.revision = snapshot.revision;
-    if (!this.open) return;
-    if (snapshot.sessionId === null && snapshot.dismissedSessionId === this.sessionId) {
-      // A native dismissal closes the currently displayed interaction, including pending reads.
-      this.hide();
-      return;
+  hide(reason = 'caller', notify = true): void {
+    if (this.suggestTimer) clearTimeout(this.suggestTimer);
+    this.suggestTimer = null; this.suggestSeq += 1;
+    const wasOpen = this.open;
+    if (wasOpen) browserHistoryLog('address.hide', { reason, revision: this.revision });
+    this.open = false; this.entries = []; this.selectedIndex = -1; this.loading = false;
+    if (notify && wasOpen) void popup.hide({ session: this.session }).catch((error) => browserHistoryLog('address.hide.failure', browserHistoryError(error)));
+  }
+
+  async action(action: BrowserHistoryPopupAction): Promise<void> {
+    if (!this.open || action.session !== this.session || action.revision !== this.revision) return;
+    if (action.action === 'next' || action.action === 'previous') { this.cycle(action.action === 'next' ? 1 : -1); return; }
+    if (action.action === 'close') { this.hide('close'); return; }
+    if (action.action === 'retry') { void this.focusInput(); this.schedule(this.query, false); return; }
+    const url = action.url || this.candidateUrls[this.selectedIndex];
+    if (!url || !this.candidateUrls.includes(url)) return;
+    if (action.action === 'accept') {
+      this.hide('accept');
+      await coach.backgroundWorkbenchTab();
+      const active = (await coach.getTabs()).find((tab) => tab.active);
+      if (active?.kind === 'browser') await coach.navigate({ url });
+      else await coach.openTab({ url });
+    } else if (action.action === 'remove' && this.entries.some((entry) => entry.url === url)) {
+      void this.focusInput();
+      const session = this.session;
+      const seq = ++this.suggestSeq;
+      if (this.suggestTimer) clearTimeout(this.suggestTimer);
+      this.suggestTimer = null;
+      try {
+        await history.remove({ url });
+        if (this.open && session === this.session && seq === this.suggestSeq) this.schedule(this.query, false);
+      } catch (error) {
+        browserHistoryLog('address.remove.failure', browserHistoryError(error));
+        if (this.open && session === this.session && seq === this.suggestSeq) { this.error = true; this.publish(); }
+      }
     }
-    if (snapshot.sessionId !== this.sessionId || snapshot.query !== this.query) return;
-    this.entries = snapshot.entries;
-    this.selectedIndex = snapshot.selectedIndex;
-    this.loading = snapshot.loading;
-    this.error = snapshot.error;
   }
 
   async focusInput(): Promise<void> {
-    this.focusSuppressed = true;
-    await nextTick();
-    this.input?.focus();
-    this.focusSuppressed = false;
+    this.focusSuppressed = true; await nextTick(); this.input?.focus(); this.focusSuppressed = false;
   }
 
-  /** Returns true only for keys handled by suggestions; plain Enter retains the old navigation. */
+  private cycle(delta: number): void {
+    const count = this.candidateUrls.length;
+    if (count) this.selectedIndex = delta > 0 ? (this.selectedIndex + 1) % count : (this.selectedIndex < 0 ? count - 1 : (this.selectedIndex - 1 + count) % count);
+    this.publish();
+  }
+
+  /** Returns true only for keys handled by suggestions; plain Enter retains existing navigation. */
   keydown(event: KeyboardEvent): boolean {
     if (this.composing || event.isComposing || event.keyCode === 229) return true;
     if (event.key === 'Escape' || event.key === 'Tab') {
-      const wasOpen = this.open;
-      this.hide();
+      const wasOpen = this.open; this.hide(event.key === 'Escape' ? 'escape' : 'tab-key');
       if (wasOpen && event.key === 'Escape') event.preventDefault();
       return event.key === 'Escape';
     }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      if (!this.open) this.inputChanged();
+      if (!this.open) this.focus();
       if (!this.open) return false;
-      event.preventDefault();
-      const action = event.key === 'ArrowDown' ? 'next' : 'previous';
-      const count = this.candidateUrls.length;
-      if (count) this.selectedIndex = action === 'next' ? (this.selectedIndex + 1) % count : (this.selectedIndex < 0 ? count - 1 : (this.selectedIndex - 1 + count) % count);
-      void popup.action({ sessionId: this.sessionId, action }).catch(() => this.hide());
-      return true;
+      event.preventDefault(); this.cycle(event.key === 'ArrowDown' ? 1 : -1); return true;
     }
     if (event.key === 'Enter' && this.open && this.candidateUrls[this.selectedIndex]) {
       event.preventDefault();
-      const sessionId = this.sessionId;
-      const url = this.candidateUrls[this.selectedIndex];
-      // Main must accept the row before hide invalidates its session.
-      void popup.action({ sessionId, action: 'accept', url }).catch(() => this.hide());
-      return true;
+      void this.action({ session: this.session, revision: this.revision, action: 'accept' }); return true;
     }
     return false;
   }

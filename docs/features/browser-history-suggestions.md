@@ -56,6 +56,25 @@ Human handoff is recorded in Bitterless Preview, domain `agent builid`, Todo `00
 
 ## Attached-checkout handoff
 
+### Cowork-aligned Bitterless popup repair (2026-09-16)
+
+Status: root cause repaired and code-verified; owner runtime acceptance pending. Ral confirmed Cowork works and directed BL to follow its
+implementation. The BL home address store owns debounced SQLite queries and complete candidate
+state; the main native view receives that state and becomes ready when its document load completes.
+It is created with the main window and no longer depends on a renderer mounted-token handshake.
+Session-scoped ordering rejects stale updates while allowing a newly loaded home renderer to start
+immediately. BL retains its existing encrypted history table, ranking and interaction contract.
+Safe logs cover actual SQL counts, input dispatch, query outcomes and native view lifecycle.
+See [repair investigation](../issues/browser-history-popup-reload.md). The first increment passed
+automated checks without establishing the actual device failure; the follow-up established it below.
+The owner's follow-up logs and real-preload reproduction subsequently confirmed duplicate
+`coach/tabs` subscribers as the failure: electron-xpc keeps only the last callback, leaving history
+with an old active-tab ID. TabStore must own the single subscription and forward each authoritative
+snapshot to MenuBar/history. Retain BL's active-tab guard.
+The corrected implementation passes 50 history/interaction and 20 diagnostic tests, isolated full
+application compile and independent review. Existing type/i18n check limitations and reproduction instructions are recorded in the
+[delivery task](../plan/tasks/browser-history-popup-reload-001.md).
+
 ### Empty address focus (2026-09-15)
 
 Status: implemented; code-verified, human testing pending. Ral:「url input 激活时，没有输入字符的时候不应该显示 browser history，输入字符后再显示就行，bl cowork 都改」。

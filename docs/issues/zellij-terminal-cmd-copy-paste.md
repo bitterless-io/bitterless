@@ -1,6 +1,53 @@
 # Cmd+C and Cmd+V Do Nothing in the Zellij Terminal
 
-Status: implemented; owner verification pending (needs a rebuild — this is Main-process code)
+Status: native selection repair verified and published in Preview 0.0.122 (260917010242) on 2026-09-17; owner package acceptance pending.
+
+## Native selection follow-up
+
+The owner confirms that Cmd+C still fails after rebuilding the session; command discovery is
+separately fixed. Ordinary mouse drag in the actual Zellij 0.45.1 renderer creates a native
+server selection while `window.term.getSelection()` stays empty. The current Main bridge only
+reads that browser API, so it silently does nothing. Native mouse-release copy emits OSC 52,
+which the browser ClipboardAddon forwards to `navigator.clipboard.writeText`; the terminal
+session's deny-all permission policy rejects that independent path.
+
+The earlier browser-only tests never exercised ordinary native mouse selection. Their passing
+status did not establish the owner-visible copy flow.
+
+Repair contract:
+
+- Preserve browser/xterm selection copying and the existing Cmd+V bracketed-paste path.
+- For an empty browser selection, request the current native selection from the exact attached
+  web client of this surface/session. Route Copy on that client's existing native connection;
+  a new CLI connection can choose a different client's active pane and is not acceptable.
+- Return only a fresh response belonging to this explicit copy request to Main, which writes
+  the clipboard. Do not cache old selection text or enable broad clipboard permissions.
+- Keep requests bounded and serialized; preserve the clipboard for no selection, missing or
+  ambiguous clients, timeout, reload, retire, disposal or failure. Handle native IPC fragmentation
+  and Unicode text; never log clipboard contents or mutate sibling sessions.
+- Avoid configuration/keybinding migrations. Plain macOS Cmd+C is the existing authorized
+  trigger; other modifiers, non-macOS behavior and normal terminal bytes stay unchanged.
+- Mirror behavior in Cowork. Verify real native drag -> explicit Copy -> captured text with
+  installed/staged Zellij and an isolated web client, with no real OS clipboard writes in tests.
+  No Electron E2E or packaged-app launch.
+
+Delivery: [native selection copy task](../plan/tasks/zellij-native-selection-copy-001.md).
+
+Implemented: Main now falls back from an empty xterm selection to the attached client's native
+Copy response. Requests are ordered after mouse release, bounded, cancelled on navigation and
+drained before another request starts. Missing/empty/ambiguous responses leave the clipboard
+unchanged. Same-target registration preserves the connection and selection. Focused tests 28/28,
+full Zellij tests 211/211 and six real native/browser acceptance groups passed; see the task and
+[independent review](../plan/reviews/zellij-native-selection-copy-001-1.md). Electron E2E was not run.
+
+Protocol choice verified against Zellij 0.45.1: send the existing Cmd+C intent through the page's
+terminal WebSocket so it follows mouse release. On the same attached native stream, replace that
+key with `QueryTabNames -> Copy -> QueryTabNames`; the screen-thread Log replies delimit a fresh
+copy response. `ConnStatus` is unsuitable on attached streams because it disconnects the client;
+`CurrentTabInfo` can reply ahead of queued Render output. Native clipboard output has no request
+identifier, so accept one well-formed OSC 52 payload within the bounded window and reject mixed or
+malformed output. The upstream protocol cannot distinguish a lone program-generated clipboard
+output emitted inside that same window. Never consume passive clipboard output outside a request.
 
 ## Symptom
 
@@ -31,7 +78,7 @@ So the two keys fail for unrelated reasons and neither can be fixed by a Zellij 
 the key never carries the intent past the page's own handler, and for Cmd+V there is no handler left
 to act on it.
 
-## Repair
+## Earlier browser-only repair
 
 Both are performed from Main in `zellijKeyBridge.ts`, before the page sees the key — the same layer
 that already translates Cmd+Delete, and the only layer that still has the real event.
@@ -48,14 +95,15 @@ that already translates Cmd+Delete, and the only layer that still has the real e
   loads the WebGL renderer, which draws the selection rather than putting it in the document, so
   Blink's copy command is disabled and the `copy` listener xterm attaches to its container never
   fires. `window.term` is Zellij's own global (`assets/app.js`), so the selection text is reachable
-  whichever renderer is loaded.
+  whichever renderer is loaded, but only for browser-owned selections. Native mouse selections
+  require the follow-up above.
 - An empty selection leaves the clipboard untouched: Cmd+C with nothing selected is a no-op, not a
   way to lose what was copied a moment earlier.
 
 Windows and Linux are untouched — `bindZellijKeyBridge` still returns early off macOS, where `meta`
 is the Super key and none of this would be right.
 
-## Verification
+## Earlier verification
 
 - `node --test tests/zellij/zellijKeyBridge.test.mjs` — 8/8 pass (4 new).
 - The new cases pin the two failure modes separately, and pin the `window.term` read specifically,

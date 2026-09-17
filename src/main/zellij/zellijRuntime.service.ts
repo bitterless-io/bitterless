@@ -267,6 +267,14 @@ export const focusZellijTerminal = (surfaceId: string): void =>
 export const blurZellijTerminal = (surfaceId: string): void =>
   getZellijDirectories().deactivate(sessionName(surfaceId));
 
+export const copyZellijNativeSelection = (
+  surfaceId: string,
+  options: { sendMarker(): Promise<boolean>; signal: AbortSignal }
+): Promise<string> => {
+  const session = preparedSurfaces.get(surfaceId);
+  return session && webBridge ? webBridge.copySelection(session, options) : Promise.resolve('');
+};
+
 export const closeZellijTerminal = async (surfaceId: string): Promise<void> => {
   surfaceGenerations.set(surfaceId, (surfaceGenerations.get(surfaceId) ?? 0) + 1);
   preparedSurfaces.delete(surfaceId);

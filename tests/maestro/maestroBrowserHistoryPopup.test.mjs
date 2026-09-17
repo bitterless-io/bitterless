@@ -1,405 +1,211 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
+import { runInNewContext } from 'node:vm';
 import test from 'node:test';
 import { build } from 'esbuild';
 
 const root = resolve(import.meta.dirname, '../..');
 const runtime = { current: null };
-globalThis.__browserHistoryPopupRuntime = runtime;
-test.after(() => delete globalThis.__browserHistoryPopupRuntime);
-
+const require = createRequire(import.meta.url);
+const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 class MockWebContents extends EventEmitter {
-  destroyed = false;
-  focusCalls = 0;
-  loads = [];
+  destroyed = false; focusCalls = 0; loads = [];
   isDestroyed() { return this.destroyed; }
   focus() { this.focusCalls++; runtime.current.focused = this; }
   setWindowOpenHandler(handler) { this.windowOpenHandler = handler; }
-  async loadFile(...args) { this.loads.push({ type: 'file', args }); }
-  async loadURL(...args) { this.loads.push({ type: 'url', args }); }
+  loadFile(...args) { this.loads.push({ type: 'file', args }); return runtime.current.load.promise; }
+  loadURL(...args) { this.loads.push({ type: 'url', args }); return runtime.current.load.promise; }
   close() { this.destroyed = true; this.emit('destroyed'); }
 }
-
 class MockWebContentsView {
-  webContents = new MockWebContents();
-  bounds = null;
+  webContents = new MockWebContents(); bounds = null; visible = false;
   constructor(options) { this.options = options; runtime.current.views.push(this); }
   setBounds(bounds) { this.bounds = { ...bounds }; }
   setBackgroundColor(color) { this.backgroundColor = color; }
+  setVisible(visible) { this.visible = visible; }
 }
-
 class MockBrowserWindow extends EventEmitter {
-  destroyed = false;
-  focused = true;
-  size = [1000, 700];
-  webContents = new MockWebContents();
+  destroyed = false; focused = true; size = [1000, 700]; webContents = new MockWebContents();
   children = [{ name: 'page' }, { name: 'chat' }];
   contentView = {
-    addChildView: (view) => {
-      this.children = this.children.filter((item) => item !== view);
-      this.children.push(view);
-    },
-    removeChildView: (view) => { this.children = this.children.filter((item) => item !== view); }
+    addChildView: view => { this.children = this.children.filter(item => item !== view); this.children.push(view); },
+    removeChildView: view => { this.children = this.children.filter(item => item !== view); },
   };
-  isDestroyed() { return this.destroyed; }
-  isFocused() { return this.focused; }
-  getContentSize() { return this.size; }
+  isDestroyed() { return this.destroyed; } isFocused() { return this.focused; } getContentSize() { return this.size; }
 }
-
 runtime.WebContentsView = MockWebContentsView;
 const mocks = {
-  electron: `
-    const runtime = globalThis.__browserHistoryPopupRuntime;
-    export const WebContentsView = runtime.WebContentsView;
-    export const webContents = { getFocusedWebContents: () => runtime.current.focused };
-  `,
-  '@electron-toolkit/utils': 'export const is = { dev: false };',
-  '@maestro-main/data/maestroDataRoot': "export const MAESTRO_PARTITION = 'persist:browser-history-test';",
-  'electron-xpc/main': `
-    const runtime = globalThis.__browserHistoryPopupRuntime;
-    export const createXpcMainEmitter = () => ({
-      search: (params) => runtime.current.history.search(params),
-      remove: (params) => runtime.current.history.remove(params)
-    });
-    export const xpcMain = { broadcast: (event, params) => runtime.current.broadcasts.push({ event, params }) };
-  `
+  electron: `const runtime=globalThis.runtime; export const WebContentsView=runtime.WebContentsView; export const webContents={getFocusedWebContents:()=>runtime.current.focused};`,
+  '@electron-toolkit/utils': 'export const is={dev:false};',
+  '@maestro-main/data/maestroDataRoot': "export const MAESTRO_PARTITION='persist:history-test';",
+  vue: 'export const reactive=value=>value; export const nextTick=()=>Promise.resolve();',
+  'electron-xpc/main': 'export const xpcMain={broadcast:(event,params)=>globalThis.runtime.current.broadcast(event,params)};',
+  'electron-xpc/renderer': `export const createXpcRendererEmitter=name=>globalThis.runtime.current.emitters[name]; export const xpcRenderer={subscribe:(name,cb)=>{ const map=globalThis.runtime.current.subscriptions; map.set(name,cb); }};`,
 };
 const bundle = await build({
-  entryPoints: [resolve(root, 'src/main/maestro/windows/main/maestroHistoryView.service.ts')],
-  bundle: true,
-  platform: 'node',
-  format: 'esm',
-  target: 'node22',
-  write: false,
-  define: { __dirname: JSON.stringify(resolve(root, 'out/main')) },
-  tsconfig: resolve(root, 'tsconfig.node.json'),
-  plugins: [{
-    name: 'history-popup-boundary',
-    setup(context) {
-      context.onResolve({ filter: /.*/ }, ({ path }) =>
-        Object.hasOwn(mocks, path) ? { path, namespace: 'history-popup' } : undefined
-      );
-      context.onLoad({ filter: /.*/, namespace: 'history-popup' }, ({ path }) => ({
-        contents: mocks[path], loader: 'js'
-      }));
-    }
-  }]
+  stdin: { contents: `
+    export { MaestroHistoryViewService } from './src/main/maestro/windows/main/maestroHistoryView.service.ts';
+    export { browserHistoryStore } from './src/renderer/maestro/home/src/components/MenuBar/browserHistory.store.ts';
+    export { historyStore } from './src/renderer/maestro/history/src/history.store.ts';
+  `, resolveDir: root },
+  bundle: true, platform: 'node', format: 'cjs', target: 'node22', write: false,
+  define: { __dirname: JSON.stringify(resolve(root, 'out/main')) }, tsconfig: resolve(root, 'tsconfig.node.json'),
+  plugins: [{ name: 'history-boundary', setup(context) {
+    context.onResolve({ filter: /.*/ }, ({ path }) => Object.hasOwn(mocks, path) ? { path, namespace: 'mock' } : undefined);
+    context.onLoad({ filter: /.*/, namespace: 'mock' }, ({ path }) => ({ contents: mocks[path], loader: 'js' }));
+  } }],
 });
-const { MaestroHistoryViewService } = await import(
-  `data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`
-);
-
-const entry = (name) => ({ url: `https://history.invalid/${name}`, title: name, favicon: '', visitCount: 1, lastVisitedAt: 1 });
-const deferred = () => {
-  let resolvePromise;
-  let rejectPromise;
-  const promise = new Promise((resolve, reject) => { resolvePromise = resolve; rejectPromise = reject; });
-  return { promise, resolve: resolvePromise, reject: rejectPromise };
-};
+const entry = name => ({ url: `https://history.invalid/${name}`, title: name, favicon: '', visitCount: 1, lastVisitedAt: 1 });
 const fixture = (context) => {
   const win = new MockBrowserWindow();
-  const state = {
-    views: [], broadcasts: [], focused: win.webContents, searches: [], removes: [],
-    history: {
-      search: async (params) => { state.searches.push(params); return [entry('first'), entry('second')]; },
-      remove: async (params) => { state.removes.push(params); }
-    }
+  const state = { views: [], broadcasts: [], subscriptions: new Map(), focused: win.webContents, load: deferred(), logs: [], calls: [], timers: new Map(), timerId: 0, clock: 1000 };
+  state.broadcast = (event, params) => { state.broadcasts.push({ event, params }); state.subscriptions.get(event)?.({ params }); };
+  state.emitters = {
+    BrowserHistoryPopupHandler: { update: async value => state.service.update(value), hide: async ({session}) => state.service.hide(session), blur: async () => state.service.blur(), snapshot: async () => state.service.snapshot(), action: async value => state.service.action(value) },
+    BrowserHistoryDao: { search: async () => [entry('first'), entry('second')], remove: async value => { state.calls.push(['remove',value]); } },
+    CoachXpcHandler: { backgroundWorkbenchTab: async () => {}, getTabs: async () => [{ active:true,kind:'browser' }], navigate: async value => {state.calls.push(['navigate',value]);}, openTab: async value => {state.calls.push(['openTab',value]);} },
   };
-  runtime.current = state;
-  const host = { browserWindow: win, activeTabId: 'tab-one', navigations: [], async navigateHistory(url) { this.navigations.push(url); } };
-  const service = new MaestroHistoryViewService(host);
-  const request = (overrides = {}) => ({
-    sessionId: 'session-one', requestId: 1, tabId: 'tab-one', query: 'first',
-    anchor: { x: 160, y: 50, width: 500, height: 32 }, ...overrides
+  class Element { closest(){return null;} }
+  const input = Object.assign(new Element(), { value:'first',disabled:false,getBoundingClientRect:()=>({x:160,y:50,width:500,height:32}),focus:()=>win.webContents.focus() });
+  const module = { exports:{} };
+  runtime.current=state;
+  runInNewContext(bundle.outputFiles[0].text, { module,exports:module.exports,require,runtime,Element,
+    console:{info:(...args)=>state.logs.push(args)}, Date:class extends Date { static now(){return state.clock;} },
+    document:{addEventListener(){},removeEventListener(){}},window:{addEventListener(){},removeEventListener(){}},ResizeObserver:class {observe(){}disconnect(){}},
+    setTimeout:(fn,ms)=>{state.timers.set(++state.timerId,{fn,ms});return state.timerId;},clearTimeout:id=>state.timers.delete(id),
   });
-  const mounted = () => { service.mounted(service.rendererToken); return state.views.at(-1); };
-  context.after(() => service.reset());
-  return { state, win, host, service, request, mounted };
-};
-const assertClipped = (view, win) => {
-  const { x, y, width, height } = view.bounds;
-  assert.ok(x >= 0 && y >= 0);
-  assert.ok(width > 0 && height > 0);
-  assert.ok(x + width <= win.size[0]);
-  assert.ok(y + height <= win.size[1]);
+  const {MaestroHistoryViewService,browserHistoryStore,historyStore}=module.exports;
+  const host={browserWindow:win,activeTabId:'tab-one'};
+  const service=new MaestroHistoryViewService(host);state.service=service;service.create(win);
+  const request=(overrides={})=>({session:1001,revision:1,tabId:'tab-one',query:'first',anchor:{x:160,y:50,width:500,height:32},entries:[entry('first'),entry('second')],selectedIndex:-1,loading:false,error:false,...overrides});
+  const load=async()=>{state.load.resolve();await settle();};
+  const tick=async()=>{for(const[id,timer]of [...state.timers]){state.timers.delete(id);timer.fn();}await settle();};
+  context.after(()=>{browserHistoryStore.dispose();service.reset();});
+  return {state,win,host,service,request,load,tick,input,home:browserHistoryStore,popup:historyStore};
 };
 
-test('show waits for its renderer token, keeps address focus and raises one native child above page/chat', async (context) => {
-  const { state, win, service, request, mounted } = fixture(context);
-  const pending = deferred();
-  state.history.search = () => pending.promise;
-  const showing = service.show(request());
-  assert.equal(service.snapshot().loading, true);
-  const [view] = state.views;
-  assert.ok(view);
-  assert.equal(win.children.includes(view), false);
-  service.mounted('wrong-token');
-  assert.equal(win.children.includes(view), false);
-  mounted();
-  assert.equal(win.children.at(-1), view);
-  pending.resolve([entry('first')]);
-  await showing;
-  assert.equal(service.snapshot().loading, false);
-  assert.equal(win.webContents.focusCalls, 0);
-  assert.equal(view.webContents.focusCalls, 0);
-  assert.equal(state.focused, win.webContents);
-  assert.ok(view.webContents.loads[0].args[1].query.historyToken);
-  assertClipped(view, win);
-  win.contentView.addChildView({ name: 'new-control-pane' });
-  await service.show(request({ requestId: 2 }));
-  assert.equal(win.children.at(-1), view);
-  assert.equal(win.children.filter((item) => item === view).length, 1);
-  assert.equal(state.views.length, 1);
+test('eager view loads without token/mounted handshake and presents accepted data above page/chat',async context=>{
+  const f=fixture(context);const [view]=f.state.views;assert.equal(view.visible,false);assert.equal(view.webContents.loads[0].args.length,1);
+  assert.equal(f.service.update(f.request()),true);assert.equal(f.win.children.includes(view),false);
+  await f.load();assert.equal(f.win.children.at(-1),view);assert.equal(view.visible,true);assert.equal(f.win.webContents.focusCalls,0);
+  assert.equal(f.service.update(f.request({revision:2})),true);assert.equal(f.win.children.filter(item=>item===view).length,1);
 });
 
-test('an older delayed search cannot replace newer suggestions', async (context) => {
-  const { state, service, request, mounted } = fixture(context);
-  const first = deferred();
-  const second = deferred();
-  state.history.search = ({ query }) => query === 'first' ? first.promise : second.promise;
-  const oldSearch = service.show(request());
-  mounted();
-  const newSearch = service.show(request({ requestId: 2, query: 'second' }));
-  second.resolve([entry('new')]);
-  await newSearch;
-  const accepted = service.snapshot();
-  first.resolve([entry('stale')]);
-  await oldSearch;
-  assert.deepEqual(service.snapshot(), accepted);
-  assert.equal(service.snapshot().entries[0].title, 'new');
+test('new home session revision one opens after earlier revision 50 and full home navigation',async context=>{
+  const f=fixture(context);await f.load();f.service.update(f.request({revision:50}));
+  f.win.webContents.emit('did-start-navigation',{},'private-url',false,true);assert.equal(f.service.snapshot(),null);
+  assert.equal(f.service.update(f.request({session:1002,revision:1})),true);
+  assert.equal(f.service.update(f.request({revision:51})),false);assert.equal(f.service.snapshot().session,1002);
 });
 
-test('hiding invalidates an in-flight query and blocks delayed reopen of the same address session', async (context) => {
-  const { state, win, service, request, mounted } = fixture(context);
-  const pending = deferred();
-  let searches = 0;
-  state.history.search = () => { searches++; return pending.promise; };
-  const showing = service.show(request());
-  const view = mounted();
-  service.hide('session-one');
-  const hidden = service.snapshot();
-  pending.resolve([entry('late')]);
-  await showing;
-  await service.show(request({ requestId: 2 }));
-  assert.deepEqual(service.snapshot(), hidden);
-  assert.equal(searches, 1);
-  assert.equal(win.children.includes(view), false);
-  assert.equal(service.snapshot().dismissedSessionId, 'session-one');
-  await service.show(request({ sessionId: 'session-two', requestId: 3 }));
-  assert.equal(service.snapshot().sessionId, 'session-two');
-  service.hide('session-one');
-  assert.equal(service.snapshot().sessionId, 'session-two');
+test('dismissed sessions/stale revisions and stale action identities cannot reopen or navigate',async context=>{
+  const f=fixture(context);await f.load();f.service.update(f.request({revision:2}));
+  assert.equal(f.service.update(f.request()),false);f.service.hide(1001);
+  assert.equal(f.service.update(f.request({revision:3})),false);assert.equal(f.service.update(f.request({session:1002})),true);
+  f.service.hide(1001);assert.equal(f.service.snapshot().session,1002);
+  f.service.action({session:1001,revision:2,action:'accept',url:entry('first').url});
+  assert.equal(f.state.broadcasts.some(item=>item.event==='coach/history-action'),false);
 });
 
-test('a delayed removal cannot issue a refresh or change newer address results', async (context) => {
-  const { state, win, service, request, mounted } = fixture(context);
-  await service.show(request());
-  mounted();
-  const removing = deferred();
-  state.history.remove = () => removing.promise;
-  const removal = service.action({ sessionId: 'session-one', action: 'remove', url: entry('first').url });
-  state.history.search = async ({ query }) => { state.searches.push({ query }); return [entry('new')]; };
-  await service.show(request({ requestId: 2, query: 'new' }));
-  const accepted = service.snapshot();
-  removing.resolve();
-  await removal;
-  assert.deepEqual(service.snapshot(), accepted);
-  assert.equal(state.searches.length, 2);
-  assert.equal(win.webContents.focusCalls, 0);
+test('window focus, tab, anchor and popup process/load failures reject updates with bounded reasons',async context=>{
+  const f=fixture(context);f.win.focused=false;assert.equal(f.service.update(f.request()),false);f.win.focused=true;
+  assert.equal(f.service.update(f.request({tabId:'wrong'})),false);
+  assert.equal(f.service.update(f.request({anchor:{x:NaN,y:0,width:10,height:10}})),false);
+  assert.equal(f.service.update(f.request()),true);
+  f.state.load.reject(Object.assign(new Error('private-load-url'),{code:'ERR_FILE_NOT_FOUND'}));await settle();
+  assert.equal(f.service.update(f.request()),false);
+  for(const reason of ['window-unfocused','tab-mismatch','invalid-anchor','closed-session'])assert.ok(f.state.logs.some(([line])=>line.includes(reason)));
+  assert.equal(JSON.stringify(f.state.logs).includes('private-load-url'),false);
 });
 
-test('removal refresh remains hidden if dismissal arrives while its query is pending', async (context) => {
-  const { state, win, service, request, mounted } = fixture(context);
-  await service.show(request());
-  const view = mounted();
-  const refresh = deferred();
-  state.history.search = () => refresh.promise;
-  const removal = service.action({ sessionId: 'session-one', action: 'remove', url: entry('first').url });
-  await Promise.resolve();
-  service.hide('session-one');
-  const dismissed = service.snapshot();
-  refresh.resolve([entry('second')]);
-  await removal;
-  assert.deepEqual(service.snapshot(), dismissed);
-  assert.equal(win.children.includes(view), false);
-  assert.equal(win.webContents.focusCalls, 0);
-});
-
-test('successful removal refreshes the visible list and focuses the address without navigating', async (context) => {
-  const { state, win, host, service, request, mounted } = fixture(context);
-  await service.show(request());
-  mounted();
-  await service.action({ sessionId: 'session-one', action: 'next' });
-  state.history.search = async () => [entry('second')];
-  await service.action({ sessionId: 'session-one', action: 'remove', url: entry('first').url });
-  assert.deepEqual(state.removes, [{ url: entry('first').url }]);
-  assert.equal(service.snapshot().entries[0].title, 'second');
-  assert.equal(service.snapshot().selectedIndex, 0);
-  assert.equal(win.webContents.focusCalls, 1);
-  assert.equal(host.navigations.length, 0);
-  assert.ok(state.broadcasts.some(({ event }) => event === 'coach/history-focus-address'));
-});
-
-test('the first keyboard candidate performs Google search with the complete encoded input', async (context) => {
-  const { host, service, request, mounted } = fixture(context);
-  const query = ' 搜索 & cats#? ';
-  await service.show(request({ query }));
-  mounted();
-  await service.action({ sessionId: 'session-one', action: 'next' });
-  assert.equal(service.snapshot().selectedIndex, 0);
-  await service.action({ sessionId: 'session-one', action: 'accept' });
-  assert.deepEqual(host.navigations, [`https://www.google.com/search?q=${encodeURIComponent(query)}`]);
-  assert.equal(service.snapshot().sessionId, null);
-});
-
-test('keyboard selection traverses Google plus history, and empty history mode contains only saved pages', async (context) => {
-  const { host, service, request, mounted } = fixture(context);
-  await service.show(request());
-  mounted();
-  for (const expected of [0, 1, 2, 0]) {
-    await service.action({ sessionId: 'session-one', action: 'next' });
-    assert.equal(service.snapshot().selectedIndex, expected);
+test('popup crash/destruction keeps old session blocked and lets a fresh session recreate without late old readiness',async context=>{
+  for(const event of ['render-process-gone','destroyed']){
+    const f=fixture(context);f.service.update(f.request());
+    const oldView=f.state.views[0],oldLoad=f.state.load;
+    if(event==='destroyed')oldView.webContents.destroyed=true;
+    oldView.webContents.emit(event,{}, {reason:'crashed',exitCode:1});
+    assert.equal(f.service.snapshot(),null);
+    assert.equal(f.service.update(f.request({revision:2})),false);
+    f.state.load=deferred();assert.equal(f.service.update(f.request({session:1002})),true);
+    const replacement=f.state.views.at(-1);assert.notEqual(replacement,oldView);
+    oldLoad.resolve();await settle();assert.equal(replacement.visible,false);
+    await f.load();assert.equal(replacement.visible,true);assert.equal(f.win.children.at(-1),replacement);
+    oldView.webContents.emit('render-process-gone',{}, {reason:'crashed',exitCode:1});
+    assert.equal(f.service.snapshot().session,1002);
   }
-  await service.action({ sessionId: 'session-one', action: 'previous' });
-  assert.equal(service.snapshot().selectedIndex, 2);
-  await service.action({ sessionId: 'session-one', action: 'accept' });
-  assert.deepEqual(host.navigations, [entry('second').url]);
-  await service.show(request({ sessionId: 'session-two', requestId: 2, query: '' }));
-  await service.action({ sessionId: 'session-two', action: 'next' });
-  assert.equal(service.snapshot().selectedIndex, 0);
-  await service.action({ sessionId: 'session-two', action: 'accept' });
-  assert.deepEqual(host.navigations, [entry('second').url, entry('first').url]);
 });
 
-test('Google can be clicked but cannot be removed, and candidate acceptance rejects unrelated URLs', async (context) => {
-  const { state, host, service, request, mounted } = fixture(context);
-  await service.show(request({ query: 'https://example.invalid/path' }));
-  mounted();
-  const google = 'https://www.google.com/search?q=https%3A%2F%2Fexample.invalid%2Fpath';
-  await service.action({ sessionId: 'session-one', action: 'remove', url: google });
-  await service.action({ sessionId: 'session-one', action: 'accept', url: 'https://unrelated.invalid/' });
-  assert.equal(state.removes.length, 0);
-  assert.equal(host.navigations.length, 0);
-  await service.action({ sessionId: 'session-one', action: 'accept', url: google });
-  assert.deepEqual(host.navigations, [google]);
-  await service.show(request({ sessionId: 'session-two', requestId: 2, query: '   ' }));
-  await service.action({ sessionId: 'session-two', action: 'accept', url: google });
-  assert.deepEqual(host.navigations, [google]);
+test('native blur preserves both Home and popup focus; outside focus dismisses',async context=>{
+  const f=fixture(context);await f.load();f.service.update(f.request());
+  for(const focused of [f.win.webContents,f.state.views[0].webContents]){f.state.focused=focused;f.service.blur();await f.tick();assert.ok(f.service.snapshot());}
+  f.state.focused=new MockWebContents();f.service.blur();await f.tick();assert.equal(f.service.snapshot(),null);
+  f.service.update(f.request({session:1002}));f.win.emit('blur');assert.equal(f.service.snapshot(),null);
 });
 
-test('popup bounds stay within small windows and resize dismisses when no vertical space remains', async (context) => {
-  const { win, service, request, mounted } = fixture(context);
-  await service.show(request({ anchor: { x: -25, y: -10, width: 100, height: 32 } }));
-  const view = mounted();
-  assertClipped(view, win);
-  win.size = [180, 90];
-  win.emit('resize');
-  assertClipped(view, win);
-  await service.show(request({ requestId: 2, anchor: { x: 999, y: 25, width: 1000, height: 32 } }));
-  assertClipped(view, win);
-  win.size = [180, 20];
-  win.emit('resize');
-  assert.equal(service.snapshot().sessionId, null);
-  assert.equal(win.children.includes(view), false);
+test('same-document navigation dismisses; subframe navigation does not; old loads cannot attach replacement',async context=>{
+  const f=fixture(context);f.service.update(f.request());
+  f.win.webContents.emit('did-start-navigation',{},'private-url',false,false);assert.ok(f.service.snapshot());
+  f.win.webContents.emit('did-start-navigation',{},'private-url',true,true);assert.equal(f.service.snapshot(),null);
+  const oldLoad=f.state.load;f.service.reset();f.state.load=deferred();f.service.create(f.win);
+  f.service.update(f.request({session:1002}));oldLoad.resolve();await settle();assert.equal(f.state.views.at(-1).visible,false);
+  await f.load();assert.equal(f.state.views.at(-1).visible,true);
 });
 
-test('address blur retains popup mouse targets, while focus moving outside dismisses', async (context) => {
-  const { state, win, service, request, mounted } = fixture(context);
-  context.mock.timers.enable({ apis: ['setTimeout'] });
-  await service.show(request());
-  const view = mounted();
-  service.addressBlur('session-one');
-  state.focused = view.webContents;
-  context.mock.timers.tick(0);
-  assert.equal(service.snapshot().sessionId, 'session-one');
-  state.focused = win.webContents;
-  view.webContents.emit('blur');
-  context.mock.timers.tick(0);
-  assert.equal(service.snapshot().sessionId, 'session-one');
-  state.focused = new MockWebContents();
-  view.webContents.emit('blur');
-  context.mock.timers.tick(0);
-  assert.equal(service.snapshot().sessionId, null);
-  await service.show(request({ sessionId: 'session-two', requestId: 2 }));
-  service.addressBlur('session-one');
-  context.mock.timers.tick(0);
-  assert.equal(service.snapshot().sessionId, 'session-two');
-  service.addressBlur('session-two');
-  context.mock.timers.tick(0);
-  assert.equal(service.snapshot().sessionId, null);
+test('window teardown releases renderer/listeners without touching native view after window destruction',async context=>{
+  const f=fixture(context);await f.load();f.service.update(f.request());const view=f.state.views[0],contents=view.webContents;
+  f.win.destroyed=true;Object.defineProperty(view,'webContents',{get(){throw new Error('destroyed view');}});view.setVisible=()=>{throw new Error('destroyed view');};
+  f.win.emit('closed');assert.equal(contents.isDestroyed(),true);assert.equal(f.win.listenerCount('resize'),0);assert.equal(f.service.snapshot(),null);
 });
 
-test('window blur and main-frame navigation dismiss; invalid tab/unfocused requests do not attach', async (context) => {
-  const { state, win, host, service, request, mounted } = fixture(context);
-  await service.show(request({ tabId: 'other-tab' }));
-  win.focused = false;
-  await service.show(request());
-  assert.equal(state.views.length, 0);
-  win.focused = true;
-  await service.show(request());
-  mounted();
-  win.webContents.emit('did-start-navigation', {}, 'https://elsewhere.invalid', false, false);
-  assert.equal(service.snapshot().sessionId, 'session-one');
-  win.webContents.emit('did-start-navigation', {}, 'https://elsewhere.invalid', false, true);
-  assert.equal(service.snapshot().sessionId, null);
-  await service.show(request({ sessionId: 'session-two', requestId: 2 }));
-  win.emit('blur');
-  assert.equal(service.snapshot().sessionId, null);
-  await service.show(request({ sessionId: 'session-three', requestId: 3 }));
-  host.activeTabId = 'changed-tab';
-  await service.action({ sessionId: 'session-three', action: 'accept', url: entry('first').url });
-  assert.equal(host.navigations.length, 0);
+test('bounds stay clipped and no vertical space dismisses',async context=>{
+  const f=fixture(context);await f.load();f.service.update(f.request());f.win.size=[180,90];f.win.emit('resize');
+  const {x,y,width,height}=f.state.views[0].bounds;assert.ok(x>=0&&y>=0&&width>0&&height>0&&x+width<=180&&y+height<=90);
+  f.win.size=[180,20];f.win.emit('resize');assert.equal(f.service.snapshot(),null);
 });
 
-test('renderer/window teardown releases native view, listeners and pending requests; stale tokens cannot mount replacements', async (context) => {
-  const { state, win, service, request, mounted } = fixture(context);
-  const pending = deferred();
-  state.history.search = () => pending.promise;
-  const showing = service.show(request());
-  const oldToken = service.rendererToken;
-  const oldView = mounted();
-  assert.ok(win.listenerCount('resize') > 0);
-  oldView.webContents.emit('render-process-gone');
-  assert.equal(oldView.webContents.isDestroyed(), true);
-  assert.equal(win.children.includes(oldView), false);
-  assert.equal(win.listenerCount('resize'), 0);
-  assert.equal(win.listenerCount('blur'), 0);
-  assert.equal(win.listenerCount('closed'), 0);
-  assert.equal(win.webContents.listenerCount('did-start-navigation'), 0);
-  pending.resolve([entry('late')]);
-  await showing;
-  assert.equal(service.snapshot().sessionId, null);
-  state.history.search = async () => [entry('new')];
-  await service.show(request({ sessionId: 'session-two', requestId: 2 }));
-  const newView = state.views.at(-1);
-  service.mounted(oldToken);
-  assert.equal(win.children.includes(newView), false);
-  mounted();
-  assert.equal(win.children.at(-1), newView);
-  win.emit('closed');
-  assert.equal(newView.webContents.isDestroyed(), true);
-  assert.equal(win.listenerCount('resize'), 0);
-  assert.equal(service.snapshot().sessionId, null);
+test('linked real Home → main → popup → click navigates exactly once with original Google query',async context=>{
+  const f=fixture(context);f.home.bind(f.input);f.home.setActiveTab('tab-one');await f.popup.init();await f.load();
+  f.input.value=' 搜索 & 100% #? ';f.home.focus();await settle();
+  assert.equal(f.popup.snapshot.entries.length,2);assert.equal(f.state.views[0].visible,true);
+  await f.popup.action('accept',f.popup.googleUrl);await settle();
+  assert.equal(f.state.calls.filter(([name])=>name==='navigate').length,1);assert.equal(new URL(f.state.calls[0][1].url).searchParams.get('q'),f.input.value);
+  assert.equal(f.home.open,false);assert.equal(f.service.snapshot(),null);
 });
 
-test('popup crash rejects delayed shows from the old address session while a fresh session can reopen', async (context) => {
-  const { state, win, service, request, mounted } = fixture(context);
-  await service.show(request());
-  const crashed = mounted();
-  crashed.webContents.emit('render-process-gone');
-  const afterCrash = service.snapshot();
-  assert.equal(afterCrash.sessionId, null);
-  assert.equal(afterCrash.dismissedSessionId, 'session-one');
-  await service.show(request({ requestId: 2, query: 'delayed input' }));
-  assert.deepEqual(service.snapshot(), afterCrash);
-  assert.equal(state.views.length, 1);
-  assert.equal(win.children.includes(crashed), false);
-  await service.show(request({ sessionId: 'session-two', requestId: 3, query: 'fresh input' }));
-  assert.equal(service.snapshot().sessionId, 'session-two');
-  assert.equal(state.views.length, 2);
-  const replacement = mounted();
-  assert.notEqual(replacement, crashed);
-  assert.equal(win.children.at(-1), replacement);
+test('linked remove/retry first clicks consume identity before restoring focus and stale clicks are rejected',async context=>{
+  const f=fixture(context);f.home.bind(f.input);f.home.setActiveTab('tab-one');await f.popup.init();await f.load();f.home.toggle();await settle();
+  const old={...f.popup.snapshot};f.state.emitters.BrowserHistoryDao.search=async()=>[entry('second')];
+  await f.popup.action('remove',entry('first').url);await settle();assert.equal(f.state.calls.filter(([name])=>name==='remove').length,1);assert.equal(f.popup.snapshot.entries[0].title,'second');
+  f.service.action({session:old.session,revision:old.revision,action:'accept',url:entry('first').url});await settle();assert.equal(f.state.calls.some(([name])=>name==='navigate'),false);
+  f.state.emitters.BrowserHistoryDao.search=async()=>null;await f.popup.action('retry');await settle();assert.equal(f.popup.snapshot.error,true);
+  f.state.emitters.BrowserHistoryDao.search=async()=>[];await f.popup.action('retry');await settle();assert.equal(f.popup.snapshot.error,false);assert.equal(f.home.open,true);
+});
+
+test('linked removal refresh stays closed when dismissed during its pending SQL search',async context=>{
+  const f=fixture(context);f.home.bind(f.input);f.home.setActiveTab('tab-one');await f.popup.init();await f.load();f.home.toggle();await settle();
+  const pending=deferred();f.state.emitters.BrowserHistoryDao.search=()=>pending.promise;
+  await f.popup.action('remove',entry('first').url);await settle();assert.equal(f.home.loading,true);
+  f.service.hide();pending.resolve([entry('second')]);await settle();
+  assert.equal(f.home.open,false);assert.equal(f.service.snapshot(),null);assert.equal(f.state.views[0].visible,false);
+});
+
+test('Google cannot be removed and unrelated URLs cannot be accepted through the linked action path',async context=>{
+  const f=fixture(context);f.home.bind(f.input);f.home.setActiveTab('tab-one');await f.popup.init();await f.load();f.home.focus();await settle();
+  await f.popup.action('remove',f.popup.googleUrl);await f.popup.action('accept','https://unrelated.invalid');await settle();
+  assert.equal(f.state.calls.length,0);assert.equal(f.home.open,true);
+});
+
+test('popup snapshot refresh sequence discards late old state and logs exclude all browsing/token payloads',async context=>{
+  const f=fixture(context);const old=deferred();let count=0;f.state.emitters.BrowserHistoryPopupHandler.snapshot=()=>++count===1?old.promise:Promise.resolve(f.request({revision:2,query:'private-query',entries:[entry('private-title')]}));
+  const init=f.popup.init();f.state.broadcast('coach/history-state',{});await settle();old.resolve(f.request());await init;assert.equal(f.popup.snapshot.revision,2);
+  f.service.update(f.request({query:'private-query',entries:[entry('private-title')]}));await f.load();
+  f.state.views[0].webContents.emit('preload-error',{},'/private/path',Object.assign(new Error('private-message'),{name:'private-name',code:'private-code'}));
+  f.state.views[0].webContents.emit('render-process-gone',{}, {reason:'crashed',exitCode:1});
+  const logs=JSON.stringify(f.state.logs);for(const value of ['private-query','private-title','private-message','private-name','private-code','/private/path','https://'])assert.equal(logs.includes(value),false);
+  for(const args of f.state.logs)assert.equal(args.length,1);
+  assert.ok(logs.includes('native.attached'));assert.ok(logs.includes('native.preload.failure'));
 });

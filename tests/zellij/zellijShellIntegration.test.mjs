@@ -101,65 +101,145 @@ test('only the selected default zsh gets private stable shims; caller environmen
   }
 });
 
+for (const flags of [['-i'], ['-i', '-l']]) {
+  test(
+    `interactive startup ${flags.join(' ')} loads login files once and preserves theme and cwd`,
+    native,
+    () => {
+      const f = fixture();
+      writeStartup(f.home, '.zshenv', trace('env') + 'export FIXTURE_VALUE=from-env\n');
+      writeStartup(f.home, '.zprofile', trace('profile'));
+      writeStartup(f.home, '.zshrc', trace('rc') + "PROMPT='%F{cyan}user-theme%f> '\n");
+      writeStartup(f.home, '.zlogin', trace('login'));
+      writeStartup(f.home, '.zlogout', trace('logout'));
+      const rc = readFileSync(join(f.home, '.zshrc'), 'utf8');
+      const result = run(
+        f,
+        flags,
+        'print -r -- "$FIXTURE_VALUE|${ZSH_HIGHLIGHT_VERSION-}|${ZDOTDIR-<unset>}|$PWD|$PROMPT|${+BITTERLESS_ZSH_ORIGINAL_ZDOTDIR_SET}|${+_bitterless_zsh_zdotdir}|${options[login]}"'
+      );
+      assert.equal(result, `from-env|0.8.0|<unset>|${f.cwd}|%F{cyan}user-theme%f> |0|0|on`);
+      assert.deepEqual(traceLines(f), [
+        'env|<unset>|0',
+        'profile|<unset>|0',
+        'rc|<unset>|0',
+        'login|<unset>|0',
+        'logout|<unset>|1'
+      ]);
+      assert.equal(readFileSync(join(f.home, '.zshrc'), 'utf8'), rc);
+    }
+  );
+}
+
 test(
-  'non-login startup forwards user files, preserves theme and cwd, and restores unset ZDOTDIR',
+  'GUI PATH discovers installed claude commands and a user rc wrapper through the login profile',
   native,
   () => {
-    const f = fixture();
-    writeStartup(f.home, '.zshenv', trace('env') + 'export FIXTURE_VALUE=from-env\n');
-    writeStartup(f.home, '.zprofile', trace('profile'));
-    writeStartup(f.home, '.zshrc', trace('rc') + "PROMPT='%F{cyan}user-theme%f> '\n");
-    writeStartup(f.home, '.zlogin', trace('login'));
-    const rc = readFileSync(join(f.home, '.zshrc'), 'utf8');
-    const result = run(
-      f,
-      ['-i'],
-      'print -r -- "$FIXTURE_VALUE|${ZSH_HIGHLIGHT_VERSION-}|${ZDOTDIR-<unset>}|$PWD|$PROMPT|${+BITTERLESS_ZSH_ORIGINAL_ZDOTDIR_SET}|${+_bitterless_zsh_zdotdir}"'
-    );
-    assert.equal(result, `from-env|0.8.0|<unset>|${f.cwd}|%F{cyan}user-theme%f> |0|0`);
-    assert.deepEqual(traceLines(f), ['env|<unset>|0', 'rc|<unset>|0']);
-    assert.equal(readFileSync(join(f.home, '.zshrc'), 'utf8'), rc);
+    for (const wrapper of [false, true]) {
+      const f = fixture();
+      const bin = join(f.root, "installed tools' bin");
+      mkdirSync(bin);
+      for (const command of ['claude', 'claude2']) {
+        writeFileSync(join(bin, command), `#!/bin/sh\nprintf '%s\\n' '${command}-fixture'\n`, {
+          mode: 0o700
+        });
+      }
+      writeStartup(f.home, '.zprofile', `export PATH=${quote(bin)}:"$PATH"\n`);
+      writeStartup(f.home, '.zshrc', wrapper ? 'claude2() { command claude "$@"; }\n' : '');
+      // Never execute a real installation, even if a system startup file changes the fixture PATH.
+      const command = `[[ $(whence -p claude) == ${quote(join(bin, 'claude'))} && $(whence -p claude2) == ${quote(join(bin, 'claude2'))} ]] || exit 91; command -v claude; whence -w claude2; claude; claude2`;
+      assert.equal(
+        run(f, ['-i'], command),
+        `${bin}/claude\nclaude2: ${wrapper ? 'function' : 'command'}\nclaude-fixture\n${wrapper ? 'claude' : 'claude2'}-fixture`
+      );
+      assert.equal(f.env.PATH, '/usr/bin:/bin:/usr/sbin:/sbin');
+    }
   }
 );
 
+for (const flags of [['-i'], ['-i', '-l']]) {
+  test(
+    `startup ${flags.join(' ')} follows ZDOTDIR changes and loads after login widgets`,
+    native,
+    () => {
+      const f = fixture();
+      const original = join(f.root, "original's dotfiles");
+      const afterEnv = join(f.root, 'after env');
+      const afterProfile = join(f.root, 'after profile');
+      f.env.ZDOTDIR = original;
+      writeStartup(original, '.zshenv', trace('env') + `export ZDOTDIR=${quote(afterEnv)}\n`);
+      writeStartup(
+        afterEnv,
+        '.zprofile',
+        trace('profile') + `unset ZDOTDIR\nZDOTDIR=${quote(afterProfile)}\n`
+      );
+      writeStartup(afterProfile, '.zshrc', trace('rc'));
+      writeStartup(
+        afterProfile,
+        '.zlogin',
+        trace('login') + 'user_widget() { zle .self-insert }\nzle -N user_widget\n'
+      );
+      writeStartup(afterProfile, '.zlogout', trace('logout'));
+      const result = run(
+        f,
+        flags,
+        'print -r -- "${ZSH_HIGHLIGHT_VERSION-}|$ZDOTDIR|${(t)ZDOTDIR}|${widgets[user_widget]}|$PWD"'
+      );
+      assert.match(result, new RegExp(`^0\\.8\\.0\\|${afterProfile}\\|scalar\\|user:`));
+      assert.ok(result.endsWith(`|${f.cwd}`));
+      assert.deepEqual(traceLines(f), [
+        `env|${original}|0`,
+        `profile|${afterEnv}|0`,
+        `rc|${afterProfile}|0`,
+        `login|${afterProfile}|0`,
+        `logout|${afterProfile}|1`
+      ]);
+    }
+  );
+}
+
 test(
-  'login startup honors ZDOTDIR changes in env/profile and loads after login widgets; logout is native',
+  'user env can opt out of login startup before profile, rc and logout selection',
   native,
   () => {
-    const f = fixture();
-    const original = join(f.root, "original's dotfiles");
-    const afterEnv = join(f.root, 'after env');
-    const afterProfile = join(f.root, 'after profile');
-    f.env.ZDOTDIR = original;
-    writeStartup(original, '.zshenv', trace('env') + `export ZDOTDIR=${quote(afterEnv)}\n`);
-    writeStartup(
-      afterEnv,
-      '.zprofile',
-      trace('profile') + `unset ZDOTDIR\nZDOTDIR=${quote(afterProfile)}\n`
-    );
-    writeStartup(afterProfile, '.zshrc', trace('rc'));
-    writeStartup(
-      afterProfile,
-      '.zlogin',
-      trace('login') + 'user_widget() { zle .self-insert }\nzle -N user_widget\n'
-    );
-    writeStartup(afterProfile, '.zlogout', trace('logout'));
-    const result = run(
-      f,
-      ['-i', '-l'],
-      'print -r -- "${ZSH_HIGHLIGHT_VERSION-}|$ZDOTDIR|${(t)ZDOTDIR}|${widgets[user_widget]}|$PWD"'
-    );
-    assert.match(result, new RegExp(`^0\\.8\\.0\\|${afterProfile}\\|scalar\\|user:`));
-    assert.ok(result.endsWith(`|${f.cwd}`));
-    assert.deepEqual(traceLines(f), [
-      `env|${original}|0`,
-      `profile|${afterEnv}|0`,
-      `rc|${afterProfile}|0`,
-      `login|${afterProfile}|0`,
-      `logout|${afterProfile}|1`
-    ]);
+    for (const flags of [['-i'], ['-i', '-l']]) {
+      const f = fixture();
+      writeStartup(f.home, '.zshenv', trace('env') + 'unsetopt login\n');
+      for (const [file, name] of [
+        ['.zprofile', 'profile'],
+        ['.zshrc', 'rc'],
+        ['.zlogin', 'login'],
+        ['.zlogout', 'logout']
+      ])
+        writeStartup(f.home, file, trace(name));
+      assert.equal(
+        run(
+          f,
+          flags,
+          'print -r -- "${options[login]}|${ZSH_HIGHLIGHT_VERSION-}|${ZDOTDIR-<unset>}"'
+        ),
+        'off|0.8.0|<unset>'
+      );
+      assert.deepEqual(traceLines(f), ['env|<unset>|0', 'rc|<unset>|0']);
+    }
   }
 );
+
+test('the -f startup opt-out bypasses managed and user startup files', native, () => {
+  const f = fixture();
+  for (const file of ['.zshenv', '.zprofile', '.zshrc', '.zlogin', '.zlogout']) {
+    writeStartup(f.home, file, trace(file));
+  }
+  assert.equal(
+    run(
+      f,
+      ['-i', '-f'],
+      'print -r -- "${options[login]}|${options[rcs]}|${+functions[_zsh_highlight]}"'
+    ),
+    'off|off|0'
+  );
+  assert.equal(existsSync(f.env.TRACE_FILE), false);
+});
 
 test(
   'RCS opt-out and noninteractive shells retain normal startup behavior without the plugin',
@@ -246,18 +326,24 @@ test(
     const custom = join(f.root, 'custom');
     f.env.ZDOTDIR = custom;
     writeStartup(custom, '.zshenv', trace('env'));
+    writeStartup(custom, '.zprofile', trace('profile') + 'export PROFILE_VALUE=from-profile\n');
     writeStartup(custom, '.zshrc', trace('rc'));
+    writeStartup(custom, '.zlogin', trace('login'));
+    writeStartup(custom, '.zlogout', trace('logout'));
     const result = run(
       f,
       ['-i'],
-      `print -r -- "outer|\${+functions[_zsh_highlight]}|$ZDOTDIR"; /bin/zsh -ic 'print -r -- "nested|\${+functions[_zsh_highlight]}|$ZDOTDIR"'`
+      `print -r -- "outer|\${+functions[_zsh_highlight]}|$ZDOTDIR|\${options[login]}|$PROFILE_VALUE"; /bin/zsh -ic 'print -r -- "nested|\${+functions[_zsh_highlight]}|$ZDOTDIR|\${options[login]}|$PROFILE_VALUE"'; :`
     );
-    assert.equal(result, `outer|1|${custom}\nnested|0|${custom}`);
+    assert.equal(result, `outer|1|${custom}|on|from-profile\nnested|0|${custom}|off|from-profile`);
     assert.deepEqual(traceLines(f), [
       `env|${custom}|0`,
+      `profile|${custom}|0`,
       `rc|${custom}|0`,
+      `login|${custom}|0`,
       `env|${custom}|0`,
-      `rc|${custom}|0`
+      `rc|${custom}|0`,
+      `logout|${custom}|1`
     ]);
   }
 );

@@ -10,7 +10,7 @@
 export const ZELLIJ_THEME_NAME = 'bitterless';
 
 /** Bump when an existing installation must receive a fresh application-owned template. */
-export const ZELLIJ_CONFIG_VERSION_CODE = '260914150147';
+export const ZELLIJ_CONFIG_VERSION_CODE = '260916230933';
 
 /**
  * Replaced with the binds derived from `defaultZellijShortcuts`.
@@ -21,8 +21,8 @@ export const ZELLIJ_CONFIG_VERSION_CODE = '260914150147';
 export const ZELLIJ_BINDS_PLACEHOLDER = '{{BINDS}}';
 
 /**
- * Zellij's session UI uses RGB triples in `themes`; the web terminal's separate ANSI palette uses
- * hex strings in `web_client.theme`. Setting the first does not configure the second.
+ * Zellij's session UI uses RGB triples or palette indices in `themes`; the web terminal's separate
+ * ANSI palette uses hex strings in `web_client.theme`. Setting one does not configure the other.
  */
 export const ZELLIJ_DEFAULT_CONFIG_TEMPLATE = `// Written by Bitterless. Template version ${ZELLIJ_CONFIG_VERSION_CODE}.
 // Edits are preserved within this version. A template upgrade backs up and replaces this file.
@@ -51,17 +51,124 @@ ${ZELLIJ_BINDS_PLACEHOLDER}
 // Colors for Zellij's tab bar, status bar and other session UI.
 themes {
     ${ZELLIJ_THEME_NAME} {
-        fg 216 222 233
-        bg 26 27 38
-        black 26 27 38
-        red 247 118 142
-        green 158 206 106
-        yellow 224 175 104
-        blue 122 162 247
-        magenta 187 154 247
-        cyan 125 207 255
-        white 192 202 245
-        orange 255 158 100
+        // Preserve the 0.45.1 legacy palette conversion; only text_selected changes.
+        // A partial semantic theme would discard the other legacy colors.
+        text_unselected {
+            base 192 202 245
+            background 26 27 38
+            emphasis_0 255 158 100
+            emphasis_1 125 207 255
+            emphasis_2 158 206 106
+            emphasis_3 187 154 247
+        }
+        text_selected {
+            base 21 22 30
+            background 122 162 247
+            emphasis_0 255 158 100
+            emphasis_1 125 207 255
+            emphasis_2 158 206 106
+            emphasis_3 187 154 247
+        }
+        ribbon_unselected {
+            base 26 27 38
+            background 216 222 233
+            emphasis_0 247 118 142
+            emphasis_1 192 202 245
+            emphasis_2 122 162 247
+            emphasis_3 187 154 247
+        }
+        ribbon_selected {
+            base 26 27 38
+            background 158 206 106
+            emphasis_0 247 118 142
+            emphasis_1 255 158 100
+            emphasis_2 187 154 247
+            emphasis_3 122 162 247
+        }
+        exit_code_success {
+            base 158 206 106
+            background 0
+            emphasis_0 125 207 255
+            emphasis_1 26 27 38
+            emphasis_2 187 154 247
+            emphasis_3 122 162 247
+        }
+        exit_code_error {
+            base 247 118 142
+            background 0
+            emphasis_0 224 175 104
+            emphasis_1 0
+            emphasis_2 0
+            emphasis_3 0
+        }
+        frame_selected {
+            base 158 206 106
+            background 0
+            emphasis_0 255 158 100
+            emphasis_1 125 207 255
+            emphasis_2 187 154 247
+            emphasis_3 0
+        }
+        frame_highlight {
+            base 255 158 100
+            background 0
+            emphasis_0 187 154 247
+            emphasis_1 0
+            emphasis_2 255 158 100
+            emphasis_3 255 158 100
+        }
+        table_title {
+            base 158 206 106
+            background 0
+            emphasis_0 255 158 100
+            emphasis_1 125 207 255
+            emphasis_2 158 206 106
+            emphasis_3 187 154 247
+        }
+        table_cell_unselected {
+            base 192 202 245
+            background 26 27 38
+            emphasis_0 255 158 100
+            emphasis_1 125 207 255
+            emphasis_2 158 206 106
+            emphasis_3 187 154 247
+        }
+        table_cell_selected {
+            base 192 202 245
+            background 26 27 38
+            emphasis_0 255 158 100
+            emphasis_1 125 207 255
+            emphasis_2 158 206 106
+            emphasis_3 187 154 247
+        }
+        list_unselected {
+            base 192 202 245
+            background 26 27 38
+            emphasis_0 255 158 100
+            emphasis_1 125 207 255
+            emphasis_2 158 206 106
+            emphasis_3 187 154 247
+        }
+        list_selected {
+            base 192 202 245
+            background 26 27 38
+            emphasis_0 255 158 100
+            emphasis_1 125 207 255
+            emphasis_2 158 206 106
+            emphasis_3 187 154 247
+        }
+        multiplayer_user_colors {
+            player_1 187 154 247
+            player_2 122 162 247
+            player_3 0
+            player_4 224 175 104
+            player_5 125 207 255
+            player_6 0
+            player_7 247 118 142
+            player_8 0
+            player_9 0
+            player_10 0
+        }
     }
 }
 
@@ -82,6 +189,9 @@ web_client {
         background "#1a1b26"
         foreground "#c0caf5"
         cursor "#c0caf5"
+        selection_background "#7aa2f7"
+        selection_foreground "#15161e"
+        selection_inactive_background "#6686c2"
         black "#15161e"
         red "#f7768e"
         green "#9ece6a"

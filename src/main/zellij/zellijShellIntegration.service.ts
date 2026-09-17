@@ -102,6 +102,11 @@ else
   builtin unset ZDOTDIR
 fi
 builtin unset BITTERLESS_ZSH_ORIGINAL_ZDOTDIR_SET BITTERLESS_ZSH_ORIGINAL_ZDOTDIR
+# Zellij omits -l; use native login startup so GUI launches inherit the user's command PATH.
+# Apply before user .zshenv so an explicit unsetopt login still wins.
+if [[ -o interactive && -o rcs ]]; then
+  builtin setopt login
+fi
 ${forwardStartup('.zshenv')}${routeNextStartup(directory)}`,
     '.zprofile': restoreDirectory + forwardStartup('.zprofile') + routeNextStartup(directory),
     '.zshrc': `${restoreDirectory}${forwardStartup('.zshrc')}if [[ -o login ]]; then

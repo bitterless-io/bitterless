@@ -1,6 +1,11 @@
 import { join } from 'node:path';
 import type { ApplicationRuntimeProfile } from '@shared/diagnostics/applicationDiagnostics.contract';
 import { ZELLIJ_SURFACE_QUERY } from '@shared/zellij/zellij.type';
+import {
+  MAESTRO_FORCE_PINNED_HOME_QUERY,
+  MAESTRO_FORCE_PINNED_HOME_QUERY_VALUE,
+  MAESTRO_HOME_READY_TOKEN_QUERY,
+} from '@shared/maestro/coach.api';
 
 export const APPLICATION_LOG_FILE_MAX_SIZE = 5 * 1024 * 1024;
 
@@ -28,6 +33,7 @@ const FIRST_PARTY_RENDERER_ENTRIES = [
   { path: '/omni/omniControl/index.html', process: 'renderer:omniControl' },
   { path: '/omni/omniWindow/index.html', process: 'renderer:omniWindow' },
   { path: '/maestro/home/index.html', process: 'renderer:maestroHome' },
+  { path: '/maestro/history/index.html', process: 'renderer:maestroHistory' },
   { path: '/maestro/control/index.html', process: 'renderer:maestroControl' },
   { path: '/maestro/workbench/index.html', process: 'renderer:maestroWorkbench' },
   // 同 Zellij 那条的理由,而且已经付过一次代价:别名表单不在这张表里时,它自己报的任何错
@@ -61,13 +67,16 @@ export const resolveFirstPartyRendererProcess = (
   if (!entry || url.username || url.password) return null;
   if (url.search) {
     const query = [...url.searchParams];
-    if (
-      entry.process !== 'renderer:zellij' ||
-      query.length !== 1 ||
-      query[0][0] !== ZELLIJ_SURFACE_QUERY ||
-      !/^[A-Za-z0-9_-]{1,128}$/.test(query[0][1])
-    )
-      return null;
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const zellij = entry.process === 'renderer:zellij' && query.length === 1 &&
+      query[0][0] === ZELLIJ_SURFACE_QUERY && /^[A-Za-z0-9_-]{1,128}$/.test(query[0][1]);
+    const home = entry.process === 'renderer:maestroHome' &&
+      (query.length === 1 || query.length === 2) &&
+      url.searchParams.getAll(MAESTRO_HOME_READY_TOKEN_QUERY).length === 1 &&
+      uuid.test(url.searchParams.get(MAESTRO_HOME_READY_TOKEN_QUERY)!) &&
+      query.every(([key, value]) => key === MAESTRO_HOME_READY_TOKEN_QUERY ||
+        (key === MAESTRO_FORCE_PINNED_HOME_QUERY && value === MAESTRO_FORCE_PINNED_HOME_QUERY_VALUE));
+    if (!zellij && !home) return null;
   }
 
   if (url.protocol === 'file:') {

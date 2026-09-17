@@ -37,6 +37,7 @@ import {
   windowStateService,
   type WindowStateController,
 } from './windowState.service';
+import { OmniWindowSessionService } from './omniWindowSession.service';
 import {
   OmniGenerationReadyCollector,
   OmniOpenCoordinator,
@@ -313,6 +314,10 @@ export class OmniWindowHelper {
   private _loadSemaphore = new Semaphore(3);
   private _abortTokens = new Set<{ abort: () => void }>();
   private windowStateController: WindowStateController | null = null;
+  private hostQuitting = false;
+  private readonly windowSession = new OmniWindowSessionService(
+    () => join(app.getPath('userData'), 'omni-window-session.json'),
+  );
   private readonly openCoordinator = new OmniOpenCoordinator<BaseWindow>({
     getReady: () => {
       const window = this.baseWindow;
@@ -384,7 +389,7 @@ export class OmniWindowHelper {
 
   show(): void {
     const window = this.baseWindow;
-    if (!window || window.isDestroyed()) return;
+    if (this.hostQuitting || !window || window.isDestroyed()) return;
     if (this.windowStateController) {
       this.windowStateController.show();
     } else {
@@ -392,6 +397,8 @@ export class OmniWindowHelper {
       window.show();
     }
     window.focus();
+    this.windowStateController?.flush();
+    this.windowSession.setOpen(true);
   }
 
   private beginOpenDiagnostic(
@@ -914,7 +921,19 @@ export class OmniWindowHelper {
   }
 
   create(): Promise<BaseWindow> {
+    if (this.hostQuitting) {
+      return Promise.reject(new Error('[OmniWindowHelper] App shutdown is in progress'));
+    }
     return this.openCoordinator.open();
+  }
+
+  restoreSession(): Promise<void> {
+    if (this.hostQuitting) return Promise.resolve();
+    return this.windowSession.restoreOnce(() => this.create());
+  }
+
+  setHostQuitting(quitting: boolean): void {
+    this.hostQuitting = quitting;
   }
 
   private async createWindow(creationGeneration: number): Promise<BaseWindow> {
@@ -992,6 +1011,7 @@ export class OmniWindowHelper {
     createdWindow.on('closed' as any, () => {
       console.log('[OmniWindowHelper] baseWindow closed, cleaning up');
       if (this.baseWindow === createdWindow) {
+        if (!this.hostQuitting) this.windowSession.setOpen(false);
         for (const cell of this.cells) this.closeZellijCellSession(cell);
         this.finishOpenDiagnostic(creationGeneration, 'failure', 'closed');
         this.openCoordinator.invalidate();
@@ -2199,7 +2219,7 @@ export class OmniWindowHelper {
     creationGeneration: number,
     createdWindow?: BaseWindow,
   ): void {
-    if (!this.isCreationActive(creationGeneration, createdWindow)) {
+    if (this.hostQuitting || !this.isCreationActive(creationGeneration, createdWindow)) {
       throw new Error('[OmniWindowHelper] Window creation was cancelled');
     }
   }

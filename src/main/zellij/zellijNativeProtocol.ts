@@ -27,13 +27,19 @@ message CliAssets {
   map<string, string> host_terminal_env = 12;
 }
 message FirstClientConnected { CliAssets cli_assets = 1; bool is_web_client = 2; }
+message AttachClient { bool is_web_client = 4; }
+message Key { repeated uint32 raw_bytes = 2; bool is_kitty_keyboard_protocol = 3; }
+message Render { string content = 1; }
 message ListPanes {
   bool show_tab = 1; bool show_command = 2; bool show_state = 3;
   bool show_geometry = 4; bool show_all = 5; bool output_json = 6;
 }
 message CurrentTabInfo { bool output_json = 1; }
 message Action {
-  oneof action { ListPanes list_panes = 98; CurrentTabInfo current_tab_info = 105; }
+  oneof action {
+    Empty copy = 58; Empty query_tab_names = 68;
+    ListPanes list_panes = 98; CurrentTabInfo current_tab_info = 105;
+  }
 }
 message ActionMsg {
   Action action = 1; optional uint32 terminal_id = 2;
@@ -44,7 +50,7 @@ message Client {
     bytes detach_session = 1; bytes terminal_pixel_dimensions = 2;
     bytes background_color = 3; bytes foreground_color = 4; bytes color_registers = 5;
     bytes terminal_resize = 6; FirstClientConnected first_client_connected = 7;
-    bytes attach_client = 8; ActionMsg action = 9; bytes key = 10;
+    AttachClient attach_client = 8; ActionMsg action = 9; Key key = 10;
     Empty client_exited = 11; Empty kill_session = 12; Empty conn_status = 13;
     bytes web_server_started = 14; bytes failed_to_start_web_server = 15;
     bytes attach_watcher_client = 16; bytes subscribe_to_pane_renders = 17;
@@ -59,7 +65,7 @@ message Log { repeated string lines = 1; }
 message Exit { uint32 exit_reason = 1; optional string payload = 2; }
 message Server {
   oneof message {
-    bytes render = 1; Empty unblock_input_thread = 2; Exit exit = 3;
+    Render render = 1; Empty unblock_input_thread = 2; Exit exit = 3;
     Empty connected = 4; Log log = 5; Log log_error = 6;
     bytes switch_session = 7; bytes unblock_cli_pipe_input = 8; bytes cli_pipe_output = 9;
     bytes query_terminal_size = 10; bytes start_web_server = 11; bytes renamed_session = 12;
@@ -81,6 +87,11 @@ const encodeFrame = (type: Type, message: object): Buffer => {
     throw new Error('Missing Zellij message variant');
   }
   const payload = type.encode(created).finish();
+  return encodeZellijNativeFrame(Buffer.from(payload));
+};
+
+/** Preserve opaque fields when forwarding a decoded frame through the native Web bridge. */
+export const encodeZellijNativeFrame = (payload: Buffer): Buffer => {
   const header = Buffer.alloc(4);
   header.writeUInt32LE(payload.length);
   return Buffer.concat([header, payload]);

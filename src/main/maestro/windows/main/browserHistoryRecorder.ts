@@ -1,3 +1,4 @@
+import { browserHistoryError, browserHistoryLog } from '@maestro-shared/browserHistoryDiagnostics.service';
 import type { WebContents } from 'electron';
 import type { BrowserHistoryApi } from '@maestro-shared/browserHistory.api';
 import { normalizeBrowserHistoryUrl } from '@maestro-shared/browserHistory.service';
@@ -19,7 +20,11 @@ export const bindBrowserHistoryRecorder = (wc: WebContents, options: {
   const current = (): string | null => wc.isDestroyed() ? null : normalizeBrowserHistoryUrl(wc.getURL());
   const update = (metadata: { title?: string; favicon?: string }): void => {
     if (!successfulUrl || !options.isBrowser() || current() !== successfulUrl) return;
-    void options.history.updateMetadata({ url: successfulUrl, ...metadata }).catch(warnHistoryWrite);
+    browserHistoryLog('recorder.metadata.dispatch');
+    void options.history.updateMetadata({ url: successfulUrl, ...metadata }).then(() => browserHistoryLog('recorder.metadata.reply')).catch((error) => {
+      browserHistoryLog('recorder.metadata.failure', browserHistoryError(error));
+      warnHistoryWrite();
+    });
   };
   wc.on('did-start-navigation', (_event, _url, inPlace, isMainFrame) => {
     if (!isMainFrame) return;
@@ -30,14 +35,24 @@ export const bindBrowserHistoryRecorder = (wc: WebContents, options: {
     successfulUrl = null;
     if (!options.isBrowser() || status >= 400) return;
     successfulUrl = normalizeBrowserHistoryUrl(url);
-    if (successfulUrl) void options.history.record({ url: successfulUrl }).catch(warnHistoryWrite);
+    if (successfulUrl) {
+      browserHistoryLog('recorder.visit.dispatch', { inPlace: false });
+      void options.history.record({ url: successfulUrl }).then(() => browserHistoryLog('recorder.visit.reply')).catch((error) => {
+        browserHistoryLog('recorder.visit.failure', browserHistoryError(error));
+        warnHistoryWrite();
+      });
+    }
   });
   wc.on('did-navigate-in-page', (_event, url, isMainFrame) => {
     if (!isMainFrame || !successfulUrl || !options.isBrowser()) return;
     const next = normalizeBrowserHistoryUrl(url);
     if (!next || next === successfulUrl) return;
     successfulUrl = next;
-    void options.history.record({ url: next, title: wc.getTitle() }).catch(warnHistoryWrite);
+    browserHistoryLog('recorder.visit.dispatch', { inPlace: true });
+    void options.history.record({ url: next, title: wc.getTitle() }).then(() => browserHistoryLog('recorder.visit.reply')).catch((error) => {
+      browserHistoryLog('recorder.visit.failure', browserHistoryError(error));
+      warnHistoryWrite();
+    });
   });
   wc.on('page-title-updated', (_event, title) => update({ title }));
   wc.on('page-favicon-updated', (_event, favicons) => {

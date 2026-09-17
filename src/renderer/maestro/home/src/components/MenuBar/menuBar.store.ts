@@ -37,6 +37,8 @@ class MenuBarState {
    * and `HTMLInputElement` lands in `TargetType.INVALID`, so it is kept as-is (no `markRaw`).
    */
   private addressInput: HTMLInputElement | null = null
+  private activeTabId = ''
+  private activeTabUrl = ''
 
   async init(): Promise<void> {
     xpcRenderer.subscribe('coach/nav', (payload) => {
@@ -46,12 +48,6 @@ class MenuBarState {
     xpcRenderer.subscribe('coach/title', (payload) => {
       this.title = String(payload.params || '')
     })
-    xpcRenderer.subscribe('coach/tabs', (payload) => {
-      const tabs = (payload.params as TabInfo[]) || []
-      const active = tabs.find((tab) => tab.active)
-      browserHistoryStore.setActiveTab(active?.id ?? '');
-      if (active) this.url = stripScheme(active.displayUrl || active.url || '')
-    })
     xpcRenderer.subscribe('coach/nav-state', (payload) => {
       const s = payload.params as { canGoBack?: boolean; canGoForward?: boolean } | undefined
       this.canGoBack = Boolean(s?.canGoBack)
@@ -60,12 +56,21 @@ class MenuBarState {
     // The main process only sends this after the operator opened a BLANK tab (`newTab()`); the
     // criterion lives there, not here (contract #3.1) — this end never inspects the tab.
     xpcRenderer.subscribe('coach/focus-address', () => void this.focusAddress())
-    // Seed the bar from the active tab's URL — we no longer persist/restore a URL here
-    // (also covers a coach/nav broadcast that may have fired before we subscribed).
-    const tabs = await coach.getTabs()
+  }
+
+  // TabStore owns coach/tabs and the post-restore snapshot. XPC keeps one callback per channel,
+  // so subscribing here too would leave the address/history identity frozen at its initial tab.
+  applyTabs(tabs: TabInfo[]): void {
     const active = tabs.find((t) => t.active)
-    browserHistoryStore.setActiveTab(active?.id ?? '');
-    this.url = stripScheme(active?.displayUrl || active?.url || '')
+    const id = active?.id ?? ''
+    const url = active?.displayUrl || active?.url || ''
+    if (id !== this.activeTabId || url !== this.activeTabUrl) {
+      browserHistoryStore.hide('tab-navigation');
+      this.url = stripScheme(url)
+    }
+    browserHistoryStore.setActiveTab(id);
+    this.activeTabId = id
+    this.activeTabUrl = url
   }
 
   bindAddressInput(el: HTMLInputElement | null): void {

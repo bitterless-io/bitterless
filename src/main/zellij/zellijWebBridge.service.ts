@@ -2,16 +2,20 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { createConnection, createServer, type Server, type Socket } from 'node:net';
 import { join } from 'node:path';
 import {
+  decodeZellijClientMessage,
   encodeZellijConnectedFrame,
   encodeZellijExitFrame,
-  isZellijConnStatusFrame
+  encodeZellijNativeFrame,
+  ZellijNativeFrameDecoder
 } from './zellijNativeProtocol';
+import { ZellijNativeCopyService, type ZellijNativeCopyOptions } from './zellijNativeCopy.service';
 
 interface SessionBridge {
   server: Server;
   target: string | null;
   generation: number;
   peers: Set<Socket>;
+  clients: Set<ZellijNativeCopyService>;
 }
 
 /** Web-only discovery never enumerates canonical native sockets. ConnStatus describes this
@@ -34,12 +38,21 @@ export class ZellijWebBridgeService {
     if (this.stopped) throw new Error('operation-failed');
     const previous = this.bridges.get(session);
     if (previous) {
+      if (previous.target === target) return;
       previous.generation += 1;
       previous.target = target;
+      for (const client of previous.clients) client.dispose();
+      previous.clients.clear();
       return;
     }
     const server = createServer((socket) => this.connect(session, socket));
-    const bridge: SessionBridge = { server, target, generation: 0, peers: new Set() };
+    const bridge: SessionBridge = {
+      server,
+      target,
+      generation: 0,
+      peers: new Set(),
+      clients: new Set()
+    };
     this.bridges.set(session, bridge);
     const pending = new Promise<void>((resolve, reject) => {
       server.once('error', reject);
@@ -67,8 +80,27 @@ export class ZellijWebBridgeService {
     if (!bridge) return;
     bridge.generation += 1;
     bridge.target = null;
+    for (const client of bridge.clients) client.dispose();
+    bridge.clients.clear();
     for (const socket of bridge.peers) socket.destroy();
     bridge.peers.clear();
+  }
+
+  async copySelection(session: string, options: ZellijNativeCopyOptions): Promise<string> {
+    const bridge = this.bridges.get(session);
+    if (this.stopped || !bridge?.target || bridge.clients.size !== 1 || options.signal.aborted)
+      return '';
+    const client = [...bridge.clients][0];
+    const generation = bridge.generation;
+    const text = await client.request(options);
+    return !this.stopped &&
+      bridge.generation === generation &&
+      bridge.target &&
+      bridge.clients.size === 1 &&
+      bridge.clients.has(client) &&
+      !options.signal.aborted
+      ? text
+      : '';
   }
 
   async stop(): Promise<void> {
@@ -110,11 +142,14 @@ export class ZellijWebBridgeService {
       socket.removeListener('data', first);
       socket.pause();
       clearTimeout(timer);
+      let webClient = false;
       try {
-        if (isZellijConnStatusFrame(bytes.subarray(4, length + 4))) {
+        const hello = decodeZellijClientMessage(bytes.subarray(4, length + 4));
+        if (hello.message === 'connStatus') {
           socket.end(encodeZellijConnectedFrame());
           return;
         }
+        webClient = hello.attachClient?.isWebClient === true;
       } catch {
         socket.destroy();
         return;
@@ -131,26 +166,89 @@ export class ZellijWebBridgeService {
         this.fail(session, bridge, generation);
       }, 750);
       let replyTimer: ReturnType<typeof setTimeout> | null = null;
+      let copy: ZellijNativeCopyService | null = null;
       upstream.once('connect', () => {
         clearTimeout(connectTimer);
         if (bridge.generation !== generation || this.stopped) return void upstream.destroy();
-        upstream.write(bytes);
         replyTimer = setTimeout(() => this.fail(session, bridge, generation), 3_000);
         upstream.once('data', () => {
           if (replyTimer) clearTimeout(replyTimer);
           replyTimer = null;
         });
-        socket.pipe(upstream);
-        upstream.pipe(socket);
+        if (webClient) {
+          // A reload can briefly overlap peers. Cancel old copy requests before exposing the new
+          // attached client; never guess which of two clients owns a surface's current selection.
+          for (const client of bridge.clients) client.dispose();
+          let inputBlocked = false;
+          let outputBlocked = false;
+          const send = (frame: Buffer): void => {
+            if (!upstream.write(frame) && !inputBlocked) {
+              inputBlocked = true;
+              socket.pause();
+              upstream.once('drain', () => {
+                inputBlocked = false;
+                socket.resume();
+              });
+            }
+          };
+          const client = new ZellijNativeCopyService(send);
+          copy = client;
+          bridge.clients.add(client);
+          const input = new ZellijNativeFrameDecoder(8 * 1024 * 1024);
+          const output = new ZellijNativeFrameDecoder(8 * 1024 * 1024);
+          const forwardInput = (chunk: Buffer): void => {
+            try {
+              for (const body of input.push(chunk))
+                if (!client.consumeClientFrame(body)) send(encodeZellijNativeFrame(body));
+            } catch {
+              client.dispose();
+              socket.destroy();
+            }
+          };
+          socket.on('data', forwardInput);
+          upstream.on('data', (chunk: Buffer) => {
+            try {
+              for (const body of output.push(chunk)) {
+                if (
+                  !client.consumeServerFrame(body) &&
+                  !socket.write(encodeZellijNativeFrame(body)) &&
+                  !outputBlocked
+                ) {
+                  outputBlocked = true;
+                  upstream.pause();
+                  socket.once('drain', () => {
+                    outputBlocked = false;
+                    upstream.resume();
+                  });
+                }
+              }
+            } catch {
+              client.dispose();
+              socket.destroy();
+            }
+          });
+          forwardInput(bytes);
+          if (!inputBlocked) socket.resume();
+        } else {
+          upstream.write(bytes);
+          socket.pipe(upstream);
+          upstream.pipe(socket);
+        }
       });
       upstream.once('error', () => this.fail(session, bridge, generation));
       upstream.once('close', () => {
         clearTimeout(connectTimer);
         if (replyTimer) clearTimeout(replyTimer);
+        copy?.dispose();
+        if (copy) bridge.clients.delete(copy);
         bridge.peers.delete(upstream);
         socket.destroy();
       });
-      socket.once('close', () => upstream.destroy());
+      socket.once('close', () => {
+        copy?.dispose();
+        if (copy) bridge.clients.delete(copy);
+        upstream.destroy();
+      });
     };
     socket.on('data', first);
   }

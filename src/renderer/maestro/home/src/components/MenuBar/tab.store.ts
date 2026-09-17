@@ -10,6 +10,7 @@ import {
 import type { TabsApi, SavedTab } from '@maestro-shared/tabs.api'
 import { MAESTRO_ZELLIJ_TAB_ID } from '@maestro-shared/compositeTab.identity'
 import { MAESTRO_TAB_INLINE_RENAME_MAX_LENGTH } from '@maestro-shared/tabAlias.api'
+import { menuBarStore } from './menuBar.store'
 
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
 // Reaches the encrypted tabs store hosted in the sqlite window's preload (TabsDao). The home
@@ -117,7 +118,7 @@ class TabStoreState {
     const forcePinnedHome = consumeForcePinnedHomeBootQuery()
     if (forcePinnedHome) localStorage.setItem(LAST_ACTIVE_KEY, 'home')
     xpcRenderer.subscribe('coach/tabs', (payload) => {
-      this.tabs = (payload.params as TabInfo[]) || []
+      this.applyTabs((payload.params as TabInfo[]) || [])
       // Main observes each operation view's URL/title/favicon changes and re-broadcasts the strip;
       // persist it (debounced) so the sqlite cache tracks the live URLs, and remember which tab is
       // active so the next launch reopens it.
@@ -149,17 +150,22 @@ class TabStoreState {
     if (saved.length) await coach.restoreTabs({ tabs: saved })
     this.restored = true
     // Initial snapshot (covers a broadcast that landed before we subscribed + the just-restored set).
-    this.tabs = await coach.getTabs()
+    this.applyTabs(await coach.getTabs())
     if (forcePinnedHome) {
       const pinnedHome = this.tabs.find((tab) => tab.kind === 'home' && tab.pinned)
       if (pinnedHome && !pinnedHome.active) {
         await coach.activateTab({ id: pinnedHome.id })
-        this.tabs = await coach.getTabs()
+        this.applyTabs(await coach.getTabs())
       }
       localStorage.setItem(LAST_ACTIVE_KEY, 'home')
       return
     }
     await this.restoreLastActive()
+  }
+
+  private applyTabs(tabs: TabInfo[]): void {
+    this.tabs = tabs
+    menuBarStore.applyTabs(tabs)
   }
 
   // On boot, activate the last-activated tab (from localStorage) and load its page. Main defaults
@@ -313,7 +319,7 @@ class TabStoreState {
     if (!tab || this.debuggerToggling) return
     this.debuggerToggling = true
     try {
-      this.tabs = await coach.setTabDebugger({ id: tab.id, enabled: !tab.debuggerEnabled })
+      this.applyTabs(await coach.setTabDebugger({ id: tab.id, enabled: !tab.debuggerEnabled }))
     } finally {
       this.debuggerToggling = false
     }

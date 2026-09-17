@@ -73,13 +73,45 @@ export const zellijClipboardAction = (input: Input): ZellijClipboardAction | und
  * Zellij's own global (`assets/app.js`), and `term.getSelection()` returns the selected text
  * whichever renderer is loaded.
  */
-export const copyZellijSelection = async (webContents: WebContents): Promise<void> => {
-  const selection: unknown = await webContents.executeJavaScript(
+export type ZellijNativeSelection = (
+  sendMarker: () => Promise<boolean>,
+  signal: AbortSignal
+) => Promise<string>;
+
+export const copyZellijSelection = async (
+  webContents: WebContents,
+  {
+    nativeSelection,
+    signal = new AbortController().signal
+  }: { nativeSelection?: ZellijNativeSelection; signal?: AbortSignal } = {}
+): Promise<void> => {
+  if (signal.aborted || webContents.isDestroyed()) return;
+  let selection: unknown = await webContents.executeJavaScript(
     'typeof window.term?.getSelection === "function" ? window.term.getSelection() : ""'
   );
+  if (signal.aborted || webContents.isDestroyed()) return;
+  if (selection === '' && nativeSelection) {
+    selection = await nativeSelection(async () => {
+      if (signal.aborted || webContents.isDestroyed()) return false;
+      return (
+        (await webContents.executeJavaScript(`(() => {
+        const send = window.__zjImeBypass?.sendFn;
+        if (typeof send !== 'function') return false;
+        send('\\x1b[99;9u');
+        return true;
+      })()`)) === true
+      );
+    }, signal);
+  }
   // An empty selection must leave the clipboard alone: Cmd+C with nothing selected is a no-op, not
   // a way to lose whatever was copied a moment earlier.
-  if (typeof selection === 'string' && selection.length > 0) clipboard.writeText(selection);
+  if (
+    !signal.aborted &&
+    !webContents.isDestroyed() &&
+    typeof selection === 'string' &&
+    selection.length > 0
+  )
+    clipboard.writeText(selection);
 };
 
 /**
@@ -93,9 +125,21 @@ export const copyZellijSelection = async (webContents: WebContents): Promise<voi
  */
 export const bindZellijKeyBridge = (
   webContents: WebContents,
-  platform: string = process.platform
+  {
+    platform = process.platform,
+    nativeSelection
+  }: { platform?: string; nativeSelection?: ZellijNativeSelection } = {}
 ): void => {
   if (platform !== 'darwin') return;
+  let copy: AbortController | null = null;
+  const cancelCopy = (): void => {
+    copy?.abort();
+    copy = null;
+  };
+  webContents.on('did-start-navigation', (_event, _url, _inPlace, isMainFrame) => {
+    if (isMainFrame) cancelCopy();
+  });
+  webContents.on('destroyed', cancelCopy);
   webContents.on('before-input-event', (event, input) => {
     const clipboardAction = zellijClipboardAction(input);
     if (clipboardAction) {
@@ -107,9 +151,18 @@ export const bindZellijKeyBridge = (
         webContents.paste();
         return;
       }
-      void copyZellijSelection(webContents).catch((error) => {
-        console.error('[zellij] terminal copy failed', error);
-      });
+      if (input.isAutoRepeat && copy && !copy.signal.aborted) return;
+      cancelCopy();
+      const request = new AbortController();
+      copy = request;
+      void copyZellijSelection(webContents, { nativeSelection, signal: request.signal })
+        .catch(() => {
+          // Never log a renderer/native error payload: it can contain terminal selection text.
+          console.error('[zellij] terminal copy failed');
+        })
+        .finally(() => {
+          if (copy === request) copy = null;
+        });
       return;
     }
     const translation = translateZellijCommandKey(input);
@@ -117,7 +170,15 @@ export const bindZellijKeyBridge = (
     event.preventDefault();
     // Re-dispatched as Ctrl+<key>: one modifier, so Zellij's handler ignores it and xterm.js emits
     // the ordinary control character the shell is already listening for.
-    webContents.sendInputEvent({ type: 'keyDown', keyCode: translation.toKey, modifiers: ['control'] });
-    webContents.sendInputEvent({ type: 'keyUp', keyCode: translation.toKey, modifiers: ['control'] });
+    webContents.sendInputEvent({
+      type: 'keyDown',
+      keyCode: translation.toKey,
+      modifiers: ['control']
+    });
+    webContents.sendInputEvent({
+      type: 'keyUp',
+      keyCode: translation.toKey,
+      modifiers: ['control']
+    });
   });
 };

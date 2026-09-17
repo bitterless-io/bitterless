@@ -110,7 +110,11 @@ must not be silently downgraded by an older build.
 
 Provide the full 16-color ANSI palette in the native `web_client { theme { ... } }` section,
 plus foreground/background/cursor. Zellij's ordinary `themes` section alone does not configure
-the embedded xterm palette. Provide a truecolor-capable terminal environment, including
+the embedded xterm palette. Native `text_selected` and browser selection use blue `#7aa2f7`
+with dark `#15161e` text; the browser's inactive selection uses `#6686c2`. The complete semantic
+session theme preserves all other legacy-derived styles. See the
+[selection contrast contract](../issues/zellij-selection-contrast.md).
+Provide a truecolor-capable terminal environment, including
 normal TTY-aware color defaults for programs that support them. The GUI terminal owns its color
 capabilities: remove inherited launcher-only suppression (`TERM=dumb`, `NO_COLOR`,
 `NODE_DISABLE_COLORS`, forced-color flags), then allow explicit KDL environment settings and the
@@ -121,6 +125,12 @@ startup integration that forwards the user's existing startup files and loads a 
 `zsh-syntax-highlighting` last. Bundle the dependency and its license for development and packaged
 builds; never modify global `.zshrc` or invent a shell syntax parser. Preserve custom shell choices
 and non-zsh behavior. Test actual interactive input highlighting as well as explicit ANSI output.
+
+The managed default interactive zsh must also load its native login startup sequence, including
+system and user profiles, so a GUI-launched installation discovers commands configured by the
+user's login terminal. User `.zshenv` can explicitly disable login mode; custom KDL shell/ZDOTDIR
+overrides and noninteractive shells keep their own startup behavior. See the
+[packaged command discovery repair](../issues/zellij-packaged-shell-misses-login-path.md).
 
 Already-running shell/program processes retain the environment they started with. Some legacy
 sessions were created with `TERM=dumb` and `NO_COLOR=1`; a palette/config update cannot change
