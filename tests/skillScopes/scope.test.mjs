@@ -1,3 +1,4 @@
+import * as nativePi from '@earendil-works/pi-coding-agent'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { build } from 'esbuild'
@@ -11,13 +12,13 @@ import { tmpdir } from 'node:os'
 const app = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const skills = existsSync(join(app, 'src/main/maestro/skills')) ? 'src/main/maestro/skills' : 'src/main/skills'
 const load = async entry => {
-  const result = await build({ tsconfig: join(app, 'tsconfig.node.json'), entryPoints: [join(app, entry)], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external', plugins: [{ name: 'host-context', setup(builder) {
+  const result = await build({ tsconfig: join(app, 'tsconfig.node.json'), entryPoints: [join(app, entry)], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external', external: ['@earendil-works/pi-coding-agent', 'virtual:bitterless-pi-skills'], plugins: [{ name: 'host-context', setup(builder) {
     builder.onResolve({ filter: /skillScope\.context$/ }, () => ({ path: 'scope', namespace: 'host' }))
     builder.onResolve({ filter: /skillsPreset\.service$/ }, () => ({ path: 'preset', namespace: 'host' }))
     builder.onLoad({ filter: /.*/, namespace: 'host' }, args => ({ contents: args.path === 'scope' ? 'export const skillScopeContext={current:()=>null,authorize:async()=>null}; export const onSkillContextChanged=()=>()=>{}' : 'export const ensureSkillsPresetProject=()=>{}' }))
   } }] })
   const module = { exports: {} }
-  runInNewContext(result.outputFiles[0].text, { module, exports: module.exports, require: createRequire(join(app, 'package.json')), process, Buffer, console, setTimeout, clearTimeout, setInterval, clearInterval })
+  runInNewContext(result.outputFiles[0].text, { module, exports: module.exports, require: name => ['@earendil-works/pi-coding-agent', 'virtual:bitterless-pi-skills'].includes(name) ? nativePi : createRequire(join(app, 'package.json'))(name), process, Buffer, console, setTimeout, clearTimeout, setInterval, clearInterval })
   return module.exports
 }
 const { SkillRegistryService } = await load(`${skills}/skillRegistry.service.ts`)

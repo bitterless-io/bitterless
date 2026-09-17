@@ -1,3 +1,4 @@
+import * as nativePi from '@earendil-works/pi-coding-agent'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { build } from 'esbuild'
@@ -8,17 +9,19 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 const app = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
+let nativeScans = 0
+const countedPi = { ...nativePi, loadSkillsFromDir: options => { nativeScans++; return nativePi.loadSkillsFromDir(options) } }
 const load = async entry => {
-  const result = await build({ tsconfig: join(app, 'tsconfig.node.json'), entryPoints: [join(app, entry)], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external', plugins: [{ name: 'host', setup(builder) {
+  const result = await build({ tsconfig: join(app, 'tsconfig.node.json'), entryPoints: [join(app, entry)], bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external', external: ['@earendil-works/pi-coding-agent', 'virtual:bitterless-pi-skills'], plugins: [{ name: 'host', setup(builder) {
     builder.onResolve({ filter: /skillScope\.context$/ }, () => ({ path: 'scope', namespace: 'host' }))
     builder.onLoad({ filter: /.*/, namespace: 'host' }, () => ({ contents: 'export const skillScopeContext={current:()=>null,authorize:async()=>null}; export const onSkillContextChanged=()=>()=>{}' }))
   } }] })
   const module = { exports: {} }
-  runInNewContext(result.outputFiles[0].text, { module, exports: module.exports, require: createRequire(join(app, 'package.json')), process, Buffer, console, setTimeout, clearTimeout, setInterval, clearInterval })
+  runInNewContext(result.outputFiles[0].text, { module, exports: module.exports, require: name => ['@earendil-works/pi-coding-agent', 'virtual:bitterless-pi-skills'].includes(name) ? countedPi : createRequire(join(app, 'package.json'))(name), process, Buffer, console, setTimeout, clearTimeout, setInterval, clearInterval })
   return module.exports
 }
 const { SkillRegistryService } = await load('src/main/maestro/skills/skillRegistry.service.ts')
-const { workspaceSkillRoots, discoverWorkspaceSkills, SkillDirectoryWatcher } = await load('src/main/maestro/skills/skillDiscovery.service.ts')
+const { workspaceSkillRoots, discoverWorkspaceSkills } = await load('src/main/maestro/skills/skillDiscovery.service.ts')
 const fixture = t => {
   const base = mkdtempSync(join(tmpdir(), 'bl-three-skills-')), data = join(base, 'userdata'), workspace = join(base, 'workspace')
   mkdirSync(workspace, { recursive: true }); mkdirSync(data)
@@ -59,10 +62,11 @@ test('linked skills deduplicate, auxiliary changes revise, malformed YAML is una
   assert.equal(discoverWorkspaceSkills(f.workspace).length, 1)
   const before = f.registry.catalog(f.workspace)
   writeFileSync(join(actual, 'reference.txt'), 'Updated resource')
-  const after = f.registry.catalog(f.workspace)
+  assert.equal(f.registry.catalog(f.workspace).revision, before.revision, 'external edits stay cached until explicit refresh')
+  const after = f.registry.reload(f.workspace)
   assert.notEqual(before.revision, after.revision)
   writeFileSync(join(actual, 'SKILL.md'), '---\nname: [\n---\nbad')
-  const broken = f.registry.catalog(f.workspace)
+  const broken = f.registry.reload(f.workspace)
   assert.equal(broken.skills[0].status, 'error')
   assert.equal(f.registry.withWorkspace(f.workspace, () => f.registry.listSkills()).length, 0)
 })
@@ -73,16 +77,23 @@ test('separate Chat workspaces and private symlink cannot become workspace or gl
   const secret = skill(join(f.data, 'skill-library/foreign/99'), 'secret')
   symlinkSync(secret, join(root, 'private-alias'))
   mkdirSync(join(f.data, 'skills'), { recursive: true }); symlinkSync(secret, join(f.data, 'skills/leak'))
+  f.registry.reload(f.workspace)
   assert.ok(!f.registry.catalogPrompt(f.workspace).includes('secret'))
 })
-test('watch missing directories, rename and linked target changes without restart', async t => {
+test('explicit reload discovers creation, rename and linked target changes without background watching', t => {
   const f = fixture(t), root = join(f.workspace, '.agents/skills')
-  let changes = 0; const watcher = new SkillDirectoryWatcher(() => changes++)
-  t.after(() => watcher.dispose()); watcher.update([root])
-  skill(root, 'new'); for (let i = 0; i < 20 && changes < 1; i++) await new Promise(resolve => setTimeout(resolve, 100))
-  assert.ok(changes >= 1); const count = changes
-  renameSync(join(root, 'new'), join(root, 'renamed')); for (let i = 0; i < 20 && changes <= count; i++) await new Promise(resolve => setTimeout(resolve, 100))
-  assert.ok(changes > count)
+  let changes = 0; f.registry.onChanged(() => changes++)
+  assert.equal(f.registry.reload(f.workspace).skills.length, 0)
+  const folder = skill(root, 'new')
+  assert.equal(f.registry.reload(f.workspace).skills.length, 1)
+  renameSync(folder, join(root, 'renamed'))
+  const updated = f.registry.reload(f.workspace)
+  assert.ok(updated.skills[0].path.includes('/renamed/'))
+  writeFileSync(join(root, 'renamed', 'resource.txt'), 'Updated resource')
+  assert.notEqual(f.registry.reload(f.workspace).revision, updated.revision)
+  assert.equal(changes, 4)
+  const source = readFileSync(join(app, 'src/main/maestro/skills/skillDiscovery.service.ts'), 'utf8')
+  assert.doesNotMatch(source, /setInterval|setTimeout|\bwatch\(/)
 })
 
 const { buildAgentTurnPrompt } = await load('src/main/agent/runtime/agentPrompt.ts')
@@ -95,6 +106,8 @@ test('prompt and request catalog helpers refresh without history rewrite and rej
   const request=appendCurrentSkillCatalog({messages:history,catalog,contextWindow:262144,maxTokens:8192,systemPrompt:'Fixture'})
   assert.ok(pending.includes(request.at(-1).content)); assert.equal(history.length,1)
   writeFileSync(join(dir,'assets.txt'),'Resource revision 2')
+  assert.equal(f.registry.catalogPrompt(f.workspace),catalog)
+  f.registry.reload(f.workspace)
   const newer=f.registry.catalogPrompt(f.workspace)
   assert.notEqual(newer,catalog)
   const follow=appendCurrentSkillCatalog({messages:history,catalog:newer,contextWindow:262144,maxTokens:8192,systemPrompt:'Fixture'})
@@ -146,4 +159,100 @@ test('registry refuses archive, overwrite and delete for every read-only source 
   assert.equal(f.registry.archiveSkill(ref), true)
   assert.ok(f.registry.overwriteSkill(ref, { recipe, body: 'Updated local body' }))
   assert.ok(readFileSync(local.path, 'utf8').includes('Updated local body'))
+})
+
+test('native prompt preserves complete metadata and skill authoring targets the explicit workspace or Global with bundled Bun', () => {
+  const globalRoot = '/fixture/global skills', bunPath = "/fixture/owner's app/bun"
+  const briefs = Array.from({ length: 251 }, (_, n) => ({ id: `shared:${n}`, name: `skill-${n}`, description: 'A & B <fixture>', path: `/fixture/${n}/SKILL.md`, inputs: [], triggers: [], seed: {}, missing: [] }))
+  const params = { message: 'Create a reusable skill', currentUrl: '', briefs, skillAuthoring: { globalRoot, bunPath } }
+  const global = buildAgentTurnPrompt(params)
+  assert.equal((global.match(/<skill>/g) || []).length, 251)
+  assert.ok(global.includes('<description>A &amp; B &lt;fixture&gt;</description>'))
+  assert.ok(global.includes(JSON.stringify(globalRoot)))
+  assert.ok(global.includes("'/fixture/owner'\\''s app/bun'"))
+  const workspace = buildAgentTurnPrompt({ ...params, context: { workspace: { path: '/fixture/workspace' } } })
+  assert.ok(workspace.includes('"/fixture/workspace/.agents/skills" as the package root'))
+  assert.ok(!workspace.includes('"/fixture/global skills" as the package root'))
+})
+
+test('rendered installer guidance uses managed sources without unnecessary runtime installation', () => {
+  for (const workspace of [undefined, { path: '/fixture/selected' }]) {
+    const prompt = buildAgentTurnPrompt({ message: 'Install the skill from this npx command', currentUrl: '', briefs: [], context: { workspace }, skillAuthoring: { globalRoot: '/fixture/shared', bunPath: '/fixture/bun' } })
+    assert.match(prompt, /Prefer existing tools, bundled Bun and direct HTTPS retrieval/)
+    assert.match(prompt, /Treat an npx command as installation intent: identify the exact source, requested version\/ref and CLI behavior/)
+    assert.match(prompt, /do not run it verbatim by default/)
+    assert.match(prompt, /use bundled Bun only after verifying compatibility/)
+    assert.match(prompt, /app-private Node\/npm\/Git when a required runtime is missing/)
+    assert.match(prompt, /automatic runtime preparation is not implemented/)
+    assert.match(prompt, /Use skill_install for supported GitHub archives, npm tarballs and HTTPS Git sources/);
+    assert.match(prompt, /it records a local source ledger without executing a CLI/);
+    assert.match(prompt, /Installing necessary dependencies is allowed when existing capabilities are insufficient/)
+    assert.match(prompt, /never default to global installs or PATH changes/)
+    assert.match(prompt, /scripts\/references\/assets and binary files/)
+    assert.match(prompt, /never overwrite an existing package implicitly/)
+    assert.match(prompt, /Local installation does not require an institution/)
+    assert.match(prompt, /report the exact missing capability rather than claiming installation succeeded/)
+    assert.ok(prompt.includes(JSON.stringify(workspace ? '/fixture/selected/.agents/skills' : '/fixture/shared') + ' as the package root'))
+    assert.match(prompt, /skill_creator check for format evidence, keep behavior verification separate/)
+    assert.match(prompt, /Skills Refresh or a new Chat after file-tool edits/)
+  }
+})
+
+test('native traversal cannot publish a nested owned alias or invalid private workspace alias', t => {
+  const f = fixture(t), privateDir = skill(join(f.data, 'skill-library/foreign/99'), 'private-skill')
+  const owned = join(f.data, 'skills/nested'), workspace = join(f.workspace, '.agents/skills')
+  mkdirSync(owned, { recursive: true }); mkdirSync(workspace, { recursive: true })
+  symlinkSync(privateDir, join(owned, 'private-alias'))
+  symlinkSync(privateDir, join(workspace, 'private-alias'))
+  assert.equal(f.registry.catalog(f.workspace).skills.length, 0)
+  writeFileSync(join(privateDir, 'SKILL.md'), '---\nname: [\n---\nInvalid private body')
+  f.registry.reload(f.workspace)
+  assert.equal(f.registry.catalog(f.workspace).skills.length, 0)
+})
+
+test('cached catalog and Pi snapshots perform no native scans until explicit reload', t => {
+  const f = fixture(t), root = join(f.workspace, '.agents/skills')
+  const folder = skill(root, 'cached')
+  const first = f.registry.catalog(f.workspace), pi = f.registry.getPiSkills(f.workspace), scans = nativeScans
+  for (let n = 0; n < 5; n++) {
+    assert.equal(f.registry.catalog(f.workspace), first)
+    assert.equal(f.registry.getPiSkills(f.workspace), pi)
+    f.registry.catalogPrompt(f.workspace); f.registry.resourceRevision(f.workspace)
+    f.registry.withWorkspace(f.workspace, () => f.registry.listSkills())
+  }
+  assert.equal(nativeScans, scans)
+  skill(root, 'added'); rmSync(folder, { recursive: true, force: true })
+  assert.equal(f.registry.catalog(f.workspace), first)
+  const refreshed = f.registry.reload(f.workspace)
+  assert.deepEqual(Array.from(refreshed.skills, row => row.name), ['added'])
+  assert.ok(nativeScans > scans)
+  const reloadedScans = nativeScans
+  f.registry.getPiSkills(f.workspace); f.registry.catalogPrompt(f.workspace)
+  assert.equal(nativeScans, reloadedScans)
+})
+
+test('host mutation, cloud revision and institution scope changes invalidate loaded snapshots', t => {
+  const f = fixture(t)
+  let cloudRevision = 0
+  const registry = new SkillRegistryService(f.data, f.context, () => cloudRevision)
+  t.after(() => registry.dispose())
+  skill(join(f.data, 'skill-library/account/7'), 'private')
+  const initial = registry.catalog(f.workspace), originalReference = initial.skills[0].reference
+  const saved = registry.createRecordedSkill({ name: 'Created', description: 'Created fixture', triggers: [], inputs: [], body: 'Original', recipe: {
+    id: 'created', name: 'Created', description: 'Created fixture', source: 'recording', createdAt: 1, updatedAt: 1, inputs: [], steps: [], network: [], snapshots: []
+  } })
+  assert.equal(registry.catalog(f.workspace).skills.length, 2)
+  assert.equal(registry.deleteSkill(saved.reference).ok, true)
+  assert.equal(registry.catalog(f.workspace).skills.length, 1)
+  skill(join(f.data, 'skill-library/shared'), 'cloud-update')
+  const beforeCloud = registry.catalog(f.workspace)
+  assert.equal(beforeCloud.skills.length, 1)
+  cloudRevision++
+  assert.equal(registry.catalog(f.workspace).skills.length, 2)
+  f.context.current = () => null
+  assert.deepEqual(Array.from(registry.catalog(f.workspace).skills, row => row.name), ['cloud-update'])
+  assert.equal(registry.resolveSkill(originalReference), undefined)
+  const scans = nativeScans
+  registry.catalog(f.workspace); registry.getPiSkills(f.workspace)
+  assert.equal(nativeScans, scans)
 })

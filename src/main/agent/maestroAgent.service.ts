@@ -1,5 +1,8 @@
+import { skillAuthoringRuntime } from './runtime/skillAuthoring'
+import { applicationAuth } from '@main/auth/applicationAuth.service';
 import { ensureDefaultWorkspace } from '@maestro-main/files/defaultWorkspace'
 import { skillCloud } from '@maestro-main/skills/skillCloud.runtime'
+import { selectedSkillPrompt } from '@maestro-main/skills/skillSelection'
 import { onSkillContextChanged, skillScopeContext, assertSkillContext } from '@maestro-main/skills/skillScope.context'
 import { workflowCompletionId, workflowCompletionContext } from './workflowEngine/completion'
 import { workflowWaitContinuationText } from './workflowEngine/workflowWait'
@@ -12,10 +15,10 @@ import { isAbsolute } from 'node:path'
 import { clipboard, dialog, shell } from 'electron'
 import type { BrowserWindow } from 'electron'
 import { createXpcMainEmitter, xpcMain } from 'electron-xpc/main'
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { AsyncLocalStorage } from 'async_hooks'
 import { basename, extname, join, resolve, sep } from 'path'
-import { mkdirSync, statSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'fs'
 import { fetch } from 'undici'
 import { injectable } from 'inversify'
 import { i18nHelper } from '@main/i18n/i18n.helper'
@@ -207,6 +210,7 @@ const agentPorts = (): { runtime: PiRuntimeAdapter; describeTarget: typeof descr
 })
 
 export interface MaestroAgentServiceState {
+  readMaestroSettings(): import('@maestro-shared/coach.api').CoachSettings
   browserWindow: BrowserWindow | null
   activeTabId: string | null
   currentUrl: string
@@ -375,6 +379,8 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
 
   private readonly maestroAgents = new Map<string, MaestroAgent>()
   private readonly delegateAgents = new Map<string, DelegateAgent>()
+  private readonly manualCompactionCancels = new Map<string, () => void | Promise<void>>()
+  private readonly manualCompactions = new Map<string, Promise<unknown>>()
   private readonly hydratedMaestroAgentSessions = new Set<string>()
   private readonly attachedPaths = new Map<string, Set<string>>()
   /**
@@ -449,11 +455,14 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
   }
 
   ensureAgents(): MaestroAgentInstances {
-    this.assertAgentRuntimeActive()
+    // Constructing configuration helpers is also used by anonymous browser startup. Execution
+    // entrypoints below still assert application auth independently of provider OAuth.
+    if (this.shuttingDown) throw new Error('Maestro runtime is shutting down.');
     if (!this.piGen) {
       this.piGen = this.configureAgent(
         new BaseAgent({
           ...agentPorts(),
+          compactPrompt: () => this._state.readMaestroSettings().compactPrompt,
           buildTools: () => [],
           scope: 'summarize',
           authPath: maestroAuthPath(),
@@ -470,6 +479,8 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       this.pi = this.configureAgent(
         new MaestroAgent({
           ...agentPorts(),
+          compactPrompt: () => this._state.readMaestroSettings().compactPrompt,
+          onCompaction: (state) => xpcMain.broadcast('coach/agent-compaction', { sessionId: 'default', ...state }),
           buildTools: () => this._state.buildPiTools({ ingest: true, sessionKey: 'default' }),
           authPath: maestroAuthPath(),
           modelsPath: maestroModelsPath(),
@@ -493,6 +504,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       this.piDelegate = this.configureAgent(
         new DelegateAgent({
           ...agentPorts(),
+          autoCompaction: false,
           buildTools: () => this._state.buildPiTools({ sessionKey: 'default' }),
           authPath: maestroAuthPath(),
           modelsPath: maestroModelsPath(),
@@ -599,6 +611,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     )
     // SDK 的 BaseAgent 没有 dispose() —— 带排空的销毁属于 bitterless 独有的 15 项生命周期机制,
     // abort() 是等价出口:有界等待 + finally 里 reset() 清掉会话与 busy。
+    await Promise.allSettled([...this.manualCompactionCancels.values()].map((cancel) => Promise.resolve().then(cancel)))
     await Promise.allSettled([...agents].map((agent) => agent.abort()))
 
     this.attachedPaths.clear()
@@ -977,7 +990,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
   }
 
   hasActiveAgentTurn(): boolean {
-    return this.activeAgentTurns.size > 0
+    return this.activeAgentTurns.size > 0 || this.manualCompactions.size > 0
   }
 
   private agentTurnSnapshot(turn: ActiveAgentTurn): AgentTurnSnapshot {
@@ -1108,10 +1121,16 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       }
       const sessionKey = this.agentSessionKey(params.sessionId)
       this._state.syncWorkspaceFromContext(sessionKey, params.context?.workspace)
-      await skillScopeContext.authorize().catch(() => null)
-      await skillCloud.ensureCatalog()
+      if (skillScopeContext.current()) {
+        await skillScopeContext.authorize().catch(() => null)
+        if (skillScopeContext.current()) await skillCloud.ensureCatalog()
+      }
       assertContextTextSize(params.draft)
-      const agent = sessionKey === 'default' ? this.pi : this.maestroAgents.get(sessionKey)
+      const agent = (sessionKey === 'default' ? this.pi : this.maestroAgents.get(sessionKey)) || (existsSync(this.nativeSessionFile(sessionKey)) ? this.getMaestroAgent(sessionKey) : undefined)
+      if (agent) {
+        await agent.setProjectRoot(this._state.projectRootForSession(sessionKey))
+        if (await agent.hasConversation()) this.hydratedMaestroAgentSessions.add(sessionKey)
+      }
       const context = params.context
       const attachmentPaths = context?.attachedPaths ?? []
       if (!Array.isArray(attachmentPaths) || attachmentPaths.some((path) => typeof path !== 'string')) {
@@ -1137,6 +1156,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         userChainPath: chainFilePath(maestroUserChainDir(), sessionKey),
         currentUrl,
         catalog: registry.catalogPrompt(this._state.projectRootForSession(sessionKey)),
+        skillAuthoring: skillAuthoringRuntime(registry.scopeStorage.shared),
         briefs: this.agentSkillBriefs(message, recordings, registry)
       })
       // 组装走 SDK 的 entry 级实现(`@main/agent/contextExport.service`),与 cowork 同一份:
@@ -1209,7 +1229,12 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       assertContextTextSize(params.draft)
       // 与 `copyNextTurnContext` 里那个内联表达式同一个解析(default → this.pi,否则会话表),
       // 只是走已有的具名口子,免得同一句话在这个文件里出现第四遍。
-      const agent = this.getExistingMaestroAgent(sessionKey)
+      this._state.syncWorkspaceFromContext(sessionKey, params.context?.workspace)
+      const agent = this.getExistingMaestroAgent(sessionKey) || (existsSync(this.nativeSessionFile(sessionKey)) ? this.getMaestroAgent(sessionKey) : undefined)
+      if (agent) {
+        await agent.setProjectRoot(this._state.projectRootForSession(sessionKey))
+        if (await agent.hasConversation()) this.hydratedMaestroAgentSessions.add(sessionKey)
+      }
       const context = params.context
       const attachmentPaths = context?.attachedPaths ?? []
       if (!Array.isArray(attachmentPaths) || attachmentPaths.some((path) => typeof path !== 'string')) {
@@ -1237,6 +1262,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         userChainPath: chainFilePath(maestroUserChainDir(), sessionKey),
         currentUrl,
         catalog: registry.catalogPrompt(this._state.projectRootForSession(sessionKey)),
+        skillAuthoring: skillAuthoringRuntime(registry.scopeStorage.shared),
         briefs: this.agentSkillBriefs(message, recordings, registry)
       })
       const graph = buildContextGraph({
@@ -1307,6 +1333,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
   }
 
   async sendAgentMessage(params: AgentMessageRequest): Promise<AgentReply> {
+    this.assertAgentRuntimeActive();
     // Fix D3/D4 at receipt, before turn reservations, persistence, or media preparation can await.
     const windowTabs = params.snapshot?.windowTabs || this._state.describeWindowTabs()
     const snapshot = { windowTabs, sentAt: params.snapshot?.sentAt || localNow() }
@@ -1321,6 +1348,14 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       }
     }
     const sessionKey = this.agentSessionKey(params.sessionId)
+    const compaction = this.manualCompactions.get(sessionKey)
+    if (compaction && params.intent === 'root') {
+      // The root payload arrived; waiting for native compaction is not a lost reservation.
+      const reserved = this.activeTurnFor(sessionKey, params.turnId)
+      if (reserved?.reservationTimer) clearTimeout(reserved.reservationTimer)
+      if (reserved) reserved.reservationTimer = undefined
+    }
+    await compaction?.catch(() => undefined)
     const turn = this.activeTurnFor(sessionKey, params.turnId)
     if (!turn || turn.state === 'aborting') {
       if (!turn && params.intent === 'steering') {
@@ -1357,7 +1392,9 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       this.broadcastAgentTurn({ turn: this.agentTurnSnapshot(turn) })
     } else {
       // Capture all dynamic context before any root preparation or provider work can await.
-      const text = this.buildMessagePrompt(message, params.context, windowTabs, sessionKey, false, snapshot.sentAt)
+      const registry = this._state.existingSkillRegistry() || this._state.ensureServices().registry
+      const selected = await registry.withWorkspace(this._state.projectRootForSession(sessionKey), () => selectedSkillPrompt(registry, params.context?.selectedSkillRef))
+      const text = this.buildMessagePrompt(message + selected, params.context, windowTabs, sessionKey, false, snapshot.sentAt)
       if (turn.steeringInbox.isClosed) {
         const finished = await turn.finished
         const successor = this.activeAgentTurns.get(sessionKey)
@@ -1414,40 +1451,81 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     }
   }
 
-  async compactConversation(params: AgentCompactRequest): Promise<AgentCompactReply> {
-    const maxSummaryChars = Math.max(
-      800,
-      Math.min(500_000, Math.round(params.maxSummaryChars || 6000))
-    )
-    if (!params.messages?.length && !params.previousSummary?.trim()) {
-      return {
-        ok: false,
-        summary: '',
-        ts: Date.now(),
-        error: 'nothing-to-compact'
-      }
-    }
-    const prompt = buildConversationCompactPrompt({
-      ...params,
-      maxSummaryChars
-    })
+  async testAutoCompaction(params: { sessionId: string; filePath?: string }): Promise<import('./runtime/piAutoCompactionTest').AutoCompactionTestReport> {
+    this.assertAgentRuntimeActive()
+    if (!params?.sessionId?.trim()) throw new Error('A chat session is required.')
+    const key = this.agentSessionKey(params.sessionId)
+    if (this.activeAgentTurns.has(key) || this.manualCompactions.has(key)) throw new Error('Wait for the current operation to finish before testing compaction.')
+    const agent = this.getMaestroAgent(key)
+    const cancellation = new AbortController()
+    this.manualCompactionCancels.set(key, () => cancellation.abort())
+    const operation = (async () => {
+      await agent.setProjectRoot(this._state.projectRootForSession(key))
+      const config = agent.sessionIoConfiguration()
+      xpcMain.broadcast('coach/agent-compaction', { sessionId: key, active: true })
+      try {
+        return await new PiRuntimeAdapter().testAutoCompaction({
+          target: { providerId: config.providerId, modelId: config.modelId, thinkingLevel: config.thinkingLevel as import('./runtime/agentRuntime.types').AgentRuntimeThinkingLevel },
+          authPath: maestroAuthPath(), modelsPath: maestroModelsPath(), cwd: config.cwd,
+          systemPrompt: agent.composedSystemPrompt(), compactPrompt: this._state.readMaestroSettings().compactPrompt,
+          filePath: params.filePath, signal: cancellation.signal,
+          onCompaction: (state) => xpcMain.broadcast('coach/agent-compaction', { sessionId: key, ...state })
+        })
+      } finally { xpcMain.broadcast('coach/agent-compaction', { sessionId: key, active: false }) }
+    })()
+    this.manualCompactions.set(key, operation)
+    try { return await operation } finally { this.manualCompactions.delete(key); this.manualCompactionCancels.delete(key) }
+  }
+
+  async cancelCompaction(params: { sessionId: string }): Promise<void> {
+    await this.manualCompactionCancels.get(this.agentSessionKey(params.sessionId))?.()
+  }
+
+  async compactSession(params: { sessionId: string; instructions?: string }): Promise<AgentCompactReply & { tokensBefore?: number; estimatedTokensAfter?: number }> {
     try {
-      const { piGen } = this.ensureAgents()
-      const result = await piGen.oneShot(prompt, 120_000)
-      const summary = normalizeCompactSummary(result.text || '', maxSummaryChars)
-      if (!result.ok || !summary) {
-        return {
-          ok: false,
-          summary: '',
-          ts: Date.now(),
-          error: result.error || result.errorMessage || 'compact-summary-empty'
-        }
-      }
-      return { ok: true, summary, ts: Date.now() }
-    } catch (err) {
-      const error = err instanceof Error ? err.message : String(err)
-      return { ok: false, summary: '', ts: Date.now(), error }
+      this.assertAgentRuntimeActive()
+      if (!params?.sessionId?.trim()) throw new Error('A chat session is required.')
+      const key = this.agentSessionKey(params.sessionId)
+      if (this.activeAgentTurns.has(key)) throw new Error('Wait for the current turn to finish before using /compact.')
+      if (this.manualCompactions.has(key)) throw new Error('This conversation is already compacting.')
+      const agent = this.getMaestroAgent(key)
+      this.manualCompactionCancels.set(key, () => agent.abort())
+      const operation = (async () => {
+        await agent.setProjectRoot(this._state.projectRootForSession(key))
+        return await agent.compact(params.instructions)
+      })()
+      this.manualCompactions.set(key, operation)
+      let result: Awaited<ReturnType<BaseAgent['compact']>>
+      try { result = await operation } finally { this.manualCompactions.delete(key); this.manualCompactionCancels.delete(key) }
+      this.hydratedMaestroAgentSessions.add(key)
+      return { ok: true, ...result, ts: Date.now() }
+    } catch (error) {
+      return { ok: false, summary: '', ts: Date.now(), error: error instanceof Error ? error.message : String(error) }
     }
+  }
+
+  async deleteNativeSession(params: { sessionId: string }): Promise<{ ok: true }> {
+    this.assertAgentRuntimeActive()
+    const key = this.agentSessionKey(params.sessionId)
+    if (!params.sessionId?.trim() || key === 'default') throw new Error('A named chat session is required.')
+    await this.manualCompactionCancels.get(key)?.()
+    await this.manualCompactions.get(key)?.catch(() => undefined)
+    const turn = this.activeAgentTurns.get(key)
+    if (turn) await this.abortAgent({ sessionId: key, turnId: turn.turnId })
+    this.maestroAgents.get(key)?.reset()
+    this.maestroAgents.delete(key)
+    this.hydratedMaestroAgentSessions.delete(key)
+    rmSync(this.nativeSessionFile(key), { force: true })
+    return { ok: true }
+  }
+
+  private nativeSessionFile(sessionKey: string): string {
+    const id = createHash('sha256').update(sessionKey).digest('hex')
+    return join(maestroAgentDir(), 'chat-sessions', id + '.jsonl')
+  }
+
+  async compactConversation(_params: AgentCompactRequest): Promise<AgentCompactReply> {
+    return { ok: false, summary: '', ts: Date.now(), error: 'Use /compact to invoke native Pi compaction.' }
   }
 
   async delegateMessage(params: { message: string; sessionId?: string }): Promise<AgentReply> {
@@ -1518,6 +1596,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
   }
 
   private assertAgentRuntimeActive(): void {
+    applicationAuth.assertReady();
     if (this.shuttingDown) {
       throw new Error('Maestro runtime is shutting down.')
     }
@@ -1592,7 +1671,10 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       agent = this.configureAgent(
         new MaestroAgent({
           ...agentPorts(),
+          compactPrompt: () => this._state.readMaestroSettings().compactPrompt,
+          onCompaction: (state) => xpcMain.broadcast('coach/agent-compaction', { sessionId: key, ...state }),
           buildTools: () => this._state.buildPiTools({ ingest: true, sessionKey: key }),
+          sessionFile: this.nativeSessionFile(key),
           authPath: maestroAuthPath(),
           modelsPath: maestroModelsPath(),
           agentDir: maestroAgentDir(),
@@ -1622,6 +1704,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       agent = this.configureAgent(
         new DelegateAgent({
           ...agentPorts(),
+          autoCompaction: false,
           buildTools: () => this._state.buildPiTools({ sessionKey: key }),
           authPath: maestroAuthPath(),
           modelsPath: maestroModelsPath(),
@@ -1817,7 +1900,11 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     return await this.agentTurnContext.run(identity, () => runInAgentSession(sessionKey, async () => {
       await this.loadHostToolPolicies()
       this._state.syncWorkspaceFromContext(sessionKey, context?.workspace)
-      const includeConversationMemory = !this.hydratedMaestroAgentSessions.has(sessionKey)
+      const registry = this._state.existingSkillRegistry() || this._state.ensureServices().registry
+      const selected = await registry.withWorkspace(this._state.projectRootForSession(sessionKey), () => selectedSkillPrompt(registry, context?.selectedSkillRef))
+      const currentAgent = this.getMaestroAgent(sessionKey)
+      await currentAgent.setProjectRoot(this._state.projectRootForSession(sessionKey))
+      const includeConversationMemory = !this.hydratedMaestroAgentSessions.has(sessionKey) && !(await currentAgent.hasConversation())
       const mediaInput = await this.buildAgentMediaInput(sessionKey, context?.attachedPaths)
       if (isCancelled()) {
         return {
@@ -1827,7 +1914,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
           error: 'turn-aborted'
         }
       }
-      return await this.handleAgentTurn(message, this.getMaestroAgent(sessionId), context, {
+      return await this.handleAgentTurn(message + selected, this.getMaestroAgent(sessionId), context, {
         sessionKey: sessionId,
         includeConversationMemory,
         mediaInput,
@@ -1859,7 +1946,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       return {
         id: skill.reference || skill.id,
         scope: skill.scope === 'institution' ? 'institution' as const : 'shared' as const, institutionId: skill.institutionId, reference: skill.reference, path: skill.path,
-        layer: skill.layer, skillRevision: skill.skillRevision,
+        layer: skill.layer, skillRevision: skill.skillRevision, allowImplicitInvocation: skill.allowImplicitInvocation,
         name: skill.name,
         triggers: skill.triggers,
         description: skill.description,
@@ -1880,6 +1967,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       activeTab: windowTabs.activeTab, openTabs: windowTabs.openTabs,
       userChainPath: chainFilePath(maestroUserChainDir(), sessionKey), currentUrl,
       catalog: registry.catalogPrompt(this._state.projectRootForSession(sessionKey)),
+      skillAuthoring: skillAuthoringRuntime(registry.scopeStorage.shared),
         briefs: this.agentSkillBriefs(message, recordings, registry)
     })
   }
@@ -1909,8 +1997,8 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     }
   ): Promise<AgentReply> {
     const sessionKey = this.agentSessionKey(options?.sessionKey)
-    const authorizedSkillContext = await skillScopeContext.authorize().catch(() => null)
-    await skillCloud.ensureCatalog()
+    const authorizedSkillContext = skillScopeContext.current() ? await skillScopeContext.authorize().catch(() => null) : null
+    if (authorizedSkillContext) await skillCloud.ensureCatalog()
     const cancelledReply = (): AgentReply => ({
       ok: false,
       text: 'Stopped.',
@@ -1926,9 +2014,15 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     const registry = this._state.existingSkillRegistry() || this._state.ensureServices().registry
     const recordings = registry.withWorkspace(this._state.projectRootForSession(sessionKey), () => registry.listSkills()).filter(skill => skill.scope !== 'institution' || Boolean(authorizedSkillContext))
     agent.setSkillCatalogProvider(async () => {
-      await skillScopeContext.authorize().catch(() => null)
-      await skillCloud.ensureCatalog()
+      if (skillScopeContext.current()) {
+        await skillScopeContext.authorize().catch(() => null)
+        if (skillScopeContext.current()) await skillCloud.ensureCatalog()
+      }
       return registry.catalogPrompt(this._state.projectRootForSession(sessionKey))
+    }, {
+      revision: () => registry.resourceRevision(this._state.projectRootForSession(sessionKey)),
+      getSkills: () => registry.getPiSkills(this._state.projectRootForSession(sessionKey)),
+      reload: () => { registry.reload(this._state.projectRootForSession(sessionKey)) }
     })
     const skillBriefs = this.agentSkillBriefs(message, recordings, registry)
     const nowLocal = options?.messageSentAt || localNow()
@@ -1942,6 +2036,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       userChainPath: chainFilePath(maestroUserChainDir(), this.agentSessionKey(options?.sessionKey)),
       currentUrl,
       catalog: registry.catalogPrompt(this._state.projectRootForSession(sessionKey)),
+      skillAuthoring: skillAuthoringRuntime(registry.scopeStorage.shared),
       briefs: skillBriefs
     })
     if (!options?.steeringInbox) {
@@ -1955,6 +2050,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     }
 
     for (const candidate of recordings) {
+      if (candidate.allowImplicitInvocation === false && context?.selectedSkillRef !== candidate.reference) continue
       if (candidate.domain && candidate.domain !== (() => { try { return new URL(currentUrl).hostname } catch { return '' } })()) continue
       const recipe = registry.readRecipe(candidate.id)
       if (!recipe) continue

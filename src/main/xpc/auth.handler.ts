@@ -6,23 +6,17 @@ import type {
   CustomerSessionPayload,
 } from '@shared/auth/auth.type';
 import { customerSessionService } from '@main/auth/customerSession.service';
-import { connectorWindowHelper } from '@main/windows/connectorWindow.helper';
-import { llamaWindowHelper } from '@main/windows/llamaWindow.helper';
 import { mainWindowHelper } from '@main/windows/mainWindow.helper';
-import { omniWindowHelper } from '@main/windows/omniWindow.helper';
 import { sqliteWindowHelper } from '@main/windows/sqliteWindow.helper';
-import { pluginTestHandler } from './pluginTest.handler';
 import { todoWindowHandler } from './todoWindow.handler';
 import { eyesOnAgentsWindowHandler } from './eyesOnAgentsWindow.handler';
-import { submodulesWindowHandler } from './submodulesWindow.handler';
-import { zellijWindowService } from '@main/zellij/zellijWindow.service';
 import {
   resumeEyesOnAgentsAfterAuth,
   suspendEyesOnAgentsForAuth,
 } from './eyesOnAgents.handler';
 import { coinWindowHandler } from './coinWindow.handler';
 import { maestroWindowHandler } from './maestroWindow.handler';
-import { destroyOnlyPreviewForAuth } from './onlyPreview.handler';
+import { maestroWindowHelper } from '@maestro-main/windows/main/maestroWindow.controller';
 import type { TodoistSyncSessionApi } from '@shared/todoistSync/todoistSync.type';
 import { createBoundedTodoXpcClient } from '@shared/todoistSync/todoXpcCall.shared';
 
@@ -90,9 +84,9 @@ class AuthHandler extends XpcMainHandler implements AuthSessionApi {
       if (this._stopStaleActivation(generation)) return;
       await resumeEyesOnAgentsAfterAuth();
       if (this._stopStaleActivation(generation)) return;
-      await maestroWindowHandler.prepareForAuthenticatedSession();
-      if (this._stopStaleActivation(generation)) return;
       await coinWindowHandler.prepareForAuthenticatedSession();
+      if (this._stopStaleActivation(generation)) return;
+      await maestroWindowHandler.prepareForAuthenticatedSession();
       if (this._stopStaleActivation(generation)) return;
       await this._showAuthenticatedPrimaryWindow(generation);
     } catch (err) {
@@ -110,6 +104,7 @@ class AuthHandler extends XpcMainHandler implements AuthSessionApi {
 
   async showHomeWindow(): Promise<void> {
     await this._showMaestroPrimaryWindow();
+    maestroWindowHelper.requestLogin();
   }
 
   async showPrimaryWindow(): Promise<void> {
@@ -117,6 +112,8 @@ class AuthHandler extends XpcMainHandler implements AuthSessionApi {
   }
 
   async deactivateSession(): Promise<void> {
+    // Revoke protected capabilities immediately; browsing and Control remain alive.
+    void maestroWindowHelper.prepareForAuthShutdown();
     this.sessionShouldBeActive = false;
     customerSessionService.clear();
     this.sessionActivationGeneration += 1;
@@ -221,39 +218,11 @@ class AuthHandler extends XpcMainHandler implements AuthSessionApi {
     await eyesOnAgentsWindowHandler._destroyForAuth().catch((err) => {
       console.warn('[AuthHandler] Failed to destroy EyesOnAgents window:', err);
     });
-    await submodulesWindowHandler._destroyForAuth().catch((err) => {
-      console.warn('[AuthHandler] Failed to destroy Submodules window:', err);
-    });
     await maestroWindowHandler._destroyForAuth().catch((err) => {
       console.warn('[AuthHandler] Failed to destroy Maestro window:', err);
     });
-    await pluginTestHandler._destroyForAuth().catch((err) => {
-      console.warn('[AuthHandler] Failed to destroy plugin test windows:', err);
-    });
-
-    try {
-      omniWindowHelper.destroy();
-    } catch (err) {
-      console.warn('[AuthHandler] Failed to destroy omni window:', err);
-    }
-    await zellijWindowService.destroy().catch(() => undefined);
-
-    try {
-      destroyOnlyPreviewForAuth();
-    } catch (err) {
-      console.warn('[AuthHandler] Failed to destroy OnlyPreview windows:', err);
-    }
-
-    const preservedWindows = new Set<BrowserWindow | null>([
-      mainWindowHelper.browserWindow,
-      sqliteWindowHelper.browserWindow,
-      connectorWindowHelper.browserWindow,
-      llamaWindowHelper.browserWindow
-    ]);
-    for (const window of BrowserWindow.getAllWindows()) {
-      if (preservedWindows.has(window) || window.isDestroyed()) continue;
-      window.destroy();
-    }
+    // Only explicitly account-bound owners above are torn down. Public/local windows such as
+    // OnlyPreview and Zellij must remain usable, so there is deliberately no all-window sweep.
   }
 }
 

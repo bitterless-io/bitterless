@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
 import AdmZip from 'adm-zip'
-import { describeSkillFile } from './skillDiscovery.service'
+import { loadSkillSources, summarizeLoadedSkill } from './skillDiscovery.service'
 import type { SkillInstitutionContext } from './skillScope.storage'
 
 interface CloudRow { id: number; name: string; version: string; scope: 'GLOBAL' | 'INSTITUTION'; institution_id?: number | null; size: number; hash: string; content_revision: string | null }
@@ -33,6 +33,7 @@ const validHash = (value: unknown): value is string => typeof value === 'string'
 
 export class SkillCloudService {
   private initialized = false
+  revision = 0
   status = 'idle'
   error = ''
   private epoch = 0
@@ -118,9 +119,12 @@ export class SkillCloudService {
   }
   resetAuthorization?: () => void
   private activate(root: string, skills: Record<string, Installed>, fence: () => void): void {
-    fence(); mkdirSync(root, { recursive: true })
+    fence()
+    const entries = (value: Record<string, Installed>) => JSON.stringify(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)))
+    if (entries(this.ledger(root).skills) === entries(skills)) return
+    mkdirSync(root, { recursive: true })
     const temp = join(root, '.installed-' + randomUUID())
-    try { writeFileSync(temp, JSON.stringify({ skills })); fence(); renameSync(temp, join(root, 'installed.json')) }
+    try { writeFileSync(temp, JSON.stringify({ skills })); fence(); renameSync(temp, join(root, 'installed.json')); this.revision++ }
     finally { rmSync(temp, { force: true }) }
   }
   private ledger(root: string): { skills: Record<string, Installed> } {
@@ -157,7 +161,7 @@ export class SkillCloudService {
         if (!path.startsWith(resolve(stage) + sep)) throw new Error('Unsafe Skill archive path.')
         mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, archiveBytes(entry))
       }
-      const summary = describeSkillFile(join(stage, 'SKILL.md'), { id: String(row.id), name: row.name, description: '', source: 'external', domain: '', path: '', updatedAt: 0, inputs: [], triggers: [] })
+      const summary = summarizeLoadedSkill(loadSkillSources([stage]).find(skill => skill.file === join(stage, 'SKILL.md')) || { file: join(stage, 'SKILL.md'), root: stage, error: 'Skill package is missing valid SKILL.md metadata.' }, { id: String(row.id), name: row.name, description: '', source: 'external', domain: '', path: '', updatedAt: 0, inputs: [], triggers: [] })
       if (summary.status !== 'ready') throw new Error(summary.error || 'Invalid downloaded Skill.')
       fence(); mkdirSync(dirname(destination), { recursive: true })
       if (!existsSync(destination)) renameSync(stage, destination)

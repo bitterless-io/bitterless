@@ -1,5 +1,7 @@
 # FEATURE · Maestro 上下文压缩与召回(五段布局)
 
+> Superseded for Pi chat on 2026-09-17 by [Pi native automatic compaction](pi-native-compaction.md), approved by Ral. The text below records the old design and does not define the current Pi implementation. AI-CRMS behavior is outside this replacement.
+
 - **Status:** 📐 **契约已记录,实现暂缓** —— 等上游 `ctx-006` 落地并经真会话验证后再 backport。
   暂缓理由见下「为什么现在不实现」。
 - **Design owner:** Ral, 2026-08-28。

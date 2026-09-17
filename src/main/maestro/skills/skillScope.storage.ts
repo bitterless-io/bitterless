@@ -34,7 +34,11 @@ export class SkillScopeStorage {
     this.shared = join(this.library, 'shared')
   }
 
-  current(): SkillInstitutionContext | null { return this.context.current() }
+  current(): SkillInstitutionContext | null {
+    const value = this.context.current()
+    if (!value || !/^[a-zA-Z0-9_-]{1,128}$/.test(value.accountScope || '') || !/^[a-zA-Z0-9_-]{1,128}$/.test(value.institutionId || '') || value.generation == null || value.generation === '') return null
+    return value
+  }
 
   institutionRoot(context = this.current()): string | null {
     return context ? join(this.library, segment(context.accountScope), segment(context.institutionId)) : null

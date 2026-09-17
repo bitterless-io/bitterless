@@ -1,3 +1,6 @@
+import { runPiAutoCompactionTest, type AutoCompactionTestReport } from './piAutoCompactionTest'
+import { createPiCompactionExtension } from './piNativeCompaction'
+import { resolvePiCompactionSettings } from './piCompactionPolicy'
 import { appendCurrentSkillCatalog } from './skillCatalogRequest'
 import { describeAuthFile } from './authDiagnostic'
 import type { AgentRuntimeAdapter, AgentRuntimeSession, AgentRuntimeSessionOptions } from './agentRuntime.types'
@@ -17,7 +20,15 @@ import { resolveRuntimeSystemPrompt } from './runtimeSystemPrompt'
  * `hasConfiguredAuth(model)` / `getApiKeyAndHeaders(model)` 因此一个字都不用改。
  * `ModelRuntime.hasConfiguredAuth` 收的是 `providerId` 而不是 `model`,直接换会悄悄改变语义。
  *
- * `allowModelNetwork` 不传 —— 0.85.1 的默认值是 false,与我们一直设的 `PI_OFFLINE=1` 同义。
+ * `allowModelNetwork` 不传 —— 0.85.1 里 `refreshFromNetwork = modelNetworkEnabled &&
+ * options.allowModelNetwork === true`(`dist/core/model-runtime.js:91`),那个 `=== true` 就是
+ * 目录抓取不会走网络的全部理由。
+ *
+ * **不要把它写成「因为我们设了 `PI_OFFLINE=1`」**(2026-09-17 核实):`modelNetworkEnabled` 是
+ * `process.env.PI_OFFLINE === undefined`(:88),而 **bitterless 从来没设过 `PI_OFFLINE`** ——
+ * 设它的是 micromeet-cowork(`bundledTools.service.ts`,而且那是为了工具下载,不是模型网络)。
+ * 所以本仓的 `modelNetworkEnabled` 其实是 **true**:哪天有人真传了 `allowModelNetwork: true`,
+ * 这里就会走网络,不会被什么离线开关兜住。
  */
 const createModelRuntime = async (
   pi: PiModule,
@@ -76,6 +87,18 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
     return windows
   }
 
+  async testAutoCompaction(options: {
+    target: AgentRuntimeSessionOptions['target']; authPath: string; modelsPath?: string;
+    cwd: string; systemPrompt: string; compactPrompt?: string; filePath?: string; signal?: AbortSignal; onCompaction?: (state: import('@shared/piCompaction.types').CompactionStatus) => void
+  }): Promise<AutoCompactionTestReport> {
+    const pi: PiModule = await import('@earendil-works/pi-coding-agent')
+    const modelRuntime = await createModelRuntime(pi, options.authPath, options.modelsPath)
+    const modelRegistry = new pi.ModelRegistry(modelRuntime)
+    const model = modelRegistry.find(options.target.providerId, options.target.modelId)
+    if (!model || !modelRegistry.hasConfiguredAuth(model)) throw new Error('Sign in to the selected model before testing automatic compaction.')
+    return await runPiAutoCompactionTest({ ...options, pi, modelRuntime, model, thinkingLevel: options.target.thinkingLevel })
+  }
+
   async createSession(options: AgentRuntimeSessionOptions): Promise<AgentRuntimeSession> {
     const prompt = resolveRuntimeSystemPrompt(options)
     const pi: PiModule = await import('@earendil-works/pi-coding-agent')
@@ -96,6 +119,23 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
 
     const customTools = bindPiTools(pi, Type, options)
     const { builtinNames, allowedToolNames } = resolveRuntimeToolPolicy(options)
+    const settingsManager = pi.SettingsManager.inMemory({ compaction: resolvePiCompactionSettings(model, options.autoCompaction !== false) })
+    const compactionState: import('./piNativeCompaction').PiCompactionState = {}
+    let nativeSession: import('@earendil-works/pi-coding-agent').AgentSession | undefined
+    const extension = createPiCompactionExtension(pi, {
+      getPrompt: options.compactPrompt,
+      getStream: () => nativeSession?.agent.streamFunction,
+      getRetry: () => settingsManager.getRetrySettings(),
+      state: compactionState
+    })
+    const resources = createPiResourceLoader(pi, () => prompt.hostText, options.skillResources, [extension])
+    // Pi's /new rebuilds and reloads its resources. A supplied SDK loader needs the same
+    // initialization here; subsequent turns reuse the loaded snapshot.
+    await resources.reload()
+    const promptSource = Object.assign(prompt, { resourceRevision: () => options.skillResources?.revision?.() || '', skillPrompt: (activeTools: string[]) => {
+      const reader = activeTools.includes('read') ? 'read' : activeTools.includes('bash') ? 'bash' : undefined
+      return reader ? pi.formatSkillsForPrompt(resources.getSkills().skills, reader) : ''
+    } })
     const { session } = await pi.createAgentSession({
       model,
       modelRuntime,
@@ -106,7 +146,7 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
       ...(options.agentDir ? { agentDir: options.agentDir } : {}),
       customTools,
       // pi adds cwd metadata itself; the host text is passed through without trimming.
-      resourceLoader: createPiResourceLoader(pi, () => prompt.hostText),
+      resourceLoader: resources,
       // Without this, pi reads `<cwd>/.pi/settings.json` as TRUSTED project settings
       // (sdk.js:73 `options.settingsManager ?? SettingsManager.create(cwd, agentDir)`;
       // settings-manager.js:169 `projectTrusted ?? true`), and that file supplies the bash tool's
@@ -114,9 +154,10 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
       // while cwd was `/`; once cwd follows the workspace, any repository opened here could inject a
       // shell wrapper into every bash call. The workflow path already does this
       // (workflowEngine/piAgentSession.ts). See docs/features/agent-cwd-follows-workspace.md.
-      settingsManager: pi.SettingsManager.inMemory(),
-      sessionManager: pi.SessionManager.inMemory()
+      settingsManager,
+      sessionManager: options.sessionFile ? pi.SessionManager.open(options.sessionFile, undefined, prompt.cwd) : pi.SessionManager.inMemory()
     })
+    nativeSession = session
     options.onDebug?.({
       scope: options.scope,
       phase: 'pi-session-start',
@@ -140,8 +181,8 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
         return latest
       }
     }
-    applyPiSessionPolicy(session as PiSession, debug)
-    return new PiRuntimeSession(session as PiSession, debug, prompt)
+    applyPiSessionPolicy(session as PiSession, debug, options.autoCompaction !== false)
+    return new PiRuntimeSession(session as PiSession, debug, promptSource, compactionState)
   }
 }
 

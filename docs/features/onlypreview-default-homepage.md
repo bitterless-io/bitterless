@@ -149,3 +149,19 @@ registry 没有 `defaultHome` 时退回今天的行为(建内置本地 Home),与
 **运行时那一半要跑一次才算**(单测覆盖不到,需重新打包):删掉 `coach-settings.json` → 开
 Cowork → 第一格是 OnlyPreview;把 OnlyPreview 切成独立窗口 → 关掉 Cowork 窗口 → 重开 →
 第一格是内置 Home 而不是空白。
+
+## #7 #4 的补救手段已被取代(2026-09-17)
+
+#4 的**理由**仍然成立,换掉的是补救方式。Ral 2026-09-17 要求:独立窗口占着 OnlyPreview 时,固有槽位
+不再降级成内置本地 Home,而是留在原地显示一张「已在独立窗口打开 + 前往」的占位页;关掉那个窗口时
+就地升格回真正的 OnlyPreview。理由是他自己给的:「因为 onlypreview 会被设为首页,所以关闭这个事情
+UI 上不友好了」。
+
+于是 `spec.open` 在已有活着的承载时**不再抛**,`loadPinnedHomeTab()` 那条 catch 的降级分支也不再因为
+这个原因触发。G5 的判据从「槽位这一发降级成内置 Home,trace 写明原因」改为「槽位显示占位页,关窗后
+自动升格」。
+
+#4 里「不 `show()`」那条理由**原样保留**并且更彻底了:提到前台现在完全由用户点「前往」触发。
+
+方案:[onlypreview-deferred-tab-placeholder](onlypreview-deferred-tab-placeholder.md);
+交付:[task 181](../plan/tasks/onlypreview-deferred-tab-placeholder-181.md)。

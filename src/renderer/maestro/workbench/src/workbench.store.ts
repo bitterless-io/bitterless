@@ -1,7 +1,8 @@
+import type { ManagedSkillInstallation } from '@maestro-shared/coach.api'
 import { reactive, unref } from 'vue'
 import { i18n } from '@renderer/common/i18n/i18n.helper'
 import { skillCatalogEn, skillCatalogZh } from './skillCatalog.messages'
-import type { SkillCatalogSnapshot, SkillLayer } from '@maestro-shared/coach.api'
+import type { SkillCatalogSnapshot, SkillLayer, SkillRuntimeDiagnostics } from '@maestro-shared/coach.api'
 import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer'
 import { encode } from 'gpt-tokenizer/encoding/o200k_base'
 import { AGENT_TURN_CHANNEL, defaultLlmEffort } from '@maestro-shared/coach.api'
@@ -236,11 +237,39 @@ class WorkbenchStoreState {
   skillShowMigration = false
   skillShowDetail = false
   skillCatalog: SkillCatalogSnapshot | null = null
+  skillRuntimeDiagnostics: SkillRuntimeDiagnostics | null = null
+  skillDiagnosing = false
+  skillInstallations: ManagedSkillInstallation[] | null = null
+  skillSourcesLoading = false
+  private skillSourcesRequest = 0
+  async loadSkillInstallations(): Promise<void> {
+    if (this.skillLayer === 'institution') return
+    const request = ++this.skillSourcesRequest, scope = this.skillLayer === 'workspace' ? 'workspace' : 'shared'
+    this.skillSourcesLoading = true; this.skillError = ''
+    try {
+      const result = await coach.manageSkillInstallation({ action: 'list', scope })
+      if (request === this.skillSourcesRequest) this.skillInstallations = result.installations || []
+    } catch (error) { if (request === this.skillSourcesRequest) this.skillError = String(error) }
+    finally { if (request === this.skillSourcesRequest) this.skillSourcesLoading = false }
+  }
+  async mutateSkillInstallation(action: 'update' | 'remove', installationId: string): Promise<void> {
+    if (this.skillLayer === 'institution' || this.skillSourcesLoading) return
+    if (action === 'remove' && !confirm(this.skillsText.removeSourceConfirm)) return
+    const scope = this.skillLayer === 'workspace' ? 'workspace' : 'shared'
+    this.skillSourcesLoading = true; this.skillError = ''
+    try {
+      await coach.manageSkillInstallation({ action, scope, installationId })
+      await this.refreshSkills()
+      await this.loadSkillInstallations()
+    } catch (error) { this.skillError = String(error) }
+    finally { this.skillSourcesLoading = false }
+  }
+  clearSkillInstallations(): void { this.skillSourcesRequest++; this.skillInstallations = null; this.skillSourcesLoading = false }
   readonly skillLayers: SkillLayer[] = ['global', 'workspace', 'institution']
   get skillsText() { return String(unref(i18n.global.locale)).startsWith('zh') ? skillCatalogZh : skillCatalogEn }
   get sourceSkills(): SkillSummary[] {
     return this.skills.filter(skill => this.skillShowMigration ? skill.scope === 'unassigned' : skill.layer === this.skillLayer && skill.scope !== 'unassigned')
-      .filter(skill => this.skillStatus === 'all' || skill.status === this.skillStatus)
+      .filter(skill => this.skillStatus === 'all' || (this.skillStatus === 'disabled' ? skill.enabled === false : skill.status === this.skillStatus && (this.skillStatus !== 'ready' || skill.enabled !== false)))
       .filter(skill => (skill.name + ' ' + (skill.displayName || '') + ' ' + skill.description).toLowerCase().includes(this.skillSearch.toLowerCase()))
   }
   get unassignedCount(): number { return this.skills.filter(skill => skill.scope === 'unassigned').length }
@@ -248,10 +277,11 @@ class WorkbenchStoreState {
   get skillSourceHint(): string { return this.skillsText[(this.skillLayer + 'Hint') as 'globalHint'] }
   skillCount(layer: SkillLayer): string {
     const all = this.skills.filter(skill => skill.layer === layer && skill.scope !== 'unassigned')
-    const ready = all.filter(skill => skill.status === 'ready').length
+    const ready = all.filter(skill => skill.status === 'ready' && skill.enabled !== false).length
     return all.length === ready ? String(ready) : ready + '/' + all.length
   }
   async selectSkillLayer(layer: SkillLayer): Promise<void> {
+    this.clearSkillInstallations()
     this.skillLayer = layer; localStorage.setItem('skills.source', layer)
     this.skillShowMigration = false; this.skillShowDetail = false; this.skillSearch = ''; this.skillStatus = 'all'
     this.selectedSkillId = this.sourceSkills[0]?.id || ''; await this.loadSkillDetail(this.selectedSkillId)
@@ -265,6 +295,22 @@ class WorkbenchStoreState {
     document.getElementById('skill-tab-' + this.skillLayer)?.focus()
   }
   async copySkillReference(): Promise<void> { if (this.selectedSkill) await navigator.clipboard.writeText(this.selectedSkill.reference || this.selectedSkill.id) }
+  async toggleSkillEnabled(): Promise<void> {
+    if (!this.selectedSkill?.reference) return
+    this.skillError = ''
+    try { await coach.setSkillEnabled({ reference: this.selectedSkill.reference, enabled: this.selectedSkill.enabled === false }); await this.refreshSkills() }
+    catch (error) { this.skillError = String(error) }
+  }
+  async diagnoseSelectedSkill(): Promise<void> {
+    const reference = this.selectedSkill?.reference
+    if (!reference) return
+    this.skillDiagnosing = true; this.skillError = ''
+    try {
+      const result = await coach.diagnoseSkill({ reference })
+      if (this.selectedSkill?.reference === reference) this.skillRuntimeDiagnostics = result
+    } catch (error) { this.skillError = String(error) }
+    finally { this.skillDiagnosing = false }
+  }
   async openSkillFile(): Promise<void> { if (this.selectedSkill) { const result = await coach.openSkillFile({ skillId: this.selectedSkill.id }); this.skillError = result.error || '' } }
   async openSkillSource(): Promise<void> { const result = await coach.openSkillSource({ layer: this.skillLayer }); this.skillError = result.error || '' }
   async assignGlobalSkill(): Promise<void> { this.skillImportScope = 'shared'; await this.assignSelectedSkillScope() }
@@ -468,7 +514,7 @@ class WorkbenchStoreState {
     xpcRenderer.subscribe('coach/workspace-changed', () => { this.selectedSkillId = ''; this.skillDetail = null; void this.refreshSkills() })
     xpcRenderer.subscribe('coach/skills-changed', payload => {
       if (payload.params?.contextChanged) this.clearInstitutionSkills()
-      if (payload.params?.workspaceChanged) { this.selectedSkillId = ''; this.skillDetail = null }
+      if (payload.params?.workspaceChanged) { this.clearSkillInstallations(); this.selectedSkillId = ''; this.skillDetail = null }
       void this.refreshSkills()
     })
     xpcRenderer.subscribe('coach/injected-buttons-changed', () => {
@@ -729,6 +775,13 @@ class WorkbenchStoreState {
     await this.setLlmTarget(model.provider, model.model, effort)
   }
 
+  async setCompactPrompt(compactPrompt: string): Promise<void> {
+    if (this.llmSaving) return
+    this.llmActionSaving = true
+    try { this.llmConfig = await coach.setCompactPrompt({ compactPrompt }) }
+    finally { this.llmActionSaving = false }
+  }
+
   async setLlmCompressionRemainingPercent(value: number): Promise<void> {
     const model = this.activeLlmModel
     if (!model || this.llmSaving) return
@@ -855,6 +908,7 @@ class WorkbenchStoreState {
   }
 
   clearInstitutionSkills(): void {
+    this.clearSkillInstallations()
     this.skillRequest++; this.skillDetailRequest++
     this.skills = this.skills.filter(skill => skill.scope !== 'institution')
     this.skillInstitution = null
@@ -903,6 +957,7 @@ class WorkbenchStoreState {
   }
 
   async loadSkillDetail(skillId: string): Promise<void> {
+    this.skillRuntimeDiagnostics = null
     const request = ++this.skillDetailRequest
     const detail = skillId && this.selectedSkill?.status !== 'error' ? await coach.getSkillDetail({ skillId }) : null
     if (request === this.skillDetailRequest && skillId === this.selectedSkillId) this.skillDetail = detail

@@ -592,6 +592,16 @@ export interface OnlyPreviewHostToggleState {
   error?: OnlyPreviewErrorPayload;
 }
 
+/**
+ * 「前往那个独立窗口」的结果。
+ *
+ * `focused: false` 不是失败 —— 它是「那个窗口已经不在了,所以内容就地回到了这一格 tab」。占位页
+ * 不据此改自己的界面(它整格会被替换掉),但这一位让调用方与日志能把两条分支分开。
+ */
+export interface OnlyPreviewFocusWindowResult {
+  focused: boolean;
+}
+
 export interface OnlyPreviewRecentEntry {
   id: string;
   name: string;
@@ -638,6 +648,13 @@ export interface OnlyPreviewApi {
     params: OnlyPreviewHostRequest
   ): Promise<OnlyPreviewResult<OnlyPreviewHostToggleState>>;
   toggleHost(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;
+  /**
+   * 定位到那个独立窗口 —— 占位页上「前往」那个按钮。**不带 hostToken**,占位页不持有承载能力。
+   *
+   * 不复用 `openOnlyPreviewWindow()`:它的冷分支会**新建**一个窗口,对一张占位页来说那是错的
+   * 答案(docs/features/onlypreview-deferred-tab-placeholder.md #3)。
+   */
+  focusOnlyPreviewWindow(): Promise<OnlyPreviewResult<OnlyPreviewFocusWindowResult>>;
   openOnlyPreviewWindow(): Promise<OnlyPreviewResult<void>>;
   reportShellMounted(params: OnlyPreviewHostRequest & {
     openTag: string;

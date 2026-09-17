@@ -5,6 +5,9 @@ import { enTrench } from './enTrench';
 export const en = {
   workflow: workflowEn,
   auth: {
+    controlSignInTitle: 'Sign in to Bitterless',
+    controlSignInDescription: 'Open the chat panel to sign in and use this feature. You can keep browsing without signing in.',
+    controlSignInAction: 'Sign in',
     navigationFailed: 'Signed in, but the page could not open. Please try again.',
     passwordSetupTitle: 'Set login password',
     passwordSetupDescription: 'Set a password before entering the workspace for the first time.',
@@ -538,6 +541,15 @@ export const en = {
       closeErrorDetail: 'Close error detail',
       slashTestShowError: 'Show a sample error card (diagnostics)',
       slashCopySessionPath: 'Copy the model I/O jsonl folder for this session',
+      skills: 'Skills',
+      skillSearch: 'Search skills by name, source or path',
+      skillEmpty: 'No matching skills in this Chat',
+      skillUnavailable: 'Unavailable',
+      skillExplicitOnly: 'Explicit only',
+      skillGlobal: 'Global',
+      skillWorkspace: 'Workspace',
+      skillInstitution: 'Institution',
+      removeSkillSelection: 'Remove selected skill',
       slashPathCopied: 'Session jsonl path copied',
       copySessionPath: 'Copy session path',
       openSessionFinder: 'Open in Finder',
@@ -582,6 +594,7 @@ export const en = {
       chooseWorkspace: 'Choose workspace',
       switchWorkspace: 'Switch workspace',
       openWorkspaceInPreview: 'Open this workspace in {app}',
+      workspacePreviewFailed: 'Workspace selected, but Preview could not open. Click the workspace name to retry.',
       stopUsingWorkspaceTooltip: 'Stop using this workspace',
       stopUsingWorkspaceTitle: 'Stop using this workspace?',
       stopUsingWorkspaceContent: 'This chat stops using "{name}". Nothing is deleted — the files stay where they are, and you can choose it again any time.',
@@ -608,6 +621,10 @@ export const en = {
       unknownError: 'unknown error'
     },
     responseStatus: {
+      compacting: 'Compacting context',
+      compactionRetry: 'Compacting context · retry {attempt}/{max}',
+      compactionWait: 'Waiting {seconds}s',
+      compactionQueued: 'Messages queued',
       retryProgress: 'retried: {attempt}/{max}',
       waitingDecision: 'Waiting for your decision · {title}',
       actionPanelBelow: 'Use the action panel below',
@@ -1095,6 +1112,7 @@ export const en = {
     syncDiscard: 'Discard'
   },
   zellij: {
+    dismiss: 'Dismiss',
     title: 'Zellij',
     opening: 'Opening terminal…',
     retry: 'Retry',
@@ -1128,6 +1146,10 @@ export const en = {
       'web-sharing-disabled': 'Enable web sharing in config.kdl to open this terminal.',
       'start-failed': 'Zellij stopped or could not start. Try again.',
       'startup-timeout': 'Zellij did not become ready in time. Try again.',
+      'controls-load-timeout': 'The terminal controls did not load in time. Retry to reopen the view.',
+      'terminal-load-timeout': 'The terminal view did not load in time. Retry to reconnect to the same session.',
+      'controls-load-failed': 'The terminal controls could not load. Retry to reopen the view.',
+      'terminal-load-failed': 'The terminal view could not load. Retry to reconnect to the same session.',
       'authentication-failed': 'Could not sign in to the local terminal. Try again.',
       'token-failed': 'Zellij could not create an authentication token. Try again.',
       'secure-storage-unavailable':

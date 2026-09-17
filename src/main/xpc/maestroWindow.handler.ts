@@ -181,8 +181,8 @@ class MaestroWindowHandler extends XpcMainHandler {
   }
 
   async prepareForAuthenticatedSession(): Promise<void> {
-    if (!this.isAuthInvalidated()) return
-    await this.runAuthCleanup()
+    if (this.isAuthInvalidated()) await this.runAuthCleanup()
+    await maestroWindowHelper.resumeAuthenticatedSession();
   }
 
   async destroyForHostQuit(): Promise<void> {
@@ -196,6 +196,10 @@ class MaestroWindowHandler extends XpcMainHandler {
     const searchSessions = (): boolean => {
       const window = maestroWindowHelper.browserWindow
       if (!window || window.isDestroyed() || BrowserWindow.getFocusedWindow() !== window) return false
+      if (!maestroWindowHelper.isApplicationAuthenticated()) {
+        maestroWindowHelper.requestLogin();
+        return true;
+      }
       return maestroWindowHelper.controlView.openSessionSearch()
     }
     setApplicationSessionSearchDispatch((window) =>
@@ -341,7 +345,7 @@ class MaestroWindowHandler extends XpcMainHandler {
   private async performAuthCleanup(): Promise<void> {
     const boot = this.bootPromise
     if (boot) await boot.catch(() => undefined)
-    await this.destroyMaestroRuntime()
+    await maestroWindowHelper.suspendAuthenticatedSession();
   }
 
   // `beforeFinalize` 这个钩子随 AI-CRMS session 清理一起退役了(2026-09):它唯一的调用点是

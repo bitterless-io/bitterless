@@ -38,6 +38,7 @@ for (const file of modules) {
 }
 
 const stubSources = {
+  '@main/auth/applicationAuth.service': `export const applicationAuth = { subscribe() {}, ready: false };`,
   electron: `
     export class WebContentsView {
       bounds = { x: 0, y: 0, width: 0, height: 0 };
@@ -47,6 +48,7 @@ const stubSources = {
       focused = false;
       webContents = {
         isDestroyed: () => this.destroyed,
+        getURL: () => 'https://example.com',
         close: () => { this.destroyed = true; },
         focus: () => { this.focused = true; },
         loadFile: async () => {},
@@ -171,6 +173,9 @@ const fixture = async () => {
     service(),
     service()
   );
+  controller.historyView = { hide() {}, reset() {} };
+  controller.browserUse = { clear() {}, refresh() {} };
+  controller.browserSessions = { clear() {}, refresh() {}, protectedTabIds: () => [] };
   const children = [];
   const window = {
     isDestroyed: () => false,

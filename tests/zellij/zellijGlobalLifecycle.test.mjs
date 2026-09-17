@@ -11,7 +11,14 @@ const source = ts.createSourceFile(
   ts.ScriptTarget.Latest,
   true
 );
-const names = ['prepareZellijTerminal', 'stopZellijRuntime', 'closeZellijTerminal'];
+const names = [
+  'TRANSIENT_IPC_CODES',
+  'surfacePreparations',
+  'prepareZellijTerminal',
+  'prepareZellijSurface',
+  'stopZellijRuntime',
+  'closeZellijTerminal'
+];
 const statements = source.statements.filter(
   (statement) =>
     ts.isVariableStatement(statement) &&
@@ -19,7 +26,7 @@ const statements = source.statements.filter(
       names.includes(declaration.name.getText(source))
     )
 );
-assert.equal(statements.length, 3);
+assert.equal(statements.length, names.length);
 const code = ts.transpileModule(
   statements.map((statement) => statement.getText(source).replace(/^export /u, '')).join('\n') +
     '\nglobalThis.prepare=prepareZellijTerminal;globalThis.stop=stopZellijRuntime;globalThis.close=closeZellijTerminal;',
@@ -33,6 +40,21 @@ const deferred = () => {
   return { promise, resolve };
 };
 const flush = () => new Promise((resolve) => setImmediate(resolve));
+// The lifecycle statements now emit diagnostics. Stubbed rather than captured: these tests are
+// about ordering, and a real writer would put [zellij] lines in the test output.
+const diagnostics = () => ({
+  zellijLog: { info: () => {}, warn: () => {}, error: () => {} },
+  zellijDetail: () => 'detail=none',
+  zellijSurfaceTag: (value) => value,
+  zellijSessionTag: (value) => value,
+  getRuntimeProfile: () => ({ id: 'production-debug' }),
+  ZellijNativeIpcError: class ZellijNativeIpcError extends Error {},
+  sessionMappings: () => new Map(),
+  rememberPreparedSession: () => {},
+  zellijErrorCode: (error) => error?.message ?? 'operation-failed',
+  setTimeout,
+  Date
+});
 
 test('reopen waits for directory, owned web process and bridge teardown before capturing its new generation', async () => {
   const directoryGate = deferred(),
@@ -62,6 +84,7 @@ test('reopen waits for directory, owned web process and bridge teardown before c
     }
   };
   const context = vm.createContext({
+    ...diagnostics(),
     runtimeGeneration: 0,
     runtimeStopping: null,
     bridgeCleanup: null,
@@ -134,6 +157,7 @@ test('an explicit close invalidates an opening queued behind global shutdown', a
     stop: async () => calls.push('runtime-stop')
   };
   const context = vm.createContext({
+    ...diagnostics(),
     runtimeGeneration: 0,
     runtimeStopping: null,
     bridgeCleanup: null,
@@ -177,6 +201,7 @@ test('global shutdown joins explicit closes admitted during web teardown, includ
       }
     };
     const context = vm.createContext({
+      ...diagnostics(),
       runtimeGeneration: 0,
       runtimeStopping: null,
       bridgeCleanup: null,
@@ -226,6 +251,7 @@ test('only Darwin requires an owned web namespace; Windows retains matching-serv
     compilerOptions: { target: ts.ScriptTarget.ES2022 }
   }).outputText;
   const context = vm.createContext({
+    ...diagnostics(),
     process: { platform: 'darwin' },
     webProcess: null,
     AbortSignal,

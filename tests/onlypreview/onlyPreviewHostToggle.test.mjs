@@ -11,7 +11,10 @@ const root = resolve(dirname(new URL(import.meta.url).pathname), '../..');
 const buildRoot = mkdtempSync(join(tmpdir(), 'onlypreview-host-toggle-'));
 const stubs = {
   'onlyPreviewWindow.helper': 'export const onlyPreviewWindowHelper = globalThis.__toggle.window;',
-  onlyPreviewCoworkTab: "export const ONLY_PREVIEW_COWORK_TAB_ID = 'onlypreview';",
+  onlyPreviewCoworkTab:
+    "export const ONLY_PREVIEW_COWORK_TAB_ID = 'onlypreview';" +
+    'export const getOnlyPreviewCoworkTabState = () => globalThis.__toggle.tabState();' +
+    'export const promoteOnlyPreviewCoworkTab = async () => await globalThis.__toggle.promote();',
   'maestroWindow.controller': 'export const maestroWindowHelper = globalThis.__toggle.maestro;',
   'compositeTab.registry':
     'export const getMaestroCompositeTab = () => globalThis.__toggle.registered ? {} : null;',
@@ -94,11 +97,26 @@ env.window = {
     if (!env.live) return;
     env.calls.push(`destroy:${env.live.kind}`);
     runtime.onlyPreviewHostRegistry.revoke(env.live.host.hostToken);
-    if (env.live.kind === 'cowork') env.tabs = env.tabs.filter((tab) => tab.kind !== 'onlypreview');
+    // 反转(2026-09-17):cowork 那一支**不关那一格 tab**。`mount.destroyHost()` 现在是
+    // `deps.defer()` —— composite 拆干净,tab 留在原地装占位页,于是它的运行时状态变成 `deferred`。
+    // 原来这里会把它从条上摘掉,那模型的是被取代掉的「独立窗口打开,浏览器里的 tab 就得关掉」。
     env.live = null;
     env.fileRef = null;
   },
-  show: () => env.calls.push('show')
+  show: () => env.calls.push('show'),
+  setStandaloneCloseTakeover: () => {}
+};
+/** 那一格的双态:有活着的 cowork 承载 = `live`,只剩条上那一格 = `deferred`。 */
+env.tabState = () => {
+  if (env.live?.kind === 'cowork') return 'live';
+  return env.tabs.some((tab) => tab.kind === 'onlypreview') ? 'deferred' : 'none';
+};
+/** 就地升格:条上有占位那一格时把 composite 装回去,没有就交给调用方去新开一格。 */
+env.promote = async () => {
+  if (env.tabState() !== 'deferred') return false;
+  env.calls.push('promote');
+  await createHost('cowork');
+  return true;
 };
 env.maestro = {
   get browserWindow() {
@@ -383,18 +401,44 @@ test('a removed file leaves the new Project visible with an honest error and no 
   assert.ok(runtime.onlyPreviewHostToggleService.getState(env.live.host.hostToken).error);
 });
 
-test('explicit docking removes only the stale OnlyPreview placeholder tab', async () => {
+/**
+ * 2026-09-17 反转:这一条原来叫「explicit docking removes only the stale OnlyPreview placeholder
+ * tab」—— 那时独立窗口占着承载时条上留下的是一格**空白**,dock 之前得先把它关掉。现在那一格装的是
+ * 真的占位页,而且**它就是要升格的那一格**,所以这条路上一次 `closeTab` 都不该有(G1)。
+ */
+test('explicit docking promotes the deferred tab and closes nothing', async () => {
   const old = await reset('standalone');
   env.tabs = [
-    { id: 'stale-preview', kind: 'onlypreview' },
+    { id: 'deferred-preview', kind: 'onlypreview' },
     { id: 'web-tab', kind: 'browser' }
   ];
   await runtime.onlyPreviewHostToggleService.toggle(old.hostToken);
   assert.deepEqual(
     env.calls.filter((call) => call.startsWith('close:')),
-    ['close:stale-preview']
+    [],
+    'dock 不关任何 tab —— pinned 那一格本来也关不掉,关只会留下一格空白'
   );
-  assert.ok(env.tabs.some((tab) => tab.id === 'web-tab'));
+  assert.ok(env.calls.includes('promote'), '就地升格,而不是关掉再新开一格');
+  assert.equal(env.live.kind, 'cowork');
+  assert.deepEqual(
+    env.tabs.map((tab) => tab.id),
+    ['deferred-preview', 'web-tab'],
+    '那一格留在原位,顺序与身份都不变;无关的 tab 一个不动'
+  );
+});
+
+/** undock 那一支上 `closeTab` 的调用次数为 0(G1),而条上那一格变成 `deferred`。 */
+test('undocking keeps the OnlyPreview tab and leaves it deferred', async () => {
+  const old = await reset('cowork');
+  await runtime.onlyPreviewHostToggleService.toggle(old.hostToken);
+  assert.equal(env.live.kind, 'standalone');
+  assert.deepEqual(
+    env.calls.filter((call) => call.startsWith('close:')),
+    [],
+    'G1:undock 路径上 closeTab 调用次数为 0'
+  );
+  assert.deepEqual(env.tabs.map((tab) => tab.id), ['preview-tab']);
+  assert.equal(env.tabState(), 'deferred');
 });
 
 test('a stale folder dialog cannot advance mutations after its source relocated', async () => {

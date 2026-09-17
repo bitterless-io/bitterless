@@ -2,7 +2,18 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
+import {
+  constants,
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync
+} from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -41,7 +52,7 @@ const stateOwner = createRequire(import.meta.url)(stateOutput);
 const nativeTest = process.platform === 'darwin' ? test : test.skip;
 test.after(() => rmSync(root, { recursive: true, force: true }));
 
-const listener = async (t, titleBinary = process.execPath) => {
+const listener = async (t, titleBinary = process.execPath, executable = process.execPath) => {
   const directory = mkdtempSync(join(root, 'socket-'));
   const socket = join(directory, 's');
   // A mutable title is deliberately indistinguishable from a native --server argv in ps.
@@ -51,7 +62,7 @@ const listener = async (t, titleBinary = process.execPath) => {
     const server = net.createServer();
     server.listen(process.argv[2], () => process.stdout.write('ready'));
   `;
-  const child = spawn(process.execPath, ['-e', script, titleBinary, socket], {
+  const child = spawn(executable, ['-e', script, titleBinary, socket], {
     stdio: ['ignore', 'pipe', 'ignore']
   });
   t.after(async () => {
@@ -62,7 +73,7 @@ const listener = async (t, titleBinary = process.execPath) => {
     }
     rmSync(directory, { recursive: true, force: true });
   });
-  const timeout = setTimeout(() => child.kill('SIGKILL'), 3_000);
+  const timeout = setTimeout(() => child.kill('SIGKILL'), executable === process.execPath ? 3_000 : 15_000);
   try {
     const ready = await Promise.race([
       once(child.stdout, 'data'),
@@ -138,7 +149,8 @@ nativeTest(
     const owner = await inspectZellijNativeOwner(fixture.socket, process.execPath);
     assert.ok(owner);
     for (const changed of [
-      { ...owner, executable: realpathSync('/bin/sh') },
+      { ...owner, executableDevice: owner.executableDevice + 1 },
+      { ...owner, executableInode: owner.executableInode + 1 },
       { ...owner, uid: owner.uid + 1 }
     ]) {
       await assert.rejects(isZellijNativeOwnerAlive(changed), /operation-failed/);
@@ -209,4 +221,100 @@ test('a live process with unavailable image metadata stays unknown rather than b
   ]);
   await assert.rejects(stateOwner.isZellijNativeOwnerAlive(fixture.identity), /operation-failed/);
   assert.deepEqual(fixture.calls, ['/bin/ps', '/usr/sbin/lsof', '/bin/ps']);
+});
+
+
+nativeTest('recorded mapped image survives successive moves, replacement and unlink', async (t) => {
+  const original = join(root, 'fixture executable');
+  const moved = join(root, 'fixture moved');
+  const movedAgain = join(root, 'fixture moved twice');
+  copyFileSync(process.execPath, original, constants.COPYFILE_FICLONE);
+  const fixture = await listener(t, original, original);
+  const owner = await inspectZellijNativeOwner(fixture.socket, original);
+  assert.ok(owner);
+  assert.ok(Number.isSafeInteger(owner.executableDevice));
+  assert.ok(Number.isSafeInteger(owner.executableInode));
+  const legacy = { ...owner };
+  delete legacy.executableDevice;
+  delete legacy.executableInode;
+  assert.equal(await isZellijNativeOwnerAlive(legacy), true);
+  renameSync(original, moved);
+  copyFileSync(process.execPath, original, constants.COPYFILE_FICLONE);
+  assert.equal(await isZellijNativeOwnerAlive(owner), true);
+  await assert.rejects(isZellijNativeOwnerAlive(legacy), /operation-failed/);
+  assert.equal(await inspectZellijNativeOwner(fixture.socket, original), null);
+  renameSync(moved, movedAgain);
+  assert.equal(await isZellijNativeOwnerAlive(owner), true);
+  unlinkSync(movedAgain);
+  assert.equal(await isZellijNativeOwnerAlive(owner), true);
+  const closed = once(fixture.child, 'close');
+  fixture.child.kill('SIGTERM');
+  await closed;
+  assert.equal(await isZellijNativeOwnerAlive(owner), false);
+});
+
+const mappedImageFixture = (t, fields) => {
+  const identity = {
+    pid: 177,
+    started: 'Sun Sep 13 16:00:00 2026',
+    command: '/old/bundle/zellij --server /fixture/socket',
+    executable: '/old/bundle/zellij',
+    executableDevice: 17,
+    executableInode: 23,
+    uid: process.getuid?.() ?? 0
+  };
+  globalThis.__nativeOwnerKernelState = async (file, args) => {
+    if (file === '/bin/ps')
+      return { stdout: identity.uid + ' S ' + identity.started + ' ' + identity.command + '\n' };
+    assert.equal(file, '/usr/sbin/lsof');
+    assert.ok(args.includes('-F0pfnDi'));
+    return { stdout: fields.join('\0') + '\0\n' };
+  };
+  t.after(() => delete globalThis.__nativeOwnerKernelState);
+  return identity;
+};
+
+test('mapped identity parses fields by name and ignores later images and moved paths', async (t) => {
+  const identity = mappedImageFixture(t, [
+    'p177', '\nftxt', 'n/no-longer-linked/bundle/zellij', 'i23', 'D0x11',
+    '\nftxt', 'D0x11', 'i1152921500312572606', 'n/usr/lib/dyld'
+  ]);
+  assert.equal(await stateOwner.isZellijNativeOwnerAlive(identity), true);
+  assert.equal(await stateOwner.isZellijNativeOwnerAlive({ ...identity, executable: '/diagnostic/original' }), true);
+  assert.equal(await stateOwner.isZellijNativeOwnerAlive({ ...identity, started: 'different birth' }), false);
+  await assert.rejects(stateOwner.isZellijNativeOwnerAlive({ ...identity, command: 'wrong argv' }), /operation-failed/);
+});
+
+test('malformed recorded image pairs remain unknown instead of legacy path fallback', async (t) => {
+  const identity = mappedImageFixture(t, ['p177', '\nftxt', 'D0x11', 'i23', 'n/old/bundle/zellij']);
+  for (const pair of [
+    { executableDevice: 17 }, { executableInode: 23 },
+    { executableDevice: -1, executableInode: 23 },
+    { executableDevice: 17, executableInode: 0 },
+    { executableDevice: 17, executableInode: 1.5 },
+    { executableDevice: 17, executableInode: Number.MAX_SAFE_INTEGER + 1 },
+    { executableDevice: '17', executableInode: 23 },
+    { executableDevice: null, executableInode: null }
+  ]) {
+    const changed = { ...identity };
+    delete changed.executableDevice;
+    delete changed.executableInode;
+    await assert.rejects(stateOwner.isZellijNativeOwnerAlive({ ...changed, ...pair }), /operation-failed/);
+  }
+});
+
+test('invalid or wrong first kernel image never falls through to a matching later image', async (t) => {
+  const invalidFields = [
+    ['p178', '\nftxt', 'D0x11', 'i23', 'n/old/bundle/zellij'],
+    ['p177', '\nftxt', 'D0x12', 'i23', 'n/old/bundle/zellij'],
+    ['p177', '\nftxt', 'D0x11', 'i24', 'n/old/bundle/zellij'],
+    ['p177', '\nftxt', 'D0x11', 'i23', 'i23', 'n/old/bundle/zellij'],
+    ['p177', '\nftxt', 'D0x11', 'i9007199254740992', 'n/old/bundle/zellij'],
+    ['p177', '\nftxt', 'D0x11', 'i23junk', 'n/old/bundle/zellij'],
+    ['p177', '\nftxt', 'D0x11', 'i24', 'n/wrong/image', '\nftxt', 'D0x11', 'i23', 'n/old/bundle/zellij']
+  ];
+  for (const fields of invalidFields) {
+    const identity = mappedImageFixture(t, fields);
+    await assert.rejects(stateOwner.isZellijNativeOwnerAlive(identity), /operation-failed/);
+  }
 });

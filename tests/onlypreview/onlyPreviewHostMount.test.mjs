@@ -74,6 +74,19 @@ describe('接线', () => {
     );
   });
 
+  /**
+   * 关窗升格也是 `'tab'` 的写入方之一(方案 #5.1)。
+   *
+   * 不写的话:关掉独立窗口,内容回到了 tab,而偏好还是 `'window'` —— 下一次点工作区芯片又弹一个
+   * 窗口,读起来像「刚才那一下没回来」。落定的承载就是真相,和 `relocate` 结算之后那一处同一条口径。
+   */
+  test('关窗升格写的是 tab —— 偏好留在 window 的话下次点芯片又弹窗口', () => {
+    const toggle = read('src/main/windows/onlyPreviewHostToggle.service.ts');
+    const promote = toggle.slice(toggle.indexOf('async promoteDeferredTab('));
+    assert.ok(promote, '缺 promoteDeferredTab —— 关窗回收没有落点');
+    assert.match(promote.slice(0, promote.indexOf('\n  }\n')), /rememberOnlyPreviewHostMount\('tab'\)/);
+  });
+
   test('打开入口先问已有承载,再问上次那一种', () => {
     const opener = read('src/main/windows/onlyPreviewMaestroOpener.ts');
     const standaloneAt = opener.indexOf('getStandaloneHost()');

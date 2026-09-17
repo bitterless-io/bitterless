@@ -11,15 +11,15 @@ const root = mkdtempSync(join(tmpdir(), 'zellij-window-test-'));
 const output = join(root, 'window.cjs');
 const modules = {
   electron: `const {EventEmitter}=require('node:events');
-    const windows=[],views=[],chromeGates=new Map();
+    const windows=[],views=[],dialogs=[],chromeGates=new Map(),terminalGates=new Map();
     class Contents extends EventEmitter {
       constructor(){super();this.closed=false;this.loads=0;}
       setWindowOpenHandler(handler){this.openHandler=handler;}
       setIgnoreMenuShortcuts(value){this.ignore=value;}
       focus(){this.focused=true;this.emit('focus');}
-      async loadURL(url){this.url=url;this.loads++;}
+      async loadURL(url){this.url=url;this.loads++;await terminalGates.get(url)?.promise;}
       async loadFile(file,options){this.file=file;this.query=options&&options.query;await chromeGates.get(this.query?.surface)?.promise;}
-      isDevToolsOpened(){return false;} openDevTools(){} isDestroyed(){return this.closed;} close(){this.closed=true;}
+      isDevToolsOpened(){return false;} openDevTools(){} isDestroyed(){return this.closed;} close(){this.closed=true;this.emit("destroyed");}
     }
     class View {
       constructor(){this.children=[];this.visible=true;}
@@ -33,15 +33,17 @@ const modules = {
       show(){this.visible=true;} focus(){} close(){this.dead=true;this.emit('closed');} destroy(){this.close();}
     }
     class WebContentsView extends View {constructor(options){super();this.options=options;this.webContents=new Contents();views.push(this);}}
-    module.exports={BrowserWindow,WebContentsView,View,app:{getAppPath:()=>'/fixture'},windows,views,chromeGates};`,
+    const dialog={showMessageBox:(owner,options)=>new Promise(resolve=>{dialogs.push({owner,options,resolve});options.signal.addEventListener('abort',()=>resolve({response:1}),{once:true});})};
+    module.exports={BrowserWindow,WebContentsView,View,dialog,dialogs,terminalGates,app:{getAppPath:()=>'/fixture'},windows,views,chromeGates};`,
   'electron-xpc/main': `const broadcasts=[];exports.broadcasts=broadcasts;exports.xpcMain={broadcast:(event,params)=>broadcasts.push({event,params})};`,
+  '@main/i18n/i18n.helper': `exports.i18nHelper={getMessages:()=>({zellij:{title:'Zellij',retry:'Retry',dismiss:'Dismiss',errors:{'controls-load-timeout':'Controls timed out','controls-load-failed':'Controls failed'}}})};`,
   '@electron-toolkit/utils': `exports.is={dev:false};`,
   './zellijDevTools.helper': `exports.bindZellijDevTools=()=>{};exports.autoOpenZellijDevTools=()=>{};`,
   './zellijKeyBridge': `exports.bindZellijKeyBridge=()=>{};`,
   '@maestro-main/common/shortcutsHelper/shortcuts.helper': `exports.setTerminalKeyboardOwner=()=>{};`,
   '@main/windows/windowState.service': `exports.windowStateService={resolve:()=>null,register:()=>({show(){},flushAndDispose(){}})};`,
   './zellijRuntime.service': `const listeners=new Set(),failures=new Set(),gates=new Map();
-    const calls={prepare:[],close:[],focus:[],blur:[],stop:0};
+    const calls={prepare:[],close:[],focus:[],blur:[],stop:0,initialize:0};
     const initial=()=>({status:'idle',error:null,shortcuts:{splitDown:'Super d',splitRight:'Super Shift d',closePane:'Super w'},configExists:true,configFile:'/fixture/config.kdl',configDirectory:'/fixture',configRevision:'fixture'});
     let state=initial();const session={setPermissionRequestHandler(fn){this.request=fn;},setPermissionCheckHandler(fn){this.check=fn;}};
     exports.zellijOrigin=()=>'http://127.0.0.1:12902';exports.zellijTerminalSession=()=>session;
@@ -51,14 +53,14 @@ const modules = {
     exports.stopZellijRuntime=async()=>{calls.stop++;};
     exports.subscribeZellijState=fn=>{listeners.add(fn);return()=>listeners.delete(fn);};exports.listenerCount=()=>listeners.size;
     exports.subscribeZellijTerminalFailure=fn=>{failures.add(fn);return()=>failures.delete(fn);};exports.fail=id=>{for(const fn of failures)fn(id);};
-    exports.getZellijRuntime=()=>({snapshot:()=>state});
+    exports.getZellijRuntime=()=>({snapshot:()=>state,initialize:async()=>{calls.initialize++;return state;}});
     exports.change=next=>{state={...state,...next};for(const listener of [...listeners])listener(state);};
-    exports.reset=()=>{state=initial();gates.clear();for(const key of ['prepare','close','focus','blur'])calls[key].length=0;calls.stop=0;};
+    exports.reset=()=>{state=initial();gates.clear();for(const key of ['prepare','close','focus','blur'])calls[key].length=0;calls.stop=0;calls.initialize=0;};
     exports.calls=calls;exports.gates=gates;`
 };
 await build({
   stdin: {
-    contents: `export {zellijWindowService,isZellijNavigationAllowed} from '${process.cwd()}/src/main/zellij/zellijWindow.service.ts';export {BrowserWindow,windows,views,chromeGates} from 'electron';export {broadcasts} from 'electron-xpc/main';export {change,calls,gates,reset,listenerCount,fail} from './zellijRuntime.service';`,
+    contents: `export {zellijWindowService,isZellijNavigationAllowed} from '${process.cwd()}/src/main/zellij/zellijWindow.service.ts';export {BrowserWindow,windows,views,chromeGates,terminalGates,dialogs} from 'electron';export {broadcasts} from 'electron-xpc/main';export {change,calls,gates,reset,listenerCount,fail} from './zellijRuntime.service';`,
     resolveDir: process.cwd(),
     loader: 'ts'
   },
@@ -89,6 +91,8 @@ const {
   windows,
   views,
   chromeGates,
+  terminalGates,
+  dialogs,
   broadcasts,
   change,
   calls,
@@ -141,6 +145,8 @@ test.beforeEach(async () => {
   views.length = 0;
   broadcasts.length = 0;
   chromeGates.clear();
+  terminalGates.clear();
+  dialogs.length = 0;
 });
 test.after(async () => {
   await service.destroy();
@@ -370,4 +376,94 @@ test('explicit standalone close closes its session while generic destroy retains
   );
   assert.equal(calls.stop, 1);
   assert.equal(listenerCount(), 0);
+});
+
+test('controls deadline settles open, reports active-only native Retry, and preserves session identity', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const tab = tabHost('chrome-timeout');
+  const gate = deferred();
+  chromeGates.set(tab.host.instanceId, gate);
+  const opening = service.openOnTab(tab.host);
+  await flush();
+  assert.equal(calls.initialize, 1, 'shared runtime starts before controls finish');
+  assert.deepEqual(calls.prepare, []);
+  t.mock.timers.tick(15_000);
+  await opening;
+  assert.equal(service.snapshot(tab.host.instanceId).error, 'controls-load-timeout');
+  assert.equal(dialogs.length, 0, 'background restore never opens a modal');
+  const stale = views[0];
+  assert.equal(stale.webContents.closed, true);
+  service.setTabActive(tab.host, true);
+  service.setTabActive(tab.host, true);
+  assert.equal(dialogs.length, 1);
+  assert.deepEqual(dialogs[0].options.buttons, ['Retry', 'Dismiss']);
+  chromeGates.delete(tab.host.instanceId);
+  dialogs[0].resolve({ response: 0 });
+  await flush();
+  assert.equal(service.snapshot(tab.host.instanceId).status, 'ready');
+  assert.deepEqual(calls.prepare, [tab.host.instanceId]);
+  assert.deepEqual(calls.close, [], 'renderer recovery never closes native session');
+  gate.resolve();
+  await flush();
+  assert.equal(stale.webContents.focused, undefined);
+  assert.equal(service.snapshot(tab.host.instanceId).status, 'ready');
+});
+
+test('terminal deadline closes only stale renderer and Retry reuses the same target', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const tab = tabHost('terminal-timeout');
+  const target = 'http://127.0.0.1:12902/bitterless-' + tab.host.instanceId;
+  const gate = deferred();
+  terminalGates.set(target, gate);
+  await service.openOnTab(tab.host);
+  await flush();
+  const stale = terminalOf(tab.host.instanceId);
+  t.mock.timers.tick(15_000);
+  await flush();
+  assert.equal(service.snapshot(tab.host.instanceId).error, 'terminal-load-timeout');
+  assert.equal(stale.webContents.closed, true);
+  assert.equal(dialogs.length, 0, 'working controls own terminal errors');
+  terminalGates.delete(target);
+  await service.initializeSurface(tab.host.instanceId);
+  const ready = terminalOf(tab.host.instanceId);
+  assert.notEqual(ready, stale);
+  assert.equal(ready.webContents.url, target);
+  assert.deepEqual(calls.close, []);
+  gate.resolve();
+  await flush();
+  assert.equal(terminalOf(tab.host.instanceId), ready);
+  assert.equal(service.snapshot(tab.host.instanceId).status, 'ready');
+});
+
+test('quit cancels a never-resolving controls navigation without waiting for its deadline', async () => {
+  const tab = tabHost('quit-chrome');
+  chromeGates.set(tab.host.instanceId, deferred());
+  const opening = assert.rejects(service.openOnTab(tab.host), /operation-failed/);
+  await service.destroy();
+  await opening;
+  assert.equal(listenerCount(), 0);
+  assert.equal(views[0].webContents.closed, true);
+});
+
+
+test('an exhausted preparation stays failed through passive show and runtime broadcasts until Retry', async () => {
+  const gate = deferred();
+  const tab = tabHost('exhausted');
+  gates.set(tab.host.instanceId, gate);
+  await service.openOnTab(tab.host);
+  gate.reject(Error('operation-failed'));
+  await flush();
+  assert.equal(service.snapshot(tab.host.instanceId).status, 'error');
+  const attempts = calls.prepare.length;
+  change({ status: 'starting', error: null });
+  change({ status: 'ready', error: null });
+  await service.openOnTab(tab.host);
+  service.setTabActive(tab.host, true);
+  await flush();
+  assert.equal(calls.prepare.length, attempts, 'passive events cannot start another recovery cycle');
+  assert.equal(service.snapshot(tab.host.instanceId).status, 'error');
+  gates.delete(tab.host.instanceId);
+  await service.initializeSurface(tab.host.instanceId);
+  assert.equal(calls.prepare.length, attempts + 1);
+  assert.equal(service.snapshot(tab.host.instanceId).status, 'ready');
 });

@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { IconDotsVertical, IconFolderOpen, IconFolderSearch, IconListDetails, IconPaperclip, IconPlayerStop, IconPlus, IconSend2, IconX } from '@tabler/icons-vue'
 import AttachmentCard from './AttachmentCard.vue'
-import { Button, Dropdown, Doption, Message, Modal, Tooltip } from '@arco-design/web-vue'
+import { Button, Dropdown, Doption, Input, Message, Modal, Tooltip } from '@arco-design/web-vue'
 import { createXpcRendererEmitter } from 'electron-xpc/renderer'
 import { CONTEXT_GRAPH_MATCH_HEAD_CHARS } from '@maestro-shared/coach.api'
 import { MAESTRO_ONLY_PREVIEW_APP_NAME } from '@maestro-shared/compositeTab.identity'
@@ -18,9 +18,10 @@ import IconBtn from '../../../common/components/IconBtn/IconBtn.vue'
 import ChatErrorModal from './task/ChatErrorModal.vue'
 import MessageList from './MessageList.vue'
 import SlashMenu from './SlashMenu.vue'
-import { ShortcutStore, slashTokenAt } from './store/shortcut.store'
+import { ShortcutStore, slashTokenAt, parseCompactCommand } from './store/shortcut.store'
 import { channelStore } from './store/channel.store'
 import { messageStore } from './store/message.store'
+import { SkillPickerStore } from './store/skillPicker.store'
 import type { ChatAttachment, MessageSession } from './store/message.type'
 import { isRejection } from './store/turn.service'
 import { parseWorkflowCommand } from '@shared/agentWorkflow.api'
@@ -32,6 +33,8 @@ const tasksVisible = ref(false)
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
 const props = defineProps<{ session: MessageSession; sendDisabled?: boolean }>()
 const emit = defineEmits<{ sent: [reply: AgentReply] }>()
+const skillPicker = reactive(new SkillPickerStore(coach, () => props.session.id))
+skillPicker.selected = props.session.detail.draft?.skill
 
 const input = ref(props.session.detail.draft?.text || '')
 // Composer attachments: picked/dropped files, kept as {name, absolute path}. On send the
@@ -43,6 +46,8 @@ const composerCaret = ref(0)
 // 数组顺序只是阅读顺序(按加入时间):面板显示时 `ShortcutStore.matches` 按命令名 ASCII 重排,
 // 所以新命令追加在末尾就行,不必为了菜单里的位置去插队。
 const shortcutStore = reactive(new ShortcutStore([
+  { name: '/test_auto_compact', hint: 'Test automatic compaction in an isolated conversation' },
+  { name: '/compact', hint: 'Compact now; optional focus instructions' },
   { name: '/clear', get hint() { return i18nHelper.maestroControl.chat.slashClear } },
   { name: '/view_context', get hint() { return i18nHelper.maestroControl.chat.slashViewContext } },
   { name: '/copy_session_path', get hint() { return i18nHelper.maestroControl.chat.slashCopySessionPath } },
@@ -59,17 +64,18 @@ let composerDisposed = false
 let newChatPending = false
 const workflowCommandPending = ref(false)
 watch(input, () => { draftRevision += 1 }, { flush: 'sync' })
-watch([input, selectedFiles], () => {
-  props.session.detail.draft = { text: input.value, files: selectedFiles.value.slice() }
+watch([input, selectedFiles, () => skillPicker.selected], () => {
+  props.session.detail.draft = { text: input.value, files: selectedFiles.value.slice(), skill: skillPicker.selected ? { ...skillPicker.selected } : undefined }
 }, { deep: true, flush: 'sync' })
 watch([input, composerCaret], () => shortcutStore.update(slashToken.value), { flush: 'post' })
-watch(() => props.session.id, () => { draftRevision += 1; shortcutStore.close() }, { flush: 'sync' })
-onBeforeUnmount(() => { composerDisposed = true; shortcutStore.close() })
+watch(() => props.session.id, () => { draftRevision += 1; shortcutStore.close(); skillPicker.reset() }, { flush: 'sync' })
+onBeforeUnmount(() => { composerDisposed = true; shortcutStore.close(); skillPicker.reset(true) })
 const shortcut = (key: string): string => `${navigator.platform.toLowerCase().includes('mac') ? '⌘' : 'Ctrl+'}${key}`
 
 // i18n 文案里的 `{count}` 占位替换。不用 `$t()` / `useI18n()` —— 本项目一律走 i18nHelper。
 const withCount = (copy: string, count: number): string => copy.replace('{count}', String(count))
 const turnLocked = computed(() => Boolean(props.session.turn))
+const skillLayerLabel = (layer?: string): string => layer === 'workspace' ? i18nHelper.maestroControl.chat.skillWorkspace : layer === 'institution' ? i18nHelper.maestroControl.chat.skillInstitution : i18nHelper.maestroControl.chat.skillGlobal
 
 const workspace = computed(() => props.session.detail.workspace)
 const workspaceLabel = computed(() => workspace.value?.name || 'Workspace')
@@ -93,7 +99,24 @@ function resetComposerHeight(): void {
 }
 
 async function send(): Promise<void> {
-  if (shortcutStore.pending || workflowCommandPending.value) return
+  if ((shortcutStore.pending && !props.session.compacting) || workflowCommandPending.value) return
+  const compactCommand = parseCompactCommand(input.value)
+  if (compactCommand && !slashVisible.value) {
+    const sessionId = props.session.id
+    input.value = ''
+    shortcutStore.pending = true
+    try { await compactCurrentSession(sessionId, compactCommand.instructions) }
+    catch (error) { Message.error(error instanceof Error ? error.message : String(error)) }
+    finally { shortcutStore.pending = false }
+    return
+  }
+  const testCommand = /^\/test_auto_compact(?:[ \t]+([^\r\n]+))?$/.exec(input.value.trim())
+  if (testCommand && !slashVisible.value) {
+    const filePath = testCommand[1]?.trim().replace(/^(["'])(.*)\1$/, '$2')
+    input.value = ''
+    try { await runAutoCompactionTest(props.session.id, filePath) } catch (error) { Message.error(error instanceof Error ? error.message : String(error)) }
+    return
+  }
   if (parseWorkflowCommand(input.value)) { await submitWorkflowCommand(); return }
   if (slashVisible.value) { await commitShortcut(); return }
   const message = input.value.trim()
@@ -109,11 +132,16 @@ async function send(): Promise<void> {
   }
   const steering = Boolean(props.session.turn)
   const files = !steering && selectedFiles.value.length ? selectedFiles.value.slice() : undefined
+  const selectedSkill = skillPicker.selected
+  const context = selectedSkill ? { ...messageStore.buildAgentContext(props.session, undefined, files?.map(file => file.path)), selectedSkillRef: selectedSkill.reference } : undefined
   input.value = ''
+  skillPicker.selected = undefined
   if (!steering) selectedFiles.value = []
   await nextTick()
+  if (composerDisposed) return
   resetComposerHeight()
-  const reply = await messageStore.turnService.send(props.session.id, message, files)
+  const reply = await messageStore.turnService.send(props.session.id, message, files, undefined, context)
+  if (composerDisposed) return
   if (reply && !isRejection(reply)) {
     if (!reply.mergedIntoTurn) emit('sent', reply)
     return
@@ -121,6 +149,7 @@ async function send(): Promise<void> {
   if (!input.value.trim()) {
     input.value = message
     if (files?.length) selectedFiles.value = files.slice()
+    skillPicker.selected = selectedSkill
     await nextTick()
     resizeComposer()
   }
@@ -161,6 +190,7 @@ async function submitWorkflowCommand(): Promise<void> {
       resetComposerHeight()
     }
   } catch (error) {
+    if (composerDisposed) return
     const message = error instanceof Error ? error.message : String(error)
     messageStore.pushLocalNote(sessionId, message)
     Message.error(message)
@@ -309,7 +339,8 @@ onMounted(() => {
 onBeforeUnmount(() => window.removeEventListener('keydown', onPanelKeydown, true))
 
 async function stop(): Promise<void> {
-  await messageStore.turnService.stop(props.session.id)
+  if (props.session.compacting) await coach.cancelCompaction({ sessionId: props.session.id })
+  if (props.session.turn) await messageStore.turnService.stop(props.session.id)
 }
 
 function onComposerKeydown(event: KeyboardEvent): void {
@@ -345,13 +376,42 @@ function completeShortcut(): void {
   void nextTick(() => composerRef.value?.setSelectionRange(composerCaret.value, composerCaret.value))
 }
 
+async function runAutoCompactionTest(sessionId: string, filePath?: string): Promise<void> {
+  const report = await coach.testAutoCompaction({ sessionId, filePath })
+  if (!report) throw new Error('Automatic compaction test could not start. Check the selected model and local path.')
+  const lines = [
+    report.ok ? 'Automatic compaction test passed' : 'Automatic compaction test failed',
+    'Model: ' + report.provider + '/' + report.model,
+    'Phase: ' + report.phase + '; requests: ' + report.requests + '; HTTP: ' + (report.responseStatus ?? 'unknown'),
+    'Test window: ' + report.testContextWindow + ' / real model window: ' + report.realContextWindow + ' tokens',
+    'Reserve: ' + report.reserveTokens + '; keep recent: ' + report.keepRecentTokens,
+    'Threshold: ' + report.thresholdTokens + '; before: ' + report.tokensBefore + '; after: ' + (report.tokensAfter ?? 'unknown'),
+    'Source bytes: ' + report.sourceBytesRead + ' / ' + report.sourceBytes + (report.sourceTruncated ? ' (excerpt)' : ''),
+    'Padding chars: ' + report.paddingChars + '; native trigger: ' + (report.reason || 'none'),
+    'System unchanged: ' + report.systemUnchanged + '; context rebuilt: ' + report.contextChanged,
+    'This isolated test does not prove the full production window.',
+    ...(report.error ? [report.error] : [])
+  ]
+  messageStore.pushLocalNote(sessionId, lines.join('\n'))
+}
+
+async function compactCurrentSession(sessionId: string, instructions?: string): Promise<void> {
+  const reply = await coach.compactSession({ sessionId, ...(instructions ? { instructions } : {}) })
+  if (!reply?.ok) throw new Error(reply?.error || 'Compaction failed.')
+  messageStore.pushLocalNote(sessionId, 'Context compacted' + (reply.tokensBefore !== undefined ? ' · ' + reply.tokensBefore + ' → ~' + (reply.estimatedTokensAfter ?? '?') + ' tokens' : ''))
+}
+
 async function commitShortcut(): Promise<void> {
   const token = slashToken.value
   if (!token || shortcutStore.pending) return
   const revision = draftRevision
+  const compactInstructions = parseCompactCommand(input.value)?.instructions
   const sessionId = props.session.id
   const draft = input.value.slice(0, token.start) + input.value.slice(token.end)
+  if (shortcutStore.active?.name === '/compact' || shortcutStore.active?.name === '/test_auto_compact') input.value = draft
   const result = await shortcutStore.commit({
+    testAutoCompaction: () => runAutoCompactionTest(sessionId),
+    compact: () => compactCurrentSession(sessionId, compactInstructions),
     listWorkflows: () => runWorkflowCommand('/workflow'),
     newChat: startNewChat,
     // 路径**同时**进剪贴板与时间线(Ral 2026-09-09:「复制到剪贴板,并在消息中回复这个路径」)。
@@ -437,7 +497,8 @@ async function revealWorkspace(): Promise<void> {
 
 async function chooseWorkspace(): Promise<void> {
   if (turnLocked.value || props.session.archivedAt) return
-  await messageStore.chooseWorkspace(props.session.id)
+  const result = await messageStore.chooseWorkspace(props.session.id)
+  if (result?.previewError) Message.warning(i18nHelper.maestroControl.chat.workspacePreviewFailed)
 }
 
 async function stopUsingWorkspace(): Promise<void> {
@@ -529,6 +590,23 @@ async function stopUsingWorkspace(): Promise<void> {
     </Modal>
 
     <div class="chat-panel__composer">
+      <section v-if="skillPicker.visible" name="chat-panel__skills" class="chat-panel__skills" role="dialog" :aria-label="i18nHelper.maestroControl.chat.skills" @keydown.esc="skillPicker.visible = false">
+        <div class="chat-panel__skills-heading"><b>{{ i18nHelper.maestroControl.chat.skills }}</b><IconBtn :aria-label="i18nHelper.maestroControl.chat.closeErrorDetail" @click="skillPicker.visible = false"><IconX :size="16" /></IconBtn></div>
+        <Input v-model="skillPicker.search" size="small" allow-clear :placeholder="i18nHelper.maestroControl.chat.skillSearch" :aria-label="i18nHelper.maestroControl.chat.skillSearch" />
+        <p v-if="skillPicker.error" class="chat-panel__skills-error" role="alert">{{ skillPicker.error }}</p>
+        <div name="chat-panel__skills-list" class="chat-panel__skills-list" :aria-busy="skillPicker.loading">
+          <button v-for="skill in skillPicker.filtered" :key="skill.reference || skill.id" name="chat-panel__skill-row" class="chat-panel__skill-row" type="button" :disabled="!skillPicker.available(skill)" @click="skillPicker.pick(skill)">
+            <span><b>{{ skill.displayName || skill.name }}</b> · {{ skillLayerLabel(skill.layer) }}</span>
+            <small v-if="!skillPicker.available(skill)">{{ i18nHelper.maestroControl.chat.skillUnavailable }}</small><small v-else-if="skill.allowImplicitInvocation === false">{{ i18nHelper.maestroControl.chat.skillExplicitOnly }}</small>
+            <code>{{ skill.path }}</code>
+          </button>
+          <p v-if="!skillPicker.loading && !skillPicker.filtered.length">{{ i18nHelper.maestroControl.chat.skillEmpty }}</p>
+        </div>
+      </section>
+      <div v-if="skillPicker.selected" name="chat-panel__selected-skill" class="chat-panel__selected-skill" :title="skillPicker.selected.path">
+        <span>{{ skillPicker.selected.name }} · {{ skillLayerLabel(skillPicker.selected.layer) }}</span>
+        <IconBtn :aria-label="i18nHelper.maestroControl.chat.removeSkillSelection" @click="skillPicker.selected = undefined"><IconX :size="14" /></IconBtn>
+      </div>
       <slot name="before-composer"></slot>
       <div
         v-if="session.allowFiles && selectedFiles.length"
@@ -574,6 +652,7 @@ async function stopUsingWorkspace(): Promise<void> {
       </div>
       <div class="chat-panel__composer-footer">
         <div v-if="session.allowFiles" name="maestro__composer__context" class="chat-panel__composer-tools">
+          <Button name="chat-panel__choose-skill" class="chat-panel__choose-skill" type="text" size="mini" :disabled="turnLocked || Boolean(session.archivedAt)" @click="skillPicker.open()">{{ i18nHelper.maestroControl.chat.skills }}</Button>
           <!-- The duplicate Skills shortcut is intentionally hidden. The Workbench Skills pane
                and its internal coach/workbench-pane broadcast remain available in Workbench. -->
           <!-- 不套 Tooltip(Ral 2026-09-09)。它原来弹的是 "Set workspace",而按钮上写着
@@ -657,7 +736,7 @@ async function stopUsingWorkspace(): Promise<void> {
                在同一排 32px 图标按钮里既比别人高一截、又是这一排唯一有描边的东西。
                文案不丢:它挪到 title / aria-label 上,i18n key 照旧。 -->
           <IconBtn
-            v-if="Boolean(session.turn)"
+            v-if="Boolean(session.turn) || session.compacting"
             name="maestro__composer__stop"
             class="chat-panel__stop-button"
             :class="{ 'chat-panel__stop-button--aborting': session.turn?.aborting }"

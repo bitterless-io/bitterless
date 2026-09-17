@@ -1,22 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-/*
- * `main/xpc/compaction.handler.ts` —— 压缩的 main 侧装配层。
- *
- * 这一层是**宿主接线**,`agent/compaction/*` 的编排本体与 cowork 逐字相同
- * (`areas/agent-runtime/agent-design-parity.md` 裁决一)。所以这里测的不是压缩算法,
- * 而是接线上那几个**方向性**的决定,每一条都在 handler 的注释里写着理由:
- *
- *   1. 账本读不到 ⇒ `no-usage`,**不是**一个零用量的「不用压」(后者与「上下文是空的」不可分,
- *      而两者的后果相反:一个该退回本地估算,一个该什么都不做);
- *   2. 拿不到会话面 ⇒ `no-context-entries`,而且**不调模型**;
- *   3. 落回 pi 会话的顺序必须 ③ 摘要 → ② U 链 → ④ 清单,任一条失败整体报 `apply-*`
- *      —— 宁可报失败也不报一个「压了但其实没压」;
- *   4. `cutPoint` **不要求登录**:该在哪切与能不能摘要是两件事;
- *   5. 永远走**已存在**的 agent,不为了凑候选批去开一个会话。
- *
- * 载入方式:ts → CJS → `new Function`,只桩掉进程边界(electron-xpc / 控制器 / pi),
- * `compactionRun` / `compactionEntries` 用**真源码** —— 那样第 3 条测的是真编排,不是我写的桩。
- */
+/* The legacy mutating endpoint is retired; read-only usage/cut inspection remains. */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -188,63 +171,17 @@ test('账本有值 → 判据整条交给 pi 的 shouldCompact,窗口取模型�
   assert.equal(seenArgs[0].cfg.keepRecentTokens, 256);
 });
 
-test('拿不到会话面 → no-context-entries,而且一次模型都不调', async () => {
-  const { handler, seen } = loadHandler({ surface: null });
+test('legacy compact endpoint is retired without reading, summarizing or mutating history', async () => {
+  const surface = fakeSurface();
+  const { handler, seen } = loadHandler({ surface });
   const reply = await handler.compact({ sessionId: 's1', keepRecentTokens: 100 });
   assert.equal(reply.ok, false);
-  assert.equal(reply.error, 'no-context-entries');
+  assert.match(reply.error, /native Pi|\/compact/);
   assert.equal(reply.applied, false);
-  assert.equal(seen.generateSummary, 0, '没有候选批还去调模型 = 白花一次钱');
-});
-
-test('候选批只从**已存在**的 agent 来 —— 不为了压缩去开一个会话', async () => {
-  const { handler, seen } = loadHandler({ surface: fakeSurface() });
-  await handler.compact({ sessionId: 's1', keepRecentTokens: 100 });
-  assert.ok(seen.getExisting > 0, '压缩必须问「这个会话在 main 侧已经有 agent 吗」');
-  assert.equal(seen.getOrCreate, 0, '开了一个新会话来凑候选批 —— 那批上下文模型从没见过');
-});
-
-test('没登录 → 如实报错,不碰会话面', async () => {
-  const surface = fakeSurface();
-  const { handler, seen } = loadHandler({ surface, signedIn: false });
-  const reply = await handler.compact({ sessionId: 's1', keepRecentTokens: 100 });
-  assert.equal(reply.ok, false);
-  assert.match(reply.error, /not signed in/);
-  assert.deepEqual(surface.calls, [], '摘要都没生成就往会话上写了东西');
   assert.equal(seen.generateSummary, 0);
-});
-
-test('落回 pi 会话的顺序是 ③ 摘要 → ② U 链 → ④ 清单', async () => {
-  const surface = fakeSurface();
-  const { handler } = loadHandler({ surface, chainRecords: [{ n: 1, at: 'fixed', ws: '', tab: '', text: 'U-CHAIN' }] });
-  const reply = await handler.compact({
-    sessionId: 's1',
-    keepRecentTokens: 10,
-    userChainText: 'U-CHAIN',
-    manifestText: 'MANIFEST'
-  });
-  assert.equal(reply.ok, true, `压缩应当成功,实际 error=${reply.error}`);
-  assert.equal(reply.applied, true);
-  const order = surface.calls.map((c) => c[0]);
-  assert.equal(order[0], 'appendCompaction', '③ 必须排第一 —— 尾部清空那条路上 ②④ 的存亡取决于它');
-  assert.deepEqual(
-    surface.calls.slice(1).map((c) => c[1]),
-    ['maestro-user-chain', 'maestro-manifest'],
-    '② U 链要排在 ④ 清单之前,且 customType 用本仓的前缀'
-  );
-});
-
-test('③ 落失败 → 整体报 apply-compaction-failed,不继续写 ②④', async () => {
-  const surface = fakeSurface({ appendCompaction: false });
-  const { handler } = loadHandler({ surface });
-  const reply = await handler.compact({ sessionId: 's1', keepRecentTokens: 10, userChainText: 'U', manifestText: 'M' });
-  assert.equal(reply.applied, false, '「压了但其实没压」比报失败糟得多 —— 下一轮直接撞窗口上限');
-  assert.match(String(reply.error || ''), /apply-compaction-failed/);
-  assert.deepEqual(
-    surface.calls.map((c) => c[0]),
-    ['appendCompaction'],
-    '③ 失败之后还继续往会话上追加 ②④'
-  );
+  assert.equal(seen.getExisting, 0);
+  assert.equal(seen.getOrCreate, 0);
+  assert.deepEqual(surface.calls, []);
 });
 
 test('cutPoint 不要求登录 —— 该在哪切与能不能摘要是两件事', async () => {

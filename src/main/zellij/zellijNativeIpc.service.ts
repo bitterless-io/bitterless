@@ -1,4 +1,5 @@
 import { Socket } from 'node:net';
+import { sanitizeDiagnostic } from '@shared/diagnostics/diagnostic.service';
 import {
   decodeZellijServerMessage,
   encodeZellijClientMessage,
@@ -16,12 +17,35 @@ import type {
 export class ZellijNativeIpcError extends Error {
   constructor(
     readonly code: ZellijNativeIpcErrorCode,
-    message: string
+    message: string,
+    /**
+     * What Zellij itself said, sanitized and bounded — empty for every locally-decided failure
+     * (timeout, abort, ENOENT).
+     *
+     * A rejection USED to collapse into the constant string 'Zellij rejected the request' while
+     * `reply.logError.lines` — the server's own explanation — was dropped on the floor. That is
+     * precisely the line the 2026-09-17 packaged incident left behind, and it is why the cause was
+     * not recoverable afterwards (docs/issues/zellij-update-restart-blocks-and-new-tab-fails.md).
+     * Callers put this in the log; it must never be shown to the user or used for control flow.
+     */
+    readonly detail: string = ''
   ) {
+    // `message` stays byte-identical to what it always was, and the native text lives ONLY on
+    // `detail`: tests/zellij/zellijNativeIpc.test.mjs:240 ("native rejections omit native payloads")
+    // pins the error a consumer sees, and that boundary is right — a rejection reaches renderer
+    // state and user-visible strings, a log line does not.
     super(message);
     this.name = 'ZellijNativeIpcError';
   }
 }
+
+/** Server error text, not pane content — still bounded and sanitized before it can reach a log. */
+const rejectionDetail = (reply: ZellijNativeServerMessage): string => {
+  if (reply.logError) return sanitizeDiagnostic(reply.logError.lines?.join(' | '), 160);
+  if (!reply.exit) return '';
+  const payload = sanitizeDiagnostic(reply.exit.payload, 120);
+  return `exitReason=${reply.exit.exitReason}${payload ? ` payload=${payload}` : ''}`;
+};
 
 /** Exact Unix socket operations never enumerate or contact sibling Zellij sessions. */
 export class ZellijNativeIpcService {
@@ -137,11 +161,23 @@ export class ZellijNativeIpcService {
           for (const body of decoder.push(chunk)) {
             const reply = decodeZellijServerMessage(body);
             if (reply.logError) {
-              finish(new ZellijNativeIpcError('rejected', 'Zellij rejected the request'));
+              finish(
+                new ZellijNativeIpcError(
+                  'rejected',
+                  'Zellij rejected the request',
+                  rejectionDetail(reply)
+                )
+              );
               return;
             }
             if (reply.exit && (expected !== 'exit' || reply.exit.exitReason !== 1)) {
-              finish(new ZellijNativeIpcError('rejected', 'Zellij rejected the request'));
+              finish(
+                new ZellijNativeIpcError(
+                  'rejected',
+                  'Zellij rejected the request',
+                  rejectionDetail(reply)
+                )
+              );
               return;
             }
             if (reply.message === expected) {

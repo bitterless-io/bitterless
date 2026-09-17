@@ -121,3 +121,18 @@ non-contract error must stay out of the wire payload.
 ## Verification
 
 See [task 179](../plan/tasks/onlypreview-error-detail-operation-cause-179.md).
+
+## Regression it caused, 2026-09-17
+
+The payload has a **second** consumer that this fix did not account for: the search wire's
+`isOnlyPreviewSearchErrorPayload`
+(`src/shared/onlypreview/onlyPreviewSearchFailure.contract.ts`) validated an **exact** two-key set, so
+the optional `causeCode` added here made every cancelled or superseded search a protocol violation and
+latched Project search dead. Repaired by
+[task 180](../plan/tasks/onlypreview-search-failure-payload-180.md); full account in
+[onlypreview-search-failure-payload-latches-protocol-error](onlypreview-search-failure-payload-latches-protocol-error.md).
+
+The lesson is specific and worth keeping: reasoning about `assert.deepEqual` shapes (as this task's
+"omitted rather than `undefined`" argument did) does not cover a runtime exact-key validator on
+another seam. `OnlyPreviewErrorPayload` now has two validators, and the producer is bound to the
+stricter one by a test.

@@ -91,6 +91,10 @@ try {
   assert(startupDocs.includes('Pinned local Bitterless Home tab'), 'embedded feature contract should preserve the pinned default tab')
 
   const service = new CoachSettingsService(dir)
+  service.save({ compactPrompt: 'Keep TASK-123 and pending commitments.' })
+  assert(new CoachSettingsService(dir).read().compactPrompt === 'Keep TASK-123 and pending commitments.', 'compact prompt must survive settings reload')
+  service.save({ compactPrompt: '  ' })
+  assert(new CoachSettingsService(dir).read().compactPrompt === '  ', 'blank compact prompt must remain available for native default resolution')
   assert(service.read().startUrl === DEFAULT_START_URL, 'fresh settings should read the default startUrl')
   assert(service.read().llmModel === 'gpt-6-astra', 'fresh settings should keep the GPT-6 Astra default')
   assert(service.hasCustomStartUrl() === false, 'fresh settings should not be custom')

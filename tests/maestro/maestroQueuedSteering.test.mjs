@@ -153,6 +153,9 @@ test('explicit Pi enqueue never calls prompt during idle, preflight or compactio
   n.native.isCompacting = true;
   await session.enqueueSteering(message('compacting', 'same text'));
   assert.deepEqual(n.calls.prompts, []);
+  assert.deepEqual(n.calls.steer, ['same text']); // compaction holds the second message outside native queue
+  n.emit({ type: 'compaction_end', reason: 'threshold', aborted: false });
+  n.native.isCompacting = false;
   assert.deepEqual(n.calls.steer, ['same text', 'same text']);
   assert.deepEqual(consumed, []);
   assert.deepEqual(session.takePendingSteering(), [message('idle', 'same text'), message('compacting', 'same text')]);
@@ -401,3 +404,22 @@ test('two live sessions keep matching message IDs, queue consumption and cleanup
   assert.deepEqual(a.native.calls.consumed, ['original root', 'A context']);
   assert.deepEqual(b.native.calls.consumed, ['original root', 'B context']);
 });
+
+test('compaction progress for manual sessions clears on attempt/end/reset and ignores a previous session', async () => {
+  const {BaseAgent}=loadProduction(), updates=[], listeners=[]
+  const agent=new BaseAgent({runtime:{async createSession(){return {subscribe(fn){listeners.push(fn);return()=>{}},abort:async()=>{},prompt:async()=>{}}}},
+    providerId:'fixture',modelId:'fixture',authPath:'/fixture/auth',buildTools:()=>[],builtinTools:[],
+    describeTarget:()=>({providerLabel:'Fixture',modelLabel:'Fixture',supplier:'test'}),onCompaction:state=>updates.push(state)})
+  await agent.init()
+  listeners[0]({type:'compaction_start'})
+  listeners[0]({type:'compaction_retry',attempt:1,maxAttempts:3,delayMs:2000,error:'temporary failure'})
+  assert.equal(updates.at(-1).retry.attempt,1)
+  listeners[0]({type:'compaction_attempt',attempt:1,maxAttempts:3});assert.equal(updates.at(-1).retry,undefined)
+  listeners[0]({type:'compaction_end',aborted:true});assert.equal(updates.at(-1).active,false)
+  agent.reset();await agent.init();listeners[1]({type:'compaction_start'})
+  const count=updates.length
+  listeners[0]({type:'compaction_retry',attempt:2,maxAttempts:3,delayMs:2000,error:'stale'})
+  listeners[0]({type:'compaction_end'})
+  assert.equal(updates.length,count);assert.equal(updates.at(-1).active,true)
+  agent.reset();assert.equal(updates.at(-1).active,false)
+})

@@ -13,14 +13,33 @@ class WorkflowStore {
   loadFailed = false
   initialized = false
   private subscribed = false
+  private authGeneration = 0
+  private authActive = true
+
+  resume(): void { this.authActive = true }
+
+  reset(): void {
+    this.authActive = false
+    this.authGeneration += 1
+    this.runs = []
+    this.activity = []
+    this.waiting = []
+    this.revision = -1
+    this.loading = false
+    this.loadFailed = false
+    this.initialized = false
+  }
   async listWorkflows(): Promise<WorkflowDescriptor[]> {
     const entries = await api.listWorkflows()
     if (!Array.isArray(entries)) throw new Error('Workflow catalog unavailable')
     return entries
   }
   async start(request: WorkflowStartRequest): Promise<WorkflowRunSnapshot> {
+    const generation = this.authGeneration
     await this.init()
+    if (!this.authActive || generation !== this.authGeneration) throw new Error('Signed out')
     const reply = await api.startWorkflow(request)
+    if (generation !== this.authGeneration) throw new Error('Signed out')
     if (reply?.ok === false) throw new Error(reply.error)
     const run = reply?.ok === true ? reply.run : undefined
     if (!run?.id || run.sessionId !== request.sessionId) throw new Error('Workflow start was not acknowledged')
@@ -28,7 +47,9 @@ class WorkflowStore {
     return run
   }
   async retry(sessionId: string, runId: string): Promise<WorkflowRunSnapshot> {
+    const generation = this.authGeneration
     const reply = await api.retryWorkflow({ sessionId, runId })
+    if (generation !== this.authGeneration) throw new Error('Signed out')
     if (reply?.ok === false) throw new Error(reply.error)
     const run = reply?.ok === true ? reply.run : undefined
     if (!run?.id || run.id === runId || run.sessionId !== sessionId) throw new Error('Workflow retry was not acknowledged')
@@ -51,25 +72,29 @@ class WorkflowStore {
     return this.activity.find(entry => entry.sessionId === sessionId)
   }
   async init(): Promise<void> {
+    if (!this.authActive || this.initialized) return
     if (!this.subscribed) {
       this.subscribed = true
-      xpcRenderer.subscribe('agent/workflows', payload => this.apply(payload.params as WorkflowSnapshot))
+      xpcRenderer.subscribe('agent/workflows', payload => {
+        if (this.initialized) this.apply(payload.params as WorkflowSnapshot)
+      })
     }
-    if (this.initialized) return
     this.initialized = true
     await this.refresh()
   }
   async refresh(): Promise<void> {
-    if (this.loading) return
+    if (!this.authActive || this.loading) return
+    const generation = this.authGeneration
     this.loading = true
     const revision = this.revision
     try {
       const snapshot = await api.listRuns({})
+      if (generation !== this.authGeneration) return
       if (!snapshot || !Array.isArray(snapshot.runs) || !Number.isFinite(snapshot.revision)) throw new Error('Workflow snapshot unavailable')
       this.apply(snapshot)
     }
-    catch { if (this.revision === revision) this.loadFailed = true }
-    finally { this.loading = false }
+    catch { if (generation === this.authGeneration && this.revision === revision) this.loadFailed = true }
+    finally { if (generation === this.authGeneration) this.loading = false }
   }
   async pauseAgent(sessionId: string, runId: string, agentId: string): Promise<void> {
     const reply = await api.pauseWorkflowAgent({ sessionId, runId, agentId })

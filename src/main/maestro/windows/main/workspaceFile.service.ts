@@ -157,7 +157,17 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
       ? await dialog.showOpenDialog(this._state.browserWindow, options)
       : await dialog.showOpenDialog(options)
     if (result.canceled || !result.filePaths[0]) return { ok: false, error: 'cancelled' }
-    return await this.setWorkspaceDirectory({ sessionId: params?.sessionId, path: result.filePaths[0] })
+    const bound = await this.setWorkspaceDirectory({ sessionId: params?.sessionId, path: result.filePaths[0] })
+    if (!bound.ok || !bound.workspace?.path) return bound
+    // The picker is a human choice; set/get also serve restoration and must not open Preview.
+    const preview = getMaestroPreviewOpener()
+    if (!preview) return { ...bound, previewError: 'unavailable' }
+    try {
+      await preview.open(bound.workspace.path)
+      return bound
+    } catch {
+      return { ...bound, previewError: 'open-failed' }
+    }
   }
 
   async setWorkspaceDirectory(params: { sessionId?: string; path?: string }): Promise<WorkspaceRefResult> {

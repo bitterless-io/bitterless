@@ -4,7 +4,10 @@ export type OnlyPreviewEntryMode =
   | 'globalSearch'
   | 'alert'
   | 'settings'
-  | 'guide';
+  | 'guide'
+  // 独立窗口占着 OnlyPreview 时,那一格 tab 上的占位页。**它不持有 hostToken** —— 这个 mode 是
+  // 这条唯一的痕迹,所以它得在这里有名字。
+  | 'detached';
 export type OnlyPreviewHostPlatform = 'darwin' | 'win32' | 'other';
 /**
  * Which kind of host carries this composite.

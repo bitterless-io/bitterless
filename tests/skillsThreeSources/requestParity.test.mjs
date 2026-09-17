@@ -1,3 +1,4 @@
+import * as nativePi from '@earendil-works/pi-coding-agent'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
@@ -44,18 +45,93 @@ const putSkill = (source, folder, name = folder) => {
   return dir
 }
 
-test('real view_context export and Pi request hook keep all 251 three-source skills identical across updates', async t => {
+test('new native Chat reloads external skills once; existing Chat turns reuse snapshots', async t => {
+  const base = mkdtempSync(join(tmpdir(), 'bl-new-chat-skills-')), data = join(base, 'data'), workspace = join(base, 'workspace')
+  mkdirSync(workspace)
+  const nativeSessions = [], requests = []
+  let scans = 0, reloads = 0
+  const model = { id: 'fixture', name: 'Fixture', api: 'openai-completions', provider: 'fixture', baseUrl: 'https://fixture.invalid', input: ['text'], reasoning: false, contextWindow: 100000, maxTokens: 1000, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }
+  const load = loader({
+    './skillScope.context': { skillScopeContext: { current: () => null } },
+    'virtual:bitterless-pi-skills': { ...nativePi, loadSkillsFromDir: options => { scans++; return nativePi.loadSkillsFromDir(options) } },
+    typebox: await import('typebox'),
+    '@earendil-works/pi-coding-agent': {
+      ...nativePi,
+      // Keep real native sessions/resources. Only model authorization and generation are offline.
+      ModelRuntime: { create: options => nativePi.ModelRuntime.create({ ...options, refreshOnCreate: false }) },
+      ModelRegistry: class { find() { return model } hasConfiguredAuth() { return true } },
+      createAgentSession: async options => {
+        const result = await nativePi.createAgentSession(options)
+        nativeSessions.push(result.session)
+        result.session.prompt = async text => {
+          const messages = [{ role: 'user', content: text, timestamp: 1 }]
+          requests.push(await result.session.agent.transformContext(messages, new AbortController().signal))
+        }
+        return result
+      }
+    }
+  }, new Set())
+  const { SkillRegistryService } = load('src/main/maestro/skills/skillRegistry.service.ts')
+  const { PiRuntimeAdapter } = load('src/main/agent/runtime/piRuntimeAdapter.ts')
+  const registry = new SkillRegistryService(data)
+  t.after(() => { nativeSessions.forEach(session => session.dispose()); registry.dispose(); rmSync(base, { recursive: true, force: true }) })
+  const original = putSkill(join(data, 'skill-library/shared'), 'original')
+  registry.catalog(workspace) // The application already has a shared catalog before New Chat.
+  const options = {
+    target: { providerId: 'fixture', modelId: 'fixture', thinkingLevel: 'off' },
+    authPath: join(base, 'auth.json'), modelsPath: join(base, 'models.json'), agentDir: join(base, 'agent'), cwd: workspace,
+    systemPrompt: 'Fixture host instructions', scope: 'maestro', builtinTools: ['read', 'bash'],
+    tools: [{ name: 'fixture_tool', description: 'Fixture', params: [], execute: async () => 'Unused' }],
+    beforeModelRequest: async () => registry.catalogPrompt(workspace),
+    skillResources: { revision: () => registry.resourceRevision(workspace), getSkills: () => registry.getPiSkills(workspace), reload: () => { reloads++; registry.reload(workspace) } }
+  }
+  const adapter = new PiRuntimeAdapter(), first = await adapter.createSession(options)
+  assert.equal(reloads, 1)
+  const originalScans = scans
+  writeFileSync(join(original, 'SKILL.md'), '---\nname: original\ndescription: Edited before New Chat\n---\nBody stays on demand.')
+  putSkill(join(workspace, '.agents/skills'), 'external-added')
+  await first.prompt({ text: 'Continue existing Chat' })
+  assert.ok(!nativeSessions[0].systemPrompt.includes('external-added'))
+  assert.ok(!JSON.parse(payloads(textOf(requests.at(-1).at(-1)))[0]).skills.some(skill => skill.name === 'external-added'))
+  assert.equal(scans, originalScans); assert.equal(reloads, 1)
+
+  const second = await adapter.createSession(options)
+  assert.equal(reloads, 2, 'each newly initialized native Chat reloads once')
+  assert.ok(scans > originalScans, 'New Chat reads disk rather than only returning the shared cached catalog')
+  assert.ok(nativeSessions[1].systemPrompt.includes('external-added'))
+  assert.ok(nativeSessions[1].systemPrompt.includes('Edited before New Chat'))
+  const afterNewChat = scans
+  await second.prompt({ text: 'First turn in new Chat' })
+  assert.ok(JSON.parse(payloads(textOf(requests.at(-1).at(-1)))[0]).skills.some(skill => skill.name === 'external-added'))
+  await second.prompt({ text: 'Next turn in new Chat' })
+  await first.prompt({ text: 'Return to previously initialized Chat' })
+  assert.equal(scans, afterNewChat, 'ordinary turns and returning to an existing Chat do not scan disk')
+  assert.equal(reloads, 2)
+})
+
+for (const hasInstitution of [true, false]) test(`real view_context and Pi request keep the complete current catalog; institution=${hasInstitution}`, async t => {
   const base = mkdtempSync(join(tmpdir(), 'bl-skills-request-parity-')), data = join(base, 'userdata'), workspace = join(base, 'workspace')
   mkdirSync(data); mkdirSync(workspace)
-  const institution = { accountScope: 'fixture-account', institutionId: '7', generation: 'generation-1', institutionName: 'Fixture' }
-  let authorizationChecks = 0, cloudChecks = 0, sessionStarts = 0, nativeTransforms = 0
+  let currentWorkspace = workspace
+  let institution = hasInstitution ? { accountScope: 'fixture-account', institutionId: '7', generation: 'generation-1', institutionName: 'Fixture' } : null
+  const skillCount = hasInstitution ? 251 : 168
+  let authorizationChecks = 0, cloudChecks = 0, sessionStarts = 0, nativeTransforms = 0, resources, nativeReloads = 0, nativeScans = 0
   const context = { current: () => institution, authorize: async () => { authorizationChecks++; return institution } }
   const clipboardWrites = [], history = [
     { role: 'user', content: 'Historical question', timestamp: 1 },
     { role: 'assistant', content: [{ type: 'text', text: 'Historical answer' }], timestamp: 2 },
     { role: 'toolResult', toolName: 'fixture_read', toolCallId: 'call-1', content: [{ type: 'text', text: 'Historical tool evidence' }], timestamp: 3 }
   ]
+  const activeTools = ['read', 'bash'], sentSystemPrompts = []
   const native = {
+    systemPrompt: '',
+    getActiveToolNames: () => [...activeTools],
+    setActiveToolsByName(names) {
+      assert.deepEqual(names, activeTools, 'catalog refresh preserves selected tools')
+      native.systemPrompt = resources.getSystemPrompt() + nativePi.formatSkillsForPrompt(resources.getSkills().skills, 'read') + '\nCurrent working directory: ' + workspace + '\n'
+    },
+    reload: async () => { nativeReloads++; await resources.reload(); native.setActiveToolsByName(activeTools) },
+    prompt: async () => { sentSystemPrompts.push(native.systemPrompt) },
     isStreaming: false, isCompacting: false,
     setAutoCompactionEnabled(value) { this.autoCompactionEnabled = value },
     setSteeringMode(value) { this.steeringMode = value },
@@ -76,15 +152,20 @@ test('real view_context export and Pi request hook keep all 251 three-source ski
     '@maestro-main/skills/skillCloud.runtime': { skillCloud: { ensureCatalog: async () => { cloudChecks++ } } },
     './sessionIoInitialization': { SessionIoInitialization: class {} },
     '@main/agent/runtime/hostApprovalHistory': { HostApprovalHistory: class {} },
+    'virtual:bitterless-pi-skills': { ...nativePi, loadSkillsFromDir: options => { nativeScans++; return nativePi.loadSkillsFromDir(options) } },
     './runtime/inputBudget': { inputBudget: {} },
+    './runtime/skillAuthoring': { skillAuthoringRuntime: globalRoot => ({ globalRoot, bunPath: '/fixture/bun' }) },
     './runtime/modelIoLog': { modelIoLog: log },
     './prompt/projectInstructions': { readProjectInstructions: () => { throw Error('No project instruction IO is needed for this test') } },
     '@maestro-main/llm/llmPaths': { maestroUserChainDir: () => join(data, 'chain') },
     '@earendil-works/pi-coding-agent': {
+      ...nativePi,
+      loadSkillsFromDir: options => { nativeScans++; return nativePi.loadSkillsFromDir(options) },
+      SettingsManager: { inMemory: () => ({}) },
       ModelRuntime: { create: async () => ({}) },
       ModelRegistry: class { find() { return { id: 'fixture-model', contextWindow: 1_000_000, maxTokens: 8192 } } hasConfiguredAuth() { return true } },
       SessionManager: { inMemory: () => ({}) }, createExtensionRuntime: () => ({}),
-      createAgentSession: async () => { sessionStarts++; return { session: native } }
+      createAgentSession: async options => { resources = options.resourceLoader; sessionStarts++; native.setActiveToolsByName(activeTools); return { session: native } }
     },
     typebox: { Type: {} }
   }, new Set([
@@ -104,10 +185,10 @@ test('real view_context export and Pi request hook keep all 251 three-source ski
   putSkill(roots[1], 'workspace-same', 'same-name'); putSkill(roots[2], 'institution-same', 'same-name')
   for (let i = 0; i < 248; i++) putSkill(roots[i % 3], `entry-${String(i).padStart(3, '0')}`)
   const initialSnapshot = registry.catalog(workspace)
-  assert.equal(initialSnapshot.skills.length, 251)
-  assert.equal(new Set(initialSnapshot.skills.map(skill => skill.reference)).size, 251)
-  assert.equal(initialSnapshot.skills.filter(skill => skill.name === 'same-name').length, 3)
-  assert.deepEqual([...new Set(initialSnapshot.skills.map(skill => skill.layer))].sort(), ['global', 'institution', 'workspace'])
+  assert.equal(initialSnapshot.skills.length, skillCount)
+  assert.equal(new Set(initialSnapshot.skills.map(skill => skill.reference)).size, skillCount)
+  assert.equal(initialSnapshot.skills.filter(skill => skill.name === 'same-name').length, hasInstitution ? 3 : 2)
+  assert.deepEqual([...new Set(initialSnapshot.skills.map(skill => skill.layer))].sort(), hasInstitution ? ['global', 'institution', 'workspace'] : ['global', 'workspace'])
   const agent = new BaseAgent({ runtime: new PiRuntimeAdapter(), buildTools: () => [], cwd: workspace,
     providerId: 'fixture-provider', modelId: 'fixture-model', authPath: join(base, 'nonexistent-auth.json'),
     describeTarget: () => ({ providerLabel: 'Fixture', modelLabel: 'Fixture', supplier: 'Fixture' }) })
@@ -116,7 +197,7 @@ test('real view_context export and Pi request hook keep all 251 three-source ski
   service.setState({
     describeWindowTabs: () => ({ openTabs: [], activeTab: undefined }),
     syncWorkspaceFromContext: (id, selected) => { assert.equal(id, sessionId); assert.equal(selected.path, workspace) },
-    projectRootForSession: id => { assert.equal(id, sessionId); return workspace },
+    projectRootForSession: id => { assert.equal(id, sessionId); return currentWorkspace },
     existingSkillRegistry: () => registry,
     agentBrowserSession: () => ({ tabs: [], selectedTabId: null }), currentUrl: 'https://unrelated-domain.invalid'
   })
@@ -128,6 +209,11 @@ test('real view_context export and Pi request hook keep all 251 three-source ski
   assert.equal(sessionStarts, 0)
   await agent.init() // Real BaseAgent -> real adapter -> installs the real transformContext closure.
   assert.equal(sessionStarts, 1)
+  assert.equal(resources.getSkills().skills.length, skillCount)
+  let reloads = 0; registry.onChanged(() => reloads++)
+  await resources.reload()
+  assert.equal(reloads, 1)
+  assert.equal(resources.getSkills().skills.filter(skill => skill.name === 'same-name').length, hasInstitution ? 3 : 2)
   const initialHistory = JSON.stringify(history)
   const run = async () => {
     const exported = await service.copyNextTurnContext({ sessionId, draft: 'Inspect all Skills', context: { workspace: selectedWorkspace } })
@@ -140,9 +226,9 @@ test('real view_context export and Pi request hook keep all 251 three-source ski
     const latest = JSON.parse(exportCatalogs.at(-1)), snapshot = registry.catalog(workspace)
     assert.equal(latest.catalogRevision, snapshot.revision)
     assert.equal(latest.workspace, workspace)
-    assert.equal(latest.institution, '7')
-    assert.equal(latest.skills.length, 251)
-    assert.equal(new Set(latest.skills.map(skill => skill.ref)).size, 251)
+    assert.equal(latest.institution, hasInstitution ? '7' : null)
+    assert.equal(latest.skills.length, skillCount)
+    assert.equal(new Set(latest.skills.map(skill => skill.ref)).size, skillCount)
     const actual = new Map(latest.skills.map(skill => [skill.ref, skill]))
     for (const row of snapshot.skills) assert.deepEqual(actual.get(row.reference), {
       name: row.canonicalName || row.name, ...(row.displayName ? { displayName: row.displayName } : {}), description: row.description,
@@ -152,7 +238,9 @@ test('real view_context export and Pi request hook keep all 251 three-source ski
     assert.equal(request.length, history.length + 1)
     return { latest, catalog: request.at(-1).content, snapshot }
   }
+  const scansBeforeRead = nativeScans
   const first = await run()
+  assert.equal(nativeScans, scansBeforeRead, 'export, model callback and catalog reads use the loaded snapshot')
   assert.equal(JSON.stringify(history), initialHistory)
   // A previous successful request is now historical evidence. A refresh must preserve it,
   // while both real outputs append the same new current revision.
@@ -160,6 +248,8 @@ test('real view_context export and Pi request hook keep all 251 three-source ski
   const retainedHistory = JSON.stringify(history)
   writeFileSync(join(changedDir, 'SKILL.md'), '---\nname: same-name\ndescription: Updated global instructions\n---\nBody stays on demand.\n')
   writeFileSync(join(changedDir, 'resource.txt'), 'Updated auxiliary resource')
+  assert.equal(registry.catalog(workspace).revision, first.latest.catalogRevision, 'an external edit is invisible until explicit refresh')
+  registry.reload(workspace)
   const second = await run()
   assert.notEqual(second.latest.catalogRevision, first.latest.catalogRevision)
   assert.equal(JSON.stringify(history), retainedHistory)
@@ -171,5 +261,33 @@ test('real view_context export and Pi request hook keep all 251 three-source ski
   assert.notEqual(changes[0].revision, before.get(changes[0].ref).revision)
   assert.equal(sessionStarts, 1, 'no session reset on Skill refresh')
   assert.equal(nativeTransforms, 2, 'the native transform remains chained for every request')
-  assert.equal(authorizationChecks, 5); assert.equal(cloudChecks, 5)
+  assert.equal(authorizationChecks, hasInstitution ? 5 : 0); assert.equal(cloudChecks, hasInstitution ? 5 : 0)
+  const runtime = await agent.sessionPromise
+  await runtime.prompt({ text: 'Next idle turn' })
+  assert.ok(sentSystemPrompts.at(-1).includes('<available_skills>'))
+  assert.ok(sentSystemPrompts.at(-1).includes('Updated global instructions'))
+  const idleScans = nativeScans, idleReloads = nativeReloads
+  await runtime.prompt({ text: 'Unchanged next turn' })
+  assert.equal(nativeScans, idleScans)
+  assert.equal(nativeReloads, idleReloads)
+  const retainedBeforeRebuild = JSON.stringify(history)
+  writeFileSync(join(changedDir, 'SKILL.md'), '---\nname: same-name\ndescription: Latest idle-turn instructions\n---\nBody stays on demand.\n')
+  await runtime.prompt({ text: 'External edit before refresh' })
+  assert.ok(sentSystemPrompts.at(-1).includes('Updated global instructions'))
+  assert.equal(nativeScans, idleScans)
+  registry.reload(workspace)
+  institution = null
+  await runtime.prompt({ text: 'Turn after edit and logout' })
+  assert.ok(sentSystemPrompts.at(-1).includes('Latest idle-turn instructions'))
+  assert.ok(!sentSystemPrompts.at(-1).includes('Updated global instructions'))
+  assert.ok(!sentSystemPrompts.at(-1).includes('/skill-library/fixture-account/7/'))
+  currentWorkspace = join(base, 'second-workspace')
+  putSkill(join(currentWorkspace, '.agents/skills'), 'new-workspace-skill')
+  await runtime.prompt({ text: 'Turn after Chat workspace switch' })
+  assert.ok(sentSystemPrompts.at(-1).includes('new-workspace-skill'))
+  assert.ok(!sentSystemPrompts.at(-1).includes(workspace + '/.agents/skills/'))
+  runtime.setSystemPrompt('Updated host system instructions')
+  assert.ok(native.systemPrompt.startsWith('Updated host system instructions'))
+  assert.ok(native.systemPrompt.includes('Latest idle-turn instructions'))
+  assert.equal(JSON.stringify(history), retainedBeforeRebuild, 'system skill refresh preserves all historical messages')
 })

@@ -87,15 +87,15 @@ test('Home auth bridge snapshots and results are strict and token-free', () => {
   );
 });
 
-test('fixed Home subscribes before its initial auth read and fails closed', () => {
-  const main = source('src/renderer/maestro/localHome/src/main.ts');
+test('Control subscribes before its initial auth read while fixed Home remains public', () => {
+  const main = source('src/renderer/maestro/control/src/control.ts');
   const store = source('src/renderer/maestro/localHome/src/localHomeAuth.store.ts');
   const app = source('src/renderer/maestro/localHome/src/LocalHomeApp.vue');
   const router = source('src/renderer/maestro/localHome/src/localHome.router.ts');
   const client = source('src/renderer/common/homeShellBridge.client.ts');
 
   assert.ok(
-    main.indexOf('localHomeAuthStore.initialize()') < main.indexOf('createApp(LocalHomeApp)')
+    main.indexOf('localHomeAuthStore.initialize()') < main.indexOf('createApp(ControlAuthApp)')
   );
   assert.ok(
     store.indexOf('homeShellBridge.subscribeAuthSnapshot') <
@@ -109,18 +109,16 @@ test('fixed Home subscribes before its initial auth read and fails closed', () =
   assert.match(store, /authorityUnavailable = true/);
   assert.match(store, /isHomeShellAuthSnapshotNewer\(snapshot, this\.latestAcceptedSnapshot\)/);
   assert.match(store, /this\.snapshot = null;[\s\S]*void this\.refreshAuthSnapshot\(\)/);
-  assert.match(client, /catch \{\s*onInvalidSnapshot\(\);\s*\}/);
-  assert.ok(
-    app.indexOf('v-if="!localHomeAuthStore.authResolved"') <
-      app.indexOf('v-else-if="!localHomeAuthStore.ready"') &&
-      app.indexOf('v-else-if="!localHomeAuthStore.ready"') < app.indexOf('<a-layout v-else')
-  );
-  assert.match(app, /<Login v-else-if="!localHomeAuthStore.ready"/);
-  assert.match(router, /path: '\/', name: 'auth-gate'/);
-  assert.doesNotMatch(router, /path: '\/', redirect: '\/mini-app'/);
-  assert.match(app, /const becameReady = ready && wasReady === false/);
-  assert.match(app, /!becameReady && !isAuthGate/);
-  assert.match(app, /routeName === 'mini-app'/);
+  assert.match(client, /catch \{\s*if \(active\) onInvalidSnapshot\(\);\s*\}/);
+  assert.match(client, /const snapshot = await homeShellBridge\.getAuthSnapshot\(500\)/);
+  assert.doesNotMatch(client, /parseHomeShellAuthSnapshot\(payload\.params\)/);
+  assert.match(store, /this\.unsubscribe\?\.\(\)/);
+  assert.match(store, /this\.refreshGeneration \+= 1/);
+  assert.match(app, /<a-layout name="maestro-local-home__body"/);
+  assert.doesNotMatch(app, /<Login|views\/login|localHomeAuthStore|v-if|router\.replace/);
+  assert.match(router, /path: '\/', redirect: '\/mini-app'/);
+  assert.doesNotMatch(router, /path: '\/login'|name: 'auth-gate'/);
+  assert.match(router, /path: '\/sign-in'/);
 });
 
 test('fixed Home keeps credentials and tokens inside the hidden Home authority', () => {
@@ -143,29 +141,32 @@ test('fixed Home keeps credentials and tokens inside the hidden Home authority',
   assert.match(preload, /import 'electron-xpc\/preload'/);
 });
 
-test('legacy and Maestro Home reuse one complete Login surface', () => {
+test('Control owns the complete Login surface without a business router', () => {
   const routes = source('src/renderer/home/src/router/defaultRoutes.ts');
   const legacy = source('src/renderer/home/src/views/login/LegacyLogin.vue');
   const local = source('src/renderer/maestro/localHome/src/LocalHomeApp.vue');
   const login = source('src/renderer/home/src/views/login/Login.vue');
+  const overlay = source('src/renderer/maestro/control/src/ControlAuthApp.vue');
   const recovery = source('src/renderer/home/src/stores/auth/authSessionRecovery.service.ts');
   const router = source('src/renderer/home/src/router/index.ts');
 
   assert.match(routes, /import Login from '@\/views\/login\/LegacyLogin\.vue'/);
-  assert.match(legacy, /import Login from '\.\/Login\.vue'/);
-  assert.match(local, /import Login from '@\/views\/login\/Login\.vue'/);
+  assert.match(legacy, /name="home-auth-authority" hidden aria-hidden="true"/);
+  assert.doesNotMatch(`${legacy}\n${local}`, /import Login|<Login/);
+  assert.match(overlay, /import Login from '@renderer\/home\/src\/views\/login\/Login\.vue'/);
+  assert.match(overlay, /<Login v-else :auth="localHomeAuthStore" compact/);
+  assert.match(overlay, /<ControlApp\s+v-if="localHomeAuthStore.ready && !localHomeAuthStore.loggingOut"/);
   assert.match(login, /onSendOtp/);
   assert.match(login, /onResetPassword/);
   assert.match(login, /onSetPassword/);
   assert.match(login, /onDiscardPersistedSession/);
-  assert.match(legacy, /handlesPostAuthNavigation: true/);
   assert.match(
     source('src/renderer/maestro/localHome/src/localHomeAuth.store.ts'),
     /handlesPostAuthNavigation = false/
   );
-  assert.match(local, /:auth="localHomeAuthStore"/);
-  assert.match(login, /if \(!authStore\.handlesPostAuthNavigation\) return/);
-  assert.match(login, /NavigationFailureType\.duplicated/);
+  assert.match(login, /if \(!props\.navigateAfterLogin\) return/);
+  assert.match(login, /await props\.navigateAfterLogin\(\)/);
+  assert.doesNotMatch(login, /vue-router|useRoute|useRouter|router\.replace/);
   assert.match(router, /restoreCustomerSession\(\)/);
   assert.match(recovery, /activeSessionRecovery \?\? startSessionRecovery\(\)/);
   const consumerRestore = recovery.match(

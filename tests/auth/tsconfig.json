@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.node.json",
+  "include": ["*.ts", "../../src/shared/auth/authE2E.contract.ts", "../e2e/electronLaunchArgs.ts"],
+  "compilerOptions": { "composite": false, "noEmit": true, "strict": true, "noImplicitAny": true, "noUnusedLocals": true }
+}

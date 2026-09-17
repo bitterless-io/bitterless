@@ -79,7 +79,7 @@ export const createWorkflowPiSession: PiSessionFactory = async (start, customToo
   signal.throwIfAborted()
   const { session } = await createAgentSession({
     cwd, agentDir: runtime.agentDir, modelRuntime, model, thinkingLevel: attempt.opts.thinkingLevel ?? runtime.thinkingLevel,
-    tools, customTools, resourceLoader: loader, settingsManager: SettingsManager.inMemory(), sessionManager: SessionManager.inMemory()
+    tools, customTools, resourceLoader: loader, settingsManager: SettingsManager.inMemory({ compaction: { enabled: false } }), sessionManager: SessionManager.inMemory()
   })
   // Kimchi owns the output-repair budget. A rejected submission must not start an
   // unbounded Pi tool loop before Kimchi can count the failed turn.

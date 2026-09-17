@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.node.json",
+  "include": [
+    "../../src/main/agent/runtime/piNativeCompaction.ts",
+    "../../src/main/agent/runtime/piRuntimeProtocol.ts",
+    "../../src/main/agent/runtime/piRuntimeSession.ts",
+    "../../src/main/agent/runtime/piRuntimeAdapter.ts",
+    "../../src/main/agent/runtime/piAutoCompactionTest.ts",
+    "../../src/main/agent/runtime/compactionAwareTimeout.ts",
+    "../../src/shared/piCompactionTest.types.ts",
+    "../../src/shared/maestro/coach.api.ts"
+  ],
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true
+  }
+}

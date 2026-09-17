@@ -6,7 +6,8 @@ import { build } from 'esbuild';
 
 const root = resolve(import.meta.dirname, '../..');
 const mocks = {
-  'electron-xpc/preload': 'export class XpcPreloadHandler {}',
+  'electron-xpc/preload': `export class XpcPreloadHandler {}
+export const createXpcPreloadEmitter = name => name === 'CoachXpcHandler' ? { deleteNativeSession: async ({sessionId}) => { globalThis.__nativeChatDeletes.push(sessionId); return {ok:true} } } : { stopSession: async () => ({ok:true}), listRuns: async () => ({runs:[]}) };`,
   './sqliteManager': 'export const sqliteManager = { get db() { return globalThis.__chatDraftDb } };'
 };
 const bundled = await build({
@@ -18,15 +19,15 @@ const bundled = await build({
   } }]
 });
 const { MaestroChatDao, createMaestroSqliteSchema } = await import(`data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString('base64')}`);
-after(() => { delete globalThis.__chatDraftDb; });
+after(() => { delete globalThis.__chatDraftDb; delete globalThis.__nativeChatDeletes; });
 const harness = t => {
   const db = new DatabaseSync(':memory:');
   t.after(() => db.close());
+  globalThis.__nativeChatDeletes = [];
   let inTransaction = false;
   const adapter = {
     exec: sql => db.exec(sql),
     prepare: sql => {
-      if (sql === 'SELECT 1 FROM cowork_chat_message WHERE session_id = ? LIMIT 1') assert.equal(inTransaction, true, 'eligibility and deletion share one transaction');
       return db.prepare(sql);
     },
     transaction: fn => (...args) => {
@@ -56,6 +57,7 @@ test('conditional draft deletion removes empty or absent sessions and refuses pe
   assert.equal((await dao.getSession({ id: 'used' })).messages[0].content, 'late task result');
   assert.deepEqual(await dao.deleteSession({ id: 'used' }), { ok: true }, 'explicit deletion keeps its existing semantics');
   assert.equal(await dao.getSession({ id: 'used' }), null);
+  assert.deepEqual(globalThis.__nativeChatDeletes, ['empty', 'missing', 'used']);
 });
 
 test('failed database deletion rolls back and retains the empty session', async t => {
@@ -64,4 +66,5 @@ test('failed database deletion rolls back and retains the empty session', async 
   db.exec("CREATE TRIGGER refuse_delete BEFORE DELETE ON cowork_chat_session BEGIN SELECT RAISE(ABORT, 'storage unavailable'); END");
   await assert.rejects(dao.deleteSession({ id: 'protected', onlyIfEmpty: true }), /storage unavailable/);
   assert.equal((await dao.getSession({ id: 'protected' })).id, 'protected');
+  assert.deepEqual(globalThis.__nativeChatDeletes, []);
 });

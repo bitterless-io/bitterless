@@ -1,5 +1,9 @@
 # Maestro fixed Home exposes Mini Apps before authentication
 
+Placement superseded on 2026-09-17 by [Control-owned login](../features/control-login.md):
+Home is an anonymous app launcher; credential UI lives only in Control. Protected apps retain
+their account checks. Hidden Home authority, validation, recovery and token-free bridge remain.
+
 Status: implemented; owner verification pending
 
 ## Observed behavior

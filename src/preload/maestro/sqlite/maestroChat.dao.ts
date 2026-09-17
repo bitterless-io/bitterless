@@ -1,4 +1,6 @@
 import { XpcPreloadHandler, createXpcPreloadEmitter } from 'electron-xpc/preload'
+import type { CoachXpcContract } from '@maestro-shared/coach.api'
+const coach = createXpcPreloadEmitter<CoachXpcContract>('CoachXpcHandler')
 import type { WorkflowApi } from '@shared/agentWorkflow.api'
 const workflows = createXpcPreloadEmitter<WorkflowApi>('WorkflowHandler')
 import type {
@@ -253,7 +255,7 @@ export class MaestroChatDao extends XpcPreloadHandler implements MaestroChatApi 
     if (!snapshot || snapshot.runs.some((run) => run.status === 'running' || run.status === 'stopping')) {
       throw new Error('Workflow cleanup did not finish; the chat was kept.')
     }
-    return db.transaction(() => {
+    const result = db.transaction(() => {
       if (params.onlyIfEmpty && db.prepare('SELECT 1 FROM cowork_chat_message WHERE session_id = ? LIMIT 1').get(params.id)) {
         return { ok: false }
       }
@@ -261,6 +263,11 @@ export class MaestroChatDao extends XpcPreloadHandler implements MaestroChatApi 
       db.prepare('DELETE FROM cowork_chat_session WHERE id = ?').run(params.id)
       return { ok: true }
     })()
+    if (result.ok) {
+      const cleaned = await coach.deleteNativeSession({ sessionId: params.id })
+      if (!cleaned?.ok) throw new Error('The chat was deleted, but its native context could not be removed.')
+    }
+    return result
   }
 }
 

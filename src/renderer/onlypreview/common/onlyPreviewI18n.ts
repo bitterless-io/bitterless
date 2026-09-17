@@ -40,6 +40,18 @@ const en = {
     close: 'Close OnlyPreview',
     noWorkspace: 'No project open'
   },
+  /**
+   * 独立窗口占着 OnlyPreview 时,那一格 tab 上的占位页。
+   *
+   * 叫 `detached` 而不是 `standalone`:后者在 Main 里已经专指那个**窗口**(`ensureStandalone`、
+   * `OnlyPreviewMountKind = 'standalone' | 'cowork'`),而这几句描述的是那个**tab**。
+   * 见 docs/features/onlypreview-deferred-tab-placeholder.md #7。
+   */
+  detached: {
+    title: 'OnlyPreview is open in a separate window',
+    body: 'This tab keeps its place. Close that window and OnlyPreview returns here.',
+    focusWindow: 'Go to the window'
+  },
   project: {
     label: 'Project',
     locateCurrentFile: 'Locate current preview in project',
@@ -282,6 +294,11 @@ const zh: Localized<typeof en> = {
     maximize: '最大化或还原 OnlyPreview',
     close: '关闭 OnlyPreview',
     noWorkspace: '未打开项目'
+  },
+  detached: {
+    title: '已在独立窗口打开',
+    body: '此标签页会保留。关闭那个窗口，OnlyPreview 就回到这里。',
+    focusWindow: '前往'
   },
   project: {
     label: '项目',

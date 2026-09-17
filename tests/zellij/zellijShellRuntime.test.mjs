@@ -12,6 +12,7 @@ import { buildSync } from 'esbuild';
 const directory = mkdtempSync(join(tmpdir(), 'zellij-shell-runtime-'));
 const output = join(directory, 'env.cjs');
 buildSync({
+    tsconfig: 'tsconfig.node.json',
   entryPoints: ['src/main/zellij/zellijEnvironment.service.ts'],
   outfile: output,
   bundle: true,

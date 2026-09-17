@@ -10,6 +10,14 @@
   container-type: inline-size;
 }
 
+.chat-panel__skills { padding: 12px; margin-bottom: 8px; background: var(--color-bg-1); border: 1px solid var(--color-border-2); border-radius: 10px; font-size: 12px; }
+.chat-panel__skills-heading, .chat-panel__selected-skill { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.chat-panel__skills-heading { margin-bottom: 8px; }
+.chat-panel__skills-list { max-height: 230px; overflow: auto; padding-top: 6px; }
+.chat-panel__skill-row { display: block; width: 100%; text-align: left; padding: 8px; border: 0; border-radius: 6px; background: transparent; color: var(--color-text-1); cursor: pointer; code, small { display: block; margin-top: 4px; font-size: 10px; color: var(--color-text-3); overflow-wrap: anywhere; } &:hover { background: var(--color-fill-2); } &:focus-visible { outline: 2px solid rgb(var(--primary-6)); outline-offset: -2px; } &:disabled { opacity: .55; cursor: not-allowed; } }
+.chat-panel__selected-skill { padding: 6px 10px; margin-bottom: 6px; border-radius: 6px; background: var(--color-fill-2); font-size: 12px; span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } }
+.chat-panel__skills-error { color: rgb(var(--danger-6)); overflow-wrap: anywhere; }
+
 .chat-panel__drop-overlay {
   position: absolute;
   inset: 0;

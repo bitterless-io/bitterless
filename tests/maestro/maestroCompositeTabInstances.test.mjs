@@ -124,7 +124,8 @@ const { MaestroBrowserViewService, registerMaestroCompositeTab, registerMaestroP
  *    固有槽位是**从设置重建**的(pinned tab 不进 tabs 表),所以「重启」在这里就是「拿着上一个
  *    fixture 留下的 settings 再 build 一个 fixture」。
  *  · `refuseZellij` —— Zellij 在 Terminal 开关关着时会合法地拒绝打开。
- *  · `refuseOnlyPreview` —— 默认主页那个 mini app 合法地拒绝(它已经有一个活着的承载)。
+ *  · `deferOnlyPreview` —— 独立窗口占着承载,于是默认主页那个 mini app 装的是**占位页**
+ *    (2026-09-17 起它不再拒绝 —— 见 docs/features/onlypreview-deferred-tab-placeholder.md)。
  *  · `defaultHome` —— OnlyPreview 声明自己是**默认**固有 tab,也就是 bl 的真实注册形态。
  *    **opt-in**:不开的时候默认固有 tab 仍然是内置本地 Home,这正是 cowork 那一份的形态,
  *    也让本文件其余用例的启动状态一个字不用改。
@@ -210,8 +211,11 @@ const fixture = async (context, options = {}) => {
     ...(options.defaultHome ? { defaultHome: true } : {}),
     async open(host) {
       opened.push(`onlypreview:${host.instanceId}`);
-      if (options.refuseOnlyPreview) throw new Error('OnlyPreview already has a live host.');
-      host.attach({});
+      // 独立窗口占着承载时,这一格装**占位页**而不是抛(Ral 2026-09-17)。以前这里是
+      // `throw new Error('OnlyPreview already has a live host.')`,于是固有槽位那条路把这一发降级成
+      // 内置本地 Home —— 而 OnlyPreview 成了默认主页之后那条降级是一条日常路径。
+      // 见 docs/features/onlypreview-deferred-tab-placeholder.md。
+      host.attach(options.deferOnlyPreview ? { deferred: true } : {});
     },
     close() {},
     setActive() {},
@@ -507,22 +511,26 @@ test('restoring promotes the default mini app that is ALREADY open instead of op
 });
 
 /**
- * 默认那个 mini app 拒绝打开 → 这一发降级成内置本地 Home。
+ * 独立窗口占着 OnlyPreview 时,默认那一格装**占位页**,不降级成内置本地 Home(2026-09-17 反转)。
  *
- * 真实触发是 OnlyPreview 已经在独立窗口里:它只认一个活着的承载,所以 spec 的 `open` 会抛
- * (onlypreview-default-homepage.md #4)。和 Zellij 那一条同一条兜底,区别只在这次设置里**本来
- * 就是空的** —— 兜底不许顺手写点什么进去,否则下次启动就再也不试默认值了。
+ * 这一条以前是「默认那个 mini app 拒绝打开 → 这一发降级成内置本地 Home」,真实触发就是这个状态:
+ * spec 的 `open` 会抛(onlypreview-default-homepage.md #4)。取代它的理由是 Ral 自己给的
+ * ——「因为 onlypreview 会被设为首页,所以关闭这个事情 UI 上不友好了」:主页槽位悄悄变成另一个
+ * 页面,而且没有任何回到那个窗口的入口。maestro 那条通用兜底**一个字没动**,仍然由 Zellij 那一条
+ * 用例覆盖 —— 变的只是 OnlyPreview 不再去触发它。
  */
-test('the DEFAULT mini app refusing to open falls back to the built-in Home for that boot', async (context) => {
-  const f = await fixture(context, { defaultHome: true, refuseOnlyPreview: true });
+test('the DEFAULT mini app keeps its slot and shows a placeholder when a window owns the surface', async (context) => {
+  const f = await fixture(context, { defaultHome: true, deferOnlyPreview: true });
   const pinned = f.service.tabs.find((t) => t.pinned);
-  assert.equal(pinned.kind, 'home');
+  assert.equal(pinned.kind, 'onlypreview', '槽位留在默认那个 mini app 上,不降级成内置 Home');
   assert.equal(f.service.tabs.length, 1, '不空条');
-  assert.equal(pinned.view.visible, true, '这一格是降级时新建的,可见性要自己补');
-  assert.equal(f.settings.homeCompositeId, undefined, '兜底不写设置 —— 下次启动照样再试默认值');
-  const refusal = f.traces.find((event) => event.msg.includes('refused to open'));
-  assert.match(refusal.msg, /onlypreview/);
-  assert.match(refusal.msg, /already has a live host/);
+  assert.deepEqual(pinned.surface, { deferred: true }, '这一格装的是占位 surface');
+  assert.equal(f.settings.homeCompositeId, undefined, '照旧不写设置 —— 「没设过」= 字段不存在');
+  assert.equal(
+    f.traces.some((event) => event.msg.includes('refused to open')),
+    false,
+    'spec 不再拒绝,所以也不该留下「拒绝」的 trace —— 留了就是旧的降级分支又被走到了'
+  );
 });
 
 /**

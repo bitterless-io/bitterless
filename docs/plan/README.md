@@ -1,5 +1,18 @@
 # Bitterless Delivery Plan
 
+- [Pi native compaction](tasks/pi-native-compaction-001.md) — done; native automatic compaction, /compact and /test_auto_compact, queued delivery and child compaction off; owner desktop UI testing pending.
+
+- [control-login-002](tasks/control-login-002.md) — done; Control-only login, anonymous browsing and Control-frame parity code-verified. Human acceptance pending; E2E cancelled.
+- [login-renderer-001](tasks/login-renderer-001.md) — historical implementation; replaced by control-login-002 before human acceptance.
+
+- [Complete remaining skill P1](tasks/skills-p1-completion-006.md) — implemented; qualified selection, local enablement, read-only diagnostics and managed sources. Final verification recorded in task.
+
+- [Skill installer guidance](tasks/skills-installer-guidance-005.md) — done; named Chat prompt guidance, 2 rendered-prompt tests and strict types passed. No new installer/runtime preparation capability.
+
+- [Standard skill creator](tasks/skills-creator-004.md) — done; 6 creator checks plus source/auth/cache/New Chat regressions, strict types and build passed. Owner Chat acceptance pending.
+
+- [Skill P0 completeness](tasks/skills-p0-completeness-003.md) — done; complete resource-tree import/export, 76 focused checks, strict types and build passed; native authoring unchanged, owner UI acceptance pending.
+
 - [Zellij native selection copy 001](tasks/zellij-native-selection-copy-001.md) — done;
   attached-client copy, 211/211 regressions, six real native/browser acceptance groups and independent review pass; published Preview 0.0.122 (260917010242).
 

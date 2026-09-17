@@ -9,11 +9,13 @@ export type HostToolExecutionEvent =
 export const executeHostTool = async (
   tool: Pick<AgentToolSpec, 'execute'>,
   params: Record<string, unknown>,
-  onResult?: (event: HostToolExecutionEvent) => void
+  onResult?: (event: HostToolExecutionEvent) => void,
+  signal?: AbortSignal
 ): Promise<{ text: string; durationMs: number }> => {
   const startedAt = Date.now()
   try {
-    const text = await tool.execute(params || {})
+    signal?.throwIfAborted()
+    const text = await tool.execute(params || {}, signal)
     const durationMs = Date.now() - startedAt
     onResult?.({ status: 'success', durationMs, outputChars: text.length })
     return { text, durationMs }

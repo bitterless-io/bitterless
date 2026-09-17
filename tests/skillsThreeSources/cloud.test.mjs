@@ -1,3 +1,4 @@
+import * as nativePi from '@earendil-works/pi-coding-agent'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { build } from 'esbuild'
@@ -9,14 +10,14 @@ import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import AdmZip from 'adm-zip'
 const root = resolve('.')
-const result = await build({ entryPoints: [join(root, 'src/main/maestro/skills/skillCloud.service.ts')], tsconfig: join(root, 'tsconfig.node.json'), bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external' })
+const result = await build({ entryPoints: [join(root, 'src/main/maestro/skills/skillCloud.service.ts')], tsconfig: join(root, 'tsconfig.node.json'), bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external', external: ['@earendil-works/pi-coding-agent', 'virtual:bitterless-pi-skills'] })
 const module = { exports: {} }
-runInNewContext(result.outputFiles[0].text, { module, exports: module.exports, require: createRequire(join(root,'package.json')), process, Buffer, console, setInterval, clearInterval, AbortController, AbortSignal, URL, fetch })
+runInNewContext(result.outputFiles[0].text, { module, exports: module.exports, require: name => ['@earendil-works/pi-coding-agent', 'virtual:bitterless-pi-skills'].includes(name) ? nativePi : createRequire(join(root, 'package.json'))(name), process, Buffer, console, setInterval, clearInterval, AbortController, AbortSignal, URL, fetch })
 const { SkillCloudService } = module.exports
 const fixture = t => {
   const base = mkdtempSync(join(tmpdir(), 'bl-cloud-skills-')); let session = { baseUrl: 'https://service.invalid', token: 'fixture' }, context = { accountScope: 'account', institutionId: '7', generation: 1 }
   let version = 'old', removed = false, corrupt = false, denied = false, downloads = 0, gate
-  const zip = () => { const archive = new AdmZip(); archive.addFile('sample/SKILL.md', Buffer.from('---\nname: Sample\ndescription: Fixture\n---\n' + version)); return archive.toBuffer() }
+  const zip = () => { const archive = new AdmZip(); archive.addFile('sample/SKILL.md', Buffer.from('---\nname: Sample\ndescription: Fixture\n---\n' + version)); archive.getEntry('sample/SKILL.md').header.time = new Date('2020-01-01T00:00:00Z'); return archive.toBuffer() }
   const metadata = scope => { const bytes = zip(), hash = createHash('sha256').update(bytes).digest('hex'); return { id: 1, name: 'Sample', version: '1.0.0', scope, institution_id: scope === 'GLOBAL' ? null : 7, size: bytes.length, hash, content_revision: 'sha256:' + hash } }
   const service = new SkillCloudService({ root: () => base, session: () => session, institution: () => context, authorize: async () => {}, changed() {}, fetch: async (url, options) => {
     if (String(url).includes('.aliyuncs.com')) { downloads++; if(gate) await gate; return new Response(corrupt ? Buffer.from('bad') : zip()) }
@@ -51,4 +52,20 @@ test('logout fences late archive activation, keeps prior global package', async 
 })
 test('authorization denial invalidates institution and archive writes', async t => {
   const f=fixture(t); await f.service.refresh(); const count=f.downloads; f.denied=true; await f.service.refresh(); assert.equal(f.service.status,'unauthorized'); assert.equal(f.downloads,count)
+})
+
+test('cloud resource revision changes only when the installed package ledger changes', async t => {
+  const f = fixture(t)
+  await f.service.refresh()
+  const installed = f.service.revision
+  assert.ok(installed > 0)
+  await f.service.refresh()
+  assert.equal(f.service.revision, installed)
+  f.version = 'updated content'
+  await f.service.refresh()
+  assert.ok(f.service.revision > installed)
+  const updated = f.service.revision
+  f.removed = true
+  await f.service.refresh()
+  assert.ok(f.service.revision > updated)
 })

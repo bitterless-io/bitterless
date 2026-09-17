@@ -29,12 +29,30 @@ export class SessionActionsState {
   pendingIds: string[] = []
   private initialized = false
   private actions: Promise<void> = Promise.resolve()
+  private subscribed = false
+  private authGeneration = 0
+
+  reset(): void {
+    this.authGeneration += 1
+    this.initialized = false
+    this.historyVisible = false
+    this.searchVisible = false
+    this.lastUndo = null
+    this.pendingIds = []
+    this.actions = Promise.resolve()
+    Message.clear()
+  }
 
   init(): void {
     if (this.initialized) return
     this.initialized = true
     // XPC subscriptions live for the renderer lifetime; ChatPanel remounts when the session changes.
-    xpcRenderer.subscribe('maestro/session-search', () => this.openSearch())
+    if (!this.subscribed) {
+      this.subscribed = true
+      xpcRenderer.subscribe('maestro/session-search', () => {
+        if (this.initialized) this.openSearch()
+      })
+    }
   }
 
   toggleHistory(): void {
@@ -67,8 +85,9 @@ export class SessionActionsState {
     }
   }
 
-  private enqueue<T>(action: () => Promise<T>): Promise<T> {
-    const next = this.actions.then(action)
+  private enqueue<T>(action: () => Promise<T>, cancelled: T): Promise<T> {
+    const generation = this.authGeneration
+    const next = this.actions.then(() => generation === this.authGeneration ? action() : cancelled)
     this.actions = next.then(() => undefined, () => undefined)
     return next
   }
@@ -83,25 +102,30 @@ export class SessionActionsState {
   }
 
   rename(id: string, title: string): Promise<boolean> {
+    const generation = this.authGeneration
     return this.enqueue(async () => {
       try {
         const session = await messageStore.loadPersistedSession(id)
+        if (generation !== this.authGeneration) return false
         const value = title.trim()
         if (!session || !value) throw new Error('rename')
         if (value === session.title && session.detail.titleCustomized) return true
         const previous = { title: session.title, titleCustomized: session.detail.titleCustomized }
         if (!await messageStore.renameSession(id, value)) throw new Error('rename')
+        if (generation !== this.authGeneration) return false
         this.lastUndo = { kind: 'rename', id, title: value, previous }
         this.showUndoNotice(i18nHelper.maestroControl.chat.sessionRenamed.replace('{title}', value))
         return true
       } catch {
+        if (generation !== this.authGeneration) return false
         this.showError(i18nHelper.maestroControl.chat.renameFailed)
         return false
       }
-    })
+    }, false)
   }
 
   archive(id: string): Promise<void> {
+    const generation = this.authGeneration
     if (this.pendingIds.includes(id)) return Promise.resolve()
     this.pendingIds.push(id)
     return this.enqueue(async () => {
@@ -109,8 +133,10 @@ export class SessionActionsState {
         const title = messageStore.sessionListItems.find((item) => item.id === id)?.title || 'Maestro'
         const wasCurrent = channelStore.activeSessionId === id
         if (!await messageStore.archive(id)) throw new Error('archive')
+        if (generation !== this.authGeneration) return
         this.lastUndo = { kind: 'archive', id, title }
         await channelStore.selectAfterArchive(id)
+        if (generation !== this.authGeneration) return
         if (wasCurrent) {
           await nextTick()
           const focusTarget = (this.historyVisible ? document.querySelector<HTMLElement>('[name="maestro__history-close"]') : null)
@@ -119,14 +145,16 @@ export class SessionActionsState {
         }
         this.showUndoNotice(i18nHelper.maestroControl.chat.sessionArchived.replace('{title}', title))
       } catch {
+        if (generation !== this.authGeneration) return
         this.showError(i18nHelper.maestroControl.chat.archiveFailed)
       } finally {
-        this.pendingIds = this.pendingIds.filter((pending) => pending !== id)
+        if (generation === this.authGeneration) this.pendingIds = this.pendingIds.filter((pending) => pending !== id)
       }
-    })
+    }, undefined)
   }
 
   undo(): Promise<void> {
+    const generation = this.authGeneration
     return this.enqueue(async () => {
       const record = this.lastUndo
       if (!record) return
@@ -134,10 +162,13 @@ export class SessionActionsState {
         let content: string
         if (record.kind === 'archive') {
           if (!await messageStore.restore(record.id)) throw new Error('restore')
+          if (generation !== this.authGeneration) return
           await channelStore.selectMaestroHistorySession(record.id)
+          if (generation !== this.authGeneration) return
           content = i18nHelper.maestroControl.chat.sessionRestored.replace('{title}', record.title)
         } else {
           if (!await messageStore.renameSession(record.id, record.previous.title, Boolean(record.previous.titleCustomized))) throw new Error('rename')
+          if (generation !== this.authGeneration) return
           content = i18nHelper.maestroControl.chat.sessionTitleRestored.replace('{title}', record.previous.title)
         }
         if (this.lastUndo === record) {
@@ -145,9 +176,10 @@ export class SessionActionsState {
           Message.success({ id: NOTICE_ID, content, duration: 4500, resetOnHover: true })
         }
       } catch {
+        if (generation !== this.authGeneration) return
         this.showError(record.kind === 'archive' ? i18nHelper.maestroControl.chat.restoreFailed : i18nHelper.maestroControl.chat.renameFailed)
       }
-    })
+    }, undefined)
   }
 
   private showUndoNotice(content: string): void {

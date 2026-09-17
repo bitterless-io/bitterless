@@ -1,0 +1,36 @@
+.control-auth {
+  --bl-royalblue-50: #f3f5fc;
+  --bl-royalblue-100: #e2e4eb;
+  --bl-royalblue-200: #c4cadf;
+  --bl-royalblue-300: #a3aac5;
+  --bl-royalblue-400: #808ab1;
+  --bl-royalblue-500: #606b9d;
+  --bl-royalblue-600: #4e5882;
+  --bl-royalblue-700: #3e4568;
+  --bl-royalblue-800: #323955;
+  --bl-royalblue-900: #1e2237;
+}
+
+.control-auth .control-app__toolbar {
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.control-auth__status {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px;
+  overflow: auto;
+  text-align: center;
+  color: var(--bl-royalblue-700);
+}
+
+.control-auth button:focus-visible {
+  outline: 2px solid var(--bl-royalblue-600);
+  outline-offset: 2px;
+}

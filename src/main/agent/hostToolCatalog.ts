@@ -93,6 +93,28 @@ export const HOST_TOOL_CATALOG: HostToolCatalogEntry[] = [
     safety: 'Deletes only inject_btns rows for the target domain and removes the host-owned DOM button from matching open tabs; it does not clear browser sessions or customer data.'
   },
   {
+    name: 'skill_install',
+    scopes: ['cowork'],
+    category: 'skill',
+    risk: 'write',
+    summary: 'Inspect and manage HTTPS GitHub, npm or Git skill sources with a local source ledger.',
+    useWhen: 'Install a requested skill source or pasted skills add command; inspect/list first, then install/update/remove by exact ID and scope.',
+    safety: 'Inspect/list are read-only. Install/update write packages; remove deletes a ledger-owned package. Mutations follow host approval policy after resolving source/version/target. Local edits block destructive operations; no source scripts or system-global installation.'
+  },
+  {
+    name: 'skill_diagnose', scopes: ['cowork'], category: 'skill', risk: 'read',
+    summary: 'Check a skill’s declared entry, interpreter and dependencies.',
+    useWhen: 'Before running a script or when execution reports missing runtime conditions.',
+    safety: 'Read-only; no script execution, secret inspection or software installation. Successful diagnostics do not prove behavior.'
+  },
+  {
+    name: 'skill_creator',
+    scopes: ['cowork'], category: 'skill', risk: 'write',
+    summary: 'Initialize a standard skill template or check its format with Pi.',
+    useWhen: 'When asked to create a reusable skill; initialize, fill TODOs, check format, then verify representative behavior when appropriate.',
+    safety: 'Selected workspace or Shared only; never overwrites a package or runs scripts. Generated, format-checked and behavior-verified are separate evidence.'
+  },
+  {
     name: 'run_skill_script',
     scopes: ['cowork'],
     category: 'skill',

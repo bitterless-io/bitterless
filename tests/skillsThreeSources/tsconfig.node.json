@@ -5,6 +5,11 @@
     "../../src/main/maestro/skills/skillRegistry.service.ts",
     "../../src/main/maestro/skills/skillCloud.service.ts",
     "../../src/main/maestro/skills/skillDiscovery.service.ts",
+    "../../src/main/maestro/skills/skillSelection.ts",
+    "../../src/main/maestro/skills/skillDiagnostics.ts",
+    "../../src/main/agent/tools/skillCreatorTools.ts",
+    "../../src/main/agent/tools/skillInstallTools.ts",
+    "../../src/main/agent/runtime/hostToolRegistry.ts",
     "../../src/main/agent/runtime/skillCatalogRequest.ts",
     "../../src/main/agent/runtime/agentPrompt.ts",
     "../../src/main/agent/runtime/piRuntimeAdapter.ts"

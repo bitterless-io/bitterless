@@ -44,6 +44,8 @@ class LocalHomeAuthStore implements LoginSurfaceAuthController {
   private initialized = false;
   private refreshGeneration = 0;
   private latestAcceptedSnapshot: HomeShellAuthSnapshot | null = null;
+  private unsubscribe: (() => void) | null = null;
+  private refreshPromise: Promise<void> | null = null;
 
   get current(): LoginSurfaceCustomer | null {
     if (!this.snapshot?.email) return null;
@@ -101,14 +103,31 @@ class LocalHomeAuthStore implements LoginSurfaceAuthController {
   initialize(): void {
     if (this.initialized) return;
     this.initialized = true;
-    homeShellBridge.subscribeAuthSnapshot(
+    this.unsubscribe = homeShellBridge.subscribeAuthSnapshot(
       (snapshot) => this.applySnapshot(snapshot),
       () => this.handleInvalidSnapshot()
     );
     void this.refreshAuthSnapshot();
   }
 
-  async refreshAuthSnapshot(): Promise<void> {
+  dispose(): void {
+    this.unsubscribe?.();
+    this.unsubscribe = null;
+    this.initialized = false;
+    this.refreshGeneration += 1;
+    this.refreshPromise = null;
+  }
+
+  refreshAuthSnapshot(): Promise<void> {
+    if (this.refreshPromise) return this.refreshPromise;
+    const request = this.probeAuthSnapshot().finally(() => {
+      if (this.refreshPromise === request) this.refreshPromise = null;
+    });
+    this.refreshPromise = request;
+    return request;
+  }
+
+  private async probeAuthSnapshot(): Promise<void> {
     const generation = ++this.refreshGeneration;
     this.initializing = true;
     this.authorityUnavailable = false;
@@ -194,7 +213,14 @@ class LocalHomeAuthStore implements LoginSurfaceAuthController {
   }
 
   private applySnapshot(snapshot: HomeShellAuthSnapshot): boolean {
-    if (!isHomeShellAuthSnapshotNewer(snapshot, this.latestAcceptedSnapshot)) return false;
+    if (!isHomeShellAuthSnapshotNewer(snapshot, this.latestAcceptedSnapshot)) {
+      // A read after a temporary bridge failure may validly return the same authority revision.
+      if (
+        snapshot.authorityEpoch !== this.latestAcceptedSnapshot?.authorityEpoch ||
+        snapshot.revision !== this.latestAcceptedSnapshot?.revision
+      )
+        return false;
+    }
     this.latestAcceptedSnapshot = snapshot;
     this.snapshot = snapshot;
     this.initializing = false;

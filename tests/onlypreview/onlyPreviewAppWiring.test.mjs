@@ -160,6 +160,7 @@ test('OnlyPreview XPC prototype exposes the exact renderer allowlist and capabil
     'openMarkdownLink',
     'getHostToggleState',
     'toggleHost',
+    'focusOnlyPreviewWindow',
     'openOnlyPreviewWindow',
     'reportShellMounted',
     'chooseFolder',

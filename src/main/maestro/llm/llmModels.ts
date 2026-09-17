@@ -186,17 +186,28 @@ export const contextWindowLabel = (tokens: number): string => {
 }
 
 /**
- * 用 pi 解析出的**真实**窗口覆盖预设里手写的 `contextLengthK` / `contextLengthLabel`。
+ * 用 pi 解析出的**真实**窗口覆盖预设里配置的 `contextLengthK` / `contextLengthLabel`。
  *
- * 标签也一起派生,而不是保留手写的那个 —— 否则会出现「标签写 1M、数字算 256K」这种
- * 自相矛盾的显示。查不到的退 `DEFAULT_CONTEXT_WINDOW_TOKENS`。
+ * 标签也一起派生,而不是保留配置里那个 —— 否则会出现「标签写 1M、数字算 256K」这种
+ * 自相矛盾的显示。
+ *
+ * **pi 没给出值时退回这个预设自己配置的窗口,不是 `DEFAULT_CONTEXT_WINDOW_TOKENS`**
+ * (Ral 2026-09-17:「你配置好就行」)。之前无条件退 256K,于是 `describeContextWindows` 每次
+ * 超时(3s 上限)都把整批**降**到 256K —— 包括上面那 4 个 Codex 预设,它们配置的 266K 正是
+ * 实测真值(pi 里 `contextWindow = 272000`,见 `LLM_PRESETS` 上方那段)。也就是说旧写法让一次
+ * 3 秒抖动悄悄改掉压缩触发线、reserve 预算和 summary 上限,而配置里本来就是对的数。
+ * `DEFAULT_CONTEXT_WINDOW_TOKENS` 只作为「预设自己也没有配」时的最后兜底。
  */
 export const applyResolvedContextWindows = (
   presets: LlmTarget[],
   resolved: Record<string, number>
 ): LlmTarget[] =>
   presets.map((preset) => {
-    const tokens = resolved[modelPresetKey(preset.provider, preset.model)] || DEFAULT_CONTEXT_WINDOW_TOKENS
+    const configured = preset.contextLengthK > 0 ? preset.contextLengthK * 1024 : 0
+    const tokens =
+      resolved[modelPresetKey(preset.provider, preset.model)] ||
+      configured ||
+      DEFAULT_CONTEXT_WINDOW_TOKENS
     return {
       ...preset,
       contextLengthK: Math.round(tokens / 1024),

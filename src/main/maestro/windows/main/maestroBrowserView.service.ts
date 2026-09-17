@@ -181,6 +181,7 @@ export interface OperationTab {
    * 「切去 Zellij 看一眼再切回来」就等于把那个网页丢了。
    */
   websiteUrl?: string
+  authSuspended?: boolean
   capture: DebuggerCapture | null
   replay: ReplayEngine | null
   attachReady?: Promise<void>
@@ -219,6 +220,7 @@ export interface OperationTab {
 }
 
 export interface MaestroBrowserViewServiceState {
+  isApplicationAuthenticated?(): boolean;
   browserWindow: BrowserWindow | null
   operationView: WebContentsView | null
   capture: DebuggerCapture | null
@@ -940,6 +942,10 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
    * being converted has to land back on something.
    */
   private async mountComposite(tab: OperationTab, spec: MaestroCompositeTabSpec): Promise<boolean> {
+    if (spec.requiresAuthentication && !this._state.isApplicationAuthenticated?.()) {
+      await this.showAuthenticationGuide(tab);
+      return this.tabs.includes(tab);
+    }
     this.compositeTabs.set(tab.id, spec)
     // Hoisted into a variable rather than passed inline, because every later lifecycle call
     // (`close` / `setActive` / `refresh`) must name THIS tab's host — see `compositeHosts`.
@@ -949,6 +955,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       contentRect: () => this._state.opBounds ?? this.firstFrameOperationRect(),
       attach: (container) => {
         if (!host.isOpen()) return
+        if (spec.requiresAuthentication && !this._state.isApplicationAuthenticated?.()) return;
         this.compositeSurfaceOwners.set(container, host)
         tab.surface = container
         // Index 0 is the tab-view position, so the whole composite sits below Maestro's chrome and
@@ -991,6 +998,12 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     this.compositeHosts.set(tab.id, host)
     try {
       await spec.open(host)
+      if (spec.requiresAuthentication && !this._state.isApplicationAuthenticated?.()) {
+        spec.close(host);
+        this.compositeTabs.delete(tab.id);
+        this.compositeHosts.delete(tab.id);
+        await this.showAuthenticationGuide(tab);
+      }
       return host.isOpen()
     } catch (err) {
       if (!host.isOpen()) return false
@@ -1176,6 +1189,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
   private async ensureWarm(tab: OperationTab): Promise<void> {
     if (tab.cooling) throw new Error('Tab is cooling down.')
     if (tab.view && !tab.view.webContents.isDestroyed()) return
+    if (tab.authSuspended) { await this.showAuthenticationGuide(tab); return; }
     if (tab.kind === 'home') {
       const entry = localHomeEntry()
       tab.url = entry.url
@@ -2699,6 +2713,73 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     })
     this._state.broadcastActivity('skill', `trigger ${trigger.skillTitle}`)
     return true
+  }
+
+  private async showAuthenticationGuide(tab: OperationTab): Promise<void> {
+    if (!this.tabs.includes(tab)) return;
+    tab.authSuspended = true;
+    tab.surface = null;
+    const view = tab.view && !tab.view.webContents.isDestroyed() ? tab.view : this.buildPinnedHomeView();
+    tab.view = view;
+    tab.capture = null;
+    tab.replay = null;
+    tab.navigationStarted = true;
+    const entry = localHomeEntry();
+    tab.url = `${entry.url}#/sign-in`;
+    if (entry.file) await view.webContents.loadFile(entry.file, { hash: '/sign-in' });
+    else await view.webContents.loadURL(tab.url);
+    if (!this.tabs.includes(tab) || tab.view !== view || view.webContents.isDestroyed()) return;
+    if (tab.id === this.activeTabId) {
+      this.setOperationView(view);
+      this._state.layout();
+      view.setVisible(!this.contentCovered);
+    }
+  }
+
+  async suspendProtectedTabs(): Promise<void> {
+    for (const [id, spec] of [...this.compositeTabs]) {
+      if (!spec.requiresAuthentication) continue;
+      const host = this.compositeHosts.get(id);
+      const tab = this.tabs.find((item) => item.id === id);
+      this.compositeTabs.delete(id);
+      this.compositeHosts.delete(id);
+      if (host) spec.close(host);
+      if (tab) await this.showAuthenticationGuide(tab);
+    }
+    this.broadcastTabs();
+  }
+
+  async resumeProtectedTabs(): Promise<void> {
+    if (this.protectedResumePromise) return this.protectedResumePromise;
+    const request = this.restoreProtectedTabs().finally(() => {
+      if (this.protectedResumePromise === request) this.protectedResumePromise = null;
+    });
+    this.protectedResumePromise = request;
+    return request;
+  }
+
+  private protectedResumePromise: Promise<void> | null = null;
+
+  private async restoreProtectedTabs(): Promise<void> {
+    for (const tab of this.tabs.filter((item) => item.authSuspended)) {
+      const spec = getMaestroCompositeTab(tab.kind);
+      if (!spec || !this._state.isApplicationAuthenticated?.()) continue;
+      const guide = tab.view;
+      try {
+        if (!await this.mountComposite(tab, spec) || !this._state.isApplicationAuthenticated?.()) continue;
+        tab.authSuspended = false;
+        tab.view = null;
+        if (guide && !guide.webContents.isDestroyed()) {
+          this._state.browserWindow?.contentView.removeChildView(guide);
+          guide.webContents.close();
+        }
+        this.setCompositeActive(tab.id, tab.id === this.activeTabId);
+        if (tab.id === this.activeTabId) this.setOperationView(null);
+      } catch {
+        // Runtime activation may still be pending; keep the guide until the next auth-ready pass.
+      }
+    }
+    this.broadcastTabs();
   }
 
   reset(): void {

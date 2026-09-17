@@ -11,6 +11,7 @@ test.after(() => rmSync(directory, { recursive: true, force: true }));
 
 const outfile = join(directory, 'config.cjs');
 buildSync({
+    tsconfig: 'tsconfig.node.json',
   entryPoints: ['src/main/zellij/zellijConfig.service.ts'],
   bundle: true,
   platform: 'node',

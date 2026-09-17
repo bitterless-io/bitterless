@@ -27,7 +27,7 @@ const source = read('src/main/agent/maestroAgent.service.ts');
 const ast = ts.createSourceFile('maestroAgent.service.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 const agentClass = ast.statements.find(node => ts.isClassDeclaration(node) && node.name.text === 'MaestroAgentService');
 const members = new Set([
-  'activeAgentTurns', 'agentTurnGeneration', 'agentTurnContext', 'agentTurnRevision', 'recentFinishedAgentTurns',
+  'manualCompactions', 'manualCompactionCancels', 'activeAgentTurns', 'agentTurnGeneration', 'agentTurnContext', 'agentTurnRevision', 'recentFinishedAgentTurns',
   'lastAgentRunFallback', 'lastAgentRun', 'lastAgentArtifactsFallback', 'lastAgentArtifacts',
   'tabsOpenedThisTurnFallback', 'tabsOpenedThisTurn', 'hydratedMaestroAgentSessions',
   'claimAgentTurn', 'getActiveAgentTurn', 'ackAgentTurnFinished', 'hasActiveAgentTurn', 'agentTurnSnapshot',
@@ -45,7 +45,7 @@ const deferred = () => {
 const makeHarness = (t, reservationMs = 60_000) => {
   const events = [], cancelled = [], activity = [];
   const dependencies = {
-    AsyncLocalStorage, ...context, TurnSteeringInbox,
+    AsyncLocalStorage, ...context, TurnSteeringInbox, applicationAuth: { assertReady() {} },
     buildAgentTurnPrompt: params => JSON.stringify(params), localNow: () => 'fixture-time-at-receipt',
     chainFilePath: (_directory, id) => `/fixture/chains/${id}.jsonl`, maestroUserChainDir: () => '/fixture/chains',
     AGENT_TURN_RESERVATION_TIMEOUT_MS: reservationMs,
@@ -67,13 +67,13 @@ const makeHarness = (t, reservationMs = 60_000) => {
       activeTabId: 'page-a', beginBrowserTurn: (...args) => begun.push(args), endBrowserTurn: id => ended.push(id),
       describeWindowTabs: () => ({ activeTab: null, openTabs: [] }),
       existingSkillRegistry: () => ({ listSkillsForDomain: url => url ? [{ id: `${new URL(url).hostname}-skill` }] : [] }),
-      ensurePersistedCaptureRecordsLoaded: async () => undefined, syncWorkspaceFromContext: () => undefined
+      ensurePersistedCaptureRecordsLoaded: async () => undefined, syncWorkspaceFromContext: () => undefined, projectRootForSession: () => undefined
     },
     offloadLongPasteIfNeeded: text => text, recordUserChainMessage: () => undefined,
     agentSkillBriefs: (_message, recordings) => recordings,
     loadHostToolPolicies: async () => undefined,
     buildAgentMediaInput: async () => ({ note: '' }),
-    getMaestroAgent: id => ({ id }), getExistingMaestroAgent: () => undefined
+    getMaestroAgent: id => ({ id, setProjectRoot: async () => undefined, hasConversation: async () => false }), getExistingMaestroAgent: () => undefined
   });
   t.after(() => { for (const turn of agent.activeAgentTurns.values()) clearTimeout(turn.reservationTimer); });
   const claim = (sessionId, turnId = `${sessionId}-1`) => agent.claimAgentTurn({ sessionId, turnId, rootText: `request ${sessionId}`, startedAt: 1 });
@@ -519,3 +519,17 @@ test('drill recording stays exclusive while other chats may use ordinary browser
   assert.equal(await b('page_snapshot').execute({}), 'done');
   assert.deepEqual(calls, [['A', 'start_recording'], ['A', 'stop_recording'], ['A', 'ingest_recording'], ['B', 'page_snapshot']]);
 });
+
+test('root received during manual compaction keeps its reservation beyond the normal expiry and waits for completion', async t => {
+  const {agent,claim} = makeHarness(t,15)
+  const compact = deferred(), run = deferred(), started = deferred()
+  agent.manualCompactions.set('A',compact.promise)
+  agent.routeAgentMessage = async () => { started.resolve(); await run.promise; return {ok:true,text:'done'} }
+  claim('A')
+  const result = agent.sendAgentMessage({sessionId:'A',turnId:'A-1',messageId:'root',intent:'root',message:'after compact'})
+  await new Promise(resolve => setTimeout(resolve,35))
+  assert.ok(agent.activeAgentTurns.has('A'))
+  assert.equal(agent.activeAgentTurns.get('A').rootStarted,false)
+  compact.resolve(); await started.promise
+  run.resolve(); assert.equal((await result).ok,true)
+})

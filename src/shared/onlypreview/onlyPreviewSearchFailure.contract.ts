@@ -37,9 +37,32 @@ const hasExactKeys = (value: Record<string, unknown>, keys: string[]): boolean =
 const isToken = (value: unknown): value is string =>
   typeof value === 'string' && value.length >= 1 && value.length <= 256 && !value.includes('\0');
 
+// `operation` and `causeCode` are the two optional diagnostic fields the producer may attach to any
+// failure payload (`toOnlyPreviewErrorPayload`, onlyPreview.contract.ts). They are ADMITTED here and
+// re-validated, never trusted: this seam exists because the sender's own sanitizer is not evidence.
+// The token alphabet is strictly stronger than the `message` rule below, which only forbids `/` and
+// `\` — a token cannot carry a path separator, a space, or a quote at all. Anything else, including a
+// symbol key, still fails closed: an exact-key validator here is what latched the relay's protocol
+// failure when the payload was widened on one side only (see
+// docs/issues/onlypreview-search-failure-payload-latches-protocol-error.md).
+const ERROR_PAYLOAD_KEYS = new Set(['code', 'message', 'operation', 'causeCode']);
+const DETAIL_TOKEN = /^[A-Za-z0-9._-]{1,64}$/u;
+
+const isErrorPayloadShape = (value: Record<string, unknown>): boolean => {
+  let hasCode = false;
+  let hasMessage = false;
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== 'string' || !ERROR_PAYLOAD_KEYS.has(key)) return false;
+    if (key === 'code') hasCode = true;
+    else if (key === 'message') hasMessage = true;
+    else if (typeof value[key] !== 'string' || !DETAIL_TOKEN.test(value[key] as string)) return false;
+  }
+  return hasCode && hasMessage;
+};
+
 export const isOnlyPreviewSearchErrorPayload = (value: unknown): value is OnlyPreviewErrorPayload =>
   isRecord(value) &&
-  hasExactKeys(value, ['code', 'message']) &&
+  isErrorPayloadShape(value) &&
   typeof value.code === 'string' && ERROR_CODES.has(value.code) &&
   typeof value.message === 'string' && value.message.length >= 1 && value.message.length <= 4_096 &&
   !value.message.includes('\0') && !value.message.includes('/') && !value.message.includes('\\');

@@ -12,6 +12,7 @@ import {
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { compareVersions } from 'compare-versions';
+import { zellijLog } from './zellijLog.service';
 import type { ZellijSnapshot } from '@shared/zellij/zellij.type';
 import {
   defaultZellijShortcuts,
@@ -148,6 +149,7 @@ export class ZellijConfigService {
   }
 
   private async ensureDefaults(): Promise<void> {
+    const startedAt = Date.now();
     const source = this.source();
     const revision = this.revision(source);
     const markerSource = this.markerSource();
@@ -155,6 +157,16 @@ export class ZellijConfigService {
     const candidate = upgrade
       ? buildZellijDefaultConfig({ platform: this.options.platform })
       : ensureZellijConfigDefaults(source!, this.options.platform);
+    // The most consequential invisible act of the 2026-09-17 boot: this replaced the whole template
+    // (260914150147 → 260916230933) mid-startup, and the only trace was a backup file's mtime.
+    // Zellij reads --config once, at server start, so which boot rewrote it decides which sessions
+    // are running which configuration.
+    zellijLog.info('config-decide', {
+      exists: source !== null,
+      upgrade,
+      templateVersion: ZELLIJ_CONFIG_VERSION_CODE,
+      willWrite: upgrade || candidate !== source
+    });
     if (!upgrade && candidate === source) return;
     const directory = dirname(this.file);
     mkdirSync(directory, { recursive: true });
@@ -163,8 +175,18 @@ export class ZellijConfigService {
     try {
       const mode = source === null ? 0o600 : lstatSync(this.file).mode & 0o777;
       writeFileSync(temporary, candidate, { flag: 'wx', mode });
-      await this.options.validate(temporary);
+      const validateAt = Date.now();
+      try {
+        await this.options.validate(temporary);
+      } catch (error) {
+        zellijLog.error('config-validate', { verdict: 'failed', elapsedMs: Date.now() - validateAt });
+        throw error;
+      }
+      // Spawns `zellij setup --check`: a 15s-bounded child whose duration is the single largest
+      // unmeasured cost on the prepare path.
+      zellijLog.info('config-validate', { verdict: 'ok', elapsedMs: Date.now() - validateAt });
       if (this.revision(this.source()) !== revision || this.markerSource() !== markerSource) {
+        zellijLog.warn('config-drift', { stage: 'post-validate' });
         throw new Error('config-drift');
       }
       if (upgrade) {
@@ -179,15 +201,23 @@ export class ZellijConfigService {
         );
       }
       if (source !== null) {
-        writeFileSync(`${this.file}.bitterless-backup-${Date.now()}-${randomUUID()}`, source, {
+        const backupAt = Date.now();
+        writeFileSync(`${this.file}.bitterless-backup-${backupAt}-${randomUUID()}`, source, {
           flag: 'wx',
           mode: 0o600
         });
+        // `backupAt` is the stamp IN the filename, so this line finds the artefact on disk.
+        zellijLog.info('config-backup', { backupAt, bytes: source.length });
       }
       // No await between the final revision check and replacement.
       renameSync(temporary, this.file);
       // A marker never claims an upgrade before its validated configuration has landed.
       if (upgrade) renameSync(temporaryMarker, this.markerFile());
+      zellijLog.info('config-write', {
+        mode: upgrade ? 'upgrade' : 'defaults',
+        bytes: candidate.length,
+        elapsedMs: Date.now() - startedAt
+      });
     } finally {
       if (existsSync(temporary)) unlinkSync(temporary);
       if (existsSync(temporaryMarker)) unlinkSync(temporaryMarker);

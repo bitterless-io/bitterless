@@ -65,7 +65,7 @@ export interface MaestroChatDetail {
   titleRevision?: number
   /** Durable attempt marker. Reload never resumes or retries this request. */
   titleGeneration?: { requestId: string; firstMessageId: string; expectedRevision: number }
-  draft?: { text: string; files: { name: string; path: string; isDirectory?: boolean }[] }
+  draft?: { text: string; files: { name: string; path: string; isDirectory?: boolean }[]; skill?: { reference: string; name: string; layer: string; path: string } }
   compressedUntilMessageId?: string
   compressedAt?: number
   workspace?: WorkspaceRef

@@ -23,10 +23,15 @@ contextBridge.exposeInMainWorld('extraResource', extraResourceApi);
 
 export interface HomeEnvApi {
   platform: string;
+  authOnlyE2E?: { coreOrigin: string; mode: string; env: string };
 }
 
 const homeEnvApi: HomeEnvApi = {
   platform: process.platform,
+  ...(process.env.BITTERLESS_E2E === '1' && process.env.BITTERLESS_AUTH_E2E === '1' &&
+      import.meta.env.VITE_MODE === 'debug' && import.meta.env.VITE_ENV === 'prod'
+    ? { authOnlyE2E: { coreOrigin: import.meta.env.VITE_BITTERLESS_CORE_URL || '', mode: import.meta.env.VITE_MODE, env: import.meta.env.VITE_ENV } }
+    : {}),
 };
 
 contextBridge.exposeInMainWorld('homeEnv', homeEnvApi);

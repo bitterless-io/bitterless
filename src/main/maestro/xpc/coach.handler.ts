@@ -1,5 +1,7 @@
+import type { SkillInstallationRequest } from '@maestro-shared/coach.api'
 import type { SkillSharingScope, SkillScopeContextInfo } from '@maestro-shared/coach.api'
 import { XpcMainHandler } from 'electron-xpc/main'
+import { applicationAuth } from '@main/auth/applicationAuth.service';
 import { maestroWindowHelper } from '@maestro-main/windows/main/maestroWindow.controller'
 import { getMaestroPreviewOpener } from '@maestro-main/windows/main/previewOpener.registry'
 import { updateService } from '@maestro-main/update/update.service'
@@ -67,6 +69,7 @@ import type { SavedTab } from '@maestro-shared/tabs.api'
 import type { CaptureMode } from '@maestro-shared/trace.types'
 
 export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract {
+  async requestLogin(): Promise<void> { maestroWindowHelper.requestLogin(); }
   async getAgentBrowserSession(params: { sessionId: string }): ReturnType<CoachXpcContract['getAgentBrowserSession']> {
     return maestroWindowHelper.getAgentBrowserSession(params)
   }
@@ -236,6 +239,8 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
   }
 
   async claimAgentTurn(params: AgentTurnClaimRequest): Promise<AgentTurnClaimResult> {
+    await applicationAuth.requireReady();
+    await maestroWindowHelper.resumeAuthenticatedSession();
     return maestroWindowHelper.claimAgentTurn(params)
   }
 
@@ -305,6 +310,9 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
 
   async listSkills(params?: { sessionId?: string }): Promise<SkillSummary[]> { return maestroWindowHelper.listSkills(params) }
   async skillCatalog(params?: { sessionId?: string; checkUpdates?: boolean }) { return maestroWindowHelper.skillCatalog(params) }
+  async setSkillEnabled(params: { reference: string; enabled: boolean; sessionId?: string }): Promise<void> { return maestroWindowHelper.setSkillEnabled(params) }
+  async manageSkillInstallation(params: SkillInstallationRequest) { return maestroWindowHelper.manageSkillInstallation(params) }
+  async diagnoseSkill(params: { reference: string; sessionId?: string }) { return maestroWindowHelper.diagnoseSkill(params) }
   async setSkillViewContext(params: { sessionId: string; workspace?: { path: string; name: string; exists: boolean; updatedAt: number } }) { return maestroWindowHelper.setSkillViewContext(params) }
   async openSkillFile(params: { skillId: string; sessionId?: string }) { return maestroWindowHelper.openSkillFile(params) }
   async openSkillSource(params: { layer: 'global' | 'workspace' | 'institution'; sessionId?: string }) { return maestroWindowHelper.openSkillSource(params) }
@@ -405,6 +413,26 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
 
   async setLlmConfig(params: { provider: string; model: string; effort?: LlmEffort }): Promise<LlmConfig> {
     return await maestroWindowHelper.setLlmConfig(params)
+  }
+
+  async setCompactPrompt(params: { compactPrompt: string }): Promise<LlmConfig> {
+    return await maestroWindowHelper.setCompactPrompt(params)
+  }
+
+  async testAutoCompaction(params: { sessionId: string; filePath?: string }): Promise<import('@shared/piCompactionTest.types').AutoCompactionTestReport> {
+    return await maestroWindowHelper.testAutoCompaction(params)
+  }
+
+  async deleteNativeSession(params: { sessionId: string }): Promise<{ ok: true }> {
+    return await maestroWindowHelper.deleteNativeSession(params)
+  }
+
+  async cancelCompaction(params: { sessionId: string }): Promise<void> {
+    await maestroWindowHelper.cancelCompaction(params)
+  }
+
+  async compactSession(params: { sessionId: string; instructions?: string }): Promise<AgentCompactReply & { tokensBefore?: number; estimatedTokensAfter?: number }> {
+    return await maestroWindowHelper.compactSession(params)
   }
 
   async setLlmCompression(params: { provider: string; model: string; compressionRemainingPercent: number }): Promise<LlmConfig> {

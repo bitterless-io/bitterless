@@ -75,6 +75,27 @@ const DEFAULT_HEIGHT = 760;
 const MIN_WIDTH = 800;
 const MIN_HEIGHT = 600;
 
+/**
+ * 应用正在退出 —— 关窗接管必须闭嘴。
+ *
+ * `app.quit()` 会对**每一个**窗口发 `'close'`,所以「关掉独立窗口 → 内容回到 tab」那个钩子在退出
+ * 时会被当成一次用户关窗触发,于是退出流程里凭空冒出一次建 composite 的动作。模块级的一位,
+ * 由 `app.once('before-quit')` 置位(文件末尾),因为它是**进程**的状态,不是某个 helper 实例的。
+ */
+let shuttingDown = false;
+
+/**
+ * 关窗接管的两半,分开是因为它们必须发生在**两个不同的时刻**。
+ *
+ * `capture` 在 `'close'`:承载还活着,这是唯一还能问出转移目标的时刻(工作区注册表和预览区当前
+ * 文件都会在 `'closed'` 里被吊销)。返回 `undefined` 表示这一发不接管。
+ * `promote` 在 `'closed'`:承载已经吊销,升格的幂等判据和 `buildHost` 才成立。
+ */
+type OnlyPreviewStandaloneCloseTakeover = {
+  capture: (hostToken: string) => unknown;
+  promote: (captured: unknown) => void;
+};
+
 type OnlyPreviewShortcutOrigin = OnlyPreviewGlobalSearchFocusOrigin | 'search';
 type OnlyPreviewNativeCommand =
   | 'choose-folder'
@@ -262,6 +283,21 @@ export class OnlyPreviewWindowHelper {
   private settingsWindowState: WindowStateController | null = null;
   private agentSkillGuideWindowState: WindowStateController | null = null;
   private commandHandler: ((payload: OnlyPreviewNativeCommandPayload) => void) | null = null;
+  /**
+   * 「这个独立窗口要没了 —— 有占位 tab 的话把内容接回去」的接收方。
+   *
+   * 一个注册位而不是直接 import:接管那一步要跑 dock 的那条 FIFO、要复用 `captureTarget()` /
+   * `restoreTarget()`,那些都住在 `onlyPreviewHostToggle.service.ts` 里,而它 import 了本文件 ——
+   * 直接反向 import 就是一个环。依赖方向照旧只有一条:toggle → helper。
+   */
+  private standaloneCloseTakeover: OnlyPreviewStandaloneCloseTakeover | null = null;
+  /**
+   * `'close'` 抓到的转移目标,等 `'closed'` 把承载吊销之后再交给升格。
+   *
+   * 类型是 `unknown`:目标的形状(`TransitionTarget`)属于 toggle service,helper 只负责原样带过去 ——
+   * 认识它就会把依赖方向反过来。
+   */
+  private pendingCloseTakeover: { hostToken: string; captured: unknown } | null = null;
   private readonly diagnostics: OnlyPreviewSearchDiagnostics;
   private readonly windowOpenTraces = createOnlyPreviewWindowOpenCoordinator({
     diagnostics: onlyPreviewOpenDiagnostics
@@ -278,6 +314,40 @@ export class OnlyPreviewWindowHelper {
 
   setCommandHandler(handler: (payload: OnlyPreviewNativeCommandPayload) => void): void {
     this.commandHandler = handler;
+  }
+
+  setStandaloneCloseTakeover(takeover: OnlyPreviewStandaloneCloseTakeover): void {
+    this.standaloneCloseTakeover = takeover;
+  }
+
+  /**
+   * `'closed'` 到了 —— 承载这一刻已经被 `mount.onHostGone` 吊销,现在才是升格能跑的时刻。
+   *
+   * 只有 `'close'` 真的抓到过快照(`pendingCloseTakeover` 非空且 token 对得上)才升格,所以:
+   * dock 方向与登出拆卸走 `destroy()`(不发 `'close'`)→ 没有快照 → 这里什么都不做;
+   * `app.quit()` 发了 `'close'` 但被 `shuttingDown` 拦在抓取之前 → 同样什么都不做。
+   */
+  private commitStandaloneCloseTakeover(hostToken: string): void {
+    const pending = this.pendingCloseTakeover;
+    if (!pending || pending.hostToken !== hostToken) return;
+    this.pendingCloseTakeover = null;
+    this.standaloneCloseTakeover?.promote(pending.captured);
+  }
+
+  /**
+   * 布防升格:这个独立窗口要没了,而承载还在 —— 现在是唯一能把转移目标快照下来的时刻。
+   *
+   * **`'close'` 之后、`destroyStandalone()` 之前。** 工作区注册表与预览区当前文件都会在
+   * `mount.onHostGone` 里被吊销(本文件 `attachSurface` 末尾那个监听),所以晚一步就什么都问不到了。
+   */
+  private armStandaloneCloseTakeover(hostToken: string): void {
+    if (shuttingDown) return;
+    if (this.standaloneHost?.hostToken !== hostToken) return;
+    if (this.standaloneMount?.kind !== 'standalone') return;
+    const captured = this.standaloneCloseTakeover?.capture(hostToken);
+    if (captured === undefined) return;
+    // 只存快照,不排队升格 —— 升格由 `'closed'` 那一侧的 `commitStandaloneCloseTakeover` 触发。
+    this.pendingCloseTakeover = { hostToken, captured };
   }
 
   bindNativeShortcuts(
@@ -1010,7 +1080,36 @@ export class OnlyPreviewWindowHelper {
     const mount = new OnlyPreviewStandaloneMount(window, this.baseWindowState);
     // The three window events this host translates for the composite: it went away, and it gained or
     // lost the owner's attention. Everything else the composite needs, it asks the mount for.
-    window.once('closed' as any, () => mount.reportHostGone());
+    window.once('closed' as any, () => {
+      mount.reportHostGone();
+      // **升格在这里落地,不在 `'close'` 里。** 上一行同步跑完 `mount.onHostGone` 那个监听,它把
+      // `standaloneHost` 置 null 并 `onlyPreviewHostRegistry.revoke(...)`,所以到这一行承载确实已经
+      // 没了 —— 而升格体里那道 `getStandaloneHost()` 幂等判据、以及 `buildHost('cowork')` 的
+      // 「already has a live host」都要求这一点。在 `'close'` 里直接排队升格会自己撞上那道判据:
+      // FIFO 是一条纯 `.then` 链,升格体在判据之前没有任何 macrotask 边界,而 Electron 在每个
+      // 原生→JS 回调末尾就排空微任务,于是升格在窗口真正销毁**之前**跑完,读到的承载还活着,
+      // 于是 `phase=skipped reason=live-host`,什么都不做 —— 正是本子系统那个「看起来像没反应」的
+      // 静默失败形态(两路独立评审都先判到这一条)。
+      this.commitStandaloneCloseTakeover(host.hostToken);
+    });
+    /**
+     * 关掉这个独立窗口 → 内容回到那一格 tab(Ral 2026-09-17)。
+     *
+     * **监听可取消的 `'close'`,不是 `'closed'`** —— 这不是细节,是这个钩子的选型依据。Electron 的
+     * `destroy()` 明确**不**发 `'close'`,只发 `'closed'`,所以三个非用户来源自动绕开这里:
+     *  · host toggle 的 dock 方向(`destroyStandalone()` → `mount.destroyHost()` → `destroy()`)——
+     *    它自己就是搬迁,再接管一次会建出第二个 cowork 承载;
+     *  · 登出/鉴权拆卸;
+     *  · 下面那个 `closeOnRendererFailure`。最后这一个**应该**升格(渲染进程死了,内容该回到
+     *    tab 里去),所以它在调 `destroyStandalone()` 之前**显式布防**。
+     *
+     * 而 `app.quit()` 会对每个窗口发 `'close'`,所以退出时由 `shuttingDown` 拒绝
+     * (`armStandaloneCloseTakeover` 里那一条)。
+     */
+    window.on('close' as any, () => {
+      if (this.baseWindow !== window) return;
+      this.armStandaloneCloseTakeover(host.hostToken);
+    });
     window.on('focus', () => {
       console.info(
         `[onlypreview] event=window-focus state=focus focus=${electronWebContents.getFocusedWebContents() ? 'view' : 'none'}`
@@ -1230,6 +1329,10 @@ export class OnlyPreviewWindowHelper {
       console.warn(
         `[OnlyPreview] The shell renderer exited (${details.reason}, exitCode ${details.exitCode}); closing the standalone window.`
       );
+      // **显式布防 —— 这一支够不到 `'close'` 钩子。** 下一行的 `destroyStandalone()` 走
+      // `mount.destroyHost()` → `window.destroy()`,而 `destroy()` 不发 `'close'`。渲染进程死了
+      // 是三个「非用户来源」里唯一**应该**升格的那一个:内容该回到那一格 tab,而不是连带消失。
+      this.armStandaloneCloseTakeover(host.hostToken);
       if (this.baseWindow === window) this.destroyStandalone();
     };
     shellView.webContents.once('render-process-gone', (_event, details) =>
@@ -1469,6 +1572,12 @@ export class OnlyPreviewWindowHelper {
 }
 
 export const onlyPreviewWindowHelper = new OnlyPreviewWindowHelper();
+
+// 退出时 `app.quit()` 会对每个窗口发 `'close'`,而那一次不是「用户把 OnlyPreview 收起来」。
+// `once` 就够:这一位只会从 false 变 true。
+app.once('before-quit', () => {
+  shuttingDown = true;
+});
 
 // Registered at module load, not at window creation: the menu exists for the whole application
 // lifetime, and an unclaimed chord has to resolve to `false` (so it can be replayed to the window

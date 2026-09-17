@@ -94,8 +94,15 @@ export interface OnlyPreviewMount {
   onHostGone(listener: () => void): () => void;
 
   /**
-   * Take the host down as part of the composite's own teardown: destroy the window, or close the
-   * tab. Distinct from `requestClose()`, which is the owner asking; this is the composite finishing.
+   * Take the host down as part of the composite's own teardown. Distinct from `requestClose()`,
+   * which is the owner asking; this is the composite finishing.
+   *
+   * **「Take down」是每个承载自己的说法,而它们两个不对称(Ral 2026-09-17)。** 独立窗口那一种
+   * `destroy()` 掉自己的窗口。Cowork 那一种**不关**那一格 tab —— 它把那一格降级成一张
+   * 「已在独立窗口打开 ＋ 前往」的占位页,关掉那个窗口时再就地升格回来。所以这个方法的契约是
+   * 「这个承载不再装 composite 了」,不是「这个承载消失」;把它读成后者会得出「切走之后那一格
+   * 就该没了」这个错误结论,而那正是 2026-09-07 到 2026-09-17 之间留下一格关不掉的空白的原因
+   * (docs/features/onlypreview-deferred-tab-placeholder.md #1)。
    */
   destroyHost(): void;
 

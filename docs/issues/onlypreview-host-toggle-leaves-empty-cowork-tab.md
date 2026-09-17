@@ -1,5 +1,10 @@
 # The host toggle leaves an empty Cowork tab behind, and standalone does not take effect
 
+> **Status, 2026-09-17:** the "close the tab on undock" half of this page is **reversed** — see
+> [Reversal (2026-09-17)](#reversal-2026-09-17) at the bottom and
+> [task 181](../plan/tasks/onlypreview-deferred-tab-placeholder-181.md). Symptom 2's analysis below is
+> still an accurate account of the code as it stood, and is kept for that reason.
+
 Reported by Ral 2026-09-07, against **both** bitterless and the micromeet-cowork port:
 「onlypreview toggle 独立窗口打开没生效，另外注意独立窗口打开，浏览器里的 tab 就得关掉」.
 
@@ -55,3 +60,30 @@ What to check first, in order:
 
 That ordering is the reason this symptom is invisible: the failure mode of this transition is
 "returns to the previous host", which is indistinguishable from "the button did nothing".
+
+## Reversal (2026-09-17)
+
+Ral, 2026-09-17:「cowork bl 独立窗口打开 onlypreview 时,此时浏览器内的 onlypreview tab 应该显示一个
+渲染进程:内容: 已在独立窗口打开,配上: 前往的按钮」,理由是「因为 onlypreview 会被设为首页,所以
+关闭这个事情 UI 上不友好了,新的设计更好」。
+
+The tab is no longer closed on undock. It stays and renders a placeholder. Design, edge cases and file
+plan: [onlypreview-deferred-tab-placeholder](../features/onlypreview-deferred-tab-placeholder.md);
+delivery: [task 181](../plan/tasks/onlypreview-deferred-tab-placeholder-181.md).
+
+The original reasoning above is left intact because it is still the honest account of the code, and
+because one of its own observations is what makes the reversal necessary. Symptom 2 called the
+pinned/last-tab refusal "a latent edge" that "does not bite today". **It bites by default now.**
+`onlyPreviewCoworkTab.ts:62` declares `defaultHome: true`, so on a machine that never set a homepage
+the OnlyPreview composite *is* the pinned Home tab (see
+[onlypreview-default-homepage.md](../features/onlypreview-default-homepage.md)), and `closeTab`
+returns silently for a pinned tab (`maestroBrowserView.service.ts:2427`). So
+「独立窗口打开,浏览器里的 tab 就得关掉」 has been unexecutable in the default configuration ever since
+that default landed — the close was a no-op and the slot degraded to the built-in local Home instead.
+
+What is **not** superseded, from the same 2026-09-07 session: the teardown-first ordering rule
+(`onlyPreviewHostToggle.service.ts:248-262`) and the index-continuity rule
+(`onlyPreviewWindow.helper.ts:231-238`). Both still hold.
+
+Symptom 1 ("standalone does not take effect") is untouched by this reversal and its triage order above
+still applies.

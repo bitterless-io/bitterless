@@ -45,10 +45,11 @@ export const applySteeringMode = (
 /** Apply host session policy through the native pi controls, retaining diagnostic visibility. */
 export const applyPiSessionPolicy = (
   session: PiSession,
-  debug?: (event: Omit<CodexDebugEvent, 'ts' | 'scope'>) => void
+  debug?: (event: Omit<CodexDebugEvent, 'ts' | 'scope'>) => void,
+  autoCompaction: boolean = RUNTIME_SESSION_POLICY.autoCompaction
 ): void => {
   try {
-    session.setAutoCompactionEnabled?.(RUNTIME_SESSION_POLICY.autoCompaction)
+    session.setAutoCompactionEnabled?.(autoCompaction)
   } catch {
     // Older SDKs may lack the switch; report the actual state below.
   }
@@ -68,15 +69,22 @@ export class PiRuntimeSession implements AgentRuntimeSession {
   /** 本回合正在收尾(策略表第 4 条)。pi 没有这个 getter,只能由发起 abort 的这一侧记。 */
   private aborting = false
   private pendingSteering: AgentRuntimePrompt[] = []
+  private heldSteering = new Set<AgentRuntimePrompt>()
+  private compacting = false
   private startingMessage?: AgentRuntimePrompt
   private listeners = new Set<(event: AgentRuntimeEvent) => void>()
   private unsubscribeNative?: () => void
+  private appliedResourceRevision?: string
 
   constructor(
     private readonly session: PiSession,
     private readonly debug?: (event: Omit<CodexDebugEvent, 'ts' | 'scope'>) => void,
-    private readonly promptSource?: { hostText: string; cwd: string }
-  ) {}
+    private readonly promptSource?: { hostText: string; cwd: string; resourceRevision?: () => string; skillPrompt?: (activeTools: string[]) => string },
+    private readonly compactionState?: import('./piNativeCompaction').PiCompactionState
+  ) {
+    this.appliedResourceRevision = promptSource?.resourceRevision?.()
+    if (compactionState) compactionState.onEvent = event => { if (this.compacting && !this.aborting) this.emit(event) }
+  }
 
   /**
    * pi has no public system setter. Re-selecting the unchanged active tool names rebuilds its
@@ -97,9 +105,11 @@ export class PiRuntimeSession implements AgentRuntimeSession {
     source.hostText = next.hostText
     try {
       this.session.setActiveToolsByName(activeTools)
-      if (this.session.systemPrompt !== next.finalSystemPrompt) {
+      const expected = resolveRuntimeSystemPrompt({ systemPrompt: next.hostText + (source.skillPrompt?.(activeTools) || ''), cwd: source.cwd }).finalSystemPrompt
+      if (this.session.systemPrompt !== expected) {
         throw new Error('The runtime did not apply the requested system prompt.')
       }
+      this.appliedResourceRevision = source.resourceRevision?.()
     } catch (error) {
       source.hostText = previous
       this.session.setActiveToolsByName(activeTools)
@@ -174,6 +184,11 @@ export class PiRuntimeSession implements AgentRuntimeSession {
     this.listeners.add(listener)
     if (this.listeners.size === 1) {
       this.unsubscribeNative = this.session.subscribe((event) => {
+        if (event.type === 'compaction_start') this.compacting = true
+        if (event.type === 'compaction_end') {
+          this.compacting = false
+          if (!this.aborting) this.releaseHeldSteering()
+        }
         if (event.type === 'message_start' && event.message?.role === 'user') {
           const content = event.message.content
           const text = typeof content === 'string' ? content : (content || []).filter(part => part.type === 'text').map(part => part.text || '').join('')
@@ -187,7 +202,10 @@ export class PiRuntimeSession implements AgentRuntimeSession {
           }
           if (consumed?.messageId) this.emit({ type: 'steering_consumed', messageId: consumed.messageId })
         }
-        for (const normalized of normalizePiEvent(event)) this.emit(normalized)
+        for (const normalized of normalizePiEvent(event.type === 'compaction_end' && this.compactionState?.error ? { ...event, errorMessage: this.compactionState.error, aborted: false } as PiSessionEvent : event)) {
+          if ((normalized.type === 'compaction_retry' || normalized.type === 'compaction_attempt' || normalized.type === 'compaction_retry_finished') && !this.compacting) continue
+          this.emit(normalized)
+        }
       }) || undefined
     }
     return () => {
@@ -207,15 +225,28 @@ export class PiRuntimeSession implements AgentRuntimeSession {
     this.pendingSteering.push(queued)
     try {
       // One FIFO queue. A later steer must not jump ahead of an earlier follow-up.
-      await this.session.steer(message.text)
+      if (this.compacting || this.session.isCompacting) this.heldSteering.add(queued)
+      else await this.session.steer(message.text)
     } catch (error) {
       this.pendingSteering = this.pendingSteering.filter(item => item !== queued)
       throw error
     }
   }
 
+  private releaseHeldSteering(): void {
+    for (const message of this.heldSteering) {
+      this.heldSteering.delete(message)
+      // Native steer enqueues synchronously before its Promise resolves. Invoke in FIFO order
+      // before Pi decides whether a completed run needs a continuation.
+      void this.session.steer?.(message.text).catch(error => {
+        this.debug?.({ phase: 'steering-release-error', level: 'warn', message: String(error) })
+      })
+    }
+  }
+
   takePendingSteering(): AgentRuntimePrompt[] {
     this.session.clearQueue?.()
+    this.heldSteering.clear()
     const pending = this.pendingSteering
     this.pendingSteering = []
     return pending
@@ -246,15 +277,30 @@ export class PiRuntimeSession implements AgentRuntimeSession {
     // an adapter surface can consume refs without copying bytes.
     this.startingMessage = message
     try {
+      const revision = this.promptSource?.resourceRevision?.()
+      if (!this.session.isStreaming && !this.session.isCompacting && revision !== this.appliedResourceRevision) {
+        if (!this.session.reload) throw new Error('The runtime cannot reload changed Skill resources.')
+        await this.session.reload()
+        this.appliedResourceRevision = this.promptSource?.resourceRevision?.()
+      }
       return await this.session.prompt(message.text, { streamingBehavior: decision.behavior })
     } finally {
       if (this.startingMessage === message) this.startingMessage = undefined
     }
   }
 
+  async compact(instructions?: string): Promise<{ summary: string; tokensBefore: number; estimatedTokensAfter?: number }> {
+    if (this.session.isStreaming || this.session.isCompacting) throw new Error('Wait for the current turn to finish before using /compact.')
+    if (!this.session.compact) throw new Error('This runtime does not support /compact.')
+    if (this.compactionState) this.compactionState.error = undefined
+    try { return await this.session.compact(instructions) }
+    catch (error) { throw new Error(this.compactionState?.error || (error instanceof Error ? error.message : String(error))) }
+  }
+
   async abort(): Promise<void> {
     this.aborting = true
     try {
+      this.session.abortCompaction?.()
       await this.session.abort()
     } finally {
       // pi 的 abort() 「等 agent 回到空闲」才 resolve,所以这一段正好就是收尾窗口。
@@ -271,6 +317,9 @@ export class PiRuntimeSession implements AgentRuntimeSession {
  * 标可选是为了让 SDK 大版本挪动字段时退化成「按不在流式处理」,而不是让整个回合炸掉。
  */
 export interface PiSession extends PiSteeringModeSurface {
+  compact?: (instructions?: string) => Promise<{ summary: string; tokensBefore: number; estimatedTokensAfter?: number }>
+  abortCompaction?: () => void
+  reload?: () => Promise<void>
   readonly systemPrompt?: string
   getActiveToolNames?: () => string[]
   setActiveToolsByName?: (toolNames: string[]) => void

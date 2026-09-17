@@ -1,6 +1,7 @@
 import { XpcMainHandler, xpcIgnore, xpcMain } from 'electron-xpc/main';
 import { CoinWindowLifecycle } from '@main/coin/coinWindow.lifecycle';
 import { coinWindowManager } from '@main/coin/coinWindow.manager';
+import { applicationAuth } from '@main/auth/applicationAuth.service';
 import type { CoinWindowSurface } from '@main/coin/coinWindow.type';
 import { maestroWindowHelper } from '@maestro-main/windows/main/maestroWindow.controller';
 import { getMaestroCompositeTab } from '@maestro-main/windows/main/compositeTab.registry';
@@ -25,6 +26,7 @@ class CoinWindowHandler extends XpcMainHandler implements TrenchHostApi {
   });
 
   async openCoinWindow(): Promise<void> {
+    if (!applicationAuth.ready) { maestroWindowHelper.requestLogin(); return; }
     const revision = this.sessionRevision;
     await this.pendingToggle;
     if (revision !== this.sessionRevision)
@@ -34,6 +36,11 @@ class CoinWindowHandler extends XpcMainHandler implements TrenchHostApi {
   }
 
   async openCoinTab(): Promise<void> {
+    if (!applicationAuth.ready) {
+      await maestroWindowHelper.openCompositeTab({ id: MAESTRO_TRENCH_TAB_ID });
+      maestroWindowHelper.requestLogin();
+      return;
+    }
     const revision = this.sessionRevision;
     await this.pendingToggle;
     if (revision !== this.sessionRevision)

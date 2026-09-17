@@ -112,6 +112,8 @@ export interface Turn {
 }
 
 export interface MessageSession {
+  compactionRetry?: import('@shared/piCompaction.types').CompactionRetry & { startedAt: number }
+  compacting?: boolean
   id: string
   source: MessageSource
   operationTabId: string

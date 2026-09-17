@@ -114,7 +114,14 @@ export const sanitizeErrorCauseChain = (value: unknown, maxDepth: number = 4): s
     const message = causeField(record, 'message');
     const fields = [
       name ? `name=${name}` : '',
-      code ? `code=${code}` : '',
+      // `errorCode=`, NOT `code=`: the application log sanitizes every record TWICE (the
+      // electron-log hook and the file-transport format, see src/main/logging/log.setup.ts), and on
+      // the second pass this already-assembled string meets REDACTIONS above — whose credential-key
+      // alternation literally contains `code`. So `code=rejected` reached main.log as `code=***`,
+      // and so did `code=ECONNREFUSED`, despite the all-caps carve-out in `causeField`. That is how
+      // the only line the Zellij incident of 2026-09-17 left behind lost its cause
+      // (docs/issues/zellij-update-restart-blocks-and-new-tab-fails.md #3.4).
+      code ? `errorCode=${code}` : '',
       message ? `message=${message}` : ''
     ].filter(Boolean);
     if (fields.length > 0) parts.push(fields.join(' '));

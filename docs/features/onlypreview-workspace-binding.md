@@ -1,5 +1,11 @@
 # 会话的工作区和 OnlyPreview 绑在一起
 
+> **2026-09-17 自动打开入口修复**：Chat 按钮与 Agent 请求的原生目录选择器都在 Main 的
+> `chooseWorkspaceDirectory` 成功绑定后，通过宿主适配器打开一次 Preview；不再等待 Chat 保存队列。
+> Preview 失败保留工作区，并提示点击工作区名称重试。`setWorkspaceDirectory`、恢复和发送前刷新
+> 仍不触发自动打开。此规则替代下文“只在 renderer chooseWorkspace 接线”的历史实现记录，见
+> [picker 自动打开修复](../issues/onlypreview-workspace-picker-auto-open.md)。
+
 > **2026-09-14 当前规则**：停用 workspace 只解绑匹配的 Project，保留 OnlyPreview tab / window
 > 及进程，显示选择工作区引导；再次选择复用该承载和有效索引。下文 2026-09-10
 > “收掉 / destroyStandalone”实现记录已被替代，详见

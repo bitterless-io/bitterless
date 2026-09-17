@@ -12,7 +12,7 @@ import {
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const source = (relativePath) => readFileSync(join(projectRoot, relativePath), 'utf8');
 
-test('auth teardown requests a pinned-Home boot and removes the Workbench overlay', () => {
+test('auth teardown revokes chat while preserving the primary window and browser tabs', () => {
   const handler = source('src/main/xpc/maestroWindow.handler.ts');
   const controller = source('src/main/maestro/windows/main/maestroWindow.controller.ts');
   const destroyForAuth = handler.match(
@@ -32,23 +32,14 @@ test('auth teardown requests a pinned-Home boot and removes the Workbench overla
     destroyForAuth.indexOf('persistAuthInvalidation()') <
       destroyForAuth.indexOf('await maestroWindowHelper.prepareForAuthShutdown()')
   );
-  assert.match(prepareForAuthShutdown, /this\.forcePinnedHomeIntentVersion \+= 1/);
-  // The pre-teardown activation finds the pinned tab by `pinned` ALONE. With a custom homepage set
-  // there is no `kind === 'home'` tab on the strip, so a kind-filtered find returns undefined and
-  // the step is skipped — the teardown frame then reveals whatever was on screen. A8 ("logout lands
-  // on the built-in Home") is enforced by the NEXT boot instead, which is what the two tests below
-  // pin: forcePinnedHomeIntentVersion → the forced-boot query → createPinnedHomeTab ignoring the
-  // custom homepage.
-  assert.match(prepareForAuthShutdown, /this\.tabs\.find\(\(tab\) => tab\.pinned\)/);
-  // 反向断言读**去掉注释**的源码 —— 上面那段解释「为什么不带 kind」的注释本身写着 `kind === 'home'`,
-  // 不剥掉的话这条守卫会被它自己的理由匹配红。
-  const codeOnly = (text) =>
-    text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
-  assert.doesNotMatch(codeOnly(prepareForAuthShutdown), /kind === 'home'/);
-  assert.ok(
-    prepareForAuthShutdown.indexOf('await this.browserView.activateTab') <
-      prepareForAuthShutdown.indexOf('this.workbenchView.closeTab()')
-  );
+  assert.match(prepareForAuthShutdown, /applicationAuth\.invalidate\(\)/);
+  assert.doesNotMatch(prepareForAuthShutdown, /activateTab|forcePinnedHome|closeTab/);
+  const suspend = controller.match(/async suspendAuthenticatedSession\(\): Promise<void> \{[\s\S]*?\n  \}/)?.[0];
+  assert.ok(suspend);
+  assert.match(suspend, /await this\.agentService\.shutdown\(\)/);
+  assert.match(suspend, /this\.browserView\.suspendProtectedTabs\(\)/);
+  assert.doesNotMatch(suspend, /super\.destroy|controlView\.reset|browserView\.reset|workbenchView\.reset/);
+  assert.doesNotMatch(source('src/main/xpc/auth.handler.ts'), /BrowserWindow\.getAllWindows/);
 });
 
 test('forced replacement boot skips a custom startup URL without weakening normal startup', () => {

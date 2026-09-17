@@ -272,15 +272,18 @@ test('saved customer sessions survive transient restore failures', () => {
   assert.match(login, /onDiscardPersistedSession/);
 });
 
-test('login, authenticated layout, and initial Home view use the entry bundle', () => {
+test('Home authority keeps static workspace routes while Control owns Login', () => {
   const routes = read('src/renderer/home/src/router/defaultRoutes.ts');
 
   assert.match(routes, /import Chat from '@\/views\/chat\/Chat\.vue';/);
   assert.match(routes, /import Layout from '@\/views\/layout\/Layout\.vue';/);
   assert.match(routes, /import Login from '@\/views\/login\/LegacyLogin\.vue';/);
+  const authorityRoute = read('src/renderer/home/src/views/login/LegacyLogin.vue');
+  assert.match(authorityRoute, /name="home-auth-authority" hidden aria-hidden="true"/);
+  assert.doesNotMatch(authorityRoute, /import Login|<Login/);
   assert.match(
-    read('src/renderer/home/src/views/login/LegacyLogin.vue'),
-    /import Login from '\.\/Login\.vue';/,
+    read('src/renderer/maestro/control/src/ControlAuthApp.vue'),
+    /import Login from '@renderer\/home\/src\/views\/login\/Login\.vue'/,
   );
   assert.doesNotMatch(
     routes,
@@ -599,13 +602,14 @@ test('logout cleanup starts every operation and settles rejected cleanup', async
   assert.deepEqual(events, ['main teardown', 'server revoke']);
 });
 
-test('login navigation is awaited and restore cannot overlap submit', () => {
+test('optional login continuation is awaited without a router and restore cannot overlap submit', () => {
   const login = read('src/renderer/home/src/views/login/Login.vue');
 
   assert.match(login, /const redirectAfterLogin = async \(\): Promise<void>/);
   assert.match(login, /transitioning\.value = true/);
-  assert.match(login, /const failure = await router\.replace\(redirect\)/);
-  assert.match(login, /isNavigationFailure\(failure\)/);
+  assert.match(login, /if \(!props\.navigateAfterLogin\) return/);
+  assert.match(login, /await props\.navigateAfterLogin\(\)/);
+  assert.doesNotMatch(login, /vue-router|useRoute|useRouter|router\.replace/);
   assert.ok(
     login.indexOf('await redirectAfterLogin()') < login.indexOf("Message.success('登录成功')"),
     'login success must be announced only after navigation succeeds'

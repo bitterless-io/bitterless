@@ -14,17 +14,23 @@ export interface AgentToolParamSpec {
   required?: boolean
 }
 
+export interface AgentToolExecutionContext {
+  confirm?: (resolvedArgs: Record<string, unknown>) => Promise<boolean>
+}
+
 export interface AgentToolSpec {
   name: string
   description: string
   params: AgentToolParamSpec[]
   /** Runs the underlying coach tool; returns an observation string for the agent. */
-  execute: (args: Record<string, unknown>) => Promise<string>
+  execute: (args: Record<string, unknown>, signal?: AbortSignal, context?: AgentToolExecutionContext) => Promise<string>
   /**
    * Per-tool wall clock, overriding the default 120 s. For tools whose honest runtime is minutes,
    * not seconds — API ingest is `ceil(endpoints/4)` sequential LLM calls, so any site with more than
    * a handful of endpoints blows the default and the agent is told it failed while it keeps running.
    */
+  /** Resolve concrete mutation details before requesting the existing host policy confirmation. */
+  deferConfirmation?: boolean
   timeoutMs?: number
   /** Replaces the default timeout advice ("reading a very large file…") when that would mislead. */
   timeoutHint?: string
@@ -63,6 +69,10 @@ export interface AgentRuntimePrompt {
 }
 
 export interface AgentRuntimeSessionOptions {
+  autoCompaction?: boolean
+  compactPrompt?: () => string | undefined
+  sessionFile?: string
+  skillResources?: { revision?(): string; getSkills(): import('@earendil-works/pi-coding-agent').LoadSkillsResult; reload(): void | Promise<void> }
   beforeModelRequest?: () => Promise<string | undefined> | undefined
   target: AgentRuntimeTarget
   authPath: string
@@ -112,11 +122,15 @@ export type AgentRuntimeEvent =
    * 钻探是单个能跑十几分钟、上百轮的回合,压缩是不是在正常工作直接决定它能不能跑完。
    */
   | { type: 'compaction_start'; reason?: string }
-  | { type: 'compaction_end'; reason?: string; ok?: boolean; beforeTokens?: number; afterTokens?: number }
+  | { type: 'compaction_retry'; attempt: number; maxAttempts: number; delayMs: number; error: string }
+  | { type: 'compaction_attempt'; attempt?: number; maxAttempts?: number }
+  | { type: 'compaction_retry_finished' }
+  | { type: 'compaction_end'; reason?: string; ok?: boolean; beforeTokens?: number; afterTokens?: number; aborted?: boolean; errorMessage?: string }
 
 
 
 export interface AgentRuntimeSession {
+  compact?: (instructions?: string) => Promise<{ summary: string; tokensBefore: number; estimatedTokensAfter?: number }>
   /** Apply host-authored instructions between turns without resetting conversation context. */
   setSystemPrompt?: (systemPrompt: string) => void | Promise<void>
   subscribe: (listener: (event: AgentRuntimeEvent) => void) => undefined | (() => void)

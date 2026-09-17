@@ -13,6 +13,9 @@ export interface ZellijNativeIdentity {
   device: number;
   inode: number;
   uid: number;
+  /** Adopted mapped file identity survives bundle moves/removal; absent only in legacy records. */
+  executableDevice?: number;
+  executableInode?: number;
 }
 
 const socketIdentity = (socket: string): { device: number; inode: number; uid: number } | null => {
@@ -51,23 +54,59 @@ const processIdentity = async (
   }
 };
 
-const processExecutable = async (pid: number): Promise<string> => {
-  // Darwin ps command/comm can both be changed by process.title. System lsof reads file-backed
-  // mappings from libproc; the first text image is the executable, before libraries/data maps.
-  // Inspect the first image only: merely mapping the expected binary later is not ownership.
+const hasExecutableIdentity = (identity: ZellijNativeIdentity): boolean => {
+  if (
+    !Object.prototype.hasOwnProperty.call(identity, 'executableDevice') &&
+    !Object.prototype.hasOwnProperty.call(identity, 'executableInode')
+  )
+    return false;
+  if (
+    !Number.isSafeInteger(identity.executableDevice) ||
+    typeof identity.executableDevice !== 'number' ||
+    identity.executableDevice < 0 ||
+    !Number.isSafeInteger(identity.executableInode) ||
+    typeof identity.executableInode !== 'number' ||
+    identity.executableInode <= 0
+  )
+    throw new Error('operation-failed');
+  return true;
+};
+
+const processExecutable = async (
+  pid: number
+): Promise<{ executable: string; executableDevice: number; executableInode: number }> => {
+  // The first kernel-backed txt mapping is the executable. Later mappings do not prove ownership.
   const { stdout } = await execute(
     '/usr/sbin/lsof',
-    ['-a', '-p', String(pid), '-d', 'txt', '-F0pfn'],
-    {
-      timeout: 750,
-      maxBuffer: 64 * 1024
-    }
+    ['-a', '-p', String(pid), '-d', 'txt', '-F0pfnDi'],
+    { timeout: 750, maxBuffer: 64 * 1024 }
   );
   const fields = stdout.split('\0').map((field) => field.replace(/^\n/u, ''));
-  const file = fields[2]?.startsWith('n') ? fields[2].slice(1) : '';
-  if (fields[0] !== `p${pid}` || fields[1] !== 'ftxt' || !isAbsolute(file))
+  if (fields[0] !== 'p' + pid || fields[1] !== 'ftxt') throw new Error('operation-failed');
+  const image = new Map<string, string>();
+  for (const field of fields.slice(2)) {
+    const key = field[0];
+    if (key === 'f' || key === 'p') break;
+    if (!['n', 'D', 'i'].includes(key)) continue;
+    if (image.has(key)) throw new Error('operation-failed');
+    image.set(key, field.slice(1));
+  }
+  const executable = image.get('n') ?? '';
+  const device = image.get('D') ?? '';
+  const inode = image.get('i') ?? '';
+  const executableDevice = Number(device);
+  const executableInode = Number(inode);
+  if (
+    !isAbsolute(executable) ||
+    !/^0x[\da-f]+$/iu.test(device) ||
+    !/^\d+$/u.test(inode) ||
+    !Number.isSafeInteger(executableDevice) ||
+    executableDevice < 0 ||
+    !Number.isSafeInteger(executableInode) ||
+    executableInode <= 0
+  )
     throw new Error('operation-failed');
-  return realpathSync(file);
+  return { executable, executableDevice, executableInode };
 };
 
 /** Adopt only the exact native executable, --server path, UID and socket inode. No command or
@@ -76,6 +115,25 @@ export const inspectZellijNativeOwner = async (
   socket: string,
   binary: string
 ): Promise<ZellijNativeIdentity | null> => {
+  // Two attempts, because "the audit said no" and "the audit could not run" used to return the same
+  // null. It spends up to three `ps`/`lsof` round trips bounded at 750ms each, and
+  // `lsof -t -- <socket>` measured 0.33–0.48s on an IDLE machine — so a loaded host (the first boot
+  // after an update: a full workspace re-index plus every renderer starting at once) loses the race
+  // and a brand-new session is reported as somebody else's process. A CLEAN negative verdict still
+  // returns immediately; only a thrown audit is retried
+  // (docs/issues/zellij-update-restart-blocks-and-new-tab-fails.md #3.4).
+  for (let attempt = 0; ; attempt += 1) {
+    const found = await auditZellijNativeOwner(socket, binary);
+    if (found !== 'audit-failed') return found;
+    if (attempt > 0) return null;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+};
+
+const auditZellijNativeOwner = async (
+  socket: string,
+  binary: string
+): Promise<ZellijNativeIdentity | null | 'audit-failed'> => {
   const identity = socketIdentity(socket);
   if (!identity || identity.uid !== process.getuid?.()) return null;
   try {
@@ -89,21 +147,38 @@ export const inspectZellijNativeOwner = async (
       `${realpathSync(binary)} --server ${socket}`
     ]);
     const executable = realpathSync(binary);
+    const expectedImage = lstatSync(executable);
+    if (!expectedImage.isFile()) return null;
     const matches = await Promise.all(
       candidates
         .filter((pid) => Number.isInteger(pid) && pid > 1)
-        .map(async (pid) => {
+        .map(async (pid): Promise<ZellijNativeIdentity | null> => {
           const owner = await processIdentity(pid);
           if (!owner || owner.processUid !== identity.uid || !expected.has(owner.command))
             return null;
-          if ((await processExecutable(pid)) !== executable) return null;
-          return { ...identity, started: owner.started, command: owner.command, executable, pid };
+          const image = await processExecutable(pid);
+          if (
+            realpathSync(image.executable) !== executable ||
+            image.executableDevice !== expectedImage.dev ||
+            image.executableInode !== expectedImage.ino
+          )
+            return null;
+          return {
+            ...identity,
+            executableDevice: image.executableDevice,
+            executableInode: image.executableInode,
+            started: owner.started,
+            command: owner.command,
+            executable,
+            pid
+          };
         })
     );
     const found = matches.filter((value): value is ZellijNativeIdentity => value !== null);
     return found.length === 1 && sameZellijSocket(socket, found[0]) ? found[0] : null;
   } catch {
-    return null;
+    // `ps`/`lsof` itself failed or was killed at its deadline. That is not a verdict.
+    return 'audit-failed';
   }
 };
 
@@ -141,6 +216,7 @@ export const isZellijNativeOwnerAlive = async (
     identity.uid !== process.getuid?.()
   )
     throw new Error('operation-failed');
+  const fileIdentity = hasExecutableIdentity(identity);
   const current = await processIdentity(identity.pid);
   if (!current || current.started !== identity.started) return false;
   if (current.processUid !== identity.uid) throw new Error('operation-failed');
@@ -150,7 +226,13 @@ export const isZellijNativeOwnerAlive = async (
   if (current.state.includes('E')) return waitForKernelExit(identity);
   if (current.command !== identity.command) throw new Error('operation-failed');
   try {
-    if ((await processExecutable(identity.pid)) !== identity.executable)
+    const image = await processExecutable(identity.pid);
+    if (
+      fileIdentity
+        ? image.executableDevice !== identity.executableDevice ||
+          image.executableInode !== identity.executableInode
+        : realpathSync(image.executable) !== identity.executable
+    )
       throw new Error('operation-failed');
   } catch {
     // The process may exit between ps and lsof; only a fresh process lookup proves that case.

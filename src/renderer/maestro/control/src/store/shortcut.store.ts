@@ -1,5 +1,11 @@
 import type { ShortcutCommit, ShortcutItem, ShortcutRunContext, SlashToken } from './shortcut.type'
 
+/** Exact host command; a path or longer command name stays ordinary input. */
+export const parseCompactCommand = (text: string): { instructions?: string } | null => {
+  const match = text.trim().match(/^\/compact(?:\s+([\s\S]*))?$/)
+  return match ? { instructions: match[1]?.trim() || undefined } : null
+}
+
 export const slashTokenAt = (text: string, caret: number): SlashToken | null => {
   const before = text.slice(0, caret)
   const match = /(?:^|\n)\/([\w-]*)$/.exec(before)
@@ -49,6 +55,12 @@ export class ShortcutStore {
       // 那种写法在加第三条命令的那一刻就会静默跑错一条,而且不会有任何类型错误。
       // 现在漏接一条的表现是 `unknown command`(可见的失败),不是跑错。
       switch (item.name) {
+        case '/test_auto_compact':
+          await context.testAutoCompaction()
+          return { ok: true }
+        case '/compact':
+          await context.compact()
+          return { ok: true }
         case '/workflow':
           await context.listWorkflows()
           return { ok: true }

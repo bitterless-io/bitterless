@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { Button, Dropdown, Empty, Option, Select } from '@arco-design/web-vue'
 import { IconCircleCheckFilled, IconCircleDashed, IconCpu, IconGauge, IconLogin2, IconLogout, IconPercentage } from '@tabler/icons-vue'
 import type { LlmEffort, LlmLoginMethod } from '@maestro-shared/coach.api'
@@ -11,6 +11,8 @@ const activeModel = computed(() => store.activeLlmModel)
 const modelValue = computed(() => store.activeLlmModel?.model || '')
 const effortValue = computed(() => store.llmConfig?.effort || store.activeLlmModel?.effort || 'default')
 const effortDisabled = computed(() => store.activeLlmEfforts.length <= 1 && store.activeLlmEfforts[0]?.id === 'default')
+const compactPromptDraft = ref('')
+watch(() => store.llmConfig?.compactPrompt, value => { compactPromptDraft.value = value || '' }, { immediate: true })
 const compressionRemainingValue = computed(() => store.activeLlmModel?.compressionRemainingPercent ?? 10)
 const compressionTriggerUsed = computed(() => Math.max(10, 100 - compressionRemainingValue.value))
 const activeProviderLabel = computed(() => {
@@ -83,7 +85,7 @@ onMounted(() => {
           </div>
           <div name="models__active__compression" class="workbench-models__active__field workbench-models__active__field--compression">
             <div name="models__active__compression__label" class="workbench-models__active__label">Compression</div>
-            <div class="workbench-models__active__value">{{ compressionRemainingValue }}% left</div>
+            <div class="workbench-models__active__value">Automatic</div>
           </div>
         </div>
       </div>
@@ -222,20 +224,12 @@ onMounted(() => {
                 <IconPercentage :size="14" stroke="1.8" />
                 <span>Compression</span>
               </div>
-              <div name="models__detail__compression__field" class="workbench-models__compression">
-                <input
-                  name="models__detail__compression__input"
-                  type="number"
-                  min="1"
-                  max="90"
-                  step="1"
-                  :value="compressionRemainingValue"
-                  :disabled="store.llmSaving || store.llmLoading"
-                  class="workbench-models__compression__input"
-                  @change="setCompressionRemaining"
-                />
-                <span class="workbench-models__compression__unit">% left</span>
-                <span class="workbench-models__compression__hint">at {{ compressionTriggerUsed }}% used</span>
+              <div name="models__detail__compression__field" class="workbench-models__compression">Automatic · Codex presets reserve 20% · keep recent 20,000 tokens</div>
+              <label for="compact-prompt" class="workbench-models__settings__label">Compact prompt</label>
+              <div name="models__compact" class="workbench-models__compact">
+                <textarea id="compact-prompt" v-model="compactPromptDraft" name="models__compact__input" class="workbench-models__compact-input" rows="8" :placeholder="store.llmConfig?.defaultCompactPrompt" :disabled="store.llmSaving" />
+                <p>Extra instructions for conversation summaries. Leave blank to use the default.</p>
+                <Button size="small" :loading="store.llmSaving" @click="store.setCompactPrompt(compactPromptDraft)">Save prompt</Button>
               </div>
             </div>
           </div>

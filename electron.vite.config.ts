@@ -1,3 +1,4 @@
+import { piSkillSdkPlugin } from './scripts/maestro/piSkillSdk.plugin';
 import { dirname, resolve } from 'path';
 import { defineConfig } from 'electron-vite';
 import vue from '@vitejs/plugin-vue';
@@ -92,7 +93,7 @@ const maestroOverlayDevCspPlugin = {
       return html;
     }
     return html.replace(
-      "connect-src 'none'",
+      /connect-src '(?:none|self)'/,
       "connect-src 'self' ws://localhost:* wss://localhost:*"
     );
   }
@@ -433,7 +434,7 @@ const workflowWorkerPlugin = {
 
 export default defineConfig({
   main: {
-    plugins: [runtimeProfileBuildMarkerPlugin, workflowWorkerPlugin],
+    plugins: [piSkillSdkPlugin(resolve('.')), runtimeProfileBuildMarkerPlugin, workflowWorkerPlugin],
     define: { ...generateEnvDefines() },
     build: {
       externalizeDeps: { exclude: bundledRuntimeDependencies },
@@ -559,6 +560,7 @@ export default defineConfig({
           'onlypreview/alert': resolve('src/renderer/onlypreview/alert/index.html'),
           'onlypreview/settings': resolve('src/renderer/onlypreview/settings/index.html'),
           'onlypreview/guide': resolve('src/renderer/onlypreview/guide/index.html'),
+          'onlypreview/detached': resolve('src/renderer/onlypreview/detached/index.html'),
           fileSearch: resolve('src/renderer/fileSearch/index.html'),
           'trench-io': resolve('src/renderer/trench-io/index.html'),
           'omni/omniCell': resolve('src/renderer/omni/omniCell/index.html'),

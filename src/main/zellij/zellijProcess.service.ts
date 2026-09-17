@@ -2,6 +2,7 @@ import type { ZellijErrorCode, ZellijSnapshot } from '@shared/zellij/zellij.type
 import { defaultZellijShortcuts } from './zellijConfigEdit.service';
 import { dirname } from 'node:path';
 import type { ZellijRuntimeDependencies, ZellijOwnedProcess } from './zellijRuntime.type';
+import { zellijDetail, zellijLog } from './zellijLog.service';
 
 const ERRORS = new Set<ZellijErrorCode>([
   'binary-missing',
@@ -11,6 +12,10 @@ const ERRORS = new Set<ZellijErrorCode>([
   'web-sharing-disabled',
   'start-failed',
   'startup-timeout',
+  'controls-load-timeout',
+  'terminal-load-timeout',
+  'controls-load-failed',
+  'terminal-load-failed',
   'authentication-failed',
   'token-failed',
   'secure-storage-unavailable',
@@ -152,6 +157,12 @@ export class ZellijProcessService {
   }
 
   private async open(generation: number): Promise<ZellijSnapshot> {
+    const startedAt = Date.now();
+    zellijLog.info('runtime-open-start', {
+      generation,
+      status: this.status,
+      owned: Boolean(this.owned)
+    });
     try {
       this.assertActive(generation);
       this.dependencies.checkBinary();
@@ -169,6 +180,11 @@ export class ZellijProcessService {
       await this.dependencies.config.initialize();
       this.assertActive(generation);
       let probe = await this.dependencies.probe();
+      zellijLog.info('runtime-probe', {
+        phase: 'initial',
+        verdict: probe,
+        elapsedMs: Date.now() - startedAt
+      });
       this.assertActive(generation);
       if (probe === 'mismatch') throw new Error('version-mismatch');
       if (probe === 'occupied') throw new Error('port-occupied');
@@ -180,6 +196,12 @@ export class ZellijProcessService {
           if (this.owned === previous) this.owned = null;
         }
         this.assertActive(generation);
+        // `server spawned pid=` only fires on the child's own 'spawn' event. A spawn that never
+        // reaches it — busy binary, sandbox denial, fork failure — left no line at all.
+        zellijLog.info('runtime-spawn-requested', {
+          port: this.dependencies.port(),
+          elapsedMs: Date.now() - startedAt
+        });
         const child = this.dependencies.spawn([
           '--config',
           this.dependencies.config.file,
@@ -199,7 +221,9 @@ export class ZellijProcessService {
           this.error = 'start-failed';
           this.publish();
         });
+        let attempts = 0;
         for (let attempt = 0; attempt < 40; attempt += 1) {
+          attempts = attempt + 1;
           this.assertActive(generation);
           if (child.exited()) throw new Error('start-failed');
           await this.dependencies.delay(250);
@@ -209,12 +233,25 @@ export class ZellijProcessService {
           if (probe === 'matching') break;
           if (probe === 'mismatch' || probe === 'occupied') throw new Error('port-occupied');
         }
+        // One line at completion, never per attempt: 40 x 250ms plus 40 probes is up to ~20s of a
+        // slow boot, and until now that entire loop left no trace either way.
+        const pollLine = { attempts, verdict: probe, elapsedMs: Date.now() - startedAt };
+        if (probe === 'matching') zellijLog.info('runtime-poll-done', pollLine);
+        else zellijLog.error('runtime-poll-done', pollLine);
         if (probe !== 'matching') throw new Error('startup-timeout');
       }
       this.assertActive(generation);
+      const authAt = Date.now();
       let token = this.dependencies.readToken();
       if (token && (await this.dependencies.login(token))) {
         this.assertActive(generation);
+        // Never the token itself: only which path produced it. The create-token CLI's stdout
+        // contains a credential and is deliberately unlogged everywhere.
+        zellijLog.info('runtime-auth', {
+          tokenPath: 'reused',
+          loginOk: true,
+          elapsedMs: Date.now() - authAt
+        });
         this.status = 'ready';
       } else {
         this.assertActive(generation);
@@ -228,10 +265,27 @@ export class ZellijProcessService {
         );
         this.assertActive(generation);
         this.dependencies.writeToken(token);
-        if (!(await this.dependencies.login(token))) throw new Error('authentication-failed');
+        if (!(await this.dependencies.login(token))) {
+          zellijLog.error('runtime-auth', {
+            tokenPath: 'created',
+            loginOk: false,
+            elapsedMs: Date.now() - authAt
+          });
+          throw new Error('authentication-failed');
+        }
         this.assertActive(generation);
+        zellijLog.info('runtime-auth', {
+          tokenPath: 'created',
+          loginOk: true,
+          elapsedMs: Date.now() - authAt
+        });
         this.status = 'ready';
       }
+      zellijLog.info('runtime-open-end', {
+        outcome: 'ready',
+        generation,
+        elapsedMs: Date.now() - startedAt
+      });
     } catch (error) {
       if (generation === this.generation) {
         const child = this.owned;
@@ -247,6 +301,19 @@ export class ZellijProcessService {
         this.status = 'error';
         this.error = zellijErrorCode(error);
       }
+      // `changed()` already reported a failed status, but with no duration, no generation and no way
+      // to tell a superseded open (assertActive throws the same string) from a real breakage.
+      zellijLog.error(
+        'runtime-open-end',
+        {
+          outcome: 'failure',
+          reason: zellijErrorCode(error),
+          generation,
+          current: this.generation,
+          elapsedMs: Date.now() - startedAt
+        },
+        zellijDetail(error instanceof Error ? error.message : error)
+      );
     }
     if (generation === this.generation) this.publish();
     return this.snapshot();

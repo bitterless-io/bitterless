@@ -14,6 +14,7 @@ export const registerTrenchCoworkTab = (): void => {
     displayUrl: MAESTRO_TRENCH_DISPLAY_URL,
     // One bound coin runtime, so a second copy would have nothing of its own to show.
     singleton: true,
+    requiresAuthentication: true,
     open: async (host) => {
       await coinWindowHandler.openOnTab(host);
     },

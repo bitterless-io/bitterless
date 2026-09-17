@@ -56,9 +56,9 @@ const harness = () => {
   };
   const fakePi = {
     ModelRuntime: { create: async () => { calls.auth++; return {}; } },
-    ModelRegistry: class { find() { return { id: 'gpt-test', contextWindow: 1234 }; } hasConfiguredAuth() { return true; } },
+    ModelRegistry: class { find(provider, id) { return { provider, id, contextWindow: id === 'gpt-test' ? 1234 : 272000 }; } hasConfiguredAuth() { return true; } },
     defineTool: spec => spec, createExtensionRuntime: () => ({}), SessionManager: { inMemory: () => ({ memory: true }) },
-    SettingsManager: { inMemory: () => ({ memory: true }) },
+    SettingsManager: { inMemory: settings => ({ memory: true, compaction: settings.compaction }) },
     createAgentSession: async args => { calls.sessions.push(args); return { session: native }; }
   };
   const load = loader({
@@ -90,7 +90,8 @@ test('host prompt bytes survive pi resource mapping and match the shared final p
   assert.deepEqual(resource.getSkills(), { skills: [], diagnostics: [] });
   assert.deepEqual(resource.getPrompts(), { prompts: [], diagnostics: [] });
   assert.deepEqual(resource.getThemes(), { themes: [], diagnostics: [] });
-  assert.deepEqual(resource.getExtensions().extensions, []);
+  assert.equal(resource.getExtensions().extensions.length, 1);
+  assert.equal(resource.getExtensions().extensions[0].path, '<host:native-compaction>');
   assert.deepEqual(resource.getAppendSystemPrompt(), []);
   assert.deepEqual(resource.getAppendSystemPromptSources(), []);
   assert.equal(resource.getSystemPromptSource(), undefined);
@@ -174,9 +175,11 @@ test('native stream, usage, compaction and tool events retain their runtime shap
   const unsubscribe = session.subscribe(event => events.push(event));
   h.emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'hello' } });
   h.emit({ type: 'tool_execution_start', toolName: 'read', args: { path: 'x' } });
-  h.emit({ type: 'compaction_end', reason: 'threshold', result: { ok: true, tokensBefore: 8, tokensAfter: 4 } });
+  h.emit({ type: 'compaction_end', reason: 'threshold', result: { tokensBefore: 8, estimatedTokensAfter: 4 } });
   h.emit({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }], stopReason: 'stop', usage: { input: 2, output: 3, cacheRead: 4, cacheWrite: 5, cost: { total: 0.1 } } } });
   assert.deepEqual(events.map(e => e.type), ['text_delta', 'tool_start', 'compaction_end', 'usage', 'assistant_message_end']);
+  assert.equal(events[2].afterTokens, 4);
+  assert.equal(events[2].ok, true);
   assert.equal(events[3].usage.totalTokens, 14);
   assert.equal(events[3].usage.costUsd, 0.1);
   assert.equal(events[4].text, 'done');
@@ -298,3 +301,15 @@ test('unsupported effective context fails explicitly without falling back to raw
   assert.equal(unsupported.appendCustomMessage('x', 'y'), null);
   assert.equal(unsupported.appendCompaction('x', 'y', 1), null);
 });
+
+test('model selection applies exact Codex compaction policy on every new session while children remain disabled', async () => {
+  const h=harness()
+  for(const id of ['gpt-6-astra','gpt-5.6-sol','gpt-5.6-terra','gpt-5.6-luna']) {
+    await h.adapter.createSession(options({target:{providerId:'openai-codex',modelId:id}}))
+    assert.deepEqual(h.calls.sessions.at(-1).settingsManager.compaction,{enabled:true,reserveTokens:54400,keepRecentTokens:20000})
+  }
+  await h.adapter.createSession(options({target:{providerId:'openai-codex',modelId:'gpt-6-astra'},autoCompaction:false}))
+  assert.deepEqual(h.calls.sessions.at(-1).settingsManager.compaction,{enabled:false,reserveTokens:54400,keepRecentTokens:20000})
+  await h.adapter.createSession(options())
+  assert.deepEqual(h.calls.sessions.at(-1).settingsManager.compaction,{enabled:true,reserveTokens:16384,keepRecentTokens:20000})
+})

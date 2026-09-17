@@ -1,4 +1,6 @@
 import { skillCloud } from './skillCloud.runtime'
+import { diagnoseSkill } from './skillDiagnostics'
+import { skillAuthoringRuntime } from '@main/agent/runtime/skillAuthoring'
 import type { SkillCatalogSnapshot, SkillLayer } from '@maestro-shared/coach.api'
 import type { SkillSharingScope, SkillScopeContextInfo } from '@maestro-shared/coach.api'
 import { skillScopeContext, onSkillContextChanged, resolveAuthorizedSkill } from './skillScope.context'
@@ -71,6 +73,7 @@ onSkillContextChanged(() => { xpcMain.broadcast('coach/skills-changed', { ts: Da
 @injectable()
 export class SkillService extends CommonService<SkillServiceState> {
   private viewSessionId = 'default'
+  currentViewSessionId(): string { return this.viewSessionId }
   async setSkillViewContext(params: { sessionId: string; workspace?: { path: string; name: string; exists: boolean; updatedAt: number } }): Promise<void> {
     this.viewSessionId = params.sessionId || 'default'
     this._state.syncWorkspaceFromContext(this.viewSessionId, params.workspace)
@@ -80,13 +83,32 @@ export class SkillService extends CommonService<SkillServiceState> {
     return this._state.ensureServices().registry.withWorkspace(this._state.projectRootForSession(sessionId), operation)
   }
   async skillCatalog(params?: { sessionId?: string; checkUpdates?: boolean }): Promise<SkillCatalogSnapshot> {
-    await skillScopeContext.authorize().catch(() => null)
-    if (params?.checkUpdates || skillCloud.status === 'idle') await skillCloud.refresh()
+    if (skillScopeContext.current()) {
+      await skillScopeContext.authorize().catch(() => null)
+      if (skillScopeContext.current() && (params?.checkUpdates || skillCloud.status === 'idle')) await skillCloud.refresh()
+    }
     const registry = this._state.ensureServices().registry
     registry.onChanged(() => xpcMain.broadcast('coach/skills-changed', { ts: Date.now() }))
-    return { ...registry.catalog(this._state.projectRootForSession(params?.sessionId || this.viewSessionId)), cloudStatus: skillCloud.status, cloudError: skillCloud.error }
+    const workspace = this._state.projectRootForSession(params?.sessionId || this.viewSessionId)
+    return { ...(params?.checkUpdates ? registry.reload(workspace) : registry.catalog(workspace)), cloudStatus: skillCloud.status, cloudError: skillCloud.error }
   }
   async listSkills(params?: { sessionId?: string }): Promise<SkillSummary[]> { return (await this.skillCatalog(params)).skills }
+  async setSkillEnabled(params: { reference: string; enabled: boolean; sessionId?: string }): Promise<void> {
+    await this.inWorkspace(async () => {
+      const registry = this._state.ensureServices().registry
+      const { reference } = await resolveAuthorizedSkill(registry, params.reference, true)
+      registry.setSkillEnabled(reference, params.enabled)
+    }, params.sessionId)
+  }
+  async diagnoseSkill(params: { reference: string; sessionId?: string }) {
+    return await this.inWorkspace(async () => {
+      const registry = this._state.ensureServices().registry
+      const { skill, guard } = await resolveAuthorizedSkill(registry, params.reference, true)
+      const result = diagnoseSkill({ directory: dirname(skill.path), bunPath: skillAuthoringRuntime(registry.scopeStorage.shared).bunPath })
+      await guard()
+      return result
+    }, params.sessionId)
+  }
   async openSkillSource(params: { layer: SkillLayer; sessionId?: string }): Promise<{ ok: boolean; error?: string }> {
     const snapshot = await this.skillCatalog(params)
     const path = snapshot.roots[params.layer][0]
@@ -95,7 +117,7 @@ export class SkillService extends CommonService<SkillServiceState> {
     return { ok: !error, error: error || undefined }
   }
   async openSkillFile(params: { skillId: string; sessionId?: string }): Promise<{ ok: boolean; error?: string }> {
-    const { skill, guard } = await this.inWorkspace(() => resolveAuthorizedSkill(this._state.ensureServices().registry, params.skillId), params.sessionId)
+    const { skill, guard } = await this.inWorkspace(() => resolveAuthorizedSkill(this._state.ensureServices().registry, params.skillId, true), params.sessionId)
     const error = await shell.openPath(skill.path)
     await guard()
     return { ok: !error, error: error || undefined }
@@ -104,7 +126,7 @@ export class SkillService extends CommonService<SkillServiceState> {
   async deleteSkill(params: { skillId: string }): Promise<DeleteSkillResult> {
     return this.inWorkspace(async () => {
       const registry = this._state.ensureServices().registry
-      const { reference } = await resolveAuthorizedSkill(registry, params.skillId)
+      const { reference } = await resolveAuthorizedSkill(registry, params.skillId, true)
       return registry.deleteSkill(reference)
     })
   }
@@ -221,7 +243,7 @@ export class SkillService extends CommonService<SkillServiceState> {
   async openSkillDirectory(params: {
     skillId: string
   }): Promise<{ ok: boolean; path?: string; error?: string }> {
-    const { skill, guard } = await this.inWorkspace(() => resolveAuthorizedSkill(this._state.ensureServices().registry, params.skillId))
+    const { skill, guard } = await this.inWorkspace(() => resolveAuthorizedSkill(this._state.ensureServices().registry, params.skillId, true))
     const dir = dirname(skill.path)
     const error = await shell.openPath(dir)
     await guard()
@@ -230,7 +252,7 @@ export class SkillService extends CommonService<SkillServiceState> {
 
   async exportSkillPackage(params: { skillId: string }): Promise<SkillExportResult> {
     const registry = this._state.ensureServices().registry
-    const { skill, reference, guard } = await this.inWorkspace(() => resolveAuthorizedSkill(registry, params.skillId))
+    const { skill, reference, guard } = await this.inWorkspace(() => resolveAuthorizedSkill(registry, params.skillId, true))
     if (!skill) {
       return {
         ok: false,

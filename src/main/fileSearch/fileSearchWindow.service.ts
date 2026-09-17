@@ -56,6 +56,25 @@ const requireProjectEntryName = (value: unknown): string => {
 };
 
 const PROJECT_AUTHORITY_TIMEOUT_MS = 10_000;
+/**
+ * 载入隐藏 file-search renderer 的上限。
+ *
+ * 为什么需要它:这一步原先是整条启动链上**唯一没有上限**的 await —— 它后面每一步都有
+ * (runtime ready 10s、project authority 10s、preview chunk 5s)。`did-fail-load` /
+ * `render-process-gone` / `unresponsive` / `closed` 四个事件只覆盖「加载**失败**」,覆盖不了
+ * 「**没有任何回应**」:2026-09-17 04:36:24.102Z 打出 `runtime-window phase=start` 之后,那一整个
+ * 会话再也没有 `renderer-loaded`(健康时是 342ms)。而 Electron 的网络服务在主进程里,所以主线程
+ * 一次瞬时停顿就足以让这个 localhost 载入错过响应。
+ *
+ * 后果链是这条修复真正要断掉的东西:`attachSurface` 永不返回 → `openOnMount` 的 `finally` 永不
+ * 执行 → `surfaceOpening` 永久置位 → 之后每次 `ensureStandalone`/`openOnMount` 永远 await →
+ * 目标变更队列停止推进 → 之后每一次打开/选择/导航都静默挂住,直到重启。超时改成**抛**,
+ * 那个 `finally` 就会跑,闩锁自己解开。
+ *
+ * 取 30s 而不是跟着兄弟们 10s:它的职责是断开永久闩锁,不是要求启动够快 —— 而 dev 下首次载入要
+ * 等 vite 编译那个 renderer。真正的失败仍然由上面那四个事件**立刻**报出来,这里只兜住「无人应答」。
+ */
+const RENDERER_LOAD_TIMEOUT_MS = 30_000;
 const INSTANCE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -211,8 +230,25 @@ export class FileSearchWindowService {
     window.once('closed', () => lifecycleFence.fail('File-search renderer closed unexpectedly.'));
 
     try {
-      if (is.dev && process.env.ELECTRON_RENDERER_URL) await window.loadURL(target.url);
-      else await window.loadFile(target.filePath);
+      let rendererLoadTimeout: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        is.dev && process.env.ELECTRON_RENDERER_URL
+          ? window.loadURL(target.url)
+          : window.loadFile(target.filePath),
+        stopped.then(() => {
+          throw new Error('File-search renderer load was superseded.');
+        }),
+        new Promise<never>((_resolve, reject) => {
+          rendererLoadTimeout = setTimeout(() => {
+            // Same vocabulary as the four load-failure events above, so a stalled load reads as one
+            // more way this renderer failed to come up rather than as a new kind of event.
+            lifecycleFence.fail('File-search renderer load timed out.');
+            reject(new Error('File-search renderer load timed out.'));
+          }, RENDERER_LOAD_TIMEOUT_MS);
+        })
+      ]).finally(() => {
+        if (rendererLoadTimeout) clearTimeout(rendererLoadTimeout);
+      });
       this.diagnostics.emit('runtime-window', {
         tag: diagnostic.tag,
         phase: 'renderer-loaded',

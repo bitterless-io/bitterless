@@ -1,6 +1,11 @@
+import { skillScopeContext } from '@maestro-main/skills/skillScope.context'
+import { buildSkillInstallTools } from '@main/agent/tools/skillInstallTools'
+import type { SkillInstallationRequest, SkillInstallationResult } from '@maestro-shared/coach.api'
+import { skillCloud } from '@maestro-main/skills/skillCloud.runtime'
 import { defaultWorkspaceRoot } from '@maestro-main/files/defaultWorkspace'
 import type { SkillSharingScope, SkillScopeContextInfo } from '@maestro-shared/coach.api'
 import { MaestroHistoryViewService } from './maestroHistoryView.service';
+import { applicationAuth } from '@main/auth/applicationAuth.service';
 import { showMaestroSessionMenu } from './maestroSessionMenu.service';
 import type { SessionMenuResult } from '@maestro-shared/coach.api';
 import { BrowserWindow, WebContentsView, app, shell } from 'electron'
@@ -25,6 +30,7 @@ import {
 } from '@maestro-main/capture/networkInterception'
 import type { PiToolSpec } from '@main/agent/BaseAgent'
 import { buildFileTools } from '@main/agent/tools/fileTools'
+import { buildSkillCreatorTools } from '@main/agent/tools/skillCreatorTools'
 import { buildArchiveTools } from '@main/agent/tools/archiveTools'
 import { buildWebFetchTools } from '@main/agent/tools/webFetchTools'
 import { buildWebSearchTools } from '@main/agent/tools/webSearchTools'
@@ -225,9 +231,18 @@ class MaestroWindowController
     this.skillService.setState(this)
     this.requestExec.setState(this)
     this.agentService.setState(this)
+    applicationAuth.subscribe((ready) => {
+      if (ready) void this.resumeAuthenticatedSession().catch((error) => console.warn('[auth] chat resume failed', error));
+      else void this.suspendAuthenticatedSession().catch((error) => console.warn('[auth] chat suspension failed', error));
+    });
   }
 
   readonly historyView = new MaestroHistoryViewService(this);
+  private authenticatedViewsSuspended = false;
+  private authResourceCleanup: Promise<void> | null = null;
+
+  requestLogin(): void { this.controlView.requestLogin(); }
+  isApplicationAuthenticated(): boolean { return applicationAuth.ready; }
 
   dismissBrowserHistory(): void { this.historyView.hide(); }
 
@@ -390,9 +405,8 @@ class MaestroWindowController
       this.browserSessions.refresh()
     }
   }
-  // Auth teardown may destroy this controller before the replacement Maestro is created. Keep a
-  // versioned, one-shot intent outside all window-scoped reset paths so a failed replacement boot
-  // retries on pinned Home instead of reviving a stale startup/last-active browser tab.
+  // Retain the legacy forced-Home boot fence for existing renderer restoration queries.
+  // Login lives in Control and never requests a replacement primary window.
   private forcePinnedHomeIntentVersion = 0
   private activeBootForcePinnedHomeIntentVersion = 0
   private openBootDiagnostics: MaestroOpenBootTrace | null = null
@@ -500,29 +514,36 @@ class MaestroWindowController
   }
 
   async prepareForAuthShutdown(): Promise<void> {
-    this.forcePinnedHomeIntentVersion += 1
-    // 判据是 `pinned`,**不带 kind**:设了自定义主页之后固有槽位装的是一个 composite mini-app,
-    // 条上根本没有 `kind === 'home'` 的 tab,带 kind 的找法只会返回 undefined —— 这一步被静默跳过,
-    // 拆卸那一帧露出的是当时屏幕上的任意页面。
-    //
-    // 这不放松 A8:「登出落地必须是内置本地 Home」由**下一次启动**那条路保证 ——
-    // `forcePinnedHomeIntentVersion` ＋ `createPinnedHomeTab()` 里的 `forcePinnedHomeBoot()` 无视
-    // 自定义主页。这里只负责拆卸前把前台收到那个不可关的固有槽位上。
-    const pinnedHome = this.tabs.find((tab) => tab.pinned)
-    try {
-      if (pinnedHome && this.activeTabId !== pinnedHome.id) {
-        await this.browserView.activateTab({ id: pinnedHome.id })
-      }
-    } catch (err) {
-      this.emit({ kind: 'error', msg: 'auth home activation: ' + (err as Error).message, ts: Date.now() })
+    applicationAuth.invalidate();
+  }
+
+  async suspendAuthenticatedSession(): Promise<void> {
+    if (this.authResourceCleanup) return this.authResourceCleanup;
+    this.authenticatedViewsSuspended = true;
+    const cleanup = (async () => {
+      this.demo?.stop();
+      // Agent shutdown aborts authenticated work; browser tabs and local tool mounts are retained.
+      await this.agentService.shutdown();
+      this.browserUse.clear();
+      this.browserSessions.clear();
+      this.browserToolOwners.clear();
+      await this.browserView.suspendProtectedTabs();
+    })();
+    const tracked = cleanup.finally(() => {
+      if (this.authResourceCleanup === tracked) this.authResourceCleanup = null;
+    });
+    this.authResourceCleanup = tracked;
+    await tracked;
+  }
+
+  async resumeAuthenticatedSession(): Promise<void> {
+    await this.authResourceCleanup;
+    if (!applicationAuth.ready) return;
+    if (this.authenticatedViewsSuspended) {
+      this.authenticatedViewsSuspended = false;
+      this.agentService.activate();
     }
-    // Workbench overlays the operation area. Hide it only after Home is active so teardown never
-    // reveals the previous browser tab between the Account action and window destruction.
-    try {
-      this.workbenchView.closeTab()
-    } catch (err) {
-      this.emit({ kind: 'error', msg: 'auth workbench hide: ' + (err as Error).message, ts: Date.now() })
-    }
+    await this.browserView.resumeProtectedTabs();
   }
 
   markBootSuccessful(): void {
@@ -569,6 +590,8 @@ class MaestroWindowController
     const homeMountedReady = this.createHomeRendererReadyFence(forcePinnedHome)
     const shellStartedAt = diagnostics?.mark()
     const win = super.create()
+    this.authenticatedViewsSuspended = false;
+    void applicationAuth.refresh();
     this.historyView.create(win)
     const shellReady = this.traceOpenStage(
       this.rendererReady,
@@ -676,16 +699,16 @@ class MaestroWindowController
   }
 
   async getSettings(): Promise<CoachSettings> {
-    return this.ensureServices().settings.read()
+    return this.browserSettings().read()
   }
 
   async saveSettings(params: Partial<CoachSettings>): Promise<CoachSettings> {
-    const next = this.ensureServices().settings.save(params)
+    const next = this.browserSettings().save(params)
     return next
   }
 
   hasCustomStartUrl(): boolean {
-    return this.ensureServices().settings.hasCustomStartUrl()
+    return this.browserSettings().hasCustomStartUrl()
   }
 
   async getWorkbenchTab(): ReturnType<CoachXpcContract['getWorkbenchTab']> {
@@ -872,6 +895,14 @@ class MaestroWindowController
 
   async listSkills(params?: { sessionId?: string }): Promise<SkillSummary[]> { return this.skillService.listSkills(params) }
   async skillCatalog(params?: { sessionId?: string; checkUpdates?: boolean }) { return this.skillService.skillCatalog(params) }
+  async setSkillEnabled(params: { reference: string; enabled: boolean; sessionId?: string }): Promise<void> { return this.skillService.setSkillEnabled(params) }
+  async manageSkillInstallation(params: SkillInstallationRequest): Promise<SkillInstallationResult> {
+    const sessionKey = params.sessionId || this.skillService.currentViewSessionId()
+    const tool = this.agentService.wrapHostTools('cowork', this.skillInstallationTools(sessionKey))[0]
+    if (!tool) throw new Error('skill_install is disabled by host tool policy')
+    return JSON.parse(await tool.execute({ action: params.action, scope: params.scope, installation_id: params.installationId }))
+  }
+  async diagnoseSkill(params: { reference: string; sessionId?: string }) { return this.skillService.diagnoseSkill(params) }
   async setSkillViewContext(params: { sessionId: string; workspace?: { path: string; name: string; exists: boolean; updatedAt: number } }) { return this.skillService.setSkillViewContext(params) }
   async openSkillFile(params: { skillId: string; sessionId?: string }) { return this.skillService.openSkillFile(params) }
   async openSkillSource(params: { layer: 'global' | 'workspace' | 'institution'; sessionId?: string }) { return this.skillService.openSkillSource(params) }
@@ -1038,6 +1069,7 @@ class MaestroWindowController
   }
 
   claimAgentTurn(params: AgentTurnClaimRequest): AgentTurnClaimResult {
+    applicationAuth.assertReady();
     return this.agentService.claimAgentTurn(params)
   }
 
@@ -1050,7 +1082,10 @@ class MaestroWindowController
   }
 
   async sendAgentMessage(params: AgentMessageRequest): Promise<AgentReply> {
+    const authGeneration = await applicationAuth.requireReady();
+    await this.resumeAuthenticatedSession();
     const reply = await this.agentService.sendAgentMessage(params)
+    applicationAuth.assertGeneration(authGeneration);
     /**
      * **钻探的续跑挂在这里。** 钻探开着就用合成 turn 一轮一轮推下去,没开就原样返回 ——
      * 整段逻辑在 `DrillToolsHost.continueAfterTurn`(与 cowork 同一位置、同一形状)。
@@ -1158,11 +1193,11 @@ class MaestroWindowController
   }
 
   readMaestroSettings(): CoachSettings {
-    return this.ensureServices().settings.read()
+    return this.browserSettings().read()
   }
 
   saveMaestroSettings(patch: Partial<CoachSettings>): CoachSettings {
-    return this.ensureServices().settings.save(patch)
+    return this.browserSettings().save(patch)
   }
 
   /**
@@ -1205,6 +1240,26 @@ class MaestroWindowController
 
   async setLlmConfig(params: { provider: string; model: string; effort?: LlmEffort }): Promise<LlmConfig> {
     return await this.llmService.setLlmConfig(params)
+  }
+
+  async setCompactPrompt(params: { compactPrompt: string }): Promise<LlmConfig> {
+    return await this.llmService.setCompactPrompt(params)
+  }
+
+  async testAutoCompaction(params: { sessionId: string; filePath?: string }): Promise<import('@shared/piCompactionTest.types').AutoCompactionTestReport> {
+    return await this.agentService.testAutoCompaction(params)
+  }
+
+  async deleteNativeSession(params: { sessionId: string }): Promise<{ ok: true }> {
+    return await this.agentService.deleteNativeSession(params)
+  }
+
+  async cancelCompaction(params: { sessionId: string }): Promise<void> {
+    await this.agentService.cancelCompaction(params)
+  }
+
+  async compactSession(params: { sessionId: string; instructions?: string }): Promise<AgentCompactReply & { tokensBefore?: number; estimatedTokensAfter?: number }> {
+    return await this.agentService.compactSession(params)
   }
 
   async setLlmCompression(params: { provider: string; model: string; compressionRemainingPercent: number }): Promise<LlmConfig> {
@@ -1346,12 +1401,36 @@ class MaestroWindowController
     return tools
   }
 
+  private skillInstallationTools(sessionKey: string): PiToolSpec[] {
+    return buildSkillInstallTools({
+      workspace: () => this.workspaceFile.projectRootForSession(sessionKey),
+      sharedRoot: () => this.ensureServices().registry.scopeStorage.shared,
+      libraryRoot: () => this.ensureServices().registry.scopeStorage.library,
+      stateRoot: () => join(maestroDataRoot(), 'skill-installations'),
+      identity: () => JSON.stringify(skillScopeContext.current()),
+      changed: () => this.ensureServices().registry.invalidate()
+    })
+  }
+
   buildPiTools(opts: { ingest?: boolean; sessionKey?: string } = {}): PiToolSpec[] {
     const sessionKey = opts.sessionKey || 'default'
     return this.agentService.wrapHostTools('cowork', [
       this.agentService.buildHostToolCatalogTool('cowork'),
       ...this.agentService.workflowTools(sessionKey),
       ...buildFileTools(this.workspaceFile, sessionKey),
+      ...this.skillInstallationTools(sessionKey),
+      ...buildSkillCreatorTools({
+        workspace: () => this.workspaceFile.projectRootForSession(sessionKey),
+        sharedRoot: () => this.ensureServices().registry.scopeStorage.shared,
+        libraryRoot: () => this.ensureServices().registry.scopeStorage.library,
+        changed: () => this.ensureServices().registry.invalidate()
+      }),
+      {
+        name: 'skill_diagnose',
+        description: 'Read-only checks of a skill’s declared entry, interpreter and dependencies. Returns specific missing conditions and repair guidance; never executes scripts or installs software. Undeclared requirements and runtime compatibility are not proved by this check.',
+        params: [{ name: 'skill_ref', required: true, description: 'Exact qualified skill reference from the current catalog.' }],
+        execute: async args => JSON.stringify(await this.skillService.diagnoseSkill({ reference: String(args.skill_ref || ''), sessionId: sessionKey }))
+      },
       ...buildArchiveTools(this.workspaceFile, sessionKey),
       // 联网三级(见 docs/features/agent-web-tools.md):web_search 找 URL(走 bitterless-private
       // core,凭登录态)→ web_fetch 免费读正文 → deep_fetch 开一个**受控 tab**让 JavaScript
@@ -1572,7 +1651,7 @@ class MaestroWindowController
             } as PiToolSpec
           ]
         : [])
-    ].map(tool => ({ ...tool, execute: (args: Parameters<PiToolSpec['execute']>[0]) => this.ensureServices().registry.withWorkspace(this.projectRootForSession(sessionKey), () => tool.execute(args)) })).map((tool): PiToolSpec => {
+    ].map(tool => ({ ...tool, execute: (...args: Parameters<PiToolSpec['execute']>) => this.ensureServices().registry.withWorkspace(this.projectRootForSession(sessionKey), () => tool.execute(...args)) })).map((tool): PiToolSpec => {
       if (['stop_recording', 'ingest_recording'].includes(tool.name)) return { ...tool, execute: async (args) => {
         const drill = this.drillTrio
         if (drill?.run.isDrilling && drill.run.ownerSessionId !== sessionKey) return 'ERROR: another chat owns the active drill recording. Wait for that drill to finish, or stop it in its own chat.'
@@ -1897,6 +1976,11 @@ class MaestroWindowController
     return this.skillRegistry
   }
 
+  private browserSettings(): CoachSettingsService {
+    if (!this.settings) this.settings = new CoachSettingsService(maestroDataRoot());
+    return this.settings;
+  }
+
   ensureServices(): {
     registry: SkillRegistryService
     generator: SkillGeneratorService
@@ -1908,7 +1992,7 @@ class MaestroWindowController
     if (!this.settings) this.settings = new CoachSettingsService(maestroDataRoot())
     if (!this.demo) this.demo = new BookingDemoService(maestroDataRoot())
     if (!this.skillRegistry) {
-      this.skillRegistry = new SkillRegistryService(maestroDataRoot())
+      this.skillRegistry = new SkillRegistryService(maestroDataRoot(), undefined, () => skillCloud.revision)
       this.skillRegistry.ensureRuntimeStorage()
     }
     const { pi, piDelegate, piGen } = this.agentService.ensureAgents()

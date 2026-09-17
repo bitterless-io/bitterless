@@ -6,6 +6,9 @@ import { zhTrench } from './zhTrench';
 export const zh: typeof en = {
   workflow: workflowZh,
   auth: {
+    controlSignInTitle: '登录 Bitterless',
+    controlSignInDescription: '在聊天面板登录后使用此功能；不登录也可以继续浏览。',
+    controlSignInAction: '登录',
     navigationFailed: '登录成功，但页面跳转失败，请重试。',
     passwordSetupTitle: '设置登录密码',
     passwordSetupDescription: '首次登录必须先设置密码，完成后才能进入工作区。',
@@ -530,6 +533,15 @@ export const zh: typeof en = {
       closeErrorDetail: '关闭错误详情',
       slashTestShowError: '插入一张示例错误卡（诊断用）',
       slashCopySessionPath: '复制本会话的模型 I/O jsonl 目录',
+      skills: '技能',
+      skillSearch: '按名称、来源或路径搜索技能',
+      skillEmpty: '当前 Chat 没有匹配的技能',
+      skillUnavailable: '不可用',
+      skillExplicitOnly: '仅显式调用',
+      skillGlobal: '全局',
+      skillWorkspace: '工作区',
+      skillInstitution: '机构',
+      removeSkillSelection: '移除选中的技能',
       slashPathCopied: '会话 jsonl 路径已复制',
       copySessionPath: '复制会话路径',
       openSessionFinder: '在 Finder 中打开',
@@ -574,6 +586,7 @@ export const zh: typeof en = {
       chooseWorkspace: '选择工作区',
       switchWorkspace: '更换工作区',
       openWorkspaceInPreview: '在 {app} 中打开这个工作区',
+      workspacePreviewFailed: '工作区已选择，但预览无法打开。点击工作区名称重试。',
       stopUsingWorkspaceTooltip: '停用这个工作区',
       stopUsingWorkspaceTitle: '停用这个工作区？',
       stopUsingWorkspaceContent: '当前会话将不再使用“{name}”。不会删除任何东西——文件还在原处，随时可以再选回来。',
@@ -600,6 +613,10 @@ export const zh: typeof en = {
       unknownError: '未知错误'
     },
     responseStatus: {
+      compacting: '正在压缩',
+      compactionRetry: '正在压缩 · 重试 {attempt}/{max}',
+      compactionWait: '等待 {seconds} 秒',
+      compactionQueued: '消息排队中',
       retryProgress: '已重试：{attempt}/{max}',
       waitingDecision: '等待你的决定 · {title}',
       actionPanelBelow: '请使用下方操作面板',
@@ -1076,6 +1093,7 @@ export const zh: typeof en = {
     syncDiscard: '丢弃'
   },
   zellij: {
+    dismiss: '暂时关闭',
     title: 'Zellij',
     opening: '正在打开终端…',
     retry: '重试',
@@ -1107,6 +1125,10 @@ export const zh: typeof en = {
       'web-sharing-disabled': '请在 config.kdl 中开启 Web 共享，以打开此终端。',
       'start-failed': 'Zellij 未能启动或已停止，请重试。',
       'startup-timeout': 'Zellij 启动超时，请重试。',
+      'controls-load-timeout': '终端控制页面加载超时，请重试打开页面。',
+      'terminal-load-timeout': '终端页面加载超时，请重试连接原会话。',
+      'controls-load-failed': '终端控制页面加载失败，请重试打开页面。',
+      'terminal-load-failed': '终端页面加载失败，请重试连接原会话。',
       'authentication-failed': '无法登录本地终端，请重试。',
       'token-failed': 'Zellij 无法创建认证令牌，请重试。',
       'secure-storage-unavailable': '安全凭证存储不可用，请恢复系统钥匙串访问权限后重试。',

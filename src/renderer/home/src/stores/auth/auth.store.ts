@@ -1,6 +1,7 @@
 import { markRaw, reactive } from 'vue';
 import { Message } from '@arco-design/web-vue';
 import { authEmitter } from '@/emitter/auth.emitter';
+import { homeEnv } from '@/contextBridge/homeEnv.bridge';
 import {
   SessionEligibilityError,
   SessionPayloadError,
@@ -143,6 +144,7 @@ class AuthStore {
   }
 
   private activateTodoistSync(current: CurrentCustomer): void {
+    if (homeEnv?.authOnlyE2E) return;
     let params: TodoistSyncActivateParams;
     try {
       params = getTodoistSyncActivateParams(current, getCustomerToken(), this.deviceId);
@@ -171,6 +173,8 @@ class AuthStore {
     current: CurrentCustomer,
     previousSessionId: string | null = null,
   ): void {
+    // Real auth-only E2E validates credentials but must never start sync/trading/business work.
+    if (homeEnv?.authOnlyE2E) return;
     let activation: Promise<void>;
     try {
       ensureSessionEligibleCustomer(current);

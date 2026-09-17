@@ -17,6 +17,8 @@ import {
 } from './zellijRuntime.service';
 import type { ZellijSnapshot } from '@shared/zellij/zellij.type';
 import { zellijErrorCode } from './zellijProcess.service';
+import { zellijLog, zellijSurfaceTag } from './zellijLog.service';
+import { loadZellijRenderer } from './zellijRendererLoad.service';
 
 export interface ZellijTerminalHost {
   /** Identifies THIS surface. Its Zellij session name is derived from it, so it must be stable for
@@ -59,6 +61,7 @@ export class ZellijTerminalView {
   private unsubscribe: (() => void) | null = null;
   private unsubscribeFailure: (() => void) | null = null;
   private disposed = false;
+  private readonly lifetime = new AbortController();
   private pending: Promise<ZellijSnapshot> | null = null;
   private generation = 0;
   private state: Pick<ZellijSnapshot, 'status' | 'error'> = { status: 'idle', error: null };
@@ -77,7 +80,8 @@ export class ZellijTerminalView {
 
   /** Attach against the current runtime state; safe to call repeatedly (host show/activate). */
   sync(): void {
-    if (this.disposed) return;
+    // An exhausted recovery attempt stays failed until the user explicitly presses Retry.
+    if (this.disposed || this.state.status === 'error') return;
     void this.initialize();
   }
 
@@ -99,7 +103,7 @@ export class ZellijTerminalView {
     this.publish();
     const pending = (async () => {
       try {
-        const target = await prepareZellijTerminal(this.host.surfaceId);
+        const target = await prepareZellijTerminal(this.host.surfaceId, this.lifetime.signal);
         if (this.disposed || this.host.destroyed() || generation !== this.generation)
           return this.snapshot();
         await this.attach(target);
@@ -115,7 +119,12 @@ export class ZellijTerminalView {
         // fallback for ANY unrecognised error, and it is also the literal string `assertActive`
         // throws when a preparation is merely superseded by a runtime restart. Those two are
         // opposite situations and used to log identically (see zellij-terminal-no-error-trace.md).
-        console.error(`[zellij] surface preparation failed reason=${this.state.error}`, error);
+        // Kept as the same grep-able phrase, plus the one thing it never said: WHICH surface. With
+        // five terminals open, one anonymous line could not even be attributed to a tab.
+        console.error(
+          `[zellij] surface preparation failed surface=${zellijSurfaceTag(this.host.surfaceId)} reason=${this.state.error}`,
+          error
+        );
       }
       this.publish();
       return this.snapshot();
@@ -160,6 +169,7 @@ export class ZellijTerminalView {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.lifetime.abort();
     this.generation += 1;
     this.pending = null;
     blurZellijTerminal(this.host.surfaceId);
@@ -171,7 +181,7 @@ export class ZellijTerminalView {
   }
 
   private applyState(snapshot: ZellijSnapshot): void {
-    if (this.disposed) return;
+    if (this.disposed || this.state.status === 'error') return;
     if (snapshot.status !== 'ready') {
       this.detach();
       this.state = { status: snapshot.status, error: snapshot.error };
@@ -228,7 +238,17 @@ export class ZellijTerminalView {
     view.webContents.on('blur', () => blurZellijTerminal(this.host.surfaceId));
     this.host.container.addChildView(view);
     this.layout();
-    await view.webContents.loadURL(target);
+    const startedAt = Date.now();
+    await loadZellijRenderer(
+      view.webContents,
+      () => view.webContents.loadURL(target),
+      'terminal',
+      this.lifetime.signal
+    );
+    zellijLog.info('terminal-load', {
+      surface: zellijSurfaceTag(this.host.surfaceId),
+      elapsedMs: Date.now() - startedAt
+    });
   }
 
   private publish(): void {

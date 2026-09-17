@@ -1,4 +1,4 @@
-import { createXpcRendererEmitter, xpcRenderer, type XpcPayload } from 'electron-xpc/renderer';
+import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer';
 import type { AuthSessionApi } from '@shared/auth/auth.type';
 import {
   HOME_SHELL_AUTH_SNAPSHOT_CHANGED_EVENT,
@@ -19,6 +19,12 @@ import {
 
 const homeShellEmitter = createXpcRendererEmitter<HomeShellBridgeApi>('HomeShellBridgeHandler');
 const authSessionEmitter = createXpcRendererEmitter<AuthSessionApi>('AuthHandler');
+const applicationAuthEmitter = createXpcRendererEmitter<{ invalidate(): Promise<void> }>(
+  'ApplicationAuthHandler'
+);
+const controlEmitter = createXpcRendererEmitter<{ requestLogin(): Promise<void> }>(
+  'CoachXpcHandler'
+);
 
 const HOME_SHELL_CALL_TIMEOUT_MS = 8_000;
 const HOME_SHELL_AUTH_CALL_TIMEOUT_MS = 25_000;
@@ -51,17 +57,42 @@ const runAuthCommand = async (
   );
 
 export const homeShellBridge = {
+  async requestLogin(): Promise<void> {
+    await withHomeShellTimeout(controlEmitter.requestLogin(), 'Show Control login');
+  },
   subscribeAuthSnapshot(
     listener: (snapshot: HomeShellAuthSnapshot) => void,
     onInvalidSnapshot: () => void
-  ): void {
-    xpcRenderer.subscribe(HOME_SHELL_AUTH_SNAPSHOT_CHANGED_EVENT, (payload: XpcPayload) => {
-      try {
-        listener(parseHomeShellAuthSnapshot(payload.params));
-      } catch {
-        onInvalidSnapshot();
+  ): () => void {
+    let active = true;
+    let reading = false;
+    let queued = false;
+    const refresh = async (): Promise<void> => {
+      if (!active) return;
+      if (reading) {
+        queued = true;
+        return;
       }
-    });
+      reading = true;
+      try {
+        // Broadcasts have no sender identity. Only the addressed authority can supply state.
+        const snapshot = await homeShellBridge.getAuthSnapshot(500);
+        if (active) listener(snapshot);
+      } catch {
+        if (active) onInvalidSnapshot();
+      } finally {
+        reading = false;
+        if (active && queued) {
+          queued = false;
+          void refresh();
+        }
+      }
+    };
+    xpcRenderer.subscribe(HOME_SHELL_AUTH_SNAPSHOT_CHANGED_EVENT, () => void refresh());
+    return () => {
+      active = false;
+      queued = false;
+    };
   },
 
   async getAuthSnapshot(timeoutMs = HOME_SHELL_CALL_TIMEOUT_MS): Promise<HomeShellAuthSnapshot> {
@@ -124,16 +155,22 @@ export const homeShellBridge = {
   },
 
   async openTodo(): Promise<void> {
+    const snapshot = await homeShellBridge.getAuthSnapshot();
+    if (snapshot.phase !== 'ready' || snapshot.loggingOut) {
+      await homeShellBridge.requestLogin();
+      return;
+    }
     const value = await withHomeShellTimeout(homeShellEmitter.openTodo(), 'Open Todo');
     parseHomeShellCommandAck(value);
   },
 
   async logout(): Promise<void> {
+    await withHomeShellTimeout(applicationAuthEmitter.invalidate(), 'Invalidate chat session');
     const value = await withHomeShellTimeout(homeShellEmitter.prepareLogout(), 'Prepare logout');
     parseHomeShellCommandAck(value);
 
-    // Deactivation destroys the calling Workbench renderer. Dispatch only after Home has
-    // acknowledged local-session cleanup, and intentionally do not await the return path.
+    // Deactivation closes protected business renderers but retains browsing and Control.
+    // Dispatch only after Home acknowledged local cleanup; do not await the caller's destruction.
     void authSessionEmitter.deactivateSession().catch((err) => {
       console.warn('[HomeShellBridge] Failed to request session deactivation:', err);
     });

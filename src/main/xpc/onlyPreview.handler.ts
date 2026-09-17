@@ -223,6 +223,19 @@ class OnlyPreviewHandler
     );
   }
 
+  /**
+   * 占位页上「前往」那个按钮。**0 个参数** —— 那一格不持有 hostToken。
+   *
+   * 不走 `openOnlyPreviewWindow()`:它的冷分支会新建一个窗口
+   * (docs/features/onlypreview-deferred-tab-placeholder.md #3)。
+   */
+  async focusOnlyPreviewWindow(): ReturnType<OnlyPreviewApi['focusOnlyPreviewWindow']> {
+    return await runOperation(
+      'focusOnlyPreviewWindow',
+      async () => await onlyPreviewHostToggleService.focusStandaloneWindow()
+    );
+  }
+
   async openOnlyPreviewWindow(): ReturnType<OnlyPreviewApi['openOnlyPreviewWindow']> {
     return await runOperation('openOnlyPreviewWindow', async () => {
       await onlyPreviewWindowHelper.ensureStandalone();

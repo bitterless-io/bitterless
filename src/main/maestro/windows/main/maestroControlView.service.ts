@@ -120,6 +120,15 @@ export class MaestroControlViewService extends CommonService<MaestroControlViewS
     return true
   }
 
+  requestLogin(): void {
+    const view = this.view;
+    if (!view || view.webContents.isDestroyed()) return;
+    const bounds = view.getBounds();
+    this.focusSearchOnLayout = bounds.width <= 0 || bounds.height <= 0;
+    xpcMain.broadcast('coach/login-request', {});
+    if (!this.focusSearchOnLayout) view.webContents.focus();
+  }
+
   setBounds(rect: ViewRect): void {
     const view = this.view
     if (!view || view.webContents.isDestroyed()) return

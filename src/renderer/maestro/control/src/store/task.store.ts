@@ -9,20 +9,34 @@ const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
 class TaskStoreState {
   tasks: MaestroTask[] = []
   initialized = false
+  private subscribed = false
+  private generation = 0
+  private snapshotRevision = 0
+
+  reset(): void {
+    this.generation += 1
+    this.tasks = []
+    this.initialized = false
+  }
 
   async init(): Promise<void> {
     if (this.initialized) return
     this.initialized = true
-    let receivedBroadcast = false
-    xpcRenderer.subscribe('coach/tasks', (payload) => {
-      receivedBroadcast = true
-      this.apply(payload.params as MaestroTaskSnapshot | undefined)
-    })
+    const generation = this.generation
+    const revision = this.snapshotRevision
+    if (!this.subscribed) {
+      this.subscribed = true
+      xpcRenderer.subscribe('coach/tasks', (payload) => {
+        if (!this.initialized) return
+        this.snapshotRevision += 1
+        this.apply(payload.params as MaestroTaskSnapshot | undefined)
+      })
+    }
     try {
       const tasks = await coach.listTasks()
       // A newer broadcast may have arrived while listTasks was in flight. Never replace it with the
       // older query result; the broadcast already applied the authoritative snapshot.
-      if (!receivedBroadcast) this.apply({ tasks, ts: Date.now() })
+      if (generation === this.generation && revision === this.snapshotRevision) this.apply({ tasks, ts: Date.now() })
     } catch {
       /* Main may not be ready yet; the next snapshot broadcast self-heals the store. */
     }

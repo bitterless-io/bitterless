@@ -53,15 +53,24 @@ export class HostToolRegistry {
   private confirmedTool(tool: AgentToolSpec, mode: HostToolPolicyMode): AgentToolSpec {
     return {
       ...tool,
-      execute: async (args) => {
-        const allowed = await this.options.onConfirm?.({
-          scope: this.options.scope,
-          toolName: tool.name,
-          mode,
-          args
-        })
+      execute: async (args, signal) => {
+        signal?.throwIfAborted()
+        const confirm = async (resolvedArgs: Record<string, unknown>): Promise<boolean> => {
+          signal?.throwIfAborted()
+          const allowed = await this.options.onConfirm?.({
+            scope: this.options.scope,
+            toolName: tool.name,
+            mode,
+            args: resolvedArgs
+          })
+          signal?.throwIfAborted()
+          return allowed === true
+        }
+        if (tool.deferConfirmation) return await tool.execute(args, signal, { confirm })
+        const allowed = await confirm(args)
         if (!allowed) throw new Error(`Tool "${tool.name}" was denied by the operator.`)
-        return await tool.execute(args)
+        signal?.throwIfAborted()
+        return await tool.execute(args, signal)
       }
     }
   }

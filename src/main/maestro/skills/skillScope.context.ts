@@ -4,7 +4,7 @@ import type { SkillSummary } from '@maestro-shared/coach.api'
 
 const current = (): SkillInstitutionContext | null => {
   const value = assetScope.current
-  return value ? { accountScope: value.namespace, institutionId: String(value.institutionId), institutionName: value.institutionName, generation: value.generation } : null
+  return value && /^[a-zA-Z0-9_-]{1,128}$/.test(value.namespace || '') && Number.isSafeInteger(value.institutionId) && value.institutionId > 0 && value.generation ? { accountScope: value.namespace, institutionId: String(value.institutionId), institutionName: value.institutionName, generation: value.generation } : null
 }
 export const skillScopeContext: SkillScopeContext = {
   current,
@@ -54,6 +54,7 @@ export const resolveAuthorizedSkill = async (
     assertSkillContext(context)
     if (context) await authorizeSkillReference(reference)
     assertSkillContext(context)
+    if (!registry.resolveSkill(reference, allowUnassigned)) throw new Error('Skill was disabled, deleted or became unavailable during execution')
   }
   return { skill, reference, context, guard }
 }

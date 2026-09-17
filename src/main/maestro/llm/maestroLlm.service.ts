@@ -1,3 +1,4 @@
+import { DEFAULT_COMPACT_PROMPT } from '@main/agent/runtime/piNativeCompaction'
 import { shell } from 'electron'
 import { dirname } from 'path'
 import { mkdirSync } from 'fs'
@@ -37,10 +38,19 @@ import {
 } from './llmModels'
 import { PiRuntimeAdapter } from '@main/agent/runtime/piRuntimeAdapter'
 import { maestroAgentDir, maestroAuthPath, maestroModelsPath } from './llmPaths'
-import { syncPiCompactionSettings } from './piCompactionSettings.service'
 import { codexCredentialService } from '../../codex/codexCredential.runtime'
 
 const configStore = createXpcMainEmitter<ConfigApi>('ConfigDao')
+
+/**
+ * 上下文窗口解析的封顶。查的是 pi 目录里的静态模型表,正常是毫秒级;
+ * 留 3s 是给冷启动那次 `import('@earendil-works/pi-coding-agent')` 的。
+ * 与 cowork 同一数值(coworkLlm.service.ts),两边保持一致。
+ */
+const CONTEXT_WINDOW_TIMEOUT_MS = 3000
+
+/** 单个 provider 就绪探测的封顶,与 cowork `PROVIDER_READY_TIMEOUT_MS` 同值。 */
+const PROVIDER_READY_TIMEOUT_MS = 8000
 
 interface PiAuthStorage {
   login: (
@@ -177,21 +187,33 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
     }
   }
 
+  /**
+   * 并行探测,每个都封顶(与 cowork `coworkLlm.service.ts` 同一形状)。
+   *
+   * 原来是串行且**不封顶**的:`checkLlmProviderReady` 底下是
+   * `ModelRuntime.create()`,它默认跑一趟 availability refresh,对每个 provider 调
+   * `models.checkAuth()` —— 网络调用,没 signal 没超时。没登录时一个 provider 就能挂住整条
+   * `getLlmConfig`,而它正是控制面板"Loading control config"等的那一个。
+   */
   private async buildLlmProviderStates(activeProvider: string): Promise<LlmProviderState[]> {
-    const out: LlmProviderState[] = []
-    for (const provider of LLM_PROVIDERS) {
-      const preset = firstPresetForProvider(provider.provider)
-      const ready = await this.checkLlmProviderReady(provider.provider, preset?.model || '')
-      out.push({
-        provider: provider.provider,
-        label: provider.label,
-        authLabel: provider.authLabel,
-        ready,
-        active: provider.provider === activeProvider,
-        hint: ready ? undefined : provider.hint
+    return await Promise.all(
+      LLM_PROVIDERS.map(async (provider) => {
+        const preset = firstPresetForProvider(provider.provider)
+        const ready = await Promise.race([
+          this.checkLlmProviderReady(provider.provider, preset?.model || '').catch(() => false),
+          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), PROVIDER_READY_TIMEOUT_MS))
+        ])
+        if (!ready) console.warn(`[maestro llm] provider readiness "${provider.provider}" not ready (or timed out after ${PROVIDER_READY_TIMEOUT_MS}ms)`)
+        return {
+          provider: provider.provider,
+          label: provider.label,
+          authLabel: provider.authLabel,
+          ready,
+          active: provider.provider === activeProvider,
+          hint: ready ? undefined : provider.hint
+        }
       })
-    }
-    return out
+    )
   }
 
   private async getAndBroadcastLlmConfig(): Promise<LlmConfig> {
@@ -217,8 +239,9 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
     const { presets, windows } = await this.withResolvedContextWindows(
       applyCompressionPrefs(selectableLlmPresets(), await this.readStoredLlmCompressionPrefs())
     )
-    this.syncPiCompaction(target, presets, windows)
     return {
+      compactPrompt: this._state.readMaestroSettings().compactPrompt || '',
+      defaultCompactPrompt: DEFAULT_COMPACT_PROMPT,
       provider: target.provider,
       model: target.model,
       effort: target.effort,
@@ -243,44 +266,28 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
     presets: LlmTarget[]
   ): Promise<{ presets: LlmTarget[]; windows: Record<string, number> }> {
     try {
-      const windows = await new PiRuntimeAdapter().describeContextWindows({
-        authPath: maestroAuthPath(),
-        modelsPath: maestroModelsPath(),
-        targets: presets.map((preset) => ({ providerId: preset.provider, modelId: preset.model }))
-      })
+      // 封顶,不只 try/catch:catch 只接得住抛出、接不住**挂住**,而
+      // `ModelRuntime.create()` 那趟 availability refresh 没登录时能挂几分钟
+      // (cowork 2026-09-17 实测 `getLlmConfig` 跑了 333,784ms,把整机启动判定成 stalled;
+      //  见 micromeet-cowork/docs/issues/boot-stall-renderer-config-pi-availability-refresh.md)。
+      // 超时退 `{}` 与解析失败同一口径 —— 整批退 256K,不是新的失败模式。
+      const windows = await Promise.race([
+        new PiRuntimeAdapter().describeContextWindows({
+          authPath: maestroAuthPath(),
+          modelsPath: maestroModelsPath(),
+          targets: presets.map((preset) => ({ providerId: preset.provider, modelId: preset.model }))
+        }),
+        new Promise<Record<string, number>>((resolve) =>
+          setTimeout(() => {
+            console.warn(`[llm] 解析上下文窗口超时(${CONTEXT_WINDOW_TIMEOUT_MS}ms),沿用预设里配置的窗口`)
+            resolve({})
+          }, CONTEXT_WINDOW_TIMEOUT_MS)
+        )
+      ])
       return { presets: applyResolvedContextWindows(presets, windows), windows }
     } catch (err) {
-      console.warn('[llm] 解析上下文窗口失败,整批退 256K:', err instanceof Error ? err.message : err)
+      console.warn('[llm] 解析上下文窗口失败,沿用预设里配置的窗口:', err instanceof Error ? err.message : err)
       return { presets: applyResolvedContextWindows(presets, {}), windows: {} }
-    }
-  }
-
-  /**
-   * 把选中模型的压缩参数同步进 `<agentDir>/settings.json`,让 **pi 自带的** auto-compaction
-   * 与我们自己那条触发线用同一个比例。
-   *
-   * 为什么挂在取配置这条路上而不是单独一个监听:`getLlmConfig()` 是**换模型、改余量百分比、
-   * 启动**三件事的共同下游(改动都经 `getAndBroadcastLlmConfig()` 回到这里),挂一处就全覆盖。
-   * 写盘只在值真变时发生,所以这条路被频繁调用也不产生噪音。
-   *
-   * **用精确 token 数,不用 `contextLengthK`** —— 那个字段是给人看的、四舍五入到 K 的
-   * (272,000 → 266K → 反推回来是 272,384),拿它算触发线等于凭空给自己引入 384 token 的偏差。
-   *
-   * 解析不到窗口就退 `DEFAULT_CONTEXT_WINDOW_TOKENS`,与 `applyResolvedContextWindows` 同一口径。
-   */
-  private syncPiCompaction(target: LlmStoredTarget, presets: LlmTarget[], windows: Record<string, number>): void {
-    const selected = presets.find((item) => item.provider === target.provider && item.model === target.model)
-    const result = syncPiCompactionSettings({
-      agentDir: maestroAgentDir(),
-      contextWindowTokens: windows[modelPresetKey(target.provider, target.model)] || DEFAULT_CONTEXT_WINDOW_TOKENS,
-      remainingPercent: selected?.compressionRemainingPercent ?? DEFAULT_COMPRESSION_REMAINING_PERCENT
-    })
-    if (result.error) {
-      console.warn('[llm] pi 压缩参数写入失败,pi 侧退回其固定缺省 16384:', result.error)
-    } else if (result.written) {
-      console.log(
-        `[llm] pi compaction -> reserve ${result.reserveTokens} / keepRecent ${result.keepRecentTokens} (${result.path})`
-      )
     }
   }
 
@@ -293,6 +300,12 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
     this._state.applyLlmTarget(target.provider, target.model, target.effort)
     this._state.resetLlmTurnState()
     this._state.emitTrace({ kind: 'info', msg: `LLM backend -> ${target.provider}/${target.model}/${target.effort} (conversations reset)`, ts: Date.now() })
+    return await this.getAndBroadcastLlmConfig()
+  }
+
+  async setCompactPrompt(params: { compactPrompt: string }): Promise<LlmConfig> {
+    if (typeof params?.compactPrompt !== 'string') throw new Error('compactPrompt must be text.')
+    this._state.saveMaestroSettings({ compactPrompt: params.compactPrompt })
     return await this.getAndBroadcastLlmConfig()
   }
 

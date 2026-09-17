@@ -2,7 +2,7 @@ import { workflowCompletionId } from '@shared/workflowCompletion'
 import { workflowCompletionChatText } from '../workflow.presentation'
 import { workflowText } from '../workflow.text'
 import type { WorkflowIpcApi, WorkflowSnapshot, WorkflowRunSnapshot } from '@shared/agentWorkflow.api'
-import { markRaw, nextTick, reactive } from 'vue'
+import { markRaw, nextTick, reactive, toRaw } from 'vue'
 import { inject, injectable } from 'inversify'
 import { countTokens } from 'gpt-tokenizer'
 import { iocHelper } from '@maestro-shared/iocHelper/ioc.helper'
@@ -23,7 +23,8 @@ import type {
   AgentTurnUpdate,
   CoachXpcContract,
   ModelRetryProgress,
-  WorkspaceRef
+  WorkspaceRef,
+  WorkspaceRefResult
 } from '@maestro-shared/coach.api'
 import type { MaestroChatApi, MaestroChatDetail, MaestroChatMessage, MaestroChatSession, MaestroCompactionApi } from '@maestro-shared/maestroChat.api'
 import type { MaestroTask, MaestroTaskPart } from '@maestro-shared/task.api'
@@ -253,7 +254,46 @@ export class MessageStoreState {
   contextLimitLabel = DEFAULT_CONTEXT_LIMIT_LABEL
   compressionRemainingPercent = DEFAULT_COMPRESSION_REMAINING_PERCENT
   initialized = false
+  private authGeneration = 0
+  private authActive = true
+  private subscriptionsBound = false
   activeAgentTurnSnapshots: AgentTurnSnapshot[] = []
+
+  resume(): void {
+    this.authActive = true
+  }
+
+  reset(): void {
+    this.authActive = false
+    this.authGeneration += 1
+    this.initialized = false
+    for (const session of this.sessions) session.turn = undefined
+    this.sessions = []
+    this.historySessions = []
+    this.unreadSessionIds = []
+    this.activeSessionId = ''
+    this.editingTitleSessionId = ''
+    this.defaultWorkspace = undefined
+    this.activeAgentTurnSnapshots = []
+    this.agentTurnRevision += 1
+    this.pendingAgentTurnFinishes.clear()
+    this.agentTurnFinishReplays.clear()
+    this.sessionSaves.clear()
+    this.taskBindings.clear()
+    this.confirmMessages.clear()
+    this.latestTasks = markRaw([])
+    this.workflowUnsaved.clear()
+    this.workflowDeliveries.clear()
+    this.streamBuffers.clear()
+    if (this.streamFlushRaf) cancelAnimationFrame(this.streamFlushRaf)
+    if (this.scrollNearRaf) cancelAnimationFrame(this.scrollNearRaf)
+    this.streamFlushRaf = 0
+    this.scrollNearRaf = 0
+    if (this.highlightTimer) clearTimeout(this.highlightTimer)
+    this.highlightTimer = null
+    this.highlightMessageId = null
+    this.listEl = null
+  }
 
   get activeAgentTurnSnapshot(): AgentTurnSnapshot | null {
     return this.activeAgentTurnSnapshots[0] ?? null
@@ -273,38 +313,52 @@ export class MessageStoreState {
   private listEl: HTMLElement | null = null
 
   async init(): Promise<void> {
-    if (this.initialized) return
+    if (!this.authActive || this.initialized) return
+    const generation = this.authGeneration
     this.initialized = true
-    xpcRenderer.subscribe(MODEL_RETRY_CHANNEL, (payload) => {
-      const progress = payload?.params as ModelRetryProgress | undefined
-      const session = progress ? this.getSession(progress.sessionId) : undefined
-      if (
-        !progress ||
-        !session?.turn ||
-        session.turn.id !== progress.turnId ||
-        session.turn.generation !== progress.generation ||
-        session.turn.aborting
-      ) {
-        return
-      }
-      session.turn.retry = progress.recovered
-        ? undefined
-        : { attempt: progress.attempt, max: progress.max }
-    })
-    xpcRenderer.subscribe(AGENT_TURN_CHANNEL, (payload) => {
-      this.applyAgentTurnUpdate(payload.params as AgentTurnUpdate)
-    })
-    xpcRenderer.subscribe('coach/workspace-changed', (payload) => {
-      const params = payload.params as { sessionId?: string; workspace?: WorkspaceRef | null }
-      void this.applyWorkspaceBroadcast(params)
-    })
+    if (!this.subscriptionsBound) {
+      this.subscriptionsBound = true
+      xpcRenderer.subscribe(MODEL_RETRY_CHANNEL, (payload) => {
+        if (!this.initialized) return
+        const progress = payload?.params as ModelRetryProgress | undefined
+        const session = progress ? this.getSession(progress.sessionId) : undefined
+        if (
+          !progress ||
+          !session?.turn ||
+          session.turn.id !== progress.turnId ||
+          session.turn.generation !== progress.generation ||
+          session.turn.aborting
+        ) {
+          return
+        }
+        session.turn.retry = progress.recovered
+          ? undefined
+          : { attempt: progress.attempt, max: progress.max }
+      })
+      xpcRenderer.subscribe(AGENT_TURN_CHANNEL, (payload) => {
+        if (!this.initialized) return
+        this.applyAgentTurnUpdate(payload.params as AgentTurnUpdate)
+      })
+      xpcRenderer.subscribe('coach/workspace-changed', (payload) => {
+        if (!this.initialized) return
+        const params = payload.params as { sessionId?: string; workspace?: WorkspaceRef | null }
+        void this.applyWorkspaceBroadcast(params)
+      })
+      xpcRenderer.subscribe('agent/workflows', payload => {
+        if (this.initialized) void this.applyWorkflowCompletions(payload.params as WorkflowSnapshot)
+      })
+    }
     const recovery = await coach.getActiveAgentTurn().catch(() => null)
+    if (generation !== this.authGeneration) return
     if (recovery) this.applyAgentTurnRecovery(recovery)
     await this.restoreActiveTurnSessions()
+    if (generation !== this.authGeneration) return
     await this.refreshDefaultWorkspace()
+    if (generation !== this.authGeneration) return
     await this.refreshHistory()
-    xpcRenderer.subscribe('agent/workflows', payload => { void this.applyWorkflowCompletions(payload.params as WorkflowSnapshot) })
+    if (generation !== this.authGeneration) return
     const workflows = await workflowApi.listRuns({}).catch(() => null)
+    if (generation !== this.authGeneration) return
     if (workflows) await this.applyWorkflowCompletions(workflows)
   }
 
@@ -357,7 +411,9 @@ export class MessageStoreState {
   }
 
   async latestActiveSession(): Promise<MessageSession | undefined> {
+    const generation = this.authGeneration
     await this.init()
+    if (!this.authActive || generation !== this.authGeneration) return undefined
     const existing = this.sessions
       .filter((session) => !session.archivedAt)
       .sort((a, b) => b.updatedAt - a.updatedAt)[0]
@@ -366,6 +422,7 @@ export class MessageStoreState {
     const activeSnapshot = this.activeAgentTurnSnapshot
     if (activeSnapshot) {
       const active = await this.loadPersistedSession(activeSnapshot.sessionId)
+      if (generation !== this.authGeneration) return undefined
       if (active && !active.archivedAt) return active
       if (!active) return this.createRecoveredTurnSession(activeSnapshot)
     }
@@ -374,16 +431,19 @@ export class MessageStoreState {
       .sort((a, b) => b.turn.startedAt - a.turn.startedAt)[0]
     if (missedFinish) {
       const persisted = await this.loadPersistedSession(missedFinish.turn.sessionId)
+      if (generation !== this.authGeneration) return undefined
       if (persisted && !persisted.archivedAt) return persisted
       if (!persisted) {
         const recovered = this.createRecoveredTurnSession(missedFinish.turn)
         await this.replayFinishedAgentTurns(recovered)
+        if (generation !== this.authGeneration) return undefined
         return recovered
       }
     }
 
     for (const summary of this.historySessions.filter((item) => !item.archivedAt)) {
       const session = await this.loadPersistedSession(summary.id)
+      if (generation !== this.authGeneration) return undefined
       if (session && !session.archivedAt) return session
     }
     return undefined
@@ -421,10 +481,13 @@ export class MessageStoreState {
   }
 
   async loadPersistedSession(sessionId: string): Promise<MessageSession | undefined> {
+    if (!this.authActive) return undefined
+    const generation = this.authGeneration
     const existing = this.getSession(sessionId)
     if (existing) return existing
 
     const stored = await maestroChat.getSession({ id: sessionId }).catch(() => null)
+    if (generation !== this.authGeneration) return undefined
     const loadedWhileWaiting = this.getSession(sessionId)
     if (loadedWhileWaiting) return loadedWhileWaiting
     if (!stored) return undefined
@@ -432,9 +495,11 @@ export class MessageStoreState {
     this.sessions.push(session)
     this.restorePersistedBindings(session)
     await this.replayFinishedAgentTurns(session)
+    if (generation !== this.authGeneration) return undefined
     this.restoreActiveTurn(session)
     this.replayTaskSnapshot()
     await this.refreshWorkspace(session.id)
+    if (generation !== this.authGeneration) return undefined
     return session
   }
 
@@ -792,8 +857,11 @@ export class MessageStoreState {
   }
 
   private queueSessionSave(id: string, operation: () => Promise<boolean>): Promise<boolean> {
+    const generation = this.authGeneration
     const previous = this.sessionSaves.get(id) || Promise.resolve(true)
-    const next = previous.catch(() => false).then(operation)
+    const next = previous.catch(() => false).then(() =>
+      this.authActive && generation === this.authGeneration ? operation() : false
+    )
     this.sessionSaves.set(id, next)
     void next.finally(() => {
       if (this.sessionSaves.get(id) === next) this.sessionSaves.delete(id)
@@ -802,9 +870,12 @@ export class MessageStoreState {
   }
 
   private async saveSessionNow(session: MessageSession): Promise<boolean> {
+    if (!this.authActive || toRaw(this.getSession(session.id)) !== toRaw(session)) return false
+    const generation = this.authGeneration
     this.updateSessionContextUsage(session)
     try {
       const result = await maestroChat.saveSession({ session: this.toStoredSession(session) })
+      if (generation !== this.authGeneration) return false
       if (!result?.ok) return false
     } catch {
       return false
@@ -813,31 +884,17 @@ export class MessageStoreState {
     return true
   }
 
-  async chooseWorkspace(sessionId: string): Promise<void> {
+  async chooseWorkspace(sessionId: string): Promise<WorkspaceRefResult | null> {
     const session = this.getSession(sessionId)
-    if (!session) return
+    if (!session) return null
     const result = await coach.chooseWorkspaceDirectory({ sessionId: session.id }).catch(() => null)
-    if (!result?.ok) return
+    if (!result?.ok) return result
     this.defaultWorkspace = result.workspace ? this.cloneWorkspace(result.workspace) : undefined
     session.detail = { ...session.detail, workspace: result.workspace }
     session.updatedAt = Date.now()
-    await this.persistSession(session)
-    // 选中一个工作区 → **直接在预览里打开它**(Ral 2026-09-10:「选择 workspace 后自动就打开
-    // onlypreview」)。替换也走这里,同一个调用:显式打开会把项目根换成新的那个目录,所以
-    // 「替换后要加载替换后的目录」不需要另一条路径。
-    //
-    // 挂在**这里**而不是 main 侧的 `setWorkspaceDirectory`:那个还被 `refreshWorkspace()` 用来做
-    // 状态同步(每次载入会话、切会话都会调),接在那儿会变成「一开 app 就自己弹出预览」。
-    // 这一条要的是**人的动作**,而人的动作在这个方法里。
-    //
-    // 不 await 也不因为它失败而回滚:工作区已经绑好了,预览开不开是另一件事。
-    await this.openWorkspaceInPreview(session.detail.workspace?.path)
-  }
-
-  /** 工作区绑定完之后把它开到预览里。没有路径就什么都不做。 */
-  private async openWorkspaceInPreview(path: string | undefined): Promise<void> {
-    if (!path) return
-    await coach.openWorkspaceInPreview({ path }).catch(() => null)
+    // Main already opened Preview; saving history must not delay its failure feedback either.
+    void this.persistSession(session).catch(() => undefined)
+    return result
   }
 
   async stopUsingWorkspace(sessionId: string): Promise<void> {
@@ -855,7 +912,10 @@ export class MessageStoreState {
   }
 
   async refreshDefaultWorkspace(): Promise<void> {
+    if (!this.authActive) return
+    const generation = this.authGeneration
     const result = await coach.getWorkspaceDirectory({}).catch(() => null)
+    if (generation !== this.authGeneration) return
     this.defaultWorkspace = result?.ok && result.workspace ? this.cloneWorkspace(result.workspace) : undefined
   }
 
@@ -863,6 +923,7 @@ export class MessageStoreState {
     const session = this.getSession(sessionId)
     if (!session?.detail.workspace) return
     const result = await coach.setWorkspaceDirectory({ sessionId: session.id, path: session.detail.workspace.path }).catch(() => null)
+    if (this.getSession(sessionId) !== session) return
     if (result?.ok && result.workspace) {
       this.defaultWorkspace = this.cloneWorkspace(result.workspace)
       session.detail = { ...session.detail, workspace: result.workspace }
@@ -1028,8 +1089,11 @@ export class MessageStoreState {
   }
 
   async refreshHistory(): Promise<void> {
+    if (!this.authActive) return
+    const generation = this.authGeneration
     try {
       const list = await maestroChat.listSessions({})
+      if (generation !== this.authGeneration) return
       this.historySessions = list
       turnDiagnostics.emit('history', { action: 'refresh', ok: true, count: list.length })
     } catch (err) {
@@ -1293,73 +1357,9 @@ export class MessageStoreState {
     return session.source === 'cowork' && Boolean(session.archivedAt || session.detail.titleCustomized || session.detail.draft?.text || session.detail.draft?.files.length || session.messages.some((message) => !message.id.startsWith('welcome-')))
   }
 
-  async compactSessionIfNeeded(session: MessageSession, options?: { protectMessageIds?: Set<string> }): Promise<boolean> {
+  async compactSessionIfNeeded(session: MessageSession, _options?: { protectMessageIds?: Set<string> }): Promise<boolean> {
     this.updateSessionContextUsage(session)
-    if (!session.contextUsage.compressionTriggered) return false
-    // 渲染端的启发式说该压了 → 再问 main 一次真 usage。**只有真数说"没到线"才拦**,
-    // 其余情形(账本里还没这个会话、跨进程失败)一律放行 —— 见 confirmRealUsage。
-    if (!(await this.confirmRealUsage(session))) return false
-
-    const candidates = this.selectCompactCandidates(session, options?.protectMessageIds || new Set<string>())
-    if (!candidates.length) return false
-
-    const until = candidates[candidates.length - 1]
-    const compactMessage: ChatMessage = this.withTokenCount({
-      id: uid(),
-      source: 'cowork',
-      role: 'ai',
-      type: 'compact',
-      content: COMPACTING_CONTENT,
-      streaming: true,
-      promptExcluded: true,
-      compactUntilMessageId: until.id,
-      ts: Date.now()
-    })
-    session.messages.push(compactMessage)
-    this.scrollToBottom()
-    await this.persistSession(session)
-    await delay(80)
-
-    const bridgeMessages = this.selectCompactBridgeMessages(session, candidates)
-    // 压缩本体在 main:候选批是**它自己的 pi entry 树**,不是这里的 `candidates`
-    // (渲染端的 chat 消息永远没有工具返回正文,拿它当候选批会让那套三层兜底永远休眠)。
-    // `candidates` 从此只决定**渲染端自己**标哪些消息为已压缩 —— 两个坐标系不通,
-    // 回包里的 `cutPoint` 是 entry 下标、映不到消息 id,所以这一份保留集仍由渲染端自己算。
-    const outcome = await this.requestMainCompaction(session, candidates, bridgeMessages)
-    const compactSummary = outcome.summary
-    // **`compressed` 标照打,不看 `applied`** —— 与 cowork 一致(它那边 `applied === false`
-    // 只改占位文案,不分叉打标)。
-    //
-    // 我先前写成「只有 applied 才打标」,理由是不想让记账说"压过了"而模型仍看得见全部。
-    // 撤回,因为那个理由的前提不成立,而代价是真的:
-    //  · 兜底是 pi 自己的 auto-compaction —— 两边都在 `piRuntimeAdapter.ts:188` 显式
-    //    `setAutoCompactionEnabled?.(true)`,它在**回合内**按 overflow/threshold 触发并 compact-and-retry。
-    //    所以「活着的会话没变小」不会一路撞到硬失败,有人接着;
-    //  · `applied:false` 通常是**永久**失败(pi 把 `appendCompaction` 挪走了),门控会让渲染端每一轮
-    //    重压一次、每次花一次模型钱,而重试不会成功;
-    //  · 渲染端这份标记管的是**它自己**的账与补水载荷 —— 有了摘要覆盖那段,它们就该减下去,
-    //    这件事与 pi 活着的树是否变小本来就是两回事(真 usage 才是那件事的口径,由 `shouldCompact` 读)。
-    //
-    // 让偏差**可见**而不是消失:占位文案照实说没落回会话(见下面的 `COMPACT_NOT_APPLIED_CONTENT`)。
-    for (const message of candidates) {
-      message.compressed = true
-      this.withTokenCount(message)
-    }
-    compactMessage.content = outcome.applied ? COMPACTED_CONTENT : COMPACT_NOT_APPLIED_CONTENT
-    compactMessage.streaming = false
-    compactMessage.compactSummary = compactSummary
-    compactMessage.compactUntilMessageId = until.id
-    session.detail = {
-      ...session.detail,
-      compressedContext: compactSummary,
-      compressedUntilMessageId: until.id,
-      compressedAt: Date.now()
-    }
-    session.updatedAt = Date.now()
-    this.updateSessionContextUsage(session)
-    this.scrollToBottom()
-    await this.persistSession(session)
-    return true
+    return false // Pi AgentSession exclusively schedules native compaction.
   }
 
   private selectCompactCandidates(session: MessageSession, protectMessageIds: Set<string>): ChatMessage[] {

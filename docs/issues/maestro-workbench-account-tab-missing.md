@@ -1,5 +1,9 @@
 # Maestro Workbench Settings has no dedicated Account tab
 
+Post-logout placement superseded on 2026-09-17 by [Control-owned login](../features/control-login.md):
+the primary window and browser tabs stay usable; Control shows login and protected apps return
+to their signed-out state. Logout does not navigate fixed Home to Login.
+
 Status: implemented; owner verification pending
 
 ## Observed behavior

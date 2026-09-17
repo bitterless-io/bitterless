@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue';
-import { isNavigationFailure, NavigationFailureType, useRoute, useRouter } from 'vue-router';
-import { Message } from '@arco-design/web-vue';
+import Message from '@arco-design/web-vue/es/message';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import {
   loginSurfaceCustomerNeedsPasswordSetup,
@@ -13,10 +12,10 @@ type LoginStep = 'login' | 'set-password';
 
 const props = defineProps<{
   auth: LoginSurfaceAuthController;
+  navigateAfterLogin?: () => Promise<void>;
+  compact?: boolean;
 }>();
 
-const route = useRoute();
-const router = useRouter();
 const authStore = props.auth;
 
 const mode = ref<LoginMode>('password');
@@ -49,19 +48,11 @@ const reportOperationError = (error: unknown, fallback: string): void => {
 };
 
 const redirectAfterLogin = async (): Promise<void> => {
-  if (!authStore.handlesPostAuthNavigation) return;
-  const redirect = (route.query.redirect as string) || authStore.defaultRedirect;
+  if (!props.navigateAfterLogin) return;
   transitioning.value = true;
   try {
-    const failure = await router.replace(redirect);
-    if (
-      isNavigationFailure(failure) &&
-      !isNavigationFailure(failure, NavigationFailureType.duplicated)
-    ) {
-      throw failure;
-    }
+    await props.navigateAfterLogin();
   } catch (err) {
-    if (isNavigationFailure(err, NavigationFailureType.duplicated)) return;
     Message.error(i18nHelper.auth.navigationFailed);
     throw err;
   } finally {
@@ -351,7 +342,7 @@ const onSetPassword = async (): Promise<void> => {
 </script>
 
 <template>
-  <main name="login" class="login-view">
+  <main name="login" class="login-view" :class="{ 'login-view--compact': compact }">
     <section name="login__panel" class="login-view__panel">
       <div name="login__copy" class="login-view__copy">
         <h1>{{ sessionRecoveryVisible ? '恢复登录状态' : '登录 Bitterless' }}</h1>
@@ -493,7 +484,8 @@ const onSetPassword = async (): Promise<void> => {
 
     <a-modal
       :visible="resetVisible"
-      width="min(440px, calc(100vw - 40px))"
+      :render-to-body="!compact"
+      :width="compact ? 'calc(100% - 8px)' : 'min(440px, calc(100vw - 40px))'"
       :footer="false"
       :closable="true"
       :mask-closable="true"
@@ -574,7 +566,8 @@ const onSetPassword = async (): Promise<void> => {
 
     <a-modal
       :visible="step === 'set-password'"
-      width="min(440px, calc(100vw - 40px))"
+      :render-to-body="!compact"
+      :width="compact ? 'calc(100% - 8px)' : 'min(440px, calc(100vw - 40px))'"
       :footer="false"
       :closable="false"
       :mask-closable="false"

@@ -5,10 +5,16 @@ import { toolResultLooksFailed } from './toolResultFailure'
 
 export type PiModule = typeof import('@earendil-works/pi-coding-agent')
 
-/** Supply only host instructions. Disk prompts, agent files, skills and extensions remain off. */
-export const createPiResourceLoader = (pi: PiModule, systemPrompt: string | (() => string)) => ({
-  getExtensions: () => ({ extensions: [], errors: [], runtime: pi.createExtensionRuntime() }),
-  getSkills: () => ({ skills: [], diagnostics: [] }),
+/** Use the host-authorized skill sources; unrelated disk prompts/extensions remain disabled. */
+export const createPiResourceLoader = (pi: PiModule, systemPrompt: string | (() => string), skills?: AgentRuntimeSessionOptions['skillResources'], extensions: import('@earendil-works/pi-coding-agent').Extension[] = []) => {
+  let loadedRevision = skills?.revision?.()
+  return ({
+  getExtensions: () => ({ extensions, errors: [], runtime: pi.createExtensionRuntime() }),
+  getSkills: () => {
+    const snapshot = skills?.getSkills() ?? { skills: [], diagnostics: [] }
+    loadedRevision = skills?.revision?.()
+    return snapshot
+  },
   getPrompts: () => ({ prompts: [], diagnostics: [] }),
   getThemes: () => ({ themes: [], diagnostics: [] }),
   getAgentsFiles: () => ({ agentsFiles: [] }),
@@ -17,8 +23,15 @@ export const createPiResourceLoader = (pi: PiModule, systemPrompt: string | (() 
   getAppendSystemPrompt: () => [],
   getAppendSystemPromptSources: () => [],
   extendResources: () => undefined,
-  reload: async () => undefined
-})
+  reload: async () => {
+    // A host change may already have loaded its snapshot (Workbench refresh, scope or workspace).
+    // An explicit Pi reload with an unchanged revision is the request to read external edits.
+    if (skills?.revision && skills.revision() !== loadedRevision) skills.getSkills()
+    else await skills?.reload()
+    loadedRevision = skills?.revision?.()
+  }
+  })
+}
 
 /** Map host schema/results into pi protocol without owning tool execution policy. */
 export const bindPiTools = (pi: PiModule, Type: TypeBoxFactory, options: AgentRuntimeSessionOptions) =>
@@ -27,7 +40,7 @@ export const bindPiTools = (pi: PiModule, Type: TypeBoxFactory, options: AgentRu
     label: spec.name,
     description: spec.description,
     parameters: buildSchema(Type, spec.params),
-    execute: async (_toolCallId: string, params: Record<string, unknown>) => {
+    execute: async (_toolCallId: string, params: Record<string, unknown>, signal?: AbortSignal) => {
       const { text, durationMs } = await executeHostTool(spec, params, (event) => {
         const { status, ...detail } = event
         options.onDebug?.({
@@ -38,7 +51,7 @@ export const bindPiTools = (pi: PiModule, Type: TypeBoxFactory, options: AgentRu
           detail,
           ts: Date.now()
         })
-      })
+      }, signal)
       return { content: [{ type: 'text', text }], details: { durationMs } }
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -110,9 +123,15 @@ export const normalizePiEvent = (event: PiSessionEvent): AgentRuntimeEvent[] => 
   if (type === 'compaction_start') {
     return [{ type: 'compaction_start', reason: (event as { reason?: string }).reason }]
   }
+  if (type === 'summarization_retry_scheduled') {
+    const e = event as unknown as { attempt: number; maxAttempts: number; delayMs: number; errorMessage?: string }
+    return [{ type: 'compaction_retry', attempt: e.attempt, maxAttempts: e.maxAttempts, delayMs: e.delayMs, error: sanitizeRuntimeError(e.errorMessage, 'provider') }]
+  }
+  if (type === 'summarization_retry_attempt_start') return [{ type: 'compaction_attempt' }]
+  if (type === 'summarization_retry_finished') return [{ type: 'compaction_retry_finished' }]
   if (type === 'compaction_end') {
-    const e = event as { reason?: string; result?: { ok?: boolean; tokensBefore?: number; tokensAfter?: number } }
-    return [{ type: 'compaction_end', reason: e.reason, ok: e.result?.ok, beforeTokens: e.result?.tokensBefore, afterTokens: e.result?.tokensAfter }]
+    const e = event as { reason?: string; aborted?: boolean; errorMessage?: string; result?: { tokensBefore?: number; estimatedTokensAfter?: number } }
+    return [{ type: 'compaction_end', reason: e.reason, ok: Boolean(e.result) && !e.aborted && !e.errorMessage, beforeTokens: e.result?.tokensBefore, afterTokens: e.result?.estimatedTokensAfter, aborted: e.aborted, errorMessage: sanitizeRuntimeError(e.errorMessage, 'provider') }]
   }
   if (type === 'message_update') return normalizeAssistantMessageEvent(event.assistantMessageEvent)
   if (type === 'message_end' && event.message?.role === 'assistant') {

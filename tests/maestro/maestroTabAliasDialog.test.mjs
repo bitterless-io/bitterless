@@ -54,7 +54,7 @@ class FakeWebContentsView {
 // 既当断言材料,也保证这些行真的被调用过。
 export const layerLogs = []
 const Service = actualMembers('src/main/maestro/windows/main/maestroTabAliasView.service.ts', [
-  'preload', 'requestAlias', 'snapshot', 'resolveDialog', 'setBounds', 'reset', 'present', 'ensureView', 'failOpen', 'attach', 'detach', 'publish'
+  'preload', 'requestAlias', 'open', 'snapshot', 'resolveDialog', 'setBounds', 'reset', 'present', 'ensureView', 'failOpen', 'attach', 'detach', 'publish'
 ], {
   tabAliasLog: {
     info: (msg, detail) => layerLogs.push({ level: 'info', msg, detail }),
@@ -183,9 +183,10 @@ test('clicking Alias… actually reaches the dialog layer — the seam is called
   const traces = []
   const calls = []
   const Browser = actualMembers('src/main/maestro/windows/main/maestroBrowserView.service.ts',
-    ['promptTabAlias', 'isDefaultHomeTab', 'displayUrl', 'homeCompositeSetting'],
+    ['promptTabAlias', 'applyTabAlias', 'isDefaultHomeTab', 'displayUrl', 'homeCompositeSetting'],
     {
       MAESTRO_LOCAL_HOME_DISPLAY_URL: 'bitterless://home',
+      MAESTRO_TAB_ALIAS_MAX_LENGTH: 64,
       tabAliasLog: {
         info: (msg, detail) => logs.push({ level: 'info', msg, detail }),
         warn: (msg, detail) => logs.push({ level: 'warn', msg, detail }),

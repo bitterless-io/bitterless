@@ -1,3 +1,4 @@
+import type { CompactionStatus } from '@shared/piCompaction.types'
 import { BackgroundContextInbox } from './steering/backgroundContextInbox'
 import { homedir } from 'os'
 import { join } from 'path'
@@ -7,6 +8,7 @@ import { TurnSteeringInbox } from './steering/turnSteeringInbox'
 import { inputBudget } from './runtime/inputBudget'
 import { modelIoLog } from './runtime/modelIoLog'
 import { resolveRuntimeSystemPrompt } from './runtime/runtimeSystemPrompt'
+import { withCompactionAwareTimeout } from './runtime/compactionAwareTimeout'
 import type { SessionIoConfiguration } from './sessionIoInitialization'
 import type { AgentActivityStep, AgentThinkingState, CodexDebugEvent, LlmEffort } from './runtime/runtime.types'
 import type {
@@ -17,6 +19,7 @@ import type {
   AgentRuntimeMediaRef,
   AgentRuntimePrompt,
   AgentRuntimeSession,
+  AgentRuntimeSessionOptions,
   AgentRuntimeThinkingLevel,
   AgentRuntimeUsage,
   AgentToolParamSpec,
@@ -52,6 +55,10 @@ export interface BaseAgentSteerResult {
 }
 
 export interface BaseAgentOptions {
+  autoCompaction?: boolean
+  onCompaction?: (state: CompactionStatus) => void
+  compactPrompt?: () => string | undefined
+  sessionFile?: string
   /** pi-ai provider id. Default 'openai-codex'. Env: COACH_PI_PROVIDER. */
   providerId?: string
   /** Model id for the provider (openai-codex default: gpt-6-astra). Env: COACH_PI_MODEL. */
@@ -152,6 +159,7 @@ const toolTimeoutMs = (): number => {
  * agent's ONLY tools — provider built-in read/bash/edit/write surfaces are disabled.
  */
 export class BaseAgent {
+  private sessionGeneration = 0
   private sessionPromise: Promise<AgentRuntimeSession> | null = null
   private readonly runtime: AgentRuntimeAdapter
   private busy = false
@@ -159,7 +167,8 @@ export class BaseAgent {
   private readonly backgroundContext = new BackgroundContextInbox()
   private steeringSequence = 0
   private skillCatalogProvider?: () => Promise<string>
-  setSkillCatalogProvider(provider: () => Promise<string>): void { this.skillCatalogProvider = provider }
+  private skillResources?: AgentRuntimeSessionOptions['skillResources']
+  setSkillCatalogProvider(provider: () => Promise<string>, resources?: AgentRuntimeSessionOptions['skillResources']): void { this.skillCatalogProvider = provider; this.skillResources = resources }
   private projectInstructions = ''
   /** The bound project root, or undefined when none. Source of A6 and of the next session's cwd. */
   private projectRoot?: string
@@ -367,22 +376,42 @@ export class BaseAgent {
     }
   }
 
+  async hasConversation(): Promise<boolean> {
+    const session = await this.ensureSession()
+    return Boolean(session.context?.contextEntries().some((entry) => (entry as { type?: string }).type === 'message' || (entry as { type?: string }).type === 'compaction'))
+  }
+
+  async compact(instructions?: string): Promise<{ summary: string; tokensBefore: number; estimatedTokensAfter?: number }> {
+    if (this.busy) throw new Error('Wait for the current turn to finish before using /compact.')
+    this.busy = true
+    try {
+      const session = await this.ensureSession()
+      if (!session.compact) throw new Error('This runtime does not support /compact.')
+      return await session.compact(instructions)
+    } finally { this.busy = false }
+  }
+
   private async ensureSession(): Promise<AgentRuntimeSession> {
     if (!this.sessionPromise) this.sessionPromise = this.startSession()
     return this.sessionPromise
   }
 
   private async startSession(): Promise<AgentRuntimeSession> {
-    return await this.createSession(true)
+    return await this.createSession(true, true)
   }
 
-  private async createSession(withTools: boolean): Promise<AgentRuntimeSession> {
+  private async createSession(withTools: boolean, managed = false): Promise<AgentRuntimeSession> {
+    const generation = this.sessionGeneration
     const authPath = this.opts.authPath ?? join(homedir(), '.pi', 'agent', 'auth.json')
     const providerId = this.resolveProvider()
     const modelId = this.resolveModel(providerId)
     const specs = withTools ? this.opts.buildTools().map((spec) => this.withToolTimeout(spec)) : []
-    return await this.runtime.createSession({
+    const session = await this.runtime.createSession({
+      autoCompaction: managed && this.opts.autoCompaction !== false,
+      compactPrompt: this.opts.compactPrompt,
+      sessionFile: managed ? this.opts.sessionFile : undefined,
       beforeModelRequest: () => this.skillCatalogProvider?.(),
+      skillResources: { revision: () => this.skillResources?.revision?.() || '', getSkills: () => this.skillResources?.getSkills() ?? { skills: [], diagnostics: [] }, reload: () => this.skillResources?.reload() },
       target: { providerId, modelId, thinkingLevel: this.resolveThinkingLevel() },
       authPath,
       modelsPath: this.opts.modelsPath,
@@ -408,6 +437,14 @@ export class BaseAgent {
        */
       systemPrompt: this.fullSystemPrompt()
     })
+    if (managed && this.opts.onCompaction) session.subscribe(event => {
+      if (generation !== this.sessionGeneration) return
+      if (event.type === 'compaction_retry') this.opts.onCompaction?.({ active: true, retry: { attempt: event.attempt, maxAttempts: event.maxAttempts, delayMs: event.delayMs, error: event.error } })
+      if (event.type === 'compaction_attempt' || event.type === 'compaction_retry_finished') this.opts.onCompaction?.({ active: true })
+      if (event.type === 'compaction_start') this.opts.onCompaction?.({ active: true })
+      if (event.type === 'compaction_end') this.opts.onCompaction?.({ active: false, errorMessage: event.errorMessage, aborted: event.aborted })
+    })
+    return session
   }
 
   // Wrap a tool so a hang surfaces as a tool error instead of freezing the turn silently.
@@ -423,17 +460,19 @@ export class BaseAgent {
     const hint = spec.timeoutHint || 'it may be reading a very large file or scanning a huge directory. Try a narrower path or a specific file.'
     return {
       ...spec,
-      execute: async (args: Record<string, unknown>): Promise<string> => {
+      execute: async (args: Record<string, unknown>, signal?: AbortSignal, context?: Parameters<PiToolSpec['execute']>[2]): Promise<string> => {
+        const timeout = new AbortController()
+        const combined = signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal
         try {
           return await withTimeout(
-            Promise.resolve(spec.execute(args)),
+            Promise.resolve(spec.execute(args, combined, context)),
             ms,
             `tool "${spec.name}" timed out after ${Math.round(ms / 1000)}s — ${hint}`
           )
         } catch (err) {
           if (isTimeoutError(err)) return `ERROR: ${err instanceof Error ? err.message : String(err)}`
           throw err
-        }
+        } finally { timeout.abort() }
       }
     }
   }
@@ -618,6 +657,8 @@ export class BaseAgent {
 
   /** Drop the current conversation; the next prompt starts a fresh session. */
   reset(): void {
+    this.sessionGeneration += 1
+    this.opts.onCompaction?.({ active: false })
     this.backgroundContext.reset()
     this.activeSteeringInbox?.cancel('The turn was reset before this message was delivered.')
     const existing = this.sessionPromise
@@ -737,7 +778,7 @@ export class BaseAgent {
         this.debug('compaction-start', 'info', `pi auto-compaction started (${event.reason || 'threshold'}) at round ${rounds}, peak context ${Math.round(peakContext / 1000)}k`, { reason: event.reason, round: rounds, peakContextTokens: peakContext })
       } else if (type === 'compaction_end') {
         const shrink = event.beforeTokens && event.afterTokens ? ` ${Math.round(event.beforeTokens / 1000)}k → ${Math.round(event.afterTokens / 1000)}k` : ''
-        this.debug('compaction-end', event.ok === false ? 'warn' : 'info', `pi auto-compaction ${event.ok === false ? 'FAILED' : 'done'} (${event.reason || 'threshold'})${shrink}`, { reason: event.reason, ok: event.ok, beforeTokens: event.beforeTokens, afterTokens: event.afterTokens })
+        this.debug('compaction-end', event.ok === false ? 'warn' : 'info', `pi auto-compaction ${event.ok === false ? 'FAILED' : 'done'} (${event.reason || 'threshold'})${shrink}`, { reason: event.reason, ok: event.ok, beforeTokens: event.beforeTokens, afterTokens: event.afterTokens, aborted: event.aborted, errorMessage: event.errorMessage })
         compacting = false
         if (compactedChars) this.debug('compaction-summary-withheld', 'info', `held back ${compactedChars} chars of compaction summary — internal product, not a reply`, { chars: compactedChars })
         if (event.ok !== false) peakContext = event.afterTokens || 0
@@ -765,7 +806,7 @@ export class BaseAgent {
       }
     })
     try {
-      await withTimeout((async () => {
+      await withCompactionAwareTimeout(async () => {
         let next: AgentRuntimePrompt | undefined = message
         while (next) {
           if (steeringInbox?.isClosed) break
@@ -784,7 +825,7 @@ export class BaseAgent {
           if (steeringInbox?.isClosed) break
           next = steeringInbox?.next(session)
         }
-      })(), timeoutMs, `pi agent turn timed out after ${Math.round(timeoutMs / 1000)}s`)
+      }, session, timeoutMs, () => new TimeoutError(`pi agent turn timed out after ${Math.round(timeoutMs / 1000)}s of non-compaction work`))
     } catch (err) {
       steeringInbox?.cancel(`The turn failed before this message was delivered: ${err instanceof Error ? err.message : String(err)}`)
       if (isTimeoutError(err)) {

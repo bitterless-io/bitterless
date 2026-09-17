@@ -31,6 +31,8 @@ const fixture = () => {
   const { ReplayEngine } = load('main/maestro/drive/replayEngine.ts', { './humanMouse': { HumanMouse: class {} } })
   class CommonService { setState(state) { this._state = { projectRootForSession: () => undefined, ...state } } }
   const { SkillService } = load('main/maestro/skills/skill.service.ts', {
+    './skillDiagnostics': { diagnoseSkill: () => { throw Error('Diagnostics are tested separately') } },
+    '@main/agent/runtime/skillAuthoring': { skillAuthoringRuntime: () => ({ bunPath: '/fixture/bun' }) },
     './skillCloud.runtime': { skillCloud: { status: 'idle' } }, './skillScope.context': context, electron: { dialog: {}, shell: {} }, 'electron-xpc/main': { xpcMain: { broadcast() {} } }, inversify: { injectable: () => value => value },
     '@maestro-main/capture/traceTimeline': {}, '@maestro-shared/iocHelper/ioc.helper': { CommonService }
   })
@@ -219,4 +221,16 @@ test('training rechecks writability after the model wait before archiving or ove
   const pending = generator.train('legacy-fixture', 'Refine')
   await began.promise; readonly = true; release.resolve()
   await assert.rejects(pending, /read-only/); assert.deepEqual(writes, [])
+})
+
+test('Global and Workspace explicit refresh remains local when no institution is selected', async () => {
+  const f = fixture(); f.current = null
+  let reloads = 0
+  const registry = { onChanged() {}, reload: workspace => { reloads++; assert.equal(workspace, '/fixture/workspace'); return { skills: [], roots: {} } } }
+  const service = new f.SkillService()
+  service.setState({ ensureServices: () => ({ registry }), projectRootForSession: () => '/fixture/workspace' })
+  const result = await service.skillCatalog({ checkUpdates: true })
+  assert.equal(reloads, 1)
+  assert.equal(f.checks, 0)
+  assert.deepEqual(result.skills, [])
 })

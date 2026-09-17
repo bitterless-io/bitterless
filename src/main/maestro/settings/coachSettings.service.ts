@@ -70,6 +70,7 @@ function normalizeSettings(value: Partial<CoachSettings>): CoachSettings {
   const homeInstanceId = String(value.homeInstanceId || '').trim()
   const homeAlias = String(value.homeAlias || '').trim()
   return {
+    compactPrompt: typeof value.compactPrompt === 'string' ? value.compactPrompt : '',
     startUrl: normalizeStartUrl(value.startUrl),
     llmProvider: provider,
     llmModel,

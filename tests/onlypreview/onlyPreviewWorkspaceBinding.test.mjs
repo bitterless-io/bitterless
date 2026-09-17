@@ -84,18 +84,14 @@ describe('渲染进程那一侧的接线', () => {
     source('src/renderer/maestro/control/src/store/message.store.ts')
   );
 
-  test('选中工作区之后打开预览 —— 替换走的是同一条', () => {
+  test('选择结果交还面板，自动打开由 Main picker 负责', () => {
     const choose = store.slice(
       store.indexOf('async chooseWorkspace('),
       store.indexOf('async stopUsingWorkspace(')
     );
-    assert.match(choose, /await this\.openWorkspaceInPreview\(session\.detail\.workspace\?\.path\)/);
-    // 排在 persistSession 之后:绑定先落盘,预览是随后的事
-    assert.ok(
-      choose.indexOf('await this.persistSession(session)') <
-        choose.indexOf('await this.openWorkspaceInPreview('),
-      '预览要排在绑定落盘之后'
-    );
+    assert.doesNotMatch(choose, /openWorkspaceInPreview/);
+    assert.match(choose, /return result/);
+    assert.doesNotMatch(choose, /await this\.persistSession/);
   });
 
   test('停用时用的是**解绑前**的那个路径', () => {
@@ -122,6 +118,7 @@ describe('文案:不再说 clear', () => {
   const KEYS = [
     'switchWorkspace',
     'openWorkspaceInPreview',
+    'workspacePreviewFailed',
     'stopUsingWorkspaceTooltip',
     'stopUsingWorkspaceTitle',
     'stopUsingWorkspaceContent',

@@ -11,8 +11,8 @@ const bundle = await build({
     contents: `
       export { FileSearchRuntime } from './src/preload/fileSearch/fileSearchRuntime';
       export { FileSearchRuntimeRelayService } from './src/main/fileSearch/fileSearchRuntimeRelay.service';
-      export { OnlyPreviewContractError } from './src/shared/onlypreview/onlyPreview.contract';
-      export { isOnlyPreviewSearchFailureEvent } from './src/shared/onlypreview/onlyPreviewSearchFailure.contract';
+      export { OnlyPreviewContractError, onlyPreviewFailure } from './src/shared/onlypreview/onlyPreview.contract';
+      export { isOnlyPreviewSearchErrorPayload, isOnlyPreviewSearchFailureEvent } from './src/shared/onlypreview/onlyPreviewSearchFailure.contract';
       export { createOnlyPreviewSearchDiagnostics } from './src/shared/onlypreview/onlyPreviewSearchDiagnostics.mjs';
     `,
     resolveDir: root,
@@ -33,8 +33,8 @@ const bundle = await build({
   }]
 });
 const {
-  FileSearchRuntime, FileSearchRuntimeRelayService, OnlyPreviewContractError,
-  isOnlyPreviewSearchFailureEvent, createOnlyPreviewSearchDiagnostics
+  FileSearchRuntime, FileSearchRuntimeRelayService, OnlyPreviewContractError, onlyPreviewFailure,
+  isOnlyPreviewSearchErrorPayload, isOnlyPreviewSearchFailureEvent, createOnlyPreviewSearchDiagnostics
 } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
 const diagnostics = () => createOnlyPreviewSearchDiagnostics({ write: () => undefined });
 
@@ -309,6 +309,56 @@ test('failure events are generation/host fenced and use the same bounded payload
   const rejected = assert.rejects(result, { code: 'INDEX_PROTOCOL_ERROR' });
   assert.throws(() => publish({ ...failure, extra: true }), { code: 'INDEX_PROTOCOL_ERROR' });
   await rejected;
+  relay.detach();
+});
+
+// Why the real producer is in this bundle: it and the validator above used to live in separate ones,
+// so the optional `causeCode` task 179 added to every failure payload was invisible here, and the
+// first cancelled search latched INDEX_PROTOCOL_ERROR for the life of the runtime. Hand-written
+// two-key literals cannot catch that — only the producer's own output can.
+test('every error the search runtime can throw produces a payload this wire accepts', () => {
+  const cancelled = Object.assign(new Error('Search cancelled.'), { code: 'CANCELLED' });
+  const scopeGate = new TypeError('Search directory scope does not exist');
+  const errno = Object.assign(new Error("ENOENT: open '/private/var/x'"), { code: 'ENOENT' });
+  for (const error of [
+    cancelled,
+    scopeGate,
+    errno,
+    new Error('Search index is not ready'),
+    new OnlyPreviewContractError('INDEX_FAILED', 'Index build failed.')
+  ]) {
+    const { error: payload } = onlyPreviewFailure(error);
+    assert.equal(isOnlyPreviewSearchErrorPayload(payload), true, JSON.stringify(payload));
+  }
+  assert.equal(onlyPreviewFailure(cancelled).error.causeCode, 'CANCELLED');
+  assert.equal(onlyPreviewFailure(scopeGate).error.causeCode, 'TypeError');
+  // The cause class crosses; the path in the underlying message never does.
+  assert.equal(onlyPreviewFailure(errno).error.message, 'OnlyPreview could not complete this operation.');
+  for (const payload of [
+    { code: 'INDEX_FAILED', message: 'Bad', causeCode: 'a/b' },
+    { code: 'INDEX_FAILED', message: 'Bad', causeCode: 'a\\b' },
+    { code: 'INDEX_FAILED', message: 'Bad', causeCode: 'x'.repeat(65) },
+    { code: 'INDEX_FAILED', message: 'Bad', causeCode: 7 },
+    { code: 'INDEX_FAILED', message: 'Bad', operation: '../etc' },
+    { code: 'INDEX_FAILED', message: 'Bad', unexpected: 'x' },
+    { code: 'INDEX_FAILED' },
+    { message: 'Bad' }
+  ]) {
+    assert.equal(isOnlyPreviewSearchErrorPayload(payload), false, JSON.stringify(payload));
+  }
+});
+
+test('a cancelled search answer resolves ok:false instead of latching the protocol failure', async () => {
+  const relay = new FileSearchRuntimeRelayService(diagnostics());
+  const cancelled = () =>
+    onlyPreviewFailure(Object.assign(new Error('Search cancelled.'), { code: 'CANCELLED' }));
+  await bindRelay(relay, { search: async () => cancelled() }, () => undefined);
+  const answer = await relay.call(request.hostToken, 'search', searchRequest, 1000);
+  assert.equal(answer.ok, false);
+  assert.equal(answer.error.causeCode, 'CANCELLED');
+  // The latch is what made this permanent: a second query has to still be answerable.
+  const again = await relay.call(request.hostToken, 'search', searchRequest, 1000);
+  assert.equal(again.ok, false);
   relay.detach();
 });
 

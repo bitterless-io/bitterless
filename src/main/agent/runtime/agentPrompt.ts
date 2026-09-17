@@ -1,3 +1,5 @@
+import { createSyntheticSourceInfo, formatSkillsForPrompt } from '@maestro-main/skills/piSkillSdk'
+import { dirname, join } from 'node:path'
 import moment from 'moment'
 import { renderChainPathLine } from '@main/agent/userChainStore.service'
 import { DEEP_FETCH_BROWSER_WORKFLOW } from '@main/agent/deepFetch.skill'
@@ -23,9 +25,6 @@ export const MAX_AGENT_IMAGE_BYTES = 8 * 1024 * 1024
 export const MAX_AGENT_IMAGES = 8
 export const MAX_AGENT_MEDIA_REFS = 16
 
-const MAX_AGENT_SKILL_INPUTS = 32
-const MAX_AGENT_SKILL_TRIGGERS = 16
-const MAX_AGENT_SKILL_INLINE_CHARS = 600
 
 export const safeUrlForDebug = (value: string): string => {
   try {
@@ -172,6 +171,7 @@ export interface AgentSkillBrief {
   scope?: 'shared' | 'institution'
   layer?: 'global' | 'workspace' | 'institution'
   skillRevision?: string
+  allowImplicitInvocation?: boolean
   institutionId?: string
   reference?: string
   path?: string
@@ -237,6 +237,7 @@ export const buildAgentTurnPrompt = (params: {
   userChainPath?: string
   currentUrl: string
   catalog?: string
+  skillAuthoring?: { globalRoot: string; bunPath: string }
   briefs: AgentSkillBrief[]
 }): string => {
   let domain = params.currentUrl
@@ -245,55 +246,12 @@ export const buildAgentTurnPrompt = (params: {
   } catch {
     /* keep raw */
   }
-  const selectedBriefs = params.briefs
-  const list = selectedBriefs.length
-    ? selectedBriefs
-        .map((brief) => {
-          const inputs = brief.inputs.length
-            ? brief.inputs
-                .slice(0, MAX_AGENT_SKILL_INPUTS)
-                .map((input) => {
-                  const required = input.required ? 'required' : 'optional'
-                  const label = clipInline(input.label || input.name, 120)
-                  const example = input.example
-                    ? `; example=${clipInline(JSON.stringify(input.example), 140)}`
-                    : ''
-                  return `${clipInline(input.name, 100)} (${required}; label=${JSON.stringify(label)}${example})`
-                })
-                .concat(
-                  brief.inputs.length > MAX_AGENT_SKILL_INPUTS
-                    ? [`... +${brief.inputs.length - MAX_AGENT_SKILL_INPUTS} more inputs`]
-                    : []
-                )
-                .join(', ')
-            : 'none'
-          const seed = Object.keys(brief.seed).length
-            ? clipInline(JSON.stringify(brief.seed), MAX_AGENT_SKILL_INLINE_CHARS)
-            : 'none'
-          const missing = brief.missing.length
-            ? brief.missing
-                .slice(0, MAX_AGENT_SKILL_INPUTS)
-                .map((item) => clipInline(item, 100))
-                .join(', ')
-            : 'none'
-          const triggers =
-            brief.triggers
-              .slice(0, MAX_AGENT_SKILL_TRIGGERS)
-              .map((item) => clipInline(item, 80))
-              .join(', ') || 'none'
-          return [
-            `- id: ${clipInline(brief.id, 160)}`,
-            `  name: ${clipInline(brief.name, 160)}`,
-            `  source: ${brief.layer || 'global'}; revision: ${brief.skillRevision || 'builtin'}; scope: ${brief.scope || 'shared'}; institution: ${brief.institutionId || 'none'}; reference: ${brief.reference || brief.id}; path: ${brief.path || 'builtin'}`,
-            `  triggers: ${triggers}${brief.triggers.length > MAX_AGENT_SKILL_TRIGGERS ? `, ... +${brief.triggers.length - MAX_AGENT_SKILL_TRIGGERS} more` : ''}`,
-            `  inputs: ${inputs}`,
-            `  message_seed: ${seed}`,
-            `  missing_after_seed: ${missing}`,
-            `  description: ${brief.description.replace(/\n/g, ' ')}`
-          ].join('\n')
-        })
-        .join('\n')
-    : `(none recorded for ${domain})`
+  const list = formatSkillsForPrompt(params.briefs.map(brief => ({
+    name: brief.name, description: brief.description, filePath: brief.path || brief.reference || brief.id,
+    baseDir: brief.path ? dirname(brief.path) : '',
+    sourceInfo: createSyntheticSourceInfo(brief.path || brief.id, { source: brief.layer || 'global' }),
+    disableModelInvocation: brief.allowImplicitInvocation === false
+  })), 'read') + (params.briefs.length ? '\nHost skill references and recording inputs:\n' + JSON.stringify(params.briefs) : `(none recorded for ${domain})`)
   const recentMessages = params.context?.recentMessages || []
   const recentContext = recentMessages.length
     ? recentMessages
@@ -359,6 +317,18 @@ export const buildAgentTurnPrompt = (params: {
     '',
     `Complete Skills inventory (current execution domain: ${domain}). Recorded Skills remain listed across domains but execute only on their original site:`,
     list,
+    ...(params.skillAuthoring ? [
+      'Create or update reusable skills with Pi read/write/edit tools as standard SKILL.md packages; use bash for scripts.',
+      'For a new reusable skill, use skill_creator init (instruction or script template), fill its SKILL_CREATOR_TODO markers with existing file tools, then skill_creator check. Ask only essential missing task details. Sidecars are optional; add resources only when useful. For existing packages, inspect before editing and check afterward.',
+      'Choose representative input and the expected observable outcome when useful; verify it with existing tools only when appropriate and authorized. Report generated, format-checked and behavior-verified separately with evidence. A passed format check never proves behavior; if no behavior was executed, report not verified.',
+      'For a new skill in this conversation, use ' + JSON.stringify(params.context?.workspace?.path ? join(params.context.workspace.path, '.agents', 'skills') : params.skillAuthoring.globalRoot) + ' as the package root. An explicitly selected workspace takes priority; otherwise use the Global root. Create a named subdirectory with SKILL.md and any scripts/resources. Never guess an institution destination.',
+      'Run skill JavaScript/TypeScript scripts with the bundled Bun executable ' + "'" + params.skillAuthoring.bunPath.replaceAll("'", "'\\''") + "'" + ' through bash, followed by the quoted absolute script path and arguments. Other scripts follow the commands declared by the skill. Read the current package before executing it.',
+      'Use skill_diagnose with the exact skill_ref to inspect a declared entry, interpreter and dependencies before execution or when runtime conditions are missing. It does not install software or verify behavior; follow its concrete repair guidance only within the user-authorized task.',
+      'After creating or editing a skill with file tools, use the existing Skills refresh action or start a new Chat to reload the catalog before its first turn; ordinary chat turns keep the loaded snapshot. No custom registration is required.',
+      'Skill installer guidance: use skill_install inspect for a requested source or pasted skills add command, then select exact candidate paths and install under its returned scope. Use list/update/remove for managed sources; do not bypass local-edit protection. Prefer existing tools, bundled Bun and direct HTTPS retrieval; avoid installing extra software when those suffice. Treat an npx command as installation intent: identify the exact source, requested version/ref and CLI behavior before choosing an execution path; do not run it verbatim by default.',
+      'If the original source CLI is necessary, use bundled Bun only after verifying compatibility. Consider app-private Node/npm/Git when a required runtime is missing; automatic runtime preparation is not implemented. Use skill_install for supported GitHub archives, npm tarballs and HTTPS Git sources; it records a local source ledger without executing a CLI. Installing necessary dependencies is allowed when existing capabilities are insufficient; never default to global installs or PATH changes.',
+      'Preserve the complete legal skill package, including scripts/references/assets and binary files, in the authoring root above (selected workspace first, otherwise Shared); never overwrite an existing package implicitly. Use skill_creator check for format evidence, keep behavior verification separate, and use Skills Refresh or a new Chat after file-tool edits. Local installation does not require an institution. If the available tools cannot retrieve, unpack or execute the source, report the exact missing capability rather than claiming installation succeeded.'
+    ] : []),
     '',
     'If the user explicitly asks for a chat-only answer, a model-token test, or says not to use browser tools,',
     'answer directly in chat and do not call browser tools (including deep_fetch, open_tab, page_snapshot or ui_act) for that turn.',
@@ -447,11 +417,6 @@ export const buildAgentTurnPrompt = (params: {
   ].join('\n')
 }
 
-
-const clipInline = (value: unknown, max: number): string => {
-  const text = String(value || '').replace(/\s+/g, ' ').trim()
-  return text.length <= max ? text : text.slice(0, Math.max(0, max - 3)) + '...'
-}
 
 export const summarizeApprovalArgs = (value: unknown): string => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return ''

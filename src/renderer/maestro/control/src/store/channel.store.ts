@@ -31,6 +31,16 @@ export class ChannelStoreState {
   activeSessionId = readActiveId()
   initialized = false
   private creatingSession = false
+  private authGeneration = 0
+
+  reset(): void {
+    this.authGeneration += 1
+    this.initialized = false
+    this.creatingSession = false
+    this.activeSource = 'cowork'
+    this.activeSessionId = ''
+    writeActiveId('')
+  }
 
   get activeSession(): MessageSession | undefined {
     if (this.activeSource === 'connector') return undefined
@@ -50,15 +60,32 @@ export class ChannelStoreState {
     const sessionId = this.activeSession?.id || ''
     messageStore.activeSessionId = sessionId
     writeActiveId(this.activeSessionId)
-    void coach.setSkillViewContext({ sessionId, workspace: this.activeSession?.detail.workspace })
+    // 过跨进程边界前必须**浅拷贝**:`session` 住在 `reactive()` 里,`detail.workspace` 因此是个
+    // Proxy,而 Proxy 过不了 structured clone —— 直接递会在边界上抛
+    // `An object could not be cloned.`(见 tests/maestro/maestroXpcPayloadCloneable.test.mjs)。
+    // 它只在会话**绑了工作区**之后才发作,没绑时是 undefined、可克隆,所以看起来像"突然坏了"。
+    const workspace = this.activeSession?.detail.workspace
+    // 自己吞掉错误:skill view context 只是上报"面板此刻看的是谁",它失败不该让
+    // `loadControlConfig` 起不来 —— `void` 不隔离同步抛出,而这条调用就在启动的 await 链上。
+    void (async () => {
+      try {
+        await coach.setSkillViewContext({ sessionId, workspace: workspace ? { ...workspace } : undefined })
+      } catch (error) {
+        console.warn('[skills] view context sync failed', error)
+      }
+    })()
     if (sessionId) messageStore.markRead(sessionId)
   }
 
   async init(_tabs: TabInfo[] = []): Promise<void> {
     if (this.initialized) return
+    const generation = this.authGeneration
     this.initialized = true
+    messageStore.resume()
     await messageStore.init()
+    if (generation !== this.authGeneration) return
     await this.ensureMaestroSession()
+    if (generation !== this.authGeneration) return
     this.syncActiveSession()
   }
 
@@ -89,11 +116,13 @@ export class ChannelStoreState {
   }
 
   async startFreshMaestroSession(title?: string): Promise<MessageSession | undefined> {
+    const generation = this.authGeneration
     this.activeSource = 'cowork'
     const currentId = this.activeSessionId
     const current = currentId ? messageStore.getSession(currentId) : undefined
     if (current?.turn) return undefined
     if (current && !current.archivedAt) await messageStore.archive(current.id)
+    if (generation !== this.authGeneration) return undefined
 
     const session = messageStore.createSession({ title: title ?? 'New chat', intent: 'chat', autoTitlePending: title === undefined })
     this.activeSessionId = session.id
@@ -102,7 +131,9 @@ export class ChannelStoreState {
   }
 
   async selectMaestroHistorySession(sessionId: string): Promise<boolean> {
+    const generation = this.authGeneration
     const session = await messageStore.loadPersistedSession(sessionId)
+    if (generation !== this.authGeneration) return false
     if (!session || session.archivedAt) return false
     this.activeSource = 'cowork'
     this.activeSessionId = session.id
@@ -111,19 +142,24 @@ export class ChannelStoreState {
   }
 
   async selectAfterArchive(sessionId: string): Promise<void> {
+    const generation = this.authGeneration
     if (this.activeSessionId !== sessionId) return
     await this.ensureMaestroSession()
+    if (generation !== this.authGeneration) return
     this.syncActiveSession()
   }
 
   // Tab broadcasts update page context in main; they never select or create a chat.
   async syncOperationTabs(_tabs: TabInfo[]): Promise<void> {}
 
-  private async ensureMaestroSession(): Promise<MessageSession> {
+  private async ensureMaestroSession(): Promise<MessageSession | undefined> {
+    const generation = this.authGeneration
     const existing = this.activeSessionId ? await messageStore.loadPersistedSession(this.activeSessionId) : undefined
+    if (generation !== this.authGeneration) return undefined
     if (existing && !existing.archivedAt) return existing
 
     const persisted = await messageStore.latestActiveSession()
+    if (generation !== this.authGeneration) return undefined
     if (persisted && !persisted.archivedAt) {
       this.activeSessionId = persisted.id
       return persisted

@@ -292,4 +292,82 @@ test('focus refresh is receiver-safe and cleaned up, and both catalogs describe 
   for (const key of ['openInWindow', 'moveToTab', 'dockUnavailable']) {
     assert.equal((i18n.match(new RegExp(`${key}: '([^']+)'`, 'g')) ?? []).length, 2);
   }
+  // 占位页那三句同一条纪律:`Localized<typeof en>` 已经保证 zh 不缺 key,而这里保证两边都是**真的
+  // 文案**而不是把 en 的那一份抄过去当占位 —— 漏了不会红,只会在中文界面上出现英文。
+  for (const key of ['title', 'body', 'focusWindow']) {
+    assert.equal(
+      (i18n.match(new RegExp(`\\n    ${key}: '([^']+)'`, 'g')) ?? []).length >= 2,
+      true,
+      `detached.${key} must exist in both catalogs`
+    );
+  }
+  const detachedBlocks = i18n.match(/detached: \{[\s\S]*?\n  \},/g) ?? [];
+  assert.equal(detachedBlocks.length, 2, 'detached 命名空间 en / zh 各一份');
+  for (const block of detachedBlocks) {
+    for (const key of ['title', 'body', 'focusWindow']) {
+      assert.equal(
+        (block.match(new RegExp(`${key}: '([^']+)'`, 'g')) ?? []).length,
+        1,
+        `detached.${key} appears exactly once per catalog`
+      );
+    }
+  }
+  assert.notEqual(
+    detachedBlocks[0],
+    detachedBlocks[1],
+    'zh 那一份不能是 en 的逐字副本 —— 那就是「翻了」而其实没翻'
+  );
+});
+
+/**
+ * 占位页本身:三句文案都从 i18n 取,按钮是 `a-button type="primary" size="mini"`,结构节点带稳定
+ * `name`,而**这个 surface 唯一加载的样式表**里显式写了 `border: 0` 与 `background`。
+ *
+ * 最后那一条不是多余的:2026-09-09 的那一例里,一个按钮的无边框外观来自一份它所在 surface 并不加载
+ * 的样式表,于是每个图标按钮都带上了 Chromium 的 UA 默认边框 —— typecheck 看不见,逐字节的
+ * vendoring diff 也看不见。
+ */
+test('the deferred-tab placeholder renders localized copy on a borderless button', () => {
+  const app = source('src/renderer/onlypreview/detached/src/App.vue');
+  const styles = source('src/renderer/onlypreview/detached/src/App.less');
+  const html = source('src/renderer/onlypreview/detached/index.html');
+  const entry = source('src/renderer/onlypreview/detached/src/main.ts');
+  for (const key of ['title', 'body', 'focusWindow']) {
+    assert.match(app, new RegExp(`onlyPreviewI18n\\.detached\\.${key}`));
+  }
+  assert.doesNotMatch(
+    app.match(/<template>[\s\S]*?<\/template>/)[0],
+    /OnlyPreview is open|已在独立窗口/,
+    '模板里不许有硬编码的用户可见文案'
+  );
+  for (const attribute of [
+    'onlypreview__detachedApp',
+    'onlypreview__detachedContent',
+    'onlypreview__detachedFocusWindow'
+  ]) {
+    assert.match(app, new RegExp(`name="${attribute}"`));
+  }
+  assert.match(app, /type="primary"\n\s*size="mini"/);
+  assert.match(app, /onlyPreviewClient\.focusOnlyPreviewWindow\(\)/);
+  // 检的是**代码**,不是注释:那段注释正是在解释「为什么不带 hostToken」,所以它必须提到这个名字。
+  assert.doesNotMatch(
+    app.replace(/\/\*\*[\s\S]*?\*\//g, ''),
+    /hostToken/,
+    '占位页不持有 host token'
+  );
+  assert.match(styles, /\.onlypreview-detached__focus[\s\S]*?border: 0;/);
+  assert.match(styles, /\.onlypreview-detached__focus[\s\S]*?background: var\(--onlypreview-royal\)/);
+  assert.doesNotMatch(
+    styles,
+    /border: 1px|border-bottom|border-top|border-left|border-right/,
+    '无边框规则:层次只用留白、底色、圆角'
+  );
+  // CSP 与 alert 那一份逐字一致 —— 构建期的 `onlyPreviewHtmlSecurityPlugin` 对每个 onlypreview 入口
+  // 都要断言 CSP/charset 是 `<head>` 的头两个元素,而 office/WASM 能力一个字都不许继承。
+  assert.equal(
+    html.match(/content="([^"]*)"\n\s*\/>/)[1],
+    source('src/renderer/onlypreview/alert/index.html').match(/content="([^"]*)"\n\s*\/>/)[1]
+  );
+  assert.doesNotMatch(html, /wasm-unsafe-eval/);
+  assert.match(entry, /await initializeOnlyPreviewI18n\(\)/);
 });

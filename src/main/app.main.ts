@@ -1,4 +1,5 @@
 import { runtimeProfile } from '@main/environment/runtimeProfile.bootstrap';
+import { assertAuthE2EProfile, isAllowedAuthE2ERequest } from '@shared/auth/authE2E.contract';
 import { ensureDefaultWorkspace } from '@maestro-main/files/defaultWorkspace';
 import { app, net, session } from 'electron';
 import { appendFileSync, mkdirSync } from 'fs';
@@ -90,6 +91,14 @@ const isMcpHelperMode = process.argv.includes('--mcp-helper');
 const isLegacyCodingAgentHookHelperMode = process.argv.includes('--coding-agent-hook-helper');
 const isHelperMode = isMcpHelperMode || isLegacyCodingAgentHookHelperMode;
 const isE2E = process.env.BITTERLESS_E2E === '1';
+const isAuthOnlyE2E = isE2E && process.env.BITTERLESS_AUTH_E2E === '1';
+if (isAuthOnlyE2E) assertAuthE2EProfile({
+  packaged: app.isPackaged,
+  mode: import.meta.env.VITE_MODE,
+  env: import.meta.env.VITE_ENV,
+  coreOrigin: import.meta.env.VITE_BITTERLESS_CORE_URL || '',
+  userData: process.env.BITTERLESS_E2E_USER_DATA_DIR
+});
 
 const assertE2EKeychainIsolation = (): void => {
   if (isHelperMode || !isE2E || app.isPackaged || process.platform !== 'darwin') return;
@@ -309,7 +318,7 @@ const e2eMockOrigin = (): string => {
 
 const installE2ENetworkGuard = (): void => {
   if (!isE2E) return;
-  const mockOrigin = e2eMockOrigin();
+  const mockOrigin = isAuthOnlyE2E ? '' : e2eMockOrigin();
   const deniedLog = join(app.getPath('userData'), 'e2e-network-denied.log');
   const authOrigins = new Set([
     'https://bl-test-api.terncloud.com',
@@ -330,6 +339,10 @@ const installE2ENetworkGuard = (): void => {
 
   const defaultHandler = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
+    if (isAuthOnlyE2E) {
+      if (!isAllowedAuthE2ERequest(request.url, request.method)) return Response.error();
+      return await net.fetch(request, { bypassCustomProtocolHandlers: true, redirect: 'error' });
+    }
     if (
       url.protocol === 'http:' &&
       url.origin === mockOrigin &&
@@ -610,6 +623,7 @@ const startGui = async (): Promise<void> => {
 const startOptionalIntegrations = async (
   canStartNextStage: OptionalStartupStageGuard,
 ): Promise<void> => {
+  if (isAuthOnlyE2E) return;
   if (!canStartNextStage()) return;
 
   await runDiagnosedStartupStage('mcp-bridge', async () => {

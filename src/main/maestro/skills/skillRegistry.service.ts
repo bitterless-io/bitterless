@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { describeSkillFile, discoverWorkspaceSkills, fingerprint, skillPackageFiles, SkillDirectoryWatcher, workspaceSkillRoots } from './skillDiscovery.service'
+import { summarizeLoadedSkill, loadSkillSources, discoverWorkspaceSkills, fingerprint, skillPackageFiles, workspaceSkillRoots } from './skillDiscovery.service'
 import type { SkillCatalogSnapshot } from '@maestro-shared/coach.api'
 import { SkillScopeStorage, type SkillScope, type SkillScopeContext } from './skillScope.storage'
 import { skillScopeContext } from './skillScope.context'
@@ -17,11 +17,15 @@ import {
 } from 'fs'
 import { dirname, join, relative, resolve, sep } from 'path'
 import { randomUUID } from 'crypto'
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
+import { stringify as stringifyYaml } from 'yaml'
+import { parseFrontmatter, type LoadSkillsResult } from './piSkillSdk'
+import { toPiSkills } from './skillPrompt'
 import type { DeleteSkillResult, SkillDetail, SkillExportResult, SkillImportResult, SkillInput, SkillSource, SkillSummary } from '@maestro-shared/coach.api'
 import { SkillRecipeSchema, type SkillRecipe } from './skillRecipe.types'
 import { redactRecipeForStorage } from './recipeRedact'
 import { auditSkillPackage, sanitizeSkillBodyForStorage, sanitizeSkillScriptForStorage } from './skillAudit.service'
+import { publishSkillPackage, skillPackageFileList } from './skillPackage'
+import { SkillState } from './skillState'
 
 interface CreateSkillParams {
   name: string
@@ -40,32 +44,50 @@ const SKILL_AUDIT_FILE = 'skill-audit.json'
 
 export class SkillRegistryService {
   private readonly workspace = new AsyncLocalStorage<string | undefined>()
-  private readonly watchedWorkspaces = new Map<string, SkillDirectoryWatcher>()
   private changed?: () => void
+  private readonly snapshots = new Map<string, { catalog: SkillCatalogSnapshot; pi: LoadSkillsResult }>()
+  private revision = 0
+  private sourceKey = ''
+  private storageReady = false
+  /** In-memory identity only: ordinary prompt/catalog reads never inspect the filesystem. */
+  resourceRevision(workspace = this.workspace.getStore()): string {
+    const context = this.scopeStorage.current()
+    return JSON.stringify([workspace || '', context?.accountScope, context?.institutionId, context?.generation, this.revision, this.externalRevision()])
+  }
+  invalidate(): void { this.revision++; this.snapshots.clear(); this.changed?.() }
   onChanged(callback: () => void): void { this.changed = callback }
   withWorkspace<T>(workspace: string | undefined, operation: () => T): T { return this.workspace.run(workspace, operation) }
   catalog(workspace = this.workspace.getStore()): SkillCatalogSnapshot {
-    const roots = { global: [this.skillsDir, this.legacySkillsDir, this.scopeStorage.shared], workspace: workspaceSkillRoots(workspace), institution: this.scopeStorage.institutionRoot() ? [this.scopeStorage.institutionRoot()!] : [] }
+    const context = this.scopeStorage.current()
+    const sourceKey = JSON.stringify([context?.accountScope, context?.institutionId, context?.generation, this.revision, this.externalRevision()])
+    if (sourceKey !== this.sourceKey) { this.snapshots.clear(); this.sourceKey = sourceKey }
     const key = workspace || ''
-    let watcher = this.watchedWorkspaces.get(key)
-    if (!watcher) {
-      watcher = new SkillDirectoryWatcher(() => this.changed?.())
-      this.watchedWorkspaces.set(key, watcher)
-      if (this.watchedWorkspaces.size > 16) { const oldest = this.watchedWorkspaces.keys().next().value!; this.watchedWorkspaces.get(oldest)?.dispose(); this.watchedWorkspaces.delete(oldest) }
-    }
-    watcher.update([...roots.global, ...roots.workspace, ...roots.institution])
-    const skills = this.withWorkspace(workspace, () => this.listSkills(true))
-    const revision = fingerprint(JSON.stringify([workspace || '', this.scopeStorage.current()?.generation || '', this.scopeStorage.current()?.institutionId || '', skills.map(skill => [skill.reference, skill.skillRevision, skill.status, skill.error])]))
-    return { revision, workspace: workspace || '', roots, skills, watchError: watcher.error, institution: this.scopeStorage.current(), generation: this.scopeStorage.current()?.generation }
+    const cached = this.snapshots.get(key)
+    if (cached) return cached.catalog
+    const roots = { global: [this.skillsDir, this.legacySkillsDir, this.scopeStorage.shared], workspace: workspaceSkillRoots(workspace), institution: this.scopeStorage.institutionRoot() ? [this.scopeStorage.institutionRoot()!] : [] }
+    const skills = this.withWorkspace(workspace, () => this.scanSkills()).map(skill => ({ ...skill, enabled: this.localState.enabled(skill.reference || skill.id) }))
+    const revision = fingerprint(JSON.stringify([key, context?.generation, context?.institutionId, skills.map(skill => [skill.reference, skill.skillRevision, skill.status, skill.error, skill.enabled])]))
+    const catalog = { revision, workspace: key, roots, skills, watchError: '', institution: context, generation: context?.generation }
+    const pi: LoadSkillsResult = { skills: toPiSkills(skills), diagnostics: skills.filter(skill => skill.status === 'error').map(skill => ({ type: 'warning', path: skill.path, message: skill.error || 'Skill unavailable' })) }
+    this.snapshots.set(key, { catalog, pi })
+    return catalog
   }
   catalogPrompt(workspace = this.workspace.getStore()): string {
     const catalog = this.catalog(workspace)
-    const available = catalog.skills.filter(skill => skill.status === 'ready' && skill.scope !== 'unassigned')
+    const available = catalog.skills.filter(skill => skill.status === 'ready' && skill.scope !== 'unassigned' && skill.enabled !== false)
     return '[Current complete Skills catalog]\n' + JSON.stringify({ catalogRevision: catalog.revision, workspace: catalog.workspace, institution: this.scopeStorage.current()?.institutionId || null,
       counts: Object.fromEntries(['global','workspace','institution'].map(layer => [layer, { available: available.filter(skill => skill.layer === layer).length, errors: catalog.skills.filter(skill => skill.layer === layer && skill.status === 'error').length }])),
       skills: available.map(skill => ({ name: skill.canonicalName || skill.name, displayName: skill.displayName, description: skill.description, source: skill.layer, ref: skill.reference || skill.id, path: skill.path, revision: skill.skillRevision, allowImplicitInvocation: skill.allowImplicitInvocation, ...(skill.domain ? { domain: skill.domain, execution: 'Recorded execution requires matching domain.' } : {}) })) }) + '\nCatalog entries are metadata only, not loaded bodies. Read get_skill_contract or read_file on demand. This current catalog supersedes historical inventories; never treat an old body as the current revision. Same names require a qualified ref.'
   }
-  dispose(): void { for (const watcher of this.watchedWorkspaces.values()) watcher.dispose(); this.watchedWorkspaces.clear() }
+  reload(workspace = this.workspace.getStore()): SkillCatalogSnapshot {
+    this.invalidate()
+    return this.catalog(workspace)
+  }
+  getPiSkills(workspace = this.workspace.getStore()): LoadSkillsResult {
+    this.catalog(workspace)
+    return this.snapshots.get(workspace || '')!.pi
+  }
+  dispose(): void { this.changed = undefined; this.snapshots.clear() }
   resolveSkill(reference: string, includeUnassigned = false): SkillSummary | undefined {
     const rows = this.listSkills(includeUnassigned)
     const direct = rows.filter(skill => skill.reference === reference)
@@ -78,34 +100,48 @@ export class SkillRegistryService {
   private readonly legacySkillsDir: string
   private portableDocsBackfilled = false
   readonly scopeStorage: SkillScopeStorage
+  private readonly localState: SkillState
 
-  constructor(private readonly userDataDir: string, context: SkillScopeContext = skillScopeContext) {
+  constructor(private readonly userDataDir: string, context: SkillScopeContext = skillScopeContext, private readonly externalRevision: () => number = () => 0) {
     this.scopeStorage = new SkillScopeStorage(userDataDir, context)
+    this.localState = new SkillState(userDataDir)
     this.skillsDir = join(userDataDir, 'skills')
     this.legacySkillsDir = join(userDataDir, '.agents', 'skills')
   }
 
   ensureRuntimeStorage(): void {
+    if (this.storageReady) return
     this.ensureAgentGuidance()
     this.removeRetiredBaselineSkill()
     this.backfillPortableSkillDocs()
+    this.storageReady = true
   }
 
   listSkills(includeUnassigned = false): SkillSummary[] {
+    return this.catalog().skills.filter(skill => includeUnassigned || (skill.scope !== 'unassigned' && skill.status !== 'error' && skill.enabled !== false))
+  }
+
+  setSkillEnabled(reference: string, enabled: boolean): void {
+    if (!this.catalog().skills.some(skill => skill.reference === reference && skill.scope !== 'unassigned')) throw new Error('Skill is unavailable in the current source context')
+    this.localState.setEnabled(reference, enabled)
+    this.invalidate()
+  }
+
+  private scanSkills(): SkillSummary[] {
     this.ensureRuntimeStorage()
-    const files = this.skillRoots().flatMap(dir => walk(dir).filter(file => file.endsWith('/SKILL.md')))
-    const skills = files.map(file => {
+    const skills = this.loadOwnedSkills().map(loaded => {
+      const { file } = loaded
       const skill = this.readSkillSummary(file)
       if (!skill) return null
       const oldReference = skill.reference
       if (!file.includes('/cloud/') && skill.scope !== 'unassigned') skill.reference = (skill.scope === 'institution' ? 'institution:' + this.scopeStorage.current()!.accountScope + ':' + skill.institutionId : 'shared') + ':' + fingerprint(file)
-      return describeSkillFile(file, { ...skill, aliases: oldReference ? [oldReference, skill.id] : [skill.id], layer: skill.scope === 'institution' ? 'institution' : 'global', managed: file.includes('/cloud/'), readonly: skill.scope === 'institution' || file.includes('/cloud/') || skill.source === 'builtin', root: this.skillRoots().find(root => file.startsWith(root + '/')) })
+      return summarizeLoadedSkill(loaded, { ...skill, aliases: oldReference ? [oldReference, skill.id] : [skill.id], layer: skill.scope === 'institution' ? 'institution' : 'global', managed: file.includes('/cloud/'), readonly: skill.scope === 'institution' || file.includes('/cloud/') || skill.source === 'builtin', root: loaded.root })
     }).filter((item): item is SkillSummary => Boolean(item))
     skills.push(...discoverWorkspaceSkills(this.workspace.getStore()).filter(skill => !skill.realPath || !skill.realPath.startsWith(resolve(realpathSync(this.userDataDir), 'skill-library') + sep)))
     const ids = new Map<string, number>()
     for (const skill of skills) ids.set(skill.id, (ids.get(skill.id) || 0) + 1)
     for (const skill of skills) if ((ids.get(skill.id) || 0) > 1) skill.id = skill.reference!
-    return skills.filter(skill => includeUnassigned || (skill.scope !== 'unassigned' && skill.status !== 'error')).sort((a, b) => (a.reference || a.id).localeCompare(b.reference || b.id))
+    return skills.sort((a, b) => (a.reference || a.id).localeCompare(b.reference || b.id))
   }
 
   async assignScope(skillId: string, scope: SkillScope): Promise<SkillImportResult> {
@@ -113,6 +149,7 @@ export class SkillRegistryService {
     if (!legacy) return { ok: false, message: 'Select a skill that needs scope assignment.' }
     try {
       const file = await this.scopeStorage.assign(legacy.path, scope)
+      this.invalidate()
       const skill = this.readSkillSummary(file)
       if (!skill) throw new Error('Assigned skill could not be read')
       return { ok: true, skill, path: dirname(file), message: 'Skill scope assigned; original files preserved.' }
@@ -129,8 +166,8 @@ export class SkillRegistryService {
     return skill ? dirname(dirname(skill.path)) : null
   }
 
-  readRecipe(skillId: string): SkillRecipe | null {
-    const skill = this.resolveSkill(skillId)
+  readRecipe(skillId: string, includeUnavailable = false): SkillRecipe | null {
+    const skill = this.resolveSkill(skillId, includeUnavailable)
     if (!skill?.recipePath || !existsSync(skill.recipePath)) return null
     try {
       return SkillRecipeSchema.parse(JSON.parse(readFileSync(skill.recipePath, 'utf8')))
@@ -149,7 +186,7 @@ export class SkillRegistryService {
     } catch {
       /* unreadable SKILL.md — leave body empty; recipe-derived fields below still populate */
     }
-    const recipe = skill.recipePath && existsSync(skill.recipePath) ? this.readRecipe(skill.id) : null
+    const recipe = skill.recipePath && existsSync(skill.recipePath) ? this.readRecipe(skill.id, includeUnassigned) : null
     const audit = recipe ? auditSkillPackage(recipe, body) : undefined
     return {
       id: skill.id,
@@ -175,7 +212,7 @@ export class SkillRegistryService {
   }
 
   assertWritableSkill(skillId: string): SkillSummary {
-    const skill = this.resolveSkill(skillId)
+    const skill = this.resolveSkill(skillId, true)
     if (!skill) throw new Error('Skill not found or unavailable')
     if (skill.source === 'builtin' || skill.readonly || skill.managed || skill.layer === 'workspace' || skill.layer === 'institution' || skill.scope === 'institution') throw new Error('This Skill source is read-only; import a global copy to edit it')
     return skill
@@ -207,6 +244,7 @@ export class SkillRegistryService {
     writeOpenAiSidecar(dir, recipe.name, recipe.description)
     writePortableSkillDocs(dir, recipe, body)
     writeSkillAuditFile(dir, recipe, body)
+    this.invalidate()
     return this.readSkillSummary(summary.path)
   }
 
@@ -252,7 +290,7 @@ export class SkillRegistryService {
   }
 
   deleteSkill(skillId: string): DeleteSkillResult {
-    const skill = this.resolveSkill(skillId)
+    const skill = this.resolveSkill(skillId, true)
     if (!skill) {
       return { ok: false, skillId, message: 'Skill not found.', error: 'not-found' }
     }
@@ -265,11 +303,12 @@ export class SkillRegistryService {
     }
 
     rmSync(targetDir, { recursive: true, force: true })
+    this.invalidate()
     return { ok: true, skillId, message: `Deleted skill ${skill.name}.` }
   }
 
   exportSkillPackage(skillId: string, destinationRoot: string): SkillExportResult {
-    const skill = this.resolveSkill(skillId)
+    const skill = this.resolveSkill(skillId, true)
     if (!skill) {
       return { ok: false, skillId, message: 'Skill not found.', error: 'not-found' }
     }
@@ -289,117 +328,121 @@ export class SkillRegistryService {
       return { ok: false, skillId, message: 'Export destination does not exist.', error: 'destination-not-found' }
     }
 
-    if (root === sourceDir || root.startsWith(sourceDir + sep)) {
+    if (realpathSync(root) === realpathSync(sourceDir) || realpathSync(root).startsWith(realpathSync(sourceDir) + sep)) {
       return { ok: false, skillId, message: 'Refusing to export inside the source skill directory.', error: 'destination-inside-source' }
     }
 
-    const exportDir = uniqueExportDir(root, `${slugify(skill.name)}-coach-skill`)
-    const copied: string[] = []
-    const writePortableFile = (relativePath: string, content: string): void => {
-      const dest = join(exportDir, ...relativePath.split('/'))
-      mkdirSync(dirname(dest), { recursive: true })
-      writeFileSync(dest, content, 'utf8')
-      copied.push(relativePath)
-    }
-
+    let audit: SkillExportResult['audit']
     try {
-      mkdirSync(exportDir, { recursive: true })
-      const recipe = skill.recipePath ? this.readRecipe(skill.id) : null
-      const body = sanitizeSkillBodyForStorage(readSkillBody(readFileSync(skill.path, 'utf8')))
-      const safeRecipe = recipe ? prepareRecipeForStorage(recipe) : null
-      const audit = safeRecipe ? auditSkillPackage(safeRecipe, body) : auditSkillPackage(emptyExportRecipe(skill), body)
-      if (!audit.ok) return { ok: false, skillId, path: exportDir, message: 'Skill export failed audit.', audit, error: 'skill-audit-failed' }
-      if (safeRecipe) {
-        writePortableFile('recipe.json', JSON.stringify(safeRecipe, null, 2))
-        writePortableFile(
-          'SKILL.md',
-          buildSkillMarkdown({
-            id: safeRecipe.id,
-            name: safeRecipe.name,
-            description: safeRecipe.description,
-            source: safeRecipe.source,
-            aliases: safeRecipe.aliases,
-            shortcuts: safeRecipe.shortcuts,
-            keywords: safeRecipe.keywords,
-            inputs: safeRecipe.inputs,
-            body
-          })
-        )
-        writeOpenAiSidecar(exportDir, safeRecipe.name, safeRecipe.description)
-        copied.push('agents/openai.yaml')
-        writePortableSkillDocs(exportDir, safeRecipe, body)
-        copied.push('README.md', 'AGENTS.md', 'CLAUDE.md')
-      } else {
-        writePortableFile('SKILL.md', sanitizeSkillBodyForStorage(readFileSync(skill.path, 'utf8')))
-        const sourceReadme = join(sourceDir, 'README.md')
-        writePortableFile(
-          'README.md',
-          existsSync(sourceReadme) ? sanitizeSkillBodyForStorage(readFileSync(sourceReadme, 'utf8')) : buildExternalSkillReadme(skill.name, skill.description)
-        )
-        const sourceAgents = join(sourceDir, 'AGENTS.md')
-        const sourceClaude = join(sourceDir, 'CLAUDE.md')
-        const fallbackGuidance = buildExternalAgentGuidance(skill.name, skill.description)
-        writePortableFile(
-          'AGENTS.md',
-          existsSync(sourceAgents) ? sanitizeSkillBodyForStorage(readFileSync(sourceAgents, 'utf8')) : fallbackGuidance
-        )
-        writePortableFile(
-          'CLAUDE.md',
-          existsSync(sourceClaude) ? sanitizeSkillBodyForStorage(readFileSync(sourceClaude, 'utf8')) : fallbackGuidance
-        )
-        const sourceSidecar = join(sourceDir, 'agents', 'openai.yaml')
-        if (existsSync(sourceSidecar)) {
-          writePortableFile('agents/openai.yaml', readFileSync(sourceSidecar, 'utf8'))
-        } else {
-          writeOpenAiSidecar(exportDir, skill.name, skill.description)
-          copied.push('agents/openai.yaml')
+      const exportDir = publishSkillPackage(sourceDir, join(root, `${slugify(skill.name)}-coach-skill`), (stage) => {
+        const copied = skillPackageFileList(stage)
+        const writePortableFile = (relativePath: string, content: string): void => {
+          const dest = join(stage, ...relativePath.split('/'))
+          mkdirSync(dirname(dest), { recursive: true })
+          writeFileSync(dest, content, 'utf8')
+          copied.push(relativePath)
         }
-      }
-      writePortableFile(SKILL_AUDIT_FILE, JSON.stringify(audit, null, 2))
-      writeFileSync(
-        join(exportDir, 'coach-export.json'),
-        JSON.stringify(
-          {
-            version: 1,
-            exportedAt: Date.now(),
-            skill: {
-              id: skill.id,
-              name: skill.name,
-              description: skill.description,
-              domain: skill.domain,
-              source: skill.source,
-              triggers: skill.triggers,
-              inputs: skill.inputs.map((input) => ({
-                name: input.name,
-                label: input.label,
-                required: input.required,
-                type: input.type || 'string'
-              }))
+
+        const recipe = skill.recipePath ? this.readRecipe(skill.id) : null
+        const body = sanitizeSkillBodyForStorage(readSkillBody(readFileSync(join(stage, 'SKILL.md'), 'utf8')))
+        const safeRecipe = recipe ? prepareRecipeForStorage(recipe) : null
+        audit = safeRecipe ? auditSkillPackage(safeRecipe, body) : auditSkillPackage(emptyExportRecipe(skill), body)
+        if (!audit.ok) throw new Error('skill-audit-failed')
+        if (safeRecipe) {
+          writePortableFile('recipe.json', JSON.stringify(safeRecipe, null, 2))
+          writePortableFile(
+            'SKILL.md',
+            buildSkillMarkdown({
+              id: safeRecipe.id,
+              name: safeRecipe.name,
+              description: safeRecipe.description,
+              source: safeRecipe.source,
+              aliases: safeRecipe.aliases,
+              shortcuts: safeRecipe.shortcuts,
+              keywords: safeRecipe.keywords,
+              inputs: safeRecipe.inputs,
+              body
+            })
+          )
+          writeOpenAiSidecar(stage, safeRecipe.name, safeRecipe.description)
+          copied.push('agents/openai.yaml')
+          writePortableSkillDocs(stage, safeRecipe, body)
+          copied.push('README.md', 'AGENTS.md', 'CLAUDE.md')
+        } else {
+          writePortableFile('SKILL.md', sanitizeSkillBodyForStorage(readFileSync(join(stage, 'SKILL.md'), 'utf8')))
+          const sourceReadme = join(stage, 'README.md')
+          writePortableFile(
+            'README.md',
+            existsSync(sourceReadme) ? sanitizeSkillBodyForStorage(readFileSync(sourceReadme, 'utf8')) : buildExternalSkillReadme(skill.name, skill.description)
+          )
+          const sourceAgents = join(stage, 'AGENTS.md')
+          const sourceClaude = join(stage, 'CLAUDE.md')
+          const fallbackGuidance = buildExternalAgentGuidance(skill.name, skill.description)
+          writePortableFile(
+            'AGENTS.md',
+            existsSync(sourceAgents) ? sanitizeSkillBodyForStorage(readFileSync(sourceAgents, 'utf8')) : fallbackGuidance
+          )
+          writePortableFile(
+            'CLAUDE.md',
+            existsSync(sourceClaude) ? sanitizeSkillBodyForStorage(readFileSync(sourceClaude, 'utf8')) : fallbackGuidance
+          )
+          const sourceSidecar = join(stage, 'agents', 'openai.yaml')
+          if (existsSync(sourceSidecar)) {
+            writePortableFile('agents/openai.yaml', readFileSync(sourceSidecar, 'utf8'))
+          } else {
+            writeOpenAiSidecar(stage, skill.name, skill.description)
+            copied.push('agents/openai.yaml')
+          }
+        }
+        writePortableFile(SKILL_AUDIT_FILE, JSON.stringify(audit, null, 2))
+        writeFileSync(
+          join(stage, 'coach-export.json'),
+          JSON.stringify(
+            {
+              version: 1,
+              exportedAt: Date.now(),
+              skill: {
+                id: skill.id,
+                name: skill.name,
+                description: skill.description,
+                domain: skill.domain,
+                source: skill.source,
+                triggers: skill.triggers,
+                inputs: skill.inputs.map((input) => ({
+                  name: input.name,
+                  label: input.label,
+                  required: input.required,
+                  type: input.type || 'string'
+                }))
+              },
+              audit,
+              files: [...new Set(copied)]
             },
-            audit,
-            files: copied
-          },
-          null,
-          2
-        ),
-        'utf8'
-      )
+            null,
+            2
+          ),
+          'utf8'
+        )
+        this.validatePackage(stage)
+      })
       return { ok: true, skillId, path: exportDir, message: `Exported ${skill.name}.`, audit }
     } catch (err) {
-      return { ok: false, skillId, path: exportDir, message: 'Skill export failed.', error: (err as Error).message }
+      return { ok: false, skillId, message: 'Skill export failed.', audit, error: (err as Error).message }
     }
   }
 
   importSkillPackage(packageDir: string): SkillImportResult {
-    const sourceDir = resolve(packageDir || '')
+    let sourceDir = resolve(packageDir || '')
     try {
       const sourceStats = statSync(sourceDir)
       if (!sourceStats.isDirectory()) return { ok: false, path: sourceDir, message: 'Skill package is not a directory.', error: 'not-a-directory' }
+      sourceDir = realpathSync(sourceDir)
     } catch {
       return { ok: false, path: sourceDir, message: 'Skill package directory does not exist.', error: 'package-not-found' }
     }
 
-    if (this.isInsideSkillRoot(sourceDir)) {
+    const library = existsSync(this.scopeStorage.library) ? realpathSync(this.scopeStorage.library) : resolve(this.scopeStorage.library)
+    if (this.isInsideSkillRoot(sourceDir) || sourceDir === library || sourceDir.startsWith(library + sep)) {
       return { ok: false, path: sourceDir, message: 'This package is already inside the Coach skill registry.', error: 'already-installed' }
     }
 
@@ -410,6 +453,7 @@ export class SkillRegistryService {
     }
 
     try {
+      skillPackageFileList(sourceDir) // Validate the whole tree before reading any package metadata.
       if (!existsSync(recipePath)) return this.importExternalMarkdownSkill(sourceDir, skillPath)
       const sourceRecipe = SkillRecipeSchema.parse(JSON.parse(readFileSync(recipePath, 'utf8')))
       const sourceBody = sanitizeSkillBodyForStorage(readSkillBody(readFileSync(skillPath, 'utf8')))
@@ -424,29 +468,33 @@ export class SkillRegistryService {
       const audit = auditSkillPackage(recipe, sourceBody)
       if (!audit.ok) return { ok: false, path: sourceDir, message: 'Skill import failed audit.', audit, error: 'skill-audit-failed' }
       const domainDir = domainOf(recipe.sourceUrl) || 'unknown-domain'
-      const destDir = join(this.scopeStorage.creationRoot(), domainDir, `${now}-${slugify(recipe.name)}`)
-      mkdirSync(join(destDir, 'agents'), { recursive: true })
-      writeFileSync(join(destDir, 'recipe.json'), JSON.stringify(recipe, null, 2), 'utf8')
-      writeFileSync(
-        join(destDir, 'SKILL.md'),
-        buildSkillMarkdown({
-          id,
-          name: recipe.name,
-          description: recipe.description,
-          source: 'recording',
-          aliases: recipe.aliases,
-          shortcuts: recipe.shortcuts,
-          keywords: recipe.keywords,
-          inputs: recipe.inputs,
-          body: sourceBody
-        }),
-        'utf8'
-      )
-      writeOpenAiSidecar(destDir, recipe.name, recipe.description)
-      writePortableSkillDocs(destDir, recipe, sourceBody)
-      writeSkillAuditFile(destDir, recipe, sourceBody)
+      const destDir = publishSkillPackage(sourceDir, join(this.scopeStorage.creationRoot(), domainDir, `${now}-${slugify(recipe.name)}`), (stage) => {
+        mkdirSync(join(stage, 'agents'), { recursive: true })
+        writeFileSync(join(stage, 'recipe.json'), JSON.stringify(recipe, null, 2), 'utf8')
+        writeFileSync(
+          join(stage, 'SKILL.md'),
+          buildSkillMarkdown({
+            id,
+            name: recipe.name,
+            description: recipe.description,
+            source: 'recording',
+            aliases: recipe.aliases,
+            shortcuts: recipe.shortcuts,
+            keywords: recipe.keywords,
+            inputs: recipe.inputs,
+            body: sourceBody
+          }),
+          'utf8'
+        )
+        writeOpenAiSidecar(stage, recipe.name, recipe.description)
+        writePortableSkillDocs(stage, recipe, sourceBody)
+        writeSkillAuditFile(stage, recipe, sourceBody)
+        this.validatePackage(stage)
+        this.scopeStorage.creationRoot() // Fence activation against an institution change.
+      })
       const summary = this.readSkillSummary(join(destDir, 'SKILL.md'))
       if (!summary) throw new Error('imported skill could not be read back')
+      this.invalidate()
       return { ok: true, skill: summary, path: destDir, message: `Imported ${summary.name}.`, audit }
     } catch (err) {
       return { ok: false, path: sourceDir, message: 'Skill import failed.', error: (err as Error).message }
@@ -489,6 +537,7 @@ export class SkillRegistryService {
     writeSkillAuditFile(dir, recipe, body)
     const summary = this.readSkillSummary(join(dir, 'SKILL.md'))
     if (!summary) throw new Error('created skill could not be read back')
+    this.invalidate()
     return summary
   }
 
@@ -539,8 +588,7 @@ export class SkillRegistryService {
   private backfillPortableSkillDocs(): void {
     if (this.portableDocsBackfilled) return
     this.portableDocsBackfilled = true
-    const files = this.skillRoots().flatMap((dir) => walk(dir).filter((file) => file.endsWith('/SKILL.md')))
-    for (const file of files) {
+    for (const { file } of this.loadOwnedSkills()) {
       if (file.includes('/cloud/')) continue
       const dir = dirname(file)
       const recipePath = join(dir, 'recipe.json')
@@ -560,6 +608,14 @@ export class SkillRegistryService {
     }
   }
 
+  private loadOwnedSkills() {
+    // Pi follows package links. Owned storage never permits an alias into another scope.
+    return loadSkillSources(this.skillRoots()).filter(({ file, root }) => {
+      try { return realpathSync(file) === resolve(realpathSync(root), relative(root, file)) }
+      catch { return false }
+    })
+  }
+
   private skillRoots(): string[] {
     return [this.skillsDir, this.legacySkillsDir, ...this.scopeStorage.roots()].flatMap(root => {
       if (!existsSync(root)) return [root]
@@ -577,9 +633,10 @@ export class SkillRegistryService {
   }
 
   private isInsideSkillRoot(targetDir: string): boolean {
+    const target = existsSync(targetDir) ? realpathSync(targetDir) : resolve(targetDir)
     return this.skillRoots().some((root) => {
-      const resolved = resolve(root)
-      return targetDir === resolved || targetDir.startsWith(resolved + sep)
+      const resolved = existsSync(root) ? realpathSync(root) : resolve(root)
+      return target === resolved || target.startsWith(resolved + sep)
     })
   }
 
@@ -640,49 +697,46 @@ export class SkillRegistryService {
     const audit = auditSkillPackage(auditRecipe, sourceBody)
     if (!audit.ok) return { ok: false, path: sourceDir, message: 'External skill import failed audit.', audit, error: 'skill-audit-failed' }
 
-    const destDir = join(this.scopeStorage.creationRoot(), 'external', `${now}-${slugify(name)}`)
-    mkdirSync(join(destDir, 'agents'), { recursive: true })
-    writeFileSync(
-      join(destDir, 'SKILL.md'),
-      buildExternalSkillMarkdown({
-        frontmatter,
-        id,
-        name,
-        description,
-        inputs,
-        body: sourceBody
-      }),
-      'utf8'
-    )
-    copyPortableFileIfExists(sourceDir, destDir, 'README.md')
-    copyPortableFileIfExists(sourceDir, destDir, 'AGENTS.md')
-    copyPortableFileIfExists(sourceDir, destDir, 'CLAUDE.md')
-    if (existsSync(join(sourceDir, 'agents', 'openai.yaml'))) {
-      copyFileSync(join(sourceDir, 'agents', 'openai.yaml'), join(destDir, 'agents', 'openai.yaml'))
-    } else {
-      writeOpenAiSidecar(destDir, name, description)
-    }
-    if (!existsSync(join(destDir, 'README.md'))) writeFileSync(join(destDir, 'README.md'), buildExternalSkillReadme(name, description), 'utf8')
-    if (!existsSync(join(destDir, 'AGENTS.md'))) writeFileSync(join(destDir, 'AGENTS.md'), buildExternalAgentGuidance(name, description), 'utf8')
-    if (!existsSync(join(destDir, 'CLAUDE.md'))) writeFileSync(join(destDir, 'CLAUDE.md'), buildExternalAgentGuidance(name, description), 'utf8')
-    writeFileSync(join(destDir, SKILL_AUDIT_FILE), JSON.stringify(audit, null, 2), 'utf8')
-    writeFileSync(
-      join(destDir, 'coach-import.json'),
-      JSON.stringify(
-        {
-          version: 1,
-          importedAt: now,
-          source: 'external-markdown',
-          runtime: 'external',
-          skill: { id, name, description, triggers, inputs }
-        },
-        null,
-        2
-      ),
-      'utf8'
-    )
+    const destDir = publishSkillPackage(sourceDir, join(this.scopeStorage.creationRoot(), 'external', `${now}-${slugify(name)}`), (stage) => {
+      mkdirSync(join(stage, 'agents'), { recursive: true })
+      writeFileSync(
+        join(stage, 'SKILL.md'),
+        buildExternalSkillMarkdown({
+          frontmatter,
+          id,
+          name,
+          description,
+          inputs,
+          body: sourceBody
+        }),
+        'utf8'
+      )
+      if (!existsSync(join(stage, 'agents', 'openai.yaml'))) writeOpenAiSidecar(stage, name, description)
+      if (!existsSync(join(stage, 'README.md'))) writeFileSync(join(stage, 'README.md'), buildExternalSkillReadme(name, description), 'utf8')
+      if (!existsSync(join(stage, 'AGENTS.md'))) writeFileSync(join(stage, 'AGENTS.md'), buildExternalAgentGuidance(name, description), 'utf8')
+      if (!existsSync(join(stage, 'CLAUDE.md'))) writeFileSync(join(stage, 'CLAUDE.md'), buildExternalAgentGuidance(name, description), 'utf8')
+      writeFileSync(join(stage, SKILL_AUDIT_FILE), JSON.stringify(audit, null, 2), 'utf8')
+      writeFileSync(
+        join(stage, 'coach-import.json'),
+        JSON.stringify(
+          {
+            version: 1,
+            importedAt: now,
+            source: 'external-markdown',
+            runtime: 'external',
+            skill: { id, name, description, triggers, inputs }
+          },
+          null,
+          2
+        ),
+        'utf8'
+      )
+      this.validatePackage(stage)
+      this.scopeStorage.creationRoot()
+    })
     const summary = this.readSkillSummary(join(destDir, 'SKILL.md'))
     if (!summary) throw new Error('imported external skill could not be read back')
+    this.invalidate()
     return {
       ok: true,
       skill: summary,
@@ -690,6 +744,14 @@ export class SkillRegistryService {
       message: `Imported external skill ${summary.name}. Coach can read it, but it has no runtime recipe yet.`,
       audit
     }
+  }
+
+  private validatePackage(directory: string): void {
+    const file = join(directory, 'SKILL.md')
+    const loaded = loadSkillSources([directory]).find(row => row.file === file)
+    if (!loaded?.skill) throw new Error(loaded?.error || 'Skill package has no valid SKILL.md')
+    const checked = summarizeLoadedSkill(loaded, { id: file, name: loaded.skill.name, description: loaded.skill.description, source: 'external', domain: '', path: file, updatedAt: 0, inputs: [], triggers: [] })
+    if (checked.status === 'error') throw new Error(checked.error || 'Invalid Skill package metadata')
   }
 }
 
@@ -973,10 +1035,7 @@ function escapeMd(value: string): string {
 }
 
 function readFrontmatter(content: string): Record<string, any> {
-  const match = content.match(/^---\n([\s\S]*?)\n---/)
-  if (!match) return {}
-  const parsed = parseYaml(match[1])
-  return parsed && typeof parsed === 'object' ? (parsed as Record<string, any>) : {}
+  return parseFrontmatter<Record<string, any>>(content).frontmatter
 }
 
 function asStringList(value: unknown): string[] {
@@ -1038,44 +1097,9 @@ function parseSkillInput(value: unknown): SkillInput | null {
   return item
 }
 
-function copyPortableFileIfExists(sourceDir: string, destDir: string, relativePath: string): boolean {
-  const source = join(sourceDir, ...relativePath.split('/'))
-  if (!existsSync(source)) return false
-  const dest = join(destDir, ...relativePath.split('/'))
-  mkdirSync(dirname(dest), { recursive: true })
-  copyFileSync(source, dest)
-  return true
-}
-
-function walk(dir: string): string[] {
-  if (!existsSync(dir)) return []
-  const out: string[] = []
-  for (const entry of readdirSync(dir)) {
-    // Archived prior skill versions live under <skill>/archive/<ts>/ and must not
-    // surface as live skills.
-    if (entry === 'archive' || entry === 'node_modules' || entry.startsWith('.')) continue
-    const file = join(dir, entry)
-    const stat = lstatSync(file)
-    if (stat.isSymbolicLink()) continue
-    if (stat.isDirectory()) out.push(...walk(file))
-    else out.push(file)
-  }
-  return out
-}
-
 function formatArchiveTs(date: Date): string {
   const p = (n: number): string => String(n).padStart(2, '0')
   return `${date.getFullYear()}${p(date.getMonth() + 1)}${p(date.getDate())} ${p(date.getHours())}-${p(date.getMinutes())}-${p(date.getSeconds())}`
-}
-
-function uniqueExportDir(root: string, name: string): string {
-  const base = join(root, name || 'coach-skill')
-  if (!existsSync(base)) return base
-  for (let i = 2; i <= 99; i += 1) {
-    const candidate = `${base}-${i}`
-    if (!existsSync(candidate)) return candidate
-  }
-  return `${base}-${Date.now()}`
 }
 
 // Canonical domain key for a skill: the lowercased hostname of its source URL.

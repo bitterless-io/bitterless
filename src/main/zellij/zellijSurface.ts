@@ -1,4 +1,4 @@
-import { app, View, WebContentsView } from 'electron';
+import { app, View, WebContentsView, type BaseWindow } from 'electron';
 import { is } from '@electron-toolkit/utils';
 import { join } from 'node:path';
 import { autoOpenZellijDevTools, bindZellijDevTools } from './zellijDevTools.helper';
@@ -10,6 +10,11 @@ import {
 } from '@shared/zellij/zellij.type';
 import { xpcMain } from 'electron-xpc/main';
 import { blurZellijTerminal } from './zellijRuntime.service';
+import { zellijLog, zellijSurfaceTag } from './zellijLog.service';
+import { zellijErrorCode } from './zellijProcess.service';
+import { loadZellijRenderer } from './zellijRendererLoad.service';
+import { promptZellijRendererRetry } from './zellijRendererDialog.service';
+import { i18nHelper } from '@main/i18n/i18n.helper';
 
 /**
  * The Zellij mini app as a self-contained, host-agnostic composite: one container `View` holding the
@@ -27,7 +32,12 @@ import { blurZellijTerminal } from './zellijRuntime.service';
  */
 export class ZellijSurface {
   readonly container = new View();
-  private readonly controls: WebContentsView;
+  private controls: WebContentsView;
+  private chromeReady = false;
+  private chromeError: ZellijSnapshot['error'] = null;
+  private loading: Promise<void> | null = null;
+  private readonly lifetime = new AbortController();
+  private prompt: AbortController | null = null;
   private readonly terminal: ZellijTerminalView;
   private hostRect: ZellijTerminalRect = { x: 0, y: 0, width: 0, height: 0 };
   /** Renderer-measured hole, container-relative. Height 0 means "not measured yet". */
@@ -37,26 +47,19 @@ export class ZellijSurface {
   private opened = false;
 
   constructor(private readonly surfaceId: string) {
-    this.controls = new WebContentsView({
-      webPreferences: {
-        preload: join(app.getAppPath(), 'out', 'preload', 'zellij.js'),
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: false
-      }
-    });
-    bindZellijDevTools(this.controls.webContents);
-    autoOpenZellijDevTools(this.controls.webContents);
-    this.container.addChildView(this.controls);
+    this.controls = this.createControls();
     this.terminal = new ZellijTerminalView({
       surfaceId: this.surfaceId,
       container: this.container,
       bounds: () => this.terminalRect(),
       visible: () => this.visible,
       destroyed: () => this.destroyed,
-      opened: () => this.opened,
+      opened: () => this.opened && this.chromeReady,
       changed: (snapshot) =>
-        xpcMain.broadcast(ZELLIJ_SURFACE_STATE_EVENT, { surfaceId: this.surfaceId, snapshot })
+        xpcMain.broadcast(ZELLIJ_SURFACE_STATE_EVENT, {
+          surfaceId: this.surfaceId,
+          snapshot: this.chromeError ? this.snapshot() : snapshot
+        })
     });
   }
 
@@ -68,7 +71,61 @@ export class ZellijSurface {
    * receives only `params` — no sender web contents — so with several surfaces live an id-less
    * measurement would lay out whichever terminal happened to be addressed last.
    */
-  async load(): Promise<void> {
+  load(): Promise<void> {
+    if (this.loading) return this.loading;
+    if (this.destroyed || this.chromeReady) return Promise.resolve();
+    if (this.controls.webContents.isDestroyed()) this.controls = this.createControls();
+    this.chromeError = null;
+    this.layout();
+    const startedAt = Date.now();
+    const loading = (async () => {
+      try {
+        await loadZellijRenderer(
+          this.controls.webContents,
+          () => this.loadChrome(),
+          'controls',
+          this.lifetime.signal
+        );
+        if (this.destroyed) return;
+        this.chromeReady = true;
+        zellijLog.info('chrome-load', {
+          surface: zellijSurfaceTag(this.surfaceId),
+          elapsedMs: Date.now() - startedAt
+        });
+      } catch (error) {
+        if (this.destroyed) return;
+        this.chromeError = zellijErrorCode(error);
+        this.container.removeChildView(this.controls);
+        if (!this.controls.webContents.isDestroyed()) this.controls.webContents.close();
+        zellijLog.warn('chrome-load-failed', {
+          surface: zellijSurfaceTag(this.surfaceId),
+          reason: this.chromeError,
+          elapsedMs: Date.now() - startedAt
+        });
+      }
+    })().finally(() => {
+      if (this.loading === loading) this.loading = null;
+    });
+    this.loading = loading;
+    return loading;
+  }
+
+  private createControls(): WebContentsView {
+    const controls = new WebContentsView({
+      webPreferences: {
+        preload: join(app.getAppPath(), 'out', 'preload', 'zellij.js'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: false
+      }
+    });
+    bindZellijDevTools(controls.webContents);
+    autoOpenZellijDevTools(controls.webContents);
+    this.container.addChildView(controls);
+    return controls;
+  }
+
+  private async loadChrome(): Promise<void> {
     if (is.dev && process.env.ELECTRON_RENDERER_URL) {
       const url = new URL(`${process.env.ELECTRON_RENDERER_URL}/zellij/index.html`);
       url.searchParams.set(ZELLIJ_SURFACE_QUERY, this.surfaceId);
@@ -89,7 +146,10 @@ export class ZellijSurface {
 
   setVisible(visible: boolean): void {
     this.visible = visible;
-    if (!visible) blurZellijTerminal(this.surfaceId);
+    if (!visible) {
+      blurZellijTerminal(this.surfaceId);
+      this.prompt?.abort();
+    }
     this.container.setVisible(visible);
     this.layout();
   }
@@ -111,20 +171,52 @@ export class ZellijSurface {
 
   sync(): void {
     this.opened = true;
-    this.terminal.sync();
+    if (this.chromeReady) this.terminal.sync();
   }
 
   snapshot(): ZellijSnapshot {
-    return this.terminal.snapshot();
+    const snapshot = this.terminal.snapshot();
+    return this.chromeError ? { ...snapshot, status: 'error', error: this.chromeError } : snapshot;
   }
 
-  initialize(): Promise<ZellijSnapshot> {
+  async initialize(): Promise<ZellijSnapshot> {
+    await this.load();
+    if (this.destroyed || !this.chromeReady) return this.snapshot();
     return this.terminal.initialize();
   }
 
-  focus(): void {
+  focus(owner?: BaseWindow): void {
+    if (this.destroyed || !this.visible) return;
+    if (this.chromeError && owner) {
+      this.offerRetry(owner);
+      return;
+    }
     if (this.terminal.attached()) this.terminal.focus();
     else if (!this.controls.webContents.isDestroyed()) this.controls.webContents.focus();
+  }
+
+  private offerRetry(owner: BaseWindow): void {
+    if (this.prompt || !this.chromeError) return;
+    const prompt = new AbortController();
+    this.prompt = prompt;
+    const labels = i18nHelper.getMessages().zellij;
+    void promptZellijRendererRetry(
+      owner,
+      {
+        title: labels.title,
+        message: labels.errors[this.chromeError],
+        retry: labels.retry,
+        dismiss: labels.dismiss
+      },
+      prompt.signal
+    )
+      .then(async (retry) => {
+        if (this.prompt === prompt) this.prompt = null;
+        if (!retry || this.destroyed || !this.visible) return;
+        await this.initialize();
+        if (!this.destroyed && this.visible) this.focus(owner);
+      })
+      .catch((error) => console.error('[zellij] renderer retry failed', error));
   }
 
   dispose(): void {
@@ -133,6 +225,8 @@ export class ZellijSurface {
     // Mark destroyed only after the terminal has detached — it asks the host before removing its
     // child view, and a surface that claims to be gone would leak that view instead.
     this.destroyed = true;
+    this.lifetime.abort();
+    this.prompt?.abort();
     this.container.removeChildView(this.controls);
     if (!this.controls.webContents.isDestroyed()) this.controls.webContents.close();
   }
@@ -146,12 +240,13 @@ export class ZellijSurface {
       height: Math.max(0, Math.round(this.hostRect.height))
     });
     // The chrome fills the container; the terminal overlays the hole it measured.
-    this.controls.setBounds({
-      x: 0,
-      y: 0,
-      width: Math.max(0, Math.round(this.hostRect.width)),
-      height: Math.max(0, Math.round(this.hostRect.height))
-    });
+    if (!this.controls.webContents.isDestroyed())
+      this.controls.setBounds({
+        x: 0,
+        y: 0,
+        width: Math.max(0, Math.round(this.hostRect.width)),
+        height: Math.max(0, Math.round(this.hostRect.height))
+      });
     this.terminal.layout();
   }
 

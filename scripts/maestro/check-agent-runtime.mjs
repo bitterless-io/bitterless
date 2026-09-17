@@ -229,7 +229,7 @@ assert(piProtocol.includes('executeHostTool(spec, params') && piRuntime.includes
 assert(runtimeTypes.includes('systemPrompt: string') && !runtimeTypes.includes('systemPrompt?: string'), 'runtime systemPrompt must be required')
 assert(runtimeSystemPrompt.includes('typeof text !==') && runtimeSystemPrompt.includes('!text.trim()') && runtimeSystemPrompt.includes('return text'), 'runtime prompt contract must reject blank/missing text without rewriting it')
 assert(piRuntime.indexOf('resolveRuntimeSystemPrompt(options)') < piRuntime.indexOf("await import('@earendil-works/pi-coding-agent')", piRuntime.indexOf('async createSession')), 'pi must validate host instructions before SDK/auth side effects')
-assert(piRuntime.includes('resourceLoader: createPiResourceLoader(pi, () => prompt.hostText)') && piRuntime.includes('cwd: prompt.cwd'), 'pi must always use the host loader and resolved working directory')
+assert(piRuntime.includes('const resources = createPiResourceLoader(pi, () => prompt.hostText, options.skillResources)') && piRuntime.includes('await resources.reload()') && piRuntime.includes('resourceLoader: resources') && piRuntime.includes('cwd: prompt.cwd'), 'pi must always use the host loader and resolved working directory')
 assert(packageJson.includes('"check:maestro": "node scripts/maestro/check-maestro.mjs"'), 'package scripts should expose the embedded Maestro parity suite')
 assert(piAiTypes.includes('export interface ImageContent') && piAiTypes.includes('data: string;') && !piAiTypes.includes('url: string;'), 'pi 0.79 ImageContent is base64-data only, not URL-native')
 // 2026-08-28: re-pointed, NOT retired. The guarded fact still holds in pi-ai 0.80.10 — only the

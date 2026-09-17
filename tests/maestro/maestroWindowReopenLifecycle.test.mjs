@@ -55,7 +55,7 @@ test('repeat Open shows the preserved singleton before any cold boot is created'
   assert.match(reuseBranch, /return/);
 });
 
-test('authentication and host quit retain complete Maestro runtime cleanup', () => {
+test('authentication suspends protected resources while host quit destroys the full runtime', () => {
   const handler = read('src/main/xpc/maestroWindow.handler.ts');
   const destroyForAuth = requireMatch(
     handler,
@@ -74,6 +74,7 @@ test('authentication and host quit retain complete Maestro runtime cleanup', () 
   );
 
   assert.match(destroyForAuth, /await this\.runAuthCleanup\(\)/);
-  assert.match(performAuthCleanup, /await this\.destroyMaestroRuntime/);
+  assert.match(performAuthCleanup, /await maestroWindowHelper\.suspendAuthenticatedSession\(\)/);
+  assert.doesNotMatch(performAuthCleanup, /destroyMaestroRuntime/);
   assert.match(destroyForHostQuit, /await this\.destroyMaestroRuntime\(\)/);
 });

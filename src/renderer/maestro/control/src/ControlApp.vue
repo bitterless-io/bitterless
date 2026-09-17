@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { agentBrowserStore } from './store/agentBrowser.store'
 import type { AgentBrowserSessionState } from '@maestro-shared/coach.api'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Button, Message, Notification, Spin, Trigger } from '@arco-design/web-vue'
 import { IconLogin2, IconX } from '@tabler/icons-vue'
 import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer'
@@ -33,11 +33,35 @@ import { channelStore } from './store/channel.store'
 import { messageStore } from './store/message.store'
 import { isRejection } from './store/turn.service'
 import { taskStore } from './store/task.store'
+import { workflowStore } from './store/workflow.store'
+import { localHomeAuthStore } from '@renderer/maestro/localHome/src/localHomeAuth.store'
+import { ControlSubscriptionScope } from './controlSubscriptions.service'
 import { installMarkdownLinkTooltipCleanup } from './markdownLinkTooltip.service'
 import './ControlApp.less'
 
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
 let disposeMarkdownLinkTooltip: (() => void) | undefined
+const subscriptions = new ControlSubscriptionScope()
+workflowStore.resume()
+
+const resetProtectedState = (): void => {
+  if (!subscriptions.active) return
+  subscriptions.dispose()
+  channelStore.reset()
+  messageStore.reset()
+  taskStore.reset()
+  sessionActions.reset()
+  agentBrowserStore.reset()
+  workflowStore.reset()
+  Notification.remove('codex-device')
+}
+
+// Invalidate pending reads synchronously, before Vue gets to unmount the protected subtree.
+watch(() => [localHomeAuthStore.ready && !localHomeAuthStore.loggingOut,
+  localHomeAuthStore.snapshot?.authorityEpoch, localHomeAuthStore.snapshot?.email] as const,
+([ready, epoch, email], [, previousEpoch, previousEmail]) => {
+  if (!ready || epoch !== previousEpoch || email !== previousEmail) resetProtectedState()
+}, { flush: 'sync' })
 
 const status = ref('idle')
 const controlLoading = ref(true)
@@ -52,6 +76,7 @@ const activeSession = computed(() => channelStore.activeSession)
 const chatPanelRef = ref<InstanceType<typeof ChatPanel> | null>(null)
 const focusComposer = (): void => {
   void nextTick(() => {
+    if (!subscriptions.active) return
     if (!sessionActions.historyVisible && !sessionActions.searchVisible) chatPanelRef.value?.focusComposer()
   })
 }
@@ -159,9 +184,11 @@ const toLlmEffort = (value: unknown): LlmEffort => {
 }
 
 const applyLlmConfig = async (cfg: LlmConfig): Promise<void> => {
+  if (!subscriptions.active) return
   llmConfig.value = cfg
   syncLlmContextWindow(cfg)
   await messageStore.compactAllIfNeeded()
+  if (!subscriptions.active) return
   status.value = cfg.ready ? 'idle' : 'login needed'
 }
 
@@ -174,9 +201,11 @@ const onSwitchLlmTarget = async (
   status.value = 'switching model'
   try {
     const cfg = await coach.setLlmConfig(target)
+    if (!subscriptions.active) return
     llmConfig.value = cfg
     syncLlmContextWindow(cfg)
     await messageStore.compactAllIfNeeded()
+    if (!subscriptions.active) return
     if (cfg.ready) {
       Message.success(`Switched to ${llmLabel(cfg.provider, cfg.model, cfg.effort)}`)
       status.value = 'idle'
@@ -209,9 +238,11 @@ const onSwitchLlmEffort = async (value: unknown): Promise<void> => {
   status.value = 'switching model'
   try {
     const next = await coach.setLlmConfig({ provider: cfg.provider, model: cfg.model, effort })
+    if (!subscriptions.active) return
     llmConfig.value = next
     syncLlmContextWindow(next)
     await messageStore.compactAllIfNeeded()
+    if (!subscriptions.active) return
     if (next.ready) {
       Message.success(`Switched to ${llmLabel(next.provider, next.model, next.effort)}`)
       status.value = 'idle'
@@ -228,6 +259,7 @@ const loginActiveProvider = async (): Promise<void> => {
   const cfg = llmConfig.value
   if (!cfg || !activeLlmProviderAllowed.value || llmLoginProvider.value) return
   const next = await coach.loginLlm({ provider: cfg.provider, method: 'browser' })
+  if (!subscriptions.active) return
   llmConfig.value = next
   syncLlmContextWindow(next)
 }
@@ -282,6 +314,7 @@ const onPanelBlur = (): void => {
 }
 
 onBeforeUnmount(() => {
+  resetProtectedState()
   disposeMarkdownLinkTooltip?.()
   window.removeEventListener('focus', onPanelFocus)
   window.removeEventListener('blur', onPanelBlur)
@@ -297,12 +330,15 @@ const triggerInjectedSkill = async (trigger: InjectedSkillTrigger): Promise<void
   }
   channelStore.selectSource('cowork')
   await nextTick()
+  if (!subscriptions.active) return
   const session = activeSession.value || (await channelStore.startFreshMaestroSession())
+  if (!subscriptions.active) return
   if (!session || session.turn || session.archivedAt) {
     Message.warning('Maestro is busy. Try the injected skill again after the current turn finishes.')
     return
   }
   const reply = await messageStore.turnService.send(session.id, message)
+  if (!subscriptions.active) return
   if (!reply || isRejection(reply) || !reply.ok) {
     Message.warning((reply && !isRejection(reply) && reply.text) || `Could not run ${trigger.skillTitle}`)
   }
@@ -340,24 +376,30 @@ const logCodexDebug = (event: CodexDebugEvent): void => {
 }
 
 const loadControlConfig = async (): Promise<void> => {
+  if (!subscriptions.active) return
   controlLoading.value = true
   controlLoadError.value = ''
   status.value = 'loading'
   try {
     const tabs = await coach.getTabs().catch(() => [] as TabInfo[])
+    if (!subscriptions.active) return
     await channelStore.init(tabs)
+    if (!subscriptions.active) return
 
     const cfg = await coach.getLlmConfig()
+    if (!subscriptions.active) return
     llmConfig.value = cfg
     syncLlmContextWindow(cfg)
     await messageStore.compactAllIfNeeded()
+    if (!subscriptions.active) return
     status.value = cfg.ready ? 'idle' : 'login needed'
   } catch (err) {
+    if (!subscriptions.active) return
     const message = err instanceof Error ? err.message : String(err)
     controlLoadError.value = message || 'Failed to load control config'
     status.value = 'config failed'
   } finally {
-    controlLoading.value = false
+    if (subscriptions.active) controlLoading.value = false
   }
 }
 
@@ -366,13 +408,13 @@ onMounted(async () => {
   panelFocused.value = document.hasFocus()
   window.addEventListener('focus', onPanelFocus)
   window.addEventListener('blur', onPanelBlur)
-  xpcRenderer.subscribe('coach/codex-log', (payload) => {
+  subscriptions.subscribe('coach/codex-log', (payload) => {
     logCodexDebug(payload.params as CodexDebugEvent)
   })
-  xpcRenderer.subscribe('coach/tabs', (payload) => {
+  subscriptions.subscribe('coach/tabs', (payload) => {
     void channelStore.syncOperationTabs((payload.params as TabInfo[]) || [])
   })
-  xpcRenderer.subscribe('coach/codex-device', (payload) => {
+  subscriptions.subscribe('coach/codex-device', (payload) => {
     const info = payload.params as { userCode: string; verificationUri: string } | null
     if (!info) {
       Notification.remove('codex-device')
@@ -386,32 +428,44 @@ onMounted(async () => {
       closable: true
     })
   })
-  xpcRenderer.subscribe('coach/llm-config', (payload) => {
+  subscriptions.subscribe('coach/llm-config', (payload) => {
     const cfg = payload.params as LlmConfig
     console.log('[coach control] llm config broadcast', { provider: cfg.provider, model: cfg.model, ready: cfg.ready })
     void applyLlmConfig(cfg)
   })
-  xpcRenderer.subscribe('coach/llm-login-state', (payload) => {
+  subscriptions.subscribe('coach/llm-login-state', (payload) => {
     const state = payload.params as LlmLoginState
     llmLoginProvider.value = state?.loading ? state.provider : ''
   })
-  xpcRenderer.subscribe('coach/agent-activity', (payload) => {
+  subscriptions.subscribe('coach/agent-activity', (payload) => {
     messageStore.pushActivity(payload.params as AgentActivityStep)
   })
-  xpcRenderer.subscribe('coach/agent-browser-session', (payload) => {
+  subscriptions.subscribe('coach/agent-browser-session', (payload) => {
     agentBrowserStore.accept(payload.params as AgentBrowserSessionState)
   })
-  xpcRenderer.subscribe('coach/agent-stream', (payload) => {
+  subscriptions.subscribe('coach/agent-stream', (payload) => {
     messageStore.pushStream(payload.params as AgentStreamDelta)
   })
-  xpcRenderer.subscribe('coach/agent-thinking', (payload) => {
+  subscriptions.subscribe('coach/agent-compaction', (payload) => {
+    const state = payload.params as import('@shared/piCompaction.types').CompactionStatus & { sessionId: string }
+    const session = messageStore.sessions.find(item => item.id === state.sessionId)
+    if (!session) return
+    {
+      session.compacting = state.active
+      session.compactionRetry = state.active && state.retry ? { ...state.retry, startedAt: Date.now() } : undefined
+      if (session.turn) session.turn.lastActivityAt = Date.now()
+    }
+    if (!state.active && state.errorMessage) messageStore.pushErrorCard(state.sessionId, new Error(state.errorMessage), { subtitle: 'Context compaction failed' })
+  })
+  subscriptions.subscribe('coach/agent-thinking', (payload) => {
     messageStore.pushThinking(payload.params as AgentThinkingState)
   })
-  xpcRenderer.subscribe('coach/injected-skill-trigger', (payload) => {
+  subscriptions.subscribe('coach/injected-skill-trigger', (payload) => {
     void triggerInjectedSkill(payload.params as InjectedSkillTrigger)
   })
 
   await loadControlConfig()
+  if (!subscriptions.active) return
   // Task snapshots can contain pending confirmations from before a renderer reload. Bind/load the
   // chat session first so replay is idempotent and lands in its original session.
   if (channelStore.activeSession) await taskStore.init()

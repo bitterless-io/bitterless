@@ -414,11 +414,35 @@ assert(
   `${BROWSER_VIEW}: Restore default homepage must be enabled only when a CUSTOM value is stored. Keyed on ` +
     'resolveHomeCompositeId() it is now always true, so the item sits enabled and does nothing.'
 )
+// 2026-09-17 反转:原来这条断言是「已有活着的承载时 `spec.open` 必须**抛**」,让固有槽位那条路把
+// 这一发降级成内置本地 Home。OnlyPreview 成了默认主页之后那条降级变成日常路径 —— 主页槽位悄悄换成
+// 另一个页面,而且没有任何回到那个窗口的入口(docs/features/onlypreview-deferred-tab-placeholder.md)。
+// 现在必须**装占位页**。两半都钉住:不装占位页就回到那格空白,而 `throw` 回来就是旧行为复辟。
 assert(
-  /hasLiveOnlyPreviewHost\(\)\) \{\n\s*throw new OnlyPreviewContractError/.test(onlyPreviewTab),
-  `${ONLY_PREVIEW_TAB}: opening the composite while OnlyPreview already has a live host must THROW. openOnMount's ` +
-    'reuse branch returns that host without attaching this mount, so `open` resolves onto a blank tab while the ' +
-    'standalone window jumps to the front — and as the default homepage that is a boot-time path, not an edge case.'
+  /hasLiveOnlyPreviewHost\(\)\) \{\n\s*await mountPlaceholder\(host\);/.test(onlyPreviewTab),
+  `${ONLY_PREVIEW_TAB}: opening the composite while OnlyPreview already has a live host must build the DEFERRED ` +
+    "placeholder, not throw. openOnMount's reuse branch returns that host without attaching this mount, so `open` " +
+    'would otherwise resolve onto a blank tab — and as the default homepage that is a boot-time path, not an edge ' +
+    'case. Ral 2026-09-17: the tab stays and shows "already open in a separate window" plus a Go-to button.'
+)
+assert(
+  !/hasLiveOnlyPreviewHost\(\)\) \{\n\s*throw/.test(onlyPreviewTab),
+  `${ONLY_PREVIEW_TAB}: the refusal is superseded (2026-09-17). Throwing here brings back the silent degrade to the ` +
+    'built-in local Home, which is exactly what the placeholder replaced.'
+)
+assert(
+  /promoteOnlyPreviewCoworkTab/.test(onlyPreviewTab),
+  `${ONLY_PREVIEW_TAB}: the deferred tab must be promotable IN PLACE. openCompositeTab only brings a singleton's ` +
+    'existing tab forward — it never re-mounts it — so without this export "close the window" would leave the ' +
+    'placeholder on screen for good.'
+)
+const HOST_TOGGLE = 'src/main/windows/onlyPreviewHostToggle.service.ts'
+const hostToggle = read(HOST_TOGGLE)
+assert(
+  !/closeTab/.test(hostToggle),
+  `${HOST_TOGGLE}: undocking must not close any tab (G1: zero closeTab calls on that path). A pinned tab refuses ` +
+    'silently, so the close was a no-op that left a blank slot behind; the tab now degrades to a placeholder ' +
+    'instead. See docs/issues/onlypreview-host-toggle-leaves-empty-cowork-tab.md, Reversal (2026-09-17).'
 )
 
 console.log('[check-tab-alias] ok')

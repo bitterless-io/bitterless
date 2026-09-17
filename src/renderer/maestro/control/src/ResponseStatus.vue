@@ -69,6 +69,15 @@ const taskMeta = (task: MaestroTask): string => {
 }
 
 const status = computed<StatusView | null>(() => {
+  if (props.session.compacting) {
+    const retry = props.session.compactionRetry
+    if (retry) {
+      const seconds = Math.ceil(Math.max(0, retry.startedAt + retry.delayMs - tick.value) / 1000)
+      return { tone: 'wait', text: i18nHelper.maestroControl.responseStatus.compactionRetry.replace('{attempt}', String(retry.attempt)).replace('{max}', String(retry.maxAttempts)),
+        meta: i18nHelper.maestroControl.responseStatus.compactionWait.replace('{seconds}', String(seconds)) + (retry.error ? ' · ' + retry.error : '') }
+    }
+    return { tone: 'wait', text: i18nHelper.maestroControl.responseStatus.compacting, meta: turn.value?.steering?.pending ? i18nHelper.maestroControl.responseStatus.compactionQueued : undefined }
+  }
   const retry = turn.value?.retry
   if (retry) return { tone: 'wait', text: retryProgress(retry.attempt, retry.max) }
 

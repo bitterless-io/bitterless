@@ -122,6 +122,9 @@ export interface CoachXpcContract {
   trainSkill(params: { skillId: string; guidance: string }): Promise<SkillCreateResult>
   listSkills(params?: { sessionId?: string }): Promise<SkillSummary[]>
   skillCatalog(params?: { sessionId?: string; checkUpdates?: boolean }): Promise<SkillCatalogSnapshot>
+  setSkillEnabled(params: { reference: string; enabled: boolean; sessionId?: string }): Promise<void>
+  manageSkillInstallation(params: SkillInstallationRequest): Promise<SkillInstallationResult>
+  diagnoseSkill(params: { reference: string; sessionId?: string }): Promise<SkillRuntimeDiagnostics>
   setSkillViewContext(params: { sessionId: string; workspace?: { path: string; name: string; exists: boolean; updatedAt: number } }): Promise<void>
   openSkillFile(params: { skillId: string; sessionId?: string }): Promise<{ ok: boolean; error?: string }>
   openSkillSource(params: { layer: SkillLayer; sessionId?: string }): Promise<{ ok: boolean; error?: string }>
@@ -156,6 +159,11 @@ export interface CoachXpcContract {
   replaySkill(params: { skillId: string; variables: Record<string, string> }): Promise<ReplayResult>
   getLlmConfig(): Promise<LlmConfig>
   setLlmConfig(params: { provider: string; model: string; effort?: LlmEffort }): Promise<LlmConfig>
+  setCompactPrompt(params: { compactPrompt: string }): Promise<LlmConfig>
+  testAutoCompaction(params: { sessionId: string; filePath?: string }): Promise<import('@shared/piCompactionTest.types').AutoCompactionTestReport>
+  deleteNativeSession(params: { sessionId: string }): Promise<{ ok: true }>
+  cancelCompaction(params: { sessionId: string }): Promise<void>
+  compactSession(params: { sessionId: string; instructions?: string }): Promise<AgentCompactReply & { tokensBefore?: number; estimatedTokensAfter?: number }>
   setLlmCompression(params: { provider: string; model: string; compressionRemainingPercent: number }): Promise<LlmConfig>
   // Geometry pushed from the home renderer: the operation/control placeholders in
   // Layout.vue define where the main process layers the native WebContentsViews.
@@ -165,6 +173,7 @@ export interface CoachXpcContract {
   // / the agent target. The home renderer drives switching/closing via these.
   // Open a new blank tab (empty operation view) and make it active.
   newTab(): Promise<void>
+  requestLogin(): Promise<void>
   // Open `url` in a NEW tab and activate it — atomic: the tab is born with the URL and loaded into
   // its OWN view (not the active view), so it can't desync the current tab. Used by Demo / "open in
   // new tab". Empty url → same as newTab().
@@ -497,6 +506,7 @@ export interface ViewRect {
 }
 
 export interface CoachSettings {
+  compactPrompt?: string
   startUrl: string
   llmProvider: string
   llmModel: string
@@ -600,6 +610,8 @@ export interface LlmLoginProviderOption {
 }
 
 export interface LlmConfig {
+  compactPrompt?: string
+  defaultCompactPrompt?: string
   provider: string
   model: string
   effort: LlmEffort
@@ -697,6 +709,7 @@ export interface SkillScopeContextInfo { institutionId: string; institutionName?
 export type SkillLayer = 'global' | 'workspace' | 'institution'
 export interface SkillCatalogSnapshot { institution?: SkillScopeContextInfo | null; generation?: string | number; revision: string; workspace: string; roots: Record<SkillLayer, string[]>; skills: SkillSummary[]; watchError?: string; cloudStatus?: string; cloudError?: string }
 export interface SkillSummary {
+  enabled?: boolean
   canonicalName?: string
   displayName?: string
   aliases?: string[]
@@ -726,6 +739,12 @@ export interface SkillSummary {
   updatedAt: number
   inputs: SkillInput[]
   triggers: string[]
+}
+
+export interface SkillRuntimeDiagnostics {
+  status: 'ready' | 'missing' | 'unknown'
+  behaviorVerified: false
+  checks: { kind: 'entry' | 'interpreter' | 'command' | 'package' | 'metadata'; subject: string; status: 'ready' | 'missing' | 'unknown'; detail: string; repair: string }[]
 }
 
 export interface SkillDetail {
@@ -889,6 +908,8 @@ export interface AgentContextMessage {
 }
 
 export interface AgentConversationContext {
+  /** Exact qualified reference selected for this message; main resolves current source and body. */
+  selectedSkillRef?: string
   compactSummary?: string
   recentMessages?: AgentContextMessage[]
   /** Absolute paths explicitly attached on the current user turn. Main verifies they were registered. */
@@ -1133,6 +1154,7 @@ export interface WorkspaceRef {
 export interface WorkspaceRefResult {
   ok: boolean
   workspace?: WorkspaceRef
+  previewError?: 'unavailable' | 'open-failed'
   missing?: boolean
   error?: string
 }
@@ -1154,3 +1176,10 @@ export interface FileStatusResult {
 }
 
 export type CoachTraceEvent = TraceEvent
+
+export interface SkillInstallationRequest { action: 'list' | 'update' | 'remove'; scope: 'workspace' | 'shared'; installationId?: string; sessionId?: string }
+export interface ManagedSkillInstallation {
+  id: string; destination: string; source: { kind: 'github' | 'npm' | 'git'; identity: string; requested: string; requestedRef?: string; requestedVersion?: string; resolvedCommit?: string; version?: string; integrity?: string; path?: string }
+  skills: { name: string; description: string; path: string }[]; digest: string; installedAt: string; updatedAt: string; status: 'installed' | 'modified' | 'missing'
+}
+export interface SkillInstallationResult { ok: boolean; scope: 'workspace' | 'shared'; authoringRoot: string; installations?: ManagedSkillInstallation[]; installation?: ManagedSkillInstallation; removed?: string }

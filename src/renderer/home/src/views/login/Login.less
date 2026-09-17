@@ -25,6 +25,36 @@
   box-shadow: 0 20px 56px rgba(50, 57, 85, 0.16);
 }
 
+// Control owns the viewport and toolbar; the form owns only its scrollable panel body.
+.login-view--compact {
+  position: relative;
+  height: auto;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  padding: 12px 4px;
+  background: transparent;
+  align-items: stretch;
+
+  .login-view__panel {
+    width: 100%;
+    max-height: none;
+    flex: 0 0 auto;
+    // Auto margins center spare space but become zero when the form needs to scroll.
+    margin-block: auto;
+    padding: 12px 8px;
+    overflow: visible;
+    background: transparent;
+    box-shadow: none;
+    border-radius: 0;
+  }
+
+  .login-view__copy h1 { font-size: 22px; }
+  .login-view__session-recovery-actions { grid-template-columns: 1fr; }
+  .arco-modal-container { position: absolute; }
+  .arco-modal-body { padding: 16px 12px; }
+}
+
 .login-view__copy {
   margin-bottom: 20px;
 

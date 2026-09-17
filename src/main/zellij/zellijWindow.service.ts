@@ -38,6 +38,7 @@ interface ZellijSurfaceEntry {
 class ZellijWindowService {
   private readonly surfaces = new Map<string, ZellijSurfaceEntry>();
   private readonly creating = new Map<string, Promise<ZellijSurface>>();
+  private readonly loadingSurfaces = new Map<string, ZellijSurface>();
   private window: BrowserWindow | null = null;
   private stateController: WindowStateController | null = null;
   private generation = 0;
@@ -56,11 +57,30 @@ class ZellijWindowService {
     const pending = this.creating.get(surfaceId);
     if (pending) return pending;
     const generation = this.generation;
+    // Start the SHARED server now, in parallel with this surface's own chrome page load, instead of
+    // after it.
+    //
+    // `surface.load()` is a bounded Chromium navigation, and nothing could reach
+    // `prepareZellijTerminal` until it resolved — so on the first boot after an update, when every
+    // renderer in the app is starved at once (2026-09-17: the web server was spawned 106s after
+    // startup, against 4.2s on an ordinary boot), the server had not even been asked to start by
+    // the time the user was looking at a blank tab. Kicking it here means it is already listening
+    // when the chrome finally mounts, so the terminal paints as soon as its page exists.
+    //
+    // Idempotent and fire-and-forget: `ZellijProcessService.initialize()` memoizes its in-flight
+    // promise and returns immediately once ready, so N surfaces still cause exactly one server
+    // start, and a failure here is re-reported through the normal prepare path.
+    void getZellijRuntime()
+      .initialize()
+      .catch(() => undefined);
     const created = (async () => {
       const surface = new ZellijSurface(surfaceId);
+      this.loadingSurfaces.set(surfaceId, surface);
       try {
         await surface.load();
         if (generation !== this.generation) throw new Error('operation-failed');
+        if (this.loadingSurfaces.get(surfaceId) !== surface)
+          throw new Error('[zellij] Maestro tab is no longer available');
       } catch (error) {
         surface.dispose();
         throw error;
@@ -69,6 +89,7 @@ class ZellijWindowService {
       return surface;
     })().finally(() => {
       this.creating.delete(surfaceId);
+      this.loadingSurfaces.delete(surfaceId);
     });
     this.creating.set(surfaceId, created);
     return created;
@@ -92,6 +113,7 @@ class ZellijWindowService {
     window.focus();
     surface.setVisible(true);
     surface.sync();
+    surface.focus(window);
   }
 
   /**
@@ -138,7 +160,7 @@ class ZellijWindowService {
     entry.surface.setVisible(active);
     if (active) {
       this.refreshTab(host);
-      entry.surface.focus();
+      entry.surface.focus(host.window() ?? undefined);
     }
   }
 
@@ -153,6 +175,9 @@ class ZellijWindowService {
   /** The tab went away. The surface goes with it — this is a close, not a move. */
   closeTab(host: MaestroCompositeTabHostApi): void {
     this.closedTabs.add(host);
+    const surfaceId = host.instanceId || STANDALONE_SURFACE_ID;
+    this.loadingSurfaces.get(surfaceId)?.dispose();
+    this.loadingSurfaces.delete(surfaceId);
     void closeZellijTerminal(host.instanceId || STANDALONE_SURFACE_ID).catch(() => {
       console.error('[zellij] failed to close the tab session');
     });
@@ -209,6 +234,8 @@ class ZellijWindowService {
 
   async destroy(): Promise<void> {
     this.generation += 1;
+    for (const surface of this.loadingSurfaces.values()) surface.dispose();
+    this.loadingSurfaces.clear();
     await Promise.all([...this.creating.values()].map((pending) => pending.catch(() => undefined)));
     // Capture the focused pane before disposing its view or stopping the owned server.
     await stopZellijRuntime();

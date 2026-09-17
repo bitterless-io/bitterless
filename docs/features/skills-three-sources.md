@@ -2,6 +2,22 @@
 
 状态：已按批准设计实现，2026-09-16 独立专项验收通过；验证边界与既有检查失败见 [验收记录](../plan/reviews/skills-three-sources-001-3.md)。
 
+> **2026-09-17 P1 current contract.** Chat exposes a qualified-reference picker with source/path labels and explicit-only entries; the host re-resolves the selected package before use. Profile-local enablement persists by stable reference and filters runtime catalogs/host invocation while keeping management visible; it is not an OS permission sandbox for generic read/bash. The read-only `skill_diagnose` operation reports declared entry/interpreter/command/package conditions and repair steps without running or installing anything. `skill_install` now inspects and manages GitHub HTTPS archives, npm tarballs and HTTPS Git sources, parses supported pasted skills-add commands, records local source ownership, and protects modified files on update/removal. Its selected-workspace/Shared destinations and skill catalog invalidation work without an institution. Approval follows the existing tool policy after resolving concrete source/version/target; abort or denied approval does not publish. The Skills page can explicitly list managed sources and update/remove an installation. See [task 006](../plan/tasks/skills-p1-completion-006.md) for evidence and limits; it supersedes task 005’s earlier plan-only installer statement.
+
+> **2026-09-17 native loading contract.** Discovery uses Pi's exported synchronous `loadSkillsFromDir` per configured root, with native frontmatter parsing and `formatSkillsForPrompt`. Per-root loading preserves the synchronous registry contract and same-name skills across sources. The hand-written directory walker/parser and persistent watcher/poll were removed. Native resource/session reload applies at the boundaries in #4. Without a valid institution context, skip only that layer; Global, Workspace and normal chat continue without institution login. See [native-loading task](../plan/tasks/skills-pi-native-loading-001.md) and [current reload task](../plan/tasks/skills-pi-reload-cache-002.md).
+
+> **Agent-authored skill packages.** New ordinary skills default to the explicitly selected workspace's `.agents/skills`, or the profile's `skill-library/shared` when no workspace is selected. Dynamic instructions supply absolute roots and the bundled Bun path for JS/TS execution. The lightweight `skill_creator` host tool supplies an instruction-only or script template with `init`, and native Pi format checking with `check`; existing file/process tools fill in and execute the authored behavior. Recorded-skill creation retains its existing workflow and destination. See [creator task 004](../plan/tasks/skills-creator-004.md).
+
+> **Creator evidence and boundaries.** `init` requires a name and useful description, stages a small package, refuses any existing destination, and creates only `SKILL.md` (instruction) or additionally `scripts/run.mjs` (script). Initial TODO markers mean generated=true, formatChecked=false. `check` preserves Pi diagnostics, requires explicit name/description, rejects unfinished template markers, and checks optional frontmatter `entry` and `resources` relative file paths; those optional existence hints do not add a Pi dependency or require a sidecar. Creator access is limited to the current authoring root; institution/cloud packages and escaped links are excluded. Initialization invalidates the catalog; checking is read-only and keeps the established Refresh/New Chat boundary for file edits. Both actions always return behaviorVerified=false: representative input and expected observable output must be checked separately with existing tools when useful and authorized. Report generated, format-checked and actual behavior evidence separately; this is not a general evaluation/training platform or remote installer.
+
+> **Lightweight installer guidance.** The Chat authoring prompt contains a named installation guide: prefer existing tools, bundled Bun and direct HTTPS retrieval before adding software; inspect a pasted `npx` request's source/version/CLI capability instead of executing it verbatim. Bun requires verified compatibility; necessary dependencies remain allowed when existing capabilities are insufficient. App-private Node/npm/Git automatic preparation and managed source/lock ledgers are not implemented; no global install or PATH mutation is the default. Complete resources, current workspace/Shared placement, collision protection, format/behavior evidence and Refresh/New Chat rules remain in force, including local use without an institution. This is effective prompt guidance through existing tools, not an added installer tool or managed remote installation capability. See [task 005](../plan/tasks/skills-installer-guidance-005.md).
+
+> **2026-09-17 complete package import/export.** Directory import and export preserve the complete legal resource tree, including nested scripts/references/assets, binary files, hidden resources, empty directories and executable file permissions. Safe links within the package are materialized as ordinary files/directories; escaping, broken or cyclic links, special files, unsafe portable names and case/Unicode-normalization path collisions fail explicitly. A hidden sibling stage is copied and validated before publication; name collisions choose a new directory, and failure removes staging without replacing an installed package. Native metadata validation occurs before publication. Source files and existing recording scope, authorization and recipe rules remain intact. See [P0 task 003](../plan/tasks/skills-p0-completeness-003.md).
+
+> **Resource preservation versus metadata normalization.** Standard import keeps the existing normalization of `SKILL.md` (host identity/source and input metadata plus body sanitization), fills missing `README.md`, `AGENTS.md`, `CLAUDE.md` and `agents/openai.yaml`, and writes host audit/import manifests. Standard export retains its existing sanitization of `SKILL.md` and portable Markdown documents, sidecar fallback, and generated audit/export manifests; its manifest now includes nested and hidden files. Recording packages retain their existing recipe redaction and regenerated portable documents. Other resource bytes and relative paths are preserved, rather than interpreted as text or limited to a whitelist. This remains directory import/export; it adds no local ZIP, GitHub/npm installation, dependency manager or cloud publishing UI.
+
+> **2026-09-17 Pi lifecycle correction (current contract).** Ral requested closer alignment with Pi. Each new Chat runtime performs native resource loading once. After that initial load, ordinary turns, model requests, catalog reads and `/view_context` use the loaded snapshot; they do not rescan directories or force prompt rebuilds. Explicit refresh and actual source/context changes use the resource reload lifecycle. External file edits become discoverable through the existing Skills refresh action or a new Chat runtime. This supersedes earlier next-turn automatic reload statements below. No valid institution still skips only that layer. See [task 002](../plan/tasks/skills-pi-reload-cache-002.md).
+
 本页设计 BL / Cowork 的 Skills 来源、页面、自动重载及 Chat 清单。不变量：**三个来源均可见、均可引用；显示的可用状态必须与实际模型输入及读取能力一致。**
 [页面稿](../design/skills-three-sources.html)（审核视觉与页面状态）、[任务](../plan/tasks/skills-three-sources-001.md)（批准后执行顺序与验收）、[原共享方案](workbench-institution-workflows.md)（保留 Workflow 及历史两范围实现记录）。核对日期 2026-09-16，依据：本页末尾实码审计和 OpenAI 官方资料。
 
@@ -14,7 +30,7 @@
 |---|---|---|---|
 | G1 | Skills 恰好三个来源 Tab：全局、工作区、机构；每层列出真实路径与状态 | ⚠ 原两范围 UI，工作区未接入 | [#1](#s1)、[#2](#s2) |
 | G2 | 同一 Chat 可引用全部三层可用项；同名项均可定位 | ❌ 当前域名过滤和条数上限会漏项 | [#3](#s3) |
-| G3 | 编辑、添加、删除及机构更新后自动重载对应 Skill，无需重启或新建 Chat | ⚠ 缺文件监听、持续云轮询及统一版本 | [#4](#s4) |
+| G3 | 显式刷新、来源变化及宿主管理更新后重载 Skill；普通读取和发送复用缓存，无需重启或新建 Chat | 原 watcher/每轮重扫方案已由 2026-09-17 Pi 生命周期要求取代 | [#4](#s4) |
 | G4 | `/view_context` 展示该 Chat 下次发送的真实完整清单，能区分清单与正文 | ⚠ 已有导出链路，仍使用旧清单 | [#5](#s5) |
 | G5 | 切换账号不影响本机全局；机构严格隔离；不同 Chat 的工作区不串用 | ⚠ 机构有隔离基础，工作区无目录上下文 | [#1](#s1)、[#4](#s4) |
 | G6 | 两端同一功能契约，先提交设计并发 BotAndI，Ral 确认后才开发 | ⏳ 本轮交付设计，不宣称功能完成 | [#6](#s6)、[待定账本](#pending-questions) |
@@ -43,7 +59,7 @@
 
 工作区 root 必须复用真实文件工具的解析结果；未显式绑定时使用现有 default-workspace，标明“默认工作区”。Workbench 跟随当前选中 Chat；无 Chat 时使用应用默认工作区，并标明查看上下文。打开 Workbench 本身不得改变其他运行中 Chat 的工作区。
 
-发现沿父级走到最近 Git 根（含根），子模块以自身根为界；非 Git 目录只读自身 `.agents/skills`。不递归搜索整个仓库的任意子项目。可递归读取所发现的 skill 根下技能目录，跳过无关依赖/版本控制目录；符号链接技能按真实目录去重、防循环，记录展示路径与真实路径并监听目标，既有文件访问授权仍适用。
+发现沿父级走到最近 Git 根（含根），子模块以自身根为界；非 Git 目录只读自身 `.agents/skills`。不递归搜索整个仓库的任意子项目。可递归读取所发现的 skill 根下技能目录，跳过无关依赖/版本控制目录；符号链接技能按真实目录去重、防循环，记录展示路径与真实路径，重载时重新解析目标，既有文件访问授权仍适用。
 
 **标准依据与产品选择分开。** [OpenAI Build skills](https://learn.chatgpt.com/docs/build-skills)（未标出版日期；检索 2026-09-16，原 Codex skills URL 重定向至此）说明：本地仓库从 CWD 到仓库根发现 `.agents/skills`；Skill 以含 name/description 的 SKILL.md 为入口，可有 scripts/references/assets 和可选 agents/openai.yaml；同名不合并，支持符号链接，正文按需读取。我们采用这些格式与发现规则。userData 全局位置、机构分发、完整清单保证和重载时序属于本产品设计；不额外引入 Codex 的 HOME/admin/system 四种位置作为新 Tab，也不声称完整实现 Codex 的配置/插件运行时。
 
@@ -101,7 +117,7 @@ Workbench / Skills                     当前 Chat · Workspace / 当前机构
 | 初次扫描 | 骨架 + 正在读取该来源；其他已就绪来源可浏览 | 发送前等待完整本地扫描，不能悄悄漏层 |
 | 空目录 | 说明这一来源暂无技能；工作区显示 `.agents/skills` 路径 | 合法空集合 |
 | 无搜索结果 | 清除筛选动作，来源总数保留 | 不影响完整 Chat 清单 |
-| 坏 YAML/缺字段/断链接 | 错误行、文件位置、修复后自动重载提示；原有效缓存不伪装最新 | 对应项不可用，其他项可用 |
+| 坏 YAML/缺字段/断链接 | 错误行、文件位置、修复后刷新提示；原有效缓存不伪装最新 | 对应项不可用，其他项可用 |
 | 云同步中/离线 | 正在检查或离线，最后成功时间；无验证授权则“待验证” | 有效授权与完整缓存可继续用；未授权不可用，见 #4 |
 | 账号/机构切换 | 旧列表和选中详情同步清空，新上下文重新加载 | 旧机构 ref 即时失效 |
 | 窄宽度/键盘 | 至少 800×600 可用；清单→详情单栏可返回，Tab 独立水平滚动 | 不影响引用；Tab 方向键、Enter/Space、清楚焦点、Esc 返回 |
@@ -142,25 +158,23 @@ Workbench / Skills                     当前 Chat · Workspace / 当前机构
 **代价。** 完整清单比相关度挑选消耗更多上下文；目录极大时发送会显式失败。这是用户完整性要求的代价，不用静默遗漏规避。
 
 <a id="s4"></a>
-## #4 自动重载与机构同步 — 已定 2026-09-16 · 已实现
+## #4 Pi 缓存、显式重载与机构同步 — 2026-09-17 更新
 
-**事实。** 本地更新尚无通用文件监听；Cowork 现有 60 秒是触发去重时间，不等于轮询；BL 尚缺 Skills 下载适配器。云端同版本替换 ZIP 时，现有仅比较 version 的更新判断会漏掉变化。
+**当前机制。** 当前安装的 Pi 在启动及 `/new` 创建新会话运行环境时加载资源；会话内 `getSkills()` 读取已加载快照，显式 `reload()` 重新读取。两端按这个生命周期接入宿主配置的三层来源；没有目录 watcher、本地轮询、每次发送前重扫或无条件重建提示词。宿主保留工作区、机构授权和安装事件的接线。
 
-**备选与推荐。** 只在打开页面/新会话重扫无法兑现自动更新；推荐 watcher + 每次发送前新鲜度校验 + 真正的云轮询，局部重载并原子发布快照。
-
-| 触发 | 建议行为与时序 |
+| 触发/边界 | 行为 |
 |---|---|
-| 本地目录/文件变化 | 监听 SKILL.md、agents/openai.yaml、scripts/references/assets 与其他包资源；300ms 合并连续事件。添加、删除、rename、原子保存、symlink 目标变化均使对应条目失效 |
-| 缺失目录与监听恢复 | 监听最近存在父目录；目录新建自动发现；系统恢复/重新聚焦补扫描。监听失败显示状态，发送前仍强制完成该上下文扫描 |
-| 内容版本 | 根据包文件清单和内容指纹生成 skillRevision；资源变化也触发正文/工具缓存失效，不能只看 mtime 或 version 字符串 |
-| 本地重载目标 | 常规本地文件稳定后 2 秒内 UI 与目录更新；这是待验收目标，不是已测性能。慢盘/大文件可显示“正在重载”，发送等到完成 |
-| 编辑错误 | 稳定解析失败后对应技能退出可用集合并显示错误；旧成功文件可留作诊断/恢复，不能继续标为最新版。其他技能不中断 |
-| 实际模型请求 | 已发出的请求不可修改；每次后续模型请求/新用户发送前在安全边界更新目录。已有正文过期时记录更新并按需重读，历史内容不冒充当前指令 |
-| 正在执行脚本 | 一次已开始执行固定同一包 revision，不中途替换文件；后续新调用取新 revision。若机构撤权则取消/阻断受影响调用，不能以“固定版本”绕过授权 |
-| 机构轮询 | 登录且机构有效时每 60 秒检查，启动/切换/恢复网络/手动重试立即检查；单飞请求，退出停止，带 generation 丢弃过期响应 |
-| 安装与删除 | 私有 bucket 签名下载 → 字节/可靠 hash 校验 → 安全解压 staging → 包格式验证 → 不可变版本目录 → 原子激活 → 重载。失败保留原有效版本并说明错误；下架仅撤销受控映射，不删用户文件 |
-| 离线/授权 | 全局/工作区离线可用；机构仅在既有未失效授权下使用验证过的缓存并标离线，401/403/退出/明确撤权立即不可用。不得因网络失败推断授权成功 |
-| 工作区或账号切换 | 新 generation；旧结果不能回写。工作区只失效受影响 Chat；全局技能更新广播相关 Chat；不以 resetSessions 丢掉聊天历史 |
+| New Chat / 首次使用来源 | 新 Chat 首次初始化实际运行环境时，先用 Pi 原生加载器重载该 Chat 的多层目录，再构建系统技能清单；沿用既有延迟初始化。首次目录读取也可按需加载，完整成功或明确诊断，不能悄悄漏层 |
+| 普通读取与发送 | Workbench 读取、`/view_context`、普通聊天轮次及模型请求复用同一已加载快照；不遍历/哈希技能目录 |
+| 外部文件编辑 | 编辑器或原生文件工具的添加、修改、删除、rename、坏 YAML、辅助资源和 symlink 目标变化，在用户点击现有 Skills 刷新操作或初始化新 Chat 时重载；既有会话仅发送消息不触发重扫 |
+| 宿主管理操作 | 成功创建、导入、删除、分配来源或云包激活后，使受影响快照失效/刷新；错误操作不伪装更新成功 |
+| Pi 会话更新 | 实际资源/来源变化时通过公开资源重载生命周期更新系统技能块；保持工具选择与聊天历史，不再每轮重选工具来强制重建 |
+| 无机构信息 | 缺失/无效授权立即忽略机构层和旧机构引用；全局、工作区和聊天不等待机构网络请求 |
+| 工作区或账号切换 | 来源身份/授权 generation 变化使旧快照失效；新来源按需加载一次，旧机构不能从缓存复活；每个 Chat 使用自身工作区 |
+| 编辑错误 | 重载后错误条目退出可用集合并展示错误；其他条目正常。未显式重载的外部变更不声称已更新 |
+| 正在执行脚本 | 保留既有 revision/授权边界；重载不改写已发送请求或旧历史，机构撤权仍阻断受影响调用 |
+| 机构同步 | 保留已有机构后台同步机制。成功安装/更新/下架后刷新相关快照；未变化的检查不引起本地反复扫描 |
+| 安装与删除 | 签名下载、字节/hash 校验、安全 staging、不可变版本、原子激活后重载；失败保留有效版本，下架只撤销受控映射 |
 
 云端配套契约（按现有接口增量兼容，**无需新增 Skill 表**；Workflow 表不变）：
 
@@ -175,7 +189,7 @@ Workbench / Skills                     当前 Chat · Workspace / 当前机构
 
 当前交付状态（2026-09-16）：已完成后端兼容变更与既有授权环境部署。BL Private 上海生产版本 260916180233、Mono release/2608 上海 TEST 版本 260916180926 均通过 23 项真实 HTTP 验收；迁移、线上制品一致性及测试数据清理已核实。发布证明见各后端 docs/plan/reviews/skills-content-revisions-001-2.md；项目附录中的源码缺口保留为设计阶段调查记录。
 
-**代价。** 监听和内容指纹增加磁盘开销，需按变更条目合并并释放无会话使用的 watcher；后端配套比 UI 改造更大，却是同版本更新和机构正确性的必要闭环。
+**代价。** 外部文件改动需要用户刷新一次或新开 Chat；换取普通读取和聊天不扫描目录。云端内容版本与授权边界继续沿用既有实现。
 
 <a id="s5"></a>
 ## #5 view context 的可核对证据 — 已定 2026-09-16 · 已实现
@@ -189,7 +203,7 @@ Workbench / Skills                     当前 Chat · Workspace / 当前机构
 | 当前待发送目录 | workspace 解析结果、机构身份、catalogRevision、三层可用/错误数量、完整条目（name/description/ref/source/path/revision） | 与该 Chat 实际构造 pending prompt 使用同一份快照 |
 | 正文使用说明 | 未请求正文的仅“已进入清单”；实际读取后才有具体 ref/revision 和正文读取记录 | 不生成虚构“已读取”回执 |
 | 与历史区分 | 历史轮次保留历史版本；当前目录明确替代旧目录用于后续选择 | 不改写旧历史，不以新扫描结果冒充已发送内容 |
-| 更新竞态 | 导出后发生变更则发送取新 revision；检查日志可对应实际发送 | 一致性测试固定同一 revision；变化后预览明确“下次发送将更新” |
+| 更新竞态 | 导出后发生显式重载或来源切换时，发送使用已更新 revision；单纯磁盘改动不隐式重扫 | 一致性测试使用同一已加载 revision；日志对应实际发送 |
 | 未完成扫描/错误 | 明确 pending/error 状态或等扫描完成；指出哪层未就绪 | 不把空列表伪装成功 |
 
 Ral 的人工验收路径（待开发完成后执行）：
@@ -197,7 +211,7 @@ Ral 的人工验收路径（待开发完成后执行）：
 1. 三层各准备一个可区分的有效 Skill；同名变体也各保留一份。
 2. 在选定 Chat 运行 `/view_context`，检查三层数目、每项 source/ref/path 与 Workbench 一致；本步只证明清单。
 3. 在同一 Chat 显式引用三个来源的技能，检查实际读取到各自正文。
-4. 外部编辑其中一个 SKILL.md，再运行命令、发送一条新消息；目录 revision 和该 Skill 内容应更新，无需新开 Chat。
+4. 外部编辑其中一个 SKILL.md，先确认普通发送/导出不触发扫描；点击 Skills 刷新，再运行命令或发送消息，目录 revision 和技能内容应更新。另新增一个技能并新开 Chat，确认该 Chat 首次发送就使用重新加载的清单。
 5. 切换该 Chat 工作区、切换账号/机构再查看：全局保留，工作区按 Chat 变，旧机构退出。
 6. 检查坏 YAML/删除/同版本机构包更新，确认 UI 状态与模型实际可用清单一致。
 
@@ -216,7 +230,7 @@ Ral 的人工验收路径（待开发完成后执行）：
 | A2 | 工作目录到仓库根/子模块边界、非 Git 默认目录、新建 .agents/skills、symlink 都正确；扫描前后项目文件无被动改写 |
 | A3 | 三层同名及同层重名均独立引用；裸名称歧义可解释；旧无歧义引用仍有效 |
 | A4 | 超过 BL 40 和 Cowork 200 的技能仍全部进入清单；云端分页不漏项；超预算显式失败 |
-| A5 | 外部添加/编辑/删除/rename/坏 YAML/辅助资源改动自动局部刷新；其他技能与对话历史保留 |
+| A5 | 重复读取/发送不重扫；外部添加/编辑/删除/rename/坏 YAML/辅助资源变化在显式刷新后生效；宿主管理变更刷新相关快照，其他技能和历史保留 |
 | A6 | 两个 Chat 绑定两个工作区，分别读取正确目录；后台 Chat 不受前台选择覆盖 |
 | A7 | 机构切换/退出/撤权/迟到响应、离线和恢复，均不能复活旧机构技能 |
 | A8 | 同 version 换 ZIP 内容能下载、校验、激活；失败回滚、下架撤销；旧 API 客户端兼容 |
@@ -255,7 +269,7 @@ Ral 的人工验收路径（待开发完成后执行）：
 
 阻塞定案数：1 → 0（2026-09-16，Ral 明确批准）。通知送达本身不代表批准，本次按原文确认开放开发。
 
-## 交付与验收记录
+## 历史交付与验收记录（2026-09-16；重载机制已由 #4 更新）
 
 实现覆盖三来源目录、三 Tab、完整清单、自动重载、每次模型请求的最新目录以及来源授权。两端独立验证均使用 251 个真实 SKILL.md 检查完整性及 Chat 工作区隔离。实际 Vue 组件通过明暗主题、窄屏与键盘检查。 BL Private 上海生产后端版本 260916180233，23 项真实认证/私有 OSS HTTP 验收通过，测试数据清理后活跃计数为零。
 

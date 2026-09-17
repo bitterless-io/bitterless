@@ -10,6 +10,14 @@ export class AgentBrowserStore {
   error = ''
   private revision = 0
 
+  reset(): void {
+    this.revision += 1
+    this.sessionId = ''
+    this.state = null
+    this.loading = false
+    this.error = ''
+  }
+
   async select(sessionId: string): Promise<void> {
     this.sessionId = sessionId
     this.state = null

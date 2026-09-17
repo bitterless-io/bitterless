@@ -155,6 +155,39 @@ test('hidden file-search owner uses exact lifecycle fencing and one terminal fai
   assert.equal(failures.length, 1);
 });
 
+test('the hidden renderer load is bounded, so a stalled load cannot latch OnlyPreview dead', () => {
+  const fileSearchWindow = source('src/main/fileSearch/fileSearchWindow.service.ts');
+  // The load used to be the one await on this chain with no bound at all, while every step after it
+  // had one. Its four failure events cover "failed to load", not "never answered" — and on
+  // 2026-09-17 a `runtime-window phase=start` was followed by no `renderer-loaded` for the rest of
+  // that session.
+  assert.match(fileSearchWindow, /const RENDERER_LOAD_TIMEOUT_MS = 30_000;/);
+  const loadRace = fileSearchWindow.slice(
+    fileSearchWindow.indexOf('let rendererLoadTimeout'),
+    fileSearchWindow.indexOf("phase: 'renderer-loaded'")
+  );
+  assert.ok(loadRace.length > 0, 'the load must still precede the renderer-loaded diagnostic');
+  assert.match(loadRace, /Promise\.race\(\[/);
+  assert.match(loadRace, /window\.loadURL\(target\.url\)/);
+  assert.match(loadRace, /window\.loadFile\(target\.filePath\)/);
+  // A timeout has to do both: tell the fence (so the failure reads like the other four) and reject
+  // (so the caller's finally runs — that is what releases the latch).
+  assert.match(loadRace, /lifecycleFence\.fail\('File-search renderer load timed out\.'\)/);
+  assert.match(loadRace, /reject\(new Error\('File-search renderer load timed out\.'\)\)/);
+  assert.match(loadRace, /RENDERER_LOAD_TIMEOUT_MS/);
+  assert.match(loadRace, /clearTimeout\(rendererLoadTimeout\)/);
+  // Being superseded must not be reported as a timeout.
+  assert.match(loadRace, /File-search renderer load was superseded\./);
+
+  // The other half of the invariant: the rejection has somewhere to land. Without this `finally`,
+  // bounding the load would stop one latch and leave another.
+  const windowHelper = source('src/main/windows/onlyPreviewWindow.helper.ts');
+  assert.match(
+    windowHelper,
+    /finally \{[\s\S]{0,200}if \(this\.surfaceOpening === opening\) this\.surfaceOpening = null;/
+  );
+});
+
 test('official graph owns search in top-level hidden preload over capability-bound XPC', () => {
   const windowHelper = source('src/main/windows/onlyPreviewWindow.helper.ts');
   const fileSearchWindow = source('src/main/fileSearch/fileSearchWindow.service.ts');

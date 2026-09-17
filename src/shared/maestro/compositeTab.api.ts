@@ -82,6 +82,8 @@ export interface MaestroCompositeTabSpec {
    * 见 `docs/features/onlypreview-default-homepage.md` #1。
    */
   defaultHome?: boolean
+  /** Existing app-account requirement, not a default for public/local miniapps. */
+  requiresAuthentication?: boolean
   /** Build the mini app onto this tab. Rejecting leaves no tab behind. */
   open(host: MaestroCompositeTabHostApi): Promise<void>
   /**

@@ -128,6 +128,7 @@ test('search from a hidden panel waits for visible bounds before focusing, then 
   const wc = { isDestroyed: () => false, focus: () => { focuses++; } };
   const view = { webContents: wc, getBounds: () => bounds, setVisible: () => {} };
   const target = { view, webContents: wc, focusSearchOnLayout: false,
+    _state: {},
     applyBounds: (_view, rect) => { bounds = rect; }
   };
   const open = viewMethod('openSessionSearch', (event) => events.push(event));
@@ -142,10 +143,28 @@ test('search from a hidden panel waits for visible bounds before focusing, then 
 });
 test('search on a destroyed control does not claim the shortcut or broadcast', () => {
   const open = viewMethod('openSessionSearch', () => assert.fail('unexpected broadcast'));
-  assert.equal(open.call({ view: null }), false);
-  assert.equal(open.call({ view: { webContents: { isDestroyed: () => true } } }), false);
+  const _state = {};
+  assert.equal(open.call({ _state, view: null }), false);
+  assert.equal(open.call({ _state, view: { webContents: { isDestroyed: () => true } } }), false);
 });
 
+test('Control login request reveals a hidden panel without session search', () => {
+  const events = [];
+  const open = viewMethod('requestLogin', (event) => events.push(event));
+  const target = {
+    focusSearchOnLayout: false,
+    view: {
+      webContents: {
+        isDestroyed: () => false,
+        focus: () => assert.fail('hidden Control focuses after layout')
+      },
+      getBounds: () => ({ x: 880, y: 78, width: 0, height: 722 })
+    }
+  };
+  open.call(target);
+  assert.equal(target.focusSearchOnLayout, true);
+  assert.deepEqual(events, ['coach/login-request']);
+});
 
 const source = readFileSync(resolve(root, 'src/main/maestro/common/shortcutsHelper/shortcuts.helper.ts'), 'utf8');
 const harness = (platform = 'darwin') => {
@@ -181,7 +200,9 @@ const harness = (platform = 'darwin') => {
     }
   });
   let allowed = true;
+  let authLocked = false;
   exports.activateShortcuts({
+    isAuthLocked: () => authLocked,
     newTab: () => calls.push('new'),
     closeActiveTab: () => calls.push('close'),
     reloadActiveTab: () => calls.push('reload'),
@@ -203,6 +224,7 @@ const harness = (platform = 'darwin') => {
   };
   return { contents, press, calls, exports, get menu() { return menu; },
     setFindHandled(value) { findHandled = value; },
+    setAuthLocked(value) { authLocked = value; },
     setAllowed(value) { allowed = value; }, setFocused(value) { focused = value; } };
 };
 
@@ -217,6 +239,18 @@ test('CmdF and CtrlF dispatch session search once; IME and modified Find pass th
     assert.equal(h.press(wc, { isComposing: true }), false);
     assert.equal(h.press(wc, { key: 'z' }), false, 'text undo stays renderer-owned');
     assert.deepEqual(h.calls, ['search']);
+  }
+});
+test('anonymous Cmd/Ctrl+F, T and W keep browser actions available', () => {
+  for (const platform of ['darwin', 'win32']) {
+    const h = harness(platform);
+    const wc = h.contents();
+    h.setAuthLocked(true);
+    h.setFindHandled(true);
+    for (const key of ['f', 't', 'w']) {
+      assert.equal(h.press(wc, { key }), true, `${platform} ${key}`);
+    }
+    assert.deepEqual(h.calls, ['preview', 'new', 'close']);
   }
 });
 test('unclaimed Find remains available to the focused surface', () => {

@@ -1,5 +1,57 @@
 # Bitterless Documentation
 
+- [An unbounded hidden-renderer load latches OnlyPreview dead until restart](issues/onlypreview-unbounded-renderer-load-latches-preview-dead.md) —
+  fixed in both apps; owner verification pending. The hidden file-search renderer's `loadURL` was the
+  only unbounded await on the startup chain, and a load that is never *answered* (as opposed to
+  failed) left `surfaceOpening` set forever, so every later open/select/navigate hung silently until
+  restart. Bounded at 30s; the existing recovery path needed no change. Also records the evidence
+  that OnlyPreview does **not** cause the boot stall Ral reported — it never ran during those
+  episodes; that stall is `getLlmConfig` inside the host-mutation FIFO.
+
+- [Control login frame](issues/control-login-frame-mismatch.md) — implemented; 2/2 focused checks plus Vue/Less/lint pass. Existing warm rounded Control card and renderer-focus shadow retained while signed out. E2E cancelled by Ral.
+
+- [Pi native automatic compaction](features/pi-native-compaction.md) — implemented; scoped checks and shared real-source native threshold test passed; owner desktop UI testing pending.
+
+- [A 3s context-window timeout silently downgraded every preset to 256K](issues/llm-context-window-timeout-downgrades-presets.md) —
+  fixed in both apps; owner verification pending; `applyResolvedContextWindows` discarded the
+  configured window whenever pi did not answer within 3s, so every cold boot could quietly drop the
+  four Codex presets from their measured 266K to 256K — and the compression trigger, reserve budget
+  and summary cap are all computed from that number. pi still wins when it answers; configuration is
+  now the fallback instead of a flat 256K (Ral 2026-09-17:「你配置好就行,压缩后面再处理」).
+
+- [Control-owned login](features/control-login.md) — implemented and code-verified; visual acceptance pending. Anonymous browsing, login only in Control, protected chat/miniapps remain account-gated. Replaces the [dedicated loginRenderer](features/login-renderer.md).
+
+- [Complete remaining skill P1](plan/tasks/skills-p1-completion-006.md) — implemented; qualified Chat selection, profile enablement, runtime diagnostics and managed source install/update/remove; code verification and owner handoff in task.
+
+- [Skill installer guidance](plan/tasks/skills-installer-guidance-005.md) — implemented; prefer existing tools and avoid unnecessary installs, allow necessary dependencies, report current capability limits accurately. Prompt-only checkpoint; managed installation is implemented by task 006.
+
+- [Standard skill creator](plan/tasks/skills-creator-004.md) — implemented and code-verified; instruction/script templates, native Pi format checks and separate behavior evidence. Owner Chat acceptance pending.
+
+- [Skill P0 completeness](plan/tasks/skills-p0-completeness-003.md) — implemented and code-verified; complete resource-tree import/export, staged publication and preserved Pi authoring baseline. Owner UI acceptance pending.
+
+- [Workspace picker auto-opens OnlyPreview](issues/onlypreview-workspace-picker-auto-open.md) — implemented; human testing pending;
+  one native-picker success path for Chat and agent-requested choices, independent of Chat's save queue;
+  preserve startup/session-restore behavior and show a separate preview failure warning.
+
+- [独立窗口占着 OnlyPreview 时,tab 留下一张占位页](features/onlypreview-deferred-tab-placeholder.md) —
+  bl 侧已实现,owner 验收待做;cowork 侧(PQ-4 的 re-vendor ＋ host adapter)待做,
+  via [task 181](plan/tasks/onlypreview-deferred-tab-placeholder-181.md);
+  反转 2026-09-07 的「独立窗口打开就关掉 tab」(那条在 `defaultHome: true` 之后已经执行不了 —— pinned
+  tab 的 `closeTab` 静默返回),并取代 [默认固有 tab](features/onlypreview-default-homepage.md) #4
+  「降级成内置本地 Home」这个补救手段;吸收一直挂着 pending 的 136 / 137。
+
+- [A widened error payload latches the search relay's protocol failure](issues/onlypreview-search-failure-payload-latches-protocol-error.md) —
+  fixed in both apps; owner verification pending, via [task 180](plan/tasks/onlypreview-search-failure-payload-180.md);
+  the optional `causeCode` that [task 179](plan/tasks/onlypreview-error-detail-operation-cause-179.md) added to every
+  failure payload is a third own key, and the search wire's second validator accepts an exact two-key
+  set — so the first cancelled or superseded search latched `INDEX_PROTOCOL_ERROR` and Global Search
+  stayed dead for the life of the runtime; the fix admits and re-constrains both new fields and binds
+  the real producer to that validator in one test process, which is the check whose absence let it ship.
+
+- [The protocol latch is unrecoverable](issues/onlypreview-protocol-latch-is-unrecoverable.md) — recorded, not fixed;
+  a single malformed wire payload disables Project search until the runtime re-attaches, with no
+  operator-visible reason and no retry path. Design ruling pending from Ral.
+
 - [OnlyPreview Copy-detail block has no operation and no cause](issues/onlypreview-error-detail-lacks-operation-and-cause.md) —
   fixed in both apps; owner verification pending, via [task 179](plan/tasks/onlypreview-error-detail-operation-cause-179.md);
   distinct from the earlier [no-log fix](issues/onlypreview-operation-failure-has-no-log.md), which
@@ -19,9 +71,15 @@
   `describeContextWindows` 传 `refreshOnCreate: false` + 调用方封顶，provider 就绪探测改并行封顶；
   其余 `ModelRuntime.create()` 逐个核过**不跟着改**（跳了会把所有 provider 报成未登录）。
 
-- [更新重启后 Zellij 阻塞半天，新开 tab 报 operation-failed](issues/zellij-update-restart-blocks-and-new-tab-fails.md) — 四条根因已证并已修；
+- [Zellij 恢复次数封顶与重建兜底](issues/zellij-bounded-session-recovery.md) — implemented; code-verified, packaged human acceptance pending;
+  原身份最多两次准备，仍失败就在同一次操作里重建一次；重建失败停止，避免无限 Retry。
+- [Zellij 更新后仍识别已拥有的终端进程](issues/zellij-update-owner-file-identity.md) — implemented; code-verified, packaged human acceptance pending;
+  首次认领核对 bundled binary，后续以进程实际映射的文件编号识别搬动或已删除的旧程序文件，保留进程与 socket 校验。
+- [Zellij renderer 加载超时与恢复](issues/zellij-renderer-load-timeout.md) — implemented; code-verified, packaged human acceptance pending;
+  controls 与 terminal 导航分别封顶 15 秒，错误可重试；页面加载失败不更换 native session。
+- [更新重启后 Zellij 阻塞半天，新开 tab 报 operation-failed](issues/zellij-update-restart-blocks-and-new-tab-fails.md) — R1–R6 + R9 已落盘；
   `[zellij]` 现在每阶段一行带 `elapsedMs`（之前 80 分钟日志里整个子系统只有 3 行），`code=` 被自己的脱敏器擦成 `***` 的问题一并修掉；
-  瞬态 IPC 失败与所有权审计超时各自自愈一次（Ral 手点 Retry 能恢复的那一类）；更新后认不出自己保留的 session 这条要改信任规则，待 Ral 拍板。
+  瞬态 IPC 失败与所有权审计超时各自自愈一次；2026-09-17 接手补齐上面三条修复，代码验证完成，待打包复验。
 
 - [Omni Browser window session restore](features/omni-window-session-restore.md) — implemented;
   independent review, 74/74 tests and build passed; restore open/closed intent and saved geometry.
@@ -49,7 +107,19 @@
 - [Workbench chip 右边多一条分隔线,右键什么都不弹](issues/maestro-workbench-chip-divider-and-menu.md) — implemented; owner verification pending;
   开着的 Workbench chip 占掉「收尾 pinned 组」那个槽位(只留左分隔),右击它弹出和 mini-app tab 逐项对齐的原生菜单,不适用的五项置灰。
 
+- [Pi 技能缓存与启动修复](plan/tasks/skills-pi-reload-cache-002.md) — implemented and code-verified; Pi-style New Chat loading, cached turns and explicit reload, with paired dev/build CJS startup regressions. Owner live startup/refresh acceptance pending.
+
 - [Skills 三层来源与实时上下文设计](features/skills-three-sources.md) — approved 2026-09-16; [page mockup](design/skills-three-sources.html); implemented; [independent acceptance](plan/reviews/skills-three-sources-001-3.md) passed with documented verification limits.
+  2026-09-17 addendum: [discovery/reload mechanism superseded](issues/skill-catalog-watcher-reinvents-pi-native-loading.md) —
+  Ral redirected the hand-rolled walker/watcher to Pi SDK's native `loadSourcedSkills`/`DefaultResourceLoader`;
+  [task](plan/tasks/skills-pi-native-loading-001.md) implemented and code verified (59 focused tests, final 2-test runtime regression, strict types and build); owner application testing pending. Native per-source loading replaces the directory watcher; no valid institution skips only that layer.
+  2026-09-17: Ral's 「无机构的话也别阻塞 正常的功能」 checked here — bitterless already degrades (both chat-path
+  `skillScopeContext.authorize().catch(() => null)` calls, and `skillCloud.ensureCatalog()`'s throw gated on an institution
+  actually being authorized), so it is **verified, not changed**, per the paired development rule. Three separately claimed
+  bitterless blockers were adversarially checked and refuted. Now pinned by `tests/skillScopes/institutionAuthFailure.test.mjs`
+  and `tests/skillScopes/noInstitution.test.mjs` so the Pi-native swap cannot regress it; `yarn test:skill-scopes` 40/40.
+  The paired defect and its fix are in
+  [micromeet-cowork](../../micromeet-cowork/docs/issues/no-authorized-institution-blocks-chat-and-skills.md).
 
 - [OnlyPreview background index corruption](issues/onlypreview-corrupt-project-index.md) — recovery extended; code verified, owner testing pending;
   SQLite corruption first reached during warm reconciliation gets one clean rebuild with the suspect database preserved.
@@ -470,13 +540,13 @@ design document.
   owner verification pending: replace the duplicate Chat surface with Mini Apps and Connector on
   the familiar 56px rail, hide its Settings button, use Bitterless artwork for Home/New-tab
   branding, and keep fixed-Home DevTools available in debug runtimes.
-- [Maestro fixed Home Login gate](issues/maestro-local-home-login-missing.md) - implemented; owner
-  verification pending: retain Maestro as the only visible primary, reuse the original Login
-  experience before Mini Apps, and keep the hidden Home renderer as the sole token/auth authority;
+- [Maestro fixed Home Login gate](issues/maestro-local-home-login-missing.md) - historical placement
+  superseded by [Control login](features/control-login.md); original Login behavior and hidden
+  Home token/auth authority are retained, but login no longer renders in the Home tab;
   [review 1](plan/reviews/maestro-local-home-auth-gate-096-1.md) passed.
 - [Maestro Workbench Account tab](issues/maestro-workbench-account-tab-missing.md) - implemented;
   owner verification pending: moved identity/logout from General into Settings → Account and made
-  logout close Workbench and deterministically reveal pinned Home on Login;
+  logout close Workbench; the former pinned-Home login destination is superseded by Control login;
   [review 1](plan/reviews/maestro-workbench-account-logout-097-1.md) passed.
 - [Mini Apps card action alignment](issues/miniapp-card-action-alignment.md) - implemented; owner
   verification pending: keep every fixed-Home card at `320 × 184px`, clamp descriptions to three

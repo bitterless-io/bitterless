@@ -11,6 +11,7 @@ const directory = mkdtempSync(join(tmpdir(), 'zellij-runtime-tests-'));
 const load = (name) => {
   const output = join(directory, `${name}.cjs`);
   buildSync({
+    tsconfig: 'tsconfig.node.json',
     entryPoints: [`src/main/zellij/${name}.service.ts`],
     bundle: true,
     platform: 'node',

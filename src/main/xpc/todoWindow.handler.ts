@@ -3,6 +3,8 @@ import { XpcMainHandler, createXpcMainEmitter } from 'electron-xpc/main';
 import { join } from 'path';
 import { is } from '@electron-toolkit/utils';
 import { mainWindowHelper } from '../windows/mainWindow.helper';
+import { applicationAuth } from '@main/auth/applicationAuth.service';
+import { maestroWindowHelper } from '@maestro-main/windows/main/maestroWindow.controller';
 import type { SettingDao } from '@preload/sqlite/dao/setting.dao';
 import type { WindowLayout } from '@shared/window/window.types';
 import {
@@ -39,6 +41,8 @@ class TodoWindowHandler extends XpcMainHandler {
   }
 
   async showTodoView(): Promise<void> {
+    try { await applicationAuth.requireReady(); }
+    catch { maestroWindowHelper.requestLogin(); return; }
     const mainWindow = mainWindowHelper.browserWindow;
     if (!mainWindow || mainWindow.isDestroyed()) return;
 
@@ -92,6 +96,8 @@ class TodoWindowHandler extends XpcMainHandler {
   }
 
   async openTodoWindow(): Promise<void> {
+    try { await applicationAuth.requireReady(); }
+    catch { maestroWindowHelper.requestLogin(); return; }
     if (this.creationPromise) {
       const created = await this.creationPromise;
       if (!created.isDestroyed()) {

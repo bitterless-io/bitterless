@@ -24,6 +24,7 @@ const fixture = {
     pushLocalNote: (id, text) => fixture.calls.push(['note', id, text]),
     turnService: {
       activeTurn: () => fixture.activeTurn,
+      busyElsewhere: () => false,
       send: async () => { fixture.calls.push('send'); return { text: 'ok' }; }
     },
     stopUsingWorkspace: async (id) => fixture.calls.push(['clear', id]),
@@ -63,10 +64,10 @@ const mocks = {
     export const onMounted = (callback) => globalThis.__historyFixture.mounts.push(callback);
     export const onBeforeUnmount = (callback) => globalThis.__historyFixture.unmounts.push(callback);`,
   '@tabler/icons-vue': `export const ${icons.map((name) => `${name} = {}`).join(', ')};`,
-  '@arco-design/web-vue': `export const Button = {}, Drawer = {}, Tooltip = {};
+  '@arco-design/web-vue': `export const Button = {}, Drawer = {}, Tooltip = {}, Dropdown = {}, Doption = {}, Input = {};
     export const Message = Object.fromEntries(['success', 'warning', 'error'].map(kind => [kind, text => globalThis.__historyFixture.notices.push({kind, text})]));
     export const Modal = { confirm: (params) => globalThis.__historyFixture.confirmations.push(params) };`,
-  'electron-xpc/renderer': `export const createXpcRendererEmitter = () => ({ copyNextTurnContext: params => {
+  'electron-xpc/renderer': `export const createXpcRendererEmitter = () => ({ compactSession: params => { globalThis.__historyFixture.calls.push(['compact', params]); return globalThis.__historyFixture.compactSession(params); }, testAutoCompaction: params => { globalThis.__historyFixture.calls.push(['auto-test', params]); return globalThis.__historyFixture.testAutoCompaction(params); }, copyNextTurnContext: params => {
     globalThis.__historyFixture.calls.push(['copy', params]); return globalThis.__historyFixture.copyContext(params);
   }, copySessionIoPath: params => {
     globalThis.__historyFixture.calls.push(['path', params]); return globalThis.__historyFixture.copySessionPath(params);
@@ -110,6 +111,8 @@ const harness = (t, archivedAt) => {
   fixture.calls.length = 0;
   fixture.confirmations.length = 0;
   fixture.notices.length = 0;
+  fixture.compactSession = async () => ({ ok: true, tokensBefore: 50000, estimatedTokensAfter: 20000 });
+  fixture.testAutoCompaction = async () => ({ ok: true, provider: 'fixture', model: 'fixture', testContextWindow: 65536, realContextWindow: 128000, thresholdTokens: 49152, tokensBefore: 51000, tokensAfter: 22000, sourceBytesRead: 65536, sourceBytes: 200000, sourceTruncated: true, paddingChars: 123, reason: 'threshold', systemUnchanged: true, contextChanged: true });
   fixture.copyContext = async () => ({ ok: true, chars: 123, entries: 4 });
   fixture.workflowCommand = async text => { fixture.calls.push(['workflow', text]); };
   fixture.copySessionPath = async () => ({ ok: true, path: '/tmp/session-io' });
@@ -140,7 +143,7 @@ test('SFC compiles and footer uses workspace-before-attachment with mutually exc
   assert.ok(source.indexOf('name="maestro__composer__workspace"') < source.indexOf('name="maestro__composer__attach"'));
   assert.match(source, /<IconBtn\s+v-else\s+name="maestro__composer__send"/);
   assert.doesNotMatch(source, /context-meter|contextTooltipLines|IconRefresh/);
-  const newButton = source.match(/<Button\s+name="maestro__new_chat"[\s\S]*?>/)[0];
+  const newButton = source.match(/<IconBtn\s+name="maestro__new_chat"[\s\S]*?>/)[0];
   assert.doesNotMatch(newButton, /turnLocked/);
   assert.match(newButton, /session\.archivedAt/);
 });
@@ -216,7 +219,7 @@ test('slash menu triggers only at a line start, filters predictably and wraps it
   await draft(ui, '/clear/file', 6);
   assert.equal(ui.slashVisible.value, false);
   await draft(ui, 'Question\n/');
-  assert.deepEqual(ui.shortcutStore.matches.map(item => item.name), ['/clear', '/copy_session_path', '/test_show_error', '/view_context', '/view_context_graph', '/workflow']);
+  assert.deepEqual(ui.shortcutStore.matches.map(item => item.name), ['/clear', '/compact', '/copy_session_path', '/test_auto_compact', '/test_show_error', '/view_context', '/view_context_graph', '/workflow']);
   assert.equal(ui.shortcutStore.active.name, '/clear');
   composerKey(ui, 'ArrowUp');
   assert.equal(ui.shortcutStore.active.name, '/workflow');
@@ -390,3 +393,50 @@ test('workflow startup rejects duplicate sends, retains a failed draft, and pres
   assert.equal(ui.input.value, '/workflow research evidence');
   assert.equal(fixture.notices.at(-1).text, 'workflow login required');
 });
+
+test('/compact is a host action and shows native before/after without sending a model task', async t => {
+  const { ui } = harness(t)
+  await draft(ui, '/compact')
+  await ui.commitShortcut()
+  assert.deepEqual(fixture.calls[0], ['compact', { sessionId: 'b' }])
+  assert.ok(fixture.calls.some(call => Array.isArray(call) && call[0] === 'note' && call[2].includes('50000 → ~20000')))
+  assert.equal(fixture.calls.includes('send'), false)
+  assert.equal(ui.input.value, '')
+})
+
+test('/test_auto_compact local path stays a control command and reports bounded-source facts', async t => {
+  const { ui } = harness(t)
+  await draft(ui, '/test_auto_compact "/tmp/fixture with spaces.txt"')
+  await ui.send()
+  assert.deepEqual(fixture.calls[0], ['auto-test', { sessionId: 'b', filePath: '/tmp/fixture with spaces.txt' }])
+  assert.equal(fixture.calls.includes('send'), false)
+  assert.ok(fixture.calls.some(call => Array.isArray(call) && call[0] === 'note' && call[2].includes('65536 / 200000 (excerpt)')))
+})
+
+test('ordinary input can queue while a compaction command is pending', async t => {
+  const { ui, props } = harness(t)
+  let finish
+  fixture.compactSession = () => new Promise(done => { finish = done })
+  await draft(ui, '/compact')
+  const command = ui.commitShortcut()
+  props.session.compacting = true
+  await draft(ui, 'Continue my original task after compaction.')
+  await ui.send()
+  assert.ok(fixture.calls.includes('send'))
+  finish({ ok: true, tokensBefore: 50000, estimatedTokensAfter: 22000 })
+  await command
+})
+
+test('/compact instructions are sent only to the host and command boundaries stay exact', async t => {
+  const {ui}=harness(t)
+  await draft(ui,'/compact preserve unfinished API migration')
+  await ui.send()
+  assert.deepEqual(fixture.calls[0],['compact',{sessionId:'b',instructions:'preserve unfinished API migration'}])
+  assert.equal(fixture.calls.includes('send'),false)
+  assert.equal(ui.input.value,'')
+  fixture.calls.length=0
+  await draft(ui,'/compactness is ordinary text')
+  await ui.send()
+  assert.ok(fixture.calls.includes('send'))
+  assert.equal(fixture.calls.some(call=>Array.isArray(call)&&call[0]==='compact'),false)
+})

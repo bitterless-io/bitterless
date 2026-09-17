@@ -593,7 +593,7 @@ export class TurnService extends CommonService<MessageStoreState> {
         // Waiting for an in-app decision is an explicit paused state, not a hung provider. Once the
         // card is answered, message.store touches the Turn so the silence clock resumes from zero.
         () =>
-          session.messages.some((item) => item.type === 'confirm' && item.confirm && !item.confirm.answer)
+          session.compacting || session.messages.some((item) => item.type === 'confirm' && item.confirm && !item.confirm.answer)
             ? Date.now()
             : session.turn?.lastActivityAt ?? turn.lastActivityAt,
         interpolateChatCopy(i18nHelper.maestroControl.chat.inactivityTimeout, {
