@@ -53,6 +53,12 @@ Pi 0.85.1 accepts absolute compaction settings only. The official latest documen
 
 Sources: [stable settings](https://github.com/earendil-works/pi/blob/v0.85.1/packages/coding-agent/src/core/settings-manager.ts), [branch summary](https://github.com/earendil-works/pi/blob/v0.85.1/packages/coding-agent/src/core/compaction/branch-summarization.ts), [Codex payload](https://github.com/earendil-works/pi/blob/v0.85.1/packages/ai/src/api/openai-codex-responses.ts), [simple options](https://github.com/earendil-works/pi/blob/v0.85.1/packages/ai/src/api/simple-options.ts).
 
+## Native-design acceptance — 2026-09-17
+
+Ral confirmed retaining Pi's existing design and syncing once the implemented compaction scope has no outstanding integration gap relative to Pi. Keep the existing four Codex overrides at 20% reserve / 10% recent history; the later budget discussion does not change these shipped values. Keep native summary generation, cut points, persistence, bounded retry and the approved compatibility hooks.
+
+The prefix-only compatibility hook matches [Pi's upstream fix](https://github.com/earendil-works/pi/blob/e98f287ee498e0116546f4e9aa083fdec9793cd2/packages/coding-agent/src/core/compaction/compaction.ts#L903): retain the previous summary when no complete history is being summarized, then merge the new turn-prefix summary. Its possible growth, provider-specific output enforcement and lack of a final combined-summary budget check are accepted native limitations. Do not add chunking, a post-summary shrinking loop or a new output-cap policy in this delivery.
+
 ## Manual command
 
 Ral explicitly requested `/compact` and then `/compact [instructions]` on 2026-09-17. Match the exact command boundary, allowing an optional instruction suffix; paths or longer names remain ordinary input. Intercept this command in the chat composer as a host control action. Use the same native Pi compaction, append the per-call instructions to the persisted/default compactPrompt and snapshot both before asynchronous work. Never persist the per-call addition or reuse it next time. Display start/result/error/cancellation, do not send the literal command as a user task, and do not race an active turn. Clearly reject unsupported AI-CRMS.

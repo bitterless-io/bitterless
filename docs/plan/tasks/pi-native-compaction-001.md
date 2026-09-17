@@ -90,3 +90,12 @@ Implemented the four recent ratio overrides and updated policy/native/isolated/a
 - PASS: scoped `git diff --check`.
 
 No app launch, provider request, Electron E2E or full build was run: this change only adjusts existing typed budget configuration, with the runtime/preparation paths exercised through the installed SDK and simulated responses. Existing owner desktop testing remains as recorded above. Root owns paired CoWork verification, shared budget-reference update and the requested Git sync.
+
+## Native-design acceptance and sync verification — 2026-09-17
+
+Ral confirmed using Pi's existing design and syncing after checking for integration gaps. Source comparison and existing regressions found no additional gap in the implemented compaction scope. In particular, preserving the old summary in a prefix-only split matches Pi's upstream fix; summary growth, provider output limits and no final combined-summary budget check remain native limitations. Keep the current 20% reserve / 10% recent model overrides and all existing runtime code. This follow-up updates the feature contract and shared reference only.
+
+- PASS 50/50: `node --test tests/maestro/maestroPiCompactionPolicy.test.mjs tests/maestro/maestroPiNativeCompaction.test.mjs tests/maestro/maestroPiAutoCompactionTest.test.mjs tests/maestro/maestroRuntimeAdapterContract.test.mjs` (3.569s).
+- PASS scoped types: `yarn tsc -p tests/maestro/tsconfig.pi-compaction.json --pretty false` (2.70s).
+- The paired policy and native compatibility helper are byte-identical to CoWork. Native SDK tests cover repeated compaction/reload, prefix-only continuity, threshold/overflow/manual paths, retry/cancel, settings propagation and child disablement.
+- No live provider request, app launch, Electron E2E or full build: runtime is unchanged. The existing CoWork adapter-fixture alias limitation remains separately recorded there. The owner-waived preview step remains waived; no new human action is required for this sync.
