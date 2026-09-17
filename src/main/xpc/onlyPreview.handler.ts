@@ -92,7 +92,7 @@ const runOperation = async <T>(
   try {
     return onlyPreviewSuccess(await run());
   } catch (error) {
-    const payload = toOnlyPreviewErrorPayload(error);
+    const payload = toOnlyPreviewErrorPayload(error, operation);
     onlyPreviewLogService.writeOperationFailure({ operation, code: payload.code, error });
     return { ok: false, error: payload };
   }

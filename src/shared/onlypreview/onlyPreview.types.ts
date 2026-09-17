@@ -161,6 +161,14 @@ export type OnlyPreviewErrorCode =
 export interface OnlyPreviewErrorPayload {
   code: OnlyPreviewErrorCode;
   message: string;
+  // The exact Main API method name that surfaced this failure (e.g. `selectStandaloneFile`) — a
+  // static string literal known at the `runOperation`/`runAlertOperation` call site, never derived
+  // from user data. Omitted (not `undefined`) when no operation is known.
+  operation?: string;
+  // A short class-of-failure token derived only from the caught error's `.code` or non-generic
+  // `.name` — never from `.message`/`.stack`. See `toOnlyPreviewErrorPayload` for why. Omitted when
+  // nothing safe to report.
+  causeCode?: string;
 }
 
 export type OnlyPreviewResult<T> =

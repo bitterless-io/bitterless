@@ -13,9 +13,10 @@ const bundlePath = join(buildRoot, 'errorDetail.mjs');
 const source = (path) => readFileSync(join(projectRoot, path), 'utf8');
 
 await build({
-  entryPoints: [
-    join(projectRoot, 'src/renderer/onlypreview/shell/src/onlyPreviewErrorDetail.service.ts')
-  ],
+  // A dedicated entry (not the service file directly) so the bundle also exports
+  // `OnlyPreviewContractError` from the SAME module graph — the service's `instanceof` check
+  // requires the identical class, and two independent bundles would each carry their own copy.
+  entryPoints: [join(projectRoot, 'tests/onlypreview/onlyPreviewErrorDetail.entry.ts')],
   outfile: bundlePath,
   bundle: true,
   platform: 'node',
@@ -27,7 +28,8 @@ await build({
 const {
   describeOnlyPreviewErrorDetail,
   formatOnlyPreviewErrorDetail,
-  isEmptyOnlyPreviewErrorDetail
+  isEmptyOnlyPreviewErrorDetail,
+  OnlyPreviewContractError
 } = await import(pathToFileURL(bundlePath).href);
 
 after(() => rmSync(buildRoot, { recursive: true, force: true }));
@@ -65,6 +67,42 @@ test('a typed contract failure keeps its code and carries no stack', () => {
   );
   assert.match(text, /^code: PATH_NOT_FOUND$/m);
   assert.doesNotMatch(text, /^stack:$/m);
+});
+
+test('operation and cause render only when present, after message and before stack', () => {
+  const withDetail = new OnlyPreviewContractError('OPERATION_FAILED', 'boom', {
+    operation: 'selectStandaloneFile',
+    causeCode: 'ENOENT'
+  });
+  const detail = describeOnlyPreviewErrorDetail(withDetail);
+  assert.equal(detail.operation, 'selectStandaloneFile');
+  assert.equal(detail.causeCode, 'ENOENT');
+  const text = formatOnlyPreviewErrorDetail(detail, AT);
+  const lines = text.split('\n');
+  const order = ['code:', 'name:', 'message:', 'operation:', 'cause:'];
+  const positions = order.map((prefix) => lines.findIndex((line) => line.startsWith(prefix)));
+  assert.ok(
+    positions.every((position) => position >= 0),
+    'code, name, message, operation and cause must all be present'
+  );
+  for (let index = 1; index < positions.length; index += 1) {
+    assert.ok(
+      positions[index] > positions[index - 1],
+      `${order[index]} must render after ${order[index - 1]}`
+    );
+  }
+  assert.match(text, /^operation: selectStandaloneFile$/m);
+  assert.match(text, /^cause: ENOENT$/m);
+
+  // A contract error built without the widened constructor's 3rd argument renders exactly as
+  // today: no regression on the three pre-existing tests in this file.
+  const withoutDetail = new OnlyPreviewContractError('PATH_NOT_FOUND', 'gone');
+  const plainDetail = describeOnlyPreviewErrorDetail(withoutDetail);
+  assert.equal(plainDetail.operation, undefined);
+  assert.equal(plainDetail.causeCode, undefined);
+  const plainText = formatOnlyPreviewErrorDetail(plainDetail, AT);
+  assert.doesNotMatch(plainText, /^operation:/m);
+  assert.doesNotMatch(plainText, /^cause:/m);
 });
 
 test('a long message and a long stack are bounded', () => {

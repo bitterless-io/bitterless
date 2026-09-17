@@ -7,6 +7,10 @@ export interface OnlyPreviewErrorDetail {
   name: string;
   message: string;
   stack: string;
+  // The Main API method name and a safe cause-class token — both optional, present only when the
+  // underlying error carried them (see `OnlyPreviewContractError`/`toOnlyPreviewErrorPayload`).
+  operation?: string;
+  causeCode?: string;
 }
 
 const MAX_STACK_LINES = 12;
@@ -19,7 +23,15 @@ const bound = (value: unknown): string => {
 
 export const describeOnlyPreviewErrorDetail = (error: unknown): OnlyPreviewErrorDetail => {
   if (error instanceof OnlyPreviewContractError) {
-    return { code: error.code, name: error.name, message: bound(error.message), stack: '' };
+    const detail: OnlyPreviewErrorDetail = {
+      code: error.code,
+      name: error.name,
+      message: bound(error.message),
+      stack: ''
+    };
+    if (error.operation !== undefined) detail.operation = error.operation;
+    if (error.causeCode !== undefined) detail.causeCode = error.causeCode;
+    return detail;
   }
   if (error instanceof Error) {
     // A plain Error is where a renderer bug shows up — a `ReferenceError` from a bad rename reads as
@@ -42,6 +54,8 @@ export const formatOnlyPreviewErrorDetail = (
   if (detail.code) lines.push(`code: ${detail.code}`);
   if (detail.name) lines.push(`name: ${detail.name}`);
   if (detail.message) lines.push(`message: ${detail.message}`);
+  if (detail.operation) lines.push(`operation: ${detail.operation}`);
+  if (detail.causeCode) lines.push(`cause: ${detail.causeCode}`);
   if (detail.stack) lines.push('stack:', detail.stack);
   return lines.join('\n');
 };

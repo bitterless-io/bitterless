@@ -48,6 +48,20 @@ test('strict contracts normalize only relative capabilities and preserve error e
       message: 'OnlyPreview could not complete this operation.'
     }
   });
+  // causeCode is derived only from `.code` (or, failing that, a non-generic `.name`) — never from
+  // `.message`, which is where a path leak would otherwise ride along.
+  const codedFailure = runtime.onlyPreviewFailure(
+    Object.assign(new Error('/private/path leaked'), { code: 'ENOENT' })
+  );
+  assert.deepEqual(codedFailure, {
+    ok: false,
+    error: {
+      code: 'OPERATION_FAILED',
+      message: 'OnlyPreview could not complete this operation.',
+      causeCode: 'ENOENT'
+    }
+  });
+  assert.ok(!JSON.stringify(codedFailure).includes('/private/path leaked'));
   assert.throws(
     () => runtime.unwrapOnlyPreviewResult(null),
     expectOnlyPreviewError('OPERATION_FAILED')

@@ -1,5 +1,13 @@
 # Bitterless Documentation
 
+- [OnlyPreview Copy-detail block has no operation and no cause](issues/onlypreview-error-detail-lacks-operation-and-cause.md) —
+  fixed in both apps; owner verification pending, via [task 179](plan/tasks/onlypreview-error-detail-operation-cause-179.md);
+  distinct from the earlier [no-log fix](issues/onlypreview-operation-failure-has-no-log.md), which
+  only made Main write `onlypreview.log` — the renderer-visible Copy block itself was still capped at
+  `code`/`name`/`message` because the wire payload has no slot for operation identity or a cause
+  class, and a raw `error.message` cannot be forwarded (`onlyPreviewCore.test.mjs` locks that a leaked
+  path must not cross the boundary).
+
 - [Agent cwd follows the workspace](features/agent-cwd-follows-workspace.md) — implementing; code-verified, human testing pending;
   cwd is resolved per session from the project root (else the shared default workspace), never from process.cwd(); pi gets an in-memory settings manager first.
 

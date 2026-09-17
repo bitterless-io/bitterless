@@ -50,12 +50,22 @@ export const cloneOnlyPreviewDescriptor = (
 };
 
 export class OnlyPreviewContractError extends Error {
+  // The Main API method name and a safe cause-class token, round-tripped from the wire payload by
+  // `unwrapOnlyPreviewResult` so the renderer can read them back off the reconstructed error. Both
+  // optional and additive — every existing `new OnlyPreviewContractError(code, message)` call site
+  // keeps compiling unchanged.
+  readonly operation?: string;
+  readonly causeCode?: string;
+
   constructor(
     readonly code: OnlyPreviewErrorCode,
-    message: string
+    message: string,
+    detail?: { operation?: string; causeCode?: string }
   ) {
     super(message);
     this.name = 'OnlyPreviewContractError';
+    if (detail?.operation !== undefined) this.operation = detail.operation;
+    if (detail?.causeCode !== undefined) this.causeCode = detail.causeCode;
   }
 }
 
@@ -700,21 +710,67 @@ export const parseOnlyPreviewPreviewErrorRequest = (
   return { ...request, errorCode: record.errorCode as OnlyPreviewPreviewErrorRequest['errorCode'] };
 };
 
-export const toOnlyPreviewErrorPayload = (error: unknown): OnlyPreviewErrorPayload => {
+// Mirrors the alphabet/length discipline of `ONLY_PREVIEW_LOG_TOKEN_LIMIT` / `safeToken` in
+// `src/main/logging/onlyPreviewLogRecord.service.ts:24-32` (same limit, same character class) —
+// kept as a local, unexported helper rather than an import: this module is shared into the
+// renderer bundle (`tsconfig.web.json` maps `@shared/*` but not `@main/*`, save one narrow
+// type-only exception), so it cannot depend on a `src/main/*` module. Unlike the log's `safeToken`,
+// this has no `'unknown'` fallback — a wire-payload `causeCode` is omitted, never filled with a
+// placeholder, when there is nothing safe to report.
+const ONLY_PREVIEW_CAUSE_CODE_TOKEN_LIMIT = 23;
+
+const safeOnlyPreviewCauseCodeToken = (value: string): string | undefined => {
+  const token = value.replace(/[^A-Za-z0-9._-]/g, '-').slice(0, ONLY_PREVIEW_CAUSE_CODE_TOKEN_LIMIT);
+  return token || undefined;
+};
+
+// Derived ONLY from the caught error's `.code` or (failing that) its non-generic `.name` — NEVER
+// from `.message`/`.stack`/any other free-text field. Both `.code` and `.name` are fixed, enum-like
+// identifiers that cannot carry a path or other variable content, unlike `.message`, which
+// routinely embeds an absolute filesystem path (see the issue doc's "why this is not just forward
+// error.message" section). Weakening this to read any other field reopens that leak.
+const deriveOnlyPreviewCauseCode = (error: unknown): string | undefined => {
+  const candidate = error as { code?: unknown; name?: unknown } | null | undefined;
+  const code = candidate?.code;
+  if (typeof code === 'string' && code) return safeOnlyPreviewCauseCodeToken(code);
+  const name = candidate?.name;
+  if (typeof name === 'string' && name !== 'Error') return safeOnlyPreviewCauseCodeToken(name);
+  return undefined;
+};
+
+export const toOnlyPreviewErrorPayload = (
+  error: unknown,
+  operation?: string
+): OnlyPreviewErrorPayload => {
   if (error instanceof OnlyPreviewContractError) {
-    return { code: error.code, message: error.message };
+    const payload: OnlyPreviewErrorPayload = { code: error.code, message: error.message };
+    // A contract error already knows its own operation/causeCode (built with the widened
+    // constructor) round-trips them; the passed-in `operation` is only an override for a contract
+    // error thrown deep in a call and rethrown through `runOperation`/`runAlertOperation` without
+    // ever learning which Main method it surfaced through.
+    const resolvedOperation = error.operation ?? operation;
+    if (resolvedOperation !== undefined) payload.operation = resolvedOperation;
+    if (error.causeCode !== undefined) payload.causeCode = error.causeCode;
+    return payload;
   }
-  return {
+  const payload: OnlyPreviewErrorPayload = {
     code: 'OPERATION_FAILED',
     message: 'OnlyPreview could not complete this operation.'
   };
+  if (operation !== undefined) payload.operation = operation;
+  const causeCode = deriveOnlyPreviewCauseCode(error);
+  if (causeCode !== undefined) payload.causeCode = causeCode;
+  return payload;
 };
 
 export const onlyPreviewSuccess = <T>(value: T): OnlyPreviewResult<T> => ({ ok: true, value });
 
-export const onlyPreviewFailure = (error: unknown): OnlyPreviewResult<never> => ({
+export const onlyPreviewFailure = (
+  error: unknown,
+  operation?: string
+): OnlyPreviewResult<never> => ({
   ok: false,
-  error: toOnlyPreviewErrorPayload(error)
+  error: toOnlyPreviewErrorPayload(error, operation)
 });
 
 export const unwrapOnlyPreviewResult = <T>(value: OnlyPreviewResult<T> | null): T => {
@@ -725,7 +781,10 @@ export const unwrapOnlyPreviewResult = <T>(value: OnlyPreviewResult<T> | null): 
     );
   }
   if (value.ok === false) {
-    throw new OnlyPreviewContractError(value.error.code, value.error.message);
+    throw new OnlyPreviewContractError(value.error.code, value.error.message, {
+      operation: value.error.operation,
+      causeCode: value.error.causeCode
+    });
   }
   return value.value;
 };
