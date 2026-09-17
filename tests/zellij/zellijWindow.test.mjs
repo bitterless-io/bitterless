@@ -446,7 +446,7 @@ test('quit cancels a never-resolving controls navigation without waiting for its
 });
 
 
-test('an exhausted preparation stays failed through passive show and runtime broadcasts until Retry', async () => {
+test('an exhausted preparation stays failed through passive broadcasts but activation retries it as reconnecting', async () => {
   const gate = deferred();
   const tab = tabHost('exhausted');
   gates.set(tab.host.instanceId, gate);
@@ -458,12 +458,27 @@ test('an exhausted preparation stays failed through passive show and runtime bro
   change({ status: 'starting', error: null });
   change({ status: 'ready', error: null });
   await service.openOnTab(tab.host);
-  service.setTabActive(tab.host, true);
-  await flush();
-  assert.equal(calls.prepare.length, attempts, 'passive events cannot start another recovery cycle');
+  assert.equal(
+    calls.prepare.length,
+    attempts,
+    'passive broadcasts and an already-docked tab cannot start another recovery cycle'
+  );
   assert.equal(service.snapshot(tab.host.instanceId).status, 'error');
+  service.setTabActive(tab.host, true);
+  assert.equal(
+    service.snapshot(tab.host.instanceId).status,
+    'reconnecting',
+    'activation retries automatically, labelled distinctly from a cold start'
+  );
+  await flush();
+  assert.equal(calls.prepare.length, attempts + 1, 'activation started exactly one retry');
+  assert.equal(
+    service.snapshot(tab.host.instanceId).status,
+    'error',
+    'the still-exhausted target fails the automatic retry the same way'
+  );
   gates.delete(tab.host.instanceId);
   await service.initializeSurface(tab.host.instanceId);
-  assert.equal(calls.prepare.length, attempts + 1);
+  assert.equal(calls.prepare.length, attempts + 2);
   assert.equal(service.snapshot(tab.host.instanceId).status, 'ready');
 });

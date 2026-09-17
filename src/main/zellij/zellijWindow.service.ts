@@ -160,6 +160,7 @@ class ZellijWindowService {
     entry.surface.setVisible(active);
     if (active) {
       this.refreshTab(host);
+      entry.surface.sync();
       entry.surface.focus(host.window() ?? undefined);
     }
   }

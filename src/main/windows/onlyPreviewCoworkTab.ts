@@ -160,9 +160,15 @@ export const registerOnlyPreviewCoworkTab = (): void => {
     favicon: MAESTRO_ICON_ONLY_PREVIEW,
     displayUrl: MAESTRO_ONLY_PREVIEW_DISPLAY_URL,
     getDisplayedFile: () => {
-      // 占位状态下**恒为 `null`** —— 这一格没有在显示任何文件。这一条是承重的:
-      // `onlyPreviewMaestroOpener` 的 `isMountedOnCoworkTab()` 据此把工作区芯片的点击路由到
-      // **那个窗口**而不是这一格(方案 #2)。
+      // 占位状态下**恒为 `null`** —— 这一格没有在显示任何文件。
+      //
+      // 真正的消费方是 `maestroBrowserView.service.ts` 的 `describeTabContent`(agent 面向的
+      // `list_tabs` / 当前 tab 描述):返回 null 才不会告诉 agent「一个占位 tab 正在显示某个文件」。
+      //
+      // **不是**给工作区芯片路由用的 —— `isMountedOnCoworkTab()` 只看
+      // `getMountKind(hostToken) === 'cowork'`,根本不读这个值;占位态下芯片之所以仍然路由到那个
+      // 窗口,是因为 `getStandaloneHost()` 还指着 standalone 承载,与这里返回什么无关。
+      // (这条理由第一版写错了,评审纠正;方案 #2 同步更正。)
       if (placeholder) return null;
       const host = onlyPreviewWindowHelper.getStandaloneHost();
       if (!live?.mount.isAlive() || !host || onlyPreviewWindowHelper.getMountKind(host.hostToken) !== 'cowork') return null;
@@ -193,21 +199,33 @@ export const registerOnlyPreviewCoworkTab = (): void => {
       await mountComposite(host);
     },
     close: (host) => {
-      if (placeholder?.host === host) {
-        const current = placeholder;
+      /**
+       * 两边都要走完,**不能在占位分支里 `return`**。
+       *
+       * 升格进行中 `placeholder` 与 `live` 会短暂地**同时**指向同一个 host:
+       * `promoteOnlyPreviewCoworkTab()` 先把 `live` 装上,然后 await `openOnMount(next)`
+       * ——那是几百毫秒的建视图 ＋ 装 shell ＋ 起搜索运行时——占位页要到那之后才清。这个窗口里
+       * 用户把 tab 关掉,旧写法命中占位分支就返回了:`live` 留着一个 tab 已经没了的 mount,
+       * 而 composite 的「宿主没了」信号 `reportHostGone()` 与 `dispose()` 一个都不跑,teardown
+       * 只能靠 `openOnMount` 自己那个 `requireReadySurface` 抛出来兜。
+       *
+       * 只有 OnlyPreview **不是**固有 tab 时够得到(pinned 的那一格 `closeTab` 本来就是静默 no-op)。
+       */
+      const closingPlaceholder = placeholder?.host === host ? placeholder : null;
+      const closingLive = live?.host === host ? live : null;
+      if (!closingPlaceholder && !closingLive) return;
+      if (closingPlaceholder) {
         placeholder = null;
-        foreground = false;
-        current.surface.dispose();
-        return;
+        closingPlaceholder.surface.dispose();
       }
-      if (live?.host !== host) return;
-      const current = live;
-      live = null;
+      if (closingLive) {
+        live = null;
+        // The tab is already gone; this is what tells the composite its host went away, which is the
+        // signal its own teardown listens on.
+        closingLive.mount.reportHostGone();
+        closingLive.mount.dispose();
+      }
       foreground = false;
-      // The tab is already gone; this is what tells the composite its host went away, which is the
-      // signal its own teardown listens on.
-      current.mount.reportHostGone();
-      current.mount.dispose();
     },
     setActive: (host, active) => {
       if (placeholder?.host !== host && live?.host !== host) return;

@@ -42,6 +42,7 @@ const input = ref(props.session.detail.draft?.text || '')
 const selectedFiles = ref<ChatAttachment[]>(props.session.detail.draft?.files.slice() || [])
 const fileInput = ref<HTMLInputElement | null>(null)
 const composerRef = ref<HTMLTextAreaElement | null>(null)
+const panelRef = ref<HTMLElement | null>(null)
 const composerCaret = ref(0)
 // 数组顺序只是阅读顺序(按加入时间):面板显示时 `ShortcutStore.matches` 按命令名 ASCII 重排,
 // 所以新命令追加在末尾就行,不必为了菜单里的位置去插队。
@@ -75,6 +76,9 @@ const shortcut = (key: string): string => `${navigator.platform.toLowerCase().in
 // i18n 文案里的 `{count}` 占位替换。不用 `$t()` / `useI18n()` —— 本项目一律走 i18nHelper。
 const withCount = (copy: string, count: number): string => copy.replace('{count}', String(count))
 const turnLocked = computed(() => Boolean(props.session.turn))
+// 照搬 cowork 同名判据(ChatPanel.vue `stopEnabled`)——Escape-停止要知道"现在真有能停的东西",
+// 不是只看 `turnLocked`(那条连 compacting-without-a-turn 的情况都不算)。
+const stopEnabled = computed(() => Boolean(props.session.compacting || (props.session.turn && (!props.session.turn.aborting || props.session.turn.stopError))))
 const skillLayerLabel = (layer?: string): string => layer === 'workspace' ? i18nHelper.maestroControl.chat.skillWorkspace : layer === 'institution' ? i18nHelper.maestroControl.chat.skillInstitution : i18nHelper.maestroControl.chat.skillGlobal
 
 const workspace = computed(() => props.session.detail.workspace)
@@ -334,13 +338,62 @@ function onPanelKeydown(event: KeyboardEvent): void {
 
 onMounted(() => {
   window.addEventListener('keydown', onPanelKeydown, true)
+  window.addEventListener('keydown', onChatEscapeKeydown)
   if (!sessionActions.historyVisible && !sessionActions.searchVisible) void nextTick(focusComposer)
 })
-onBeforeUnmount(() => window.removeEventListener('keydown', onPanelKeydown, true))
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onPanelKeydown, true)
+  window.removeEventListener('keydown', onChatEscapeKeydown)
+})
 
 async function stop(): Promise<void> {
   if (props.session.compacting) await coach.cancelCompaction({ sessionId: props.session.id })
   if (props.session.turn) await messageStore.turnService.stop(props.session.id)
+}
+
+// 照搬 cowork 同名判据(docs/features/maestro-chat-escape-to-stop.md)。tooltip 排除认的是它
+// 渲染出来的内容(`arco-tooltip-content`),不是传给 `<Trigger>` 就丢掉的 `class="arco-tooltip"`
+// ——Arco 的 `<Trigger>` 是 `inheritAttrs: false`,那个类从没落到真实 DOM 上过。同时把
+// `visibility==='hidden'` 单独判断扩成也认 `opacity==='0'`,盖住淡出过渡进行中的那几百毫秒。
+// `.chat-error-modal` 是 bl 独有的(cowork 没有 ChatErrorModal 的对应物)。
+const escapeStopBlockedByOverlay = (): boolean => {
+  const overlays = document.querySelectorAll<HTMLElement>(
+    '.arco-modal, .arco-drawer, .arco-trigger-popup-wrapper, .context-graph, .response-status__roster, .chat-error-modal, [role="dialog"], [role="menu"], [role="listbox"]'
+  )
+  for (const overlay of overlays) {
+    if (!overlay.getClientRects().length) continue
+    const style = getComputedStyle(overlay)
+    if (style.visibility === 'hidden' || style.opacity === '0') continue
+    if (overlay.querySelector('.arco-tooltip-content')) continue
+    return true
+  }
+  return false
+}
+
+/**
+ * 对话进行中 Escape = Stop(Ral 2026-09-17,与 cowork 同一天补的契约,docs/features/
+ * maestro-chat-escape-to-stop.md)。bl 目前没有 explore_session/drill 那套东西,所以没有
+ * cowork 那个"停止会丢探索结果,弹确认"的分支——`stop()` 直接停,不问。
+ *
+ * 也没有搬 cowork 那条"跨 WebContentsView 转播"的兜底:bl 目前没有与 Control 争夺 OS 焦点的
+ * 独立操作/浏览器 view,所以焦点丢失这条故障模式今天在 bl 不成立,先不做防御性基建
+ * (需要的时候——bl 有了自己的浏览器/任务卡片 view 之后——照 cowork 的
+ * `docs/issues/escape-stop-cross-webcontentsview-focus.md` 补一份 `before-input-event` 转播)。
+ */
+function onChatEscapeKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Escape' || event.defaultPrevented || event.repeat || event.isComposing || event.keyCode === 229) return
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+  if (!document.hasFocus() || document.visibilityState !== 'visible' || channelStore.activeSessionId !== props.session.id) return
+  const panel = panelRef.value
+  if (!panel?.getClientRects().length) return
+  const target = event.target
+  if (target instanceof Node && target !== document.body && target !== document.documentElement && !panel.contains(target)) return
+  if (shortcutStore.open) return
+  if (!stopEnabled.value) return
+  // Run after child/document handlers, retaining Escape for dismissible surfaces.
+  if (escapeStopBlockedByOverlay()) return
+  event.preventDefault()
+  void stop()
 }
 
 function onComposerKeydown(event: KeyboardEvent): void {
@@ -519,6 +572,7 @@ async function stopUsingWorkspace(): Promise<void> {
 
 <template>
   <div
+    ref="panelRef"
     class="chat-panel"
     @dragenter.prevent="onDragEnter"
     @dragover.prevent

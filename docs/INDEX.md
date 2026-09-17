@@ -1,5 +1,17 @@
 # Bitterless Documentation
 
+- [Plain Escape stops the running turn](features/maestro-chat-escape-to-stop.md) — implemented, code-verified;
+  net-new port of cowork's contract, built against cowork's own 2026-09-17 correction (tooltip-selector
+  fix included from the start). No drill-confirmation branch (bl has no explore_session feature) and
+  no cross-WebContentsView broadcast fallback (bl has no competing operation view today) — both
+  deliberately deferred, see [task 182](plan/tasks/maestro-escape-stop-182.md). Test authoring pending.
+
+- [The unread badge can misfire for the active session](issues/maestro-unread-badge-active-session-race.md) —
+  fixed, code-verified; `channelStore.activeSessionId` / `messageStore.activeSessionId` two-field race
+  (same root cause as cowork), plus a bl-specific port regression that dropped a warm-session
+  short-circuit and so paid the race window on every click, not just cold loads. Amends
+  [maestro-session-list-unread.md](features/maestro-session-list-unread.md).
+
 - [An unbounded hidden-renderer load latches OnlyPreview dead until restart](issues/onlypreview-unbounded-renderer-load-latches-preview-dead.md) —
   fixed in both apps; owner verification pending. The hidden file-search renderer's `loadURL` was the
   only unbounded await on the startup chain, and a load that is never *answered* (as opposed to
@@ -76,7 +88,8 @@
 - [Zellij 更新后仍识别已拥有的终端进程](issues/zellij-update-owner-file-identity.md) — implemented; code-verified, packaged human acceptance pending;
   首次认领核对 bundled binary，后续以进程实际映射的文件编号识别搬动或已删除的旧程序文件，保留进程与 socket 校验。
 - [Zellij renderer 加载超时与恢复](issues/zellij-renderer-load-timeout.md) — implemented; code-verified, packaged human acceptance pending;
-  controls 与 terminal 导航分别封顶 15 秒，错误可重试；页面加载失败不更换 native session。
+  controls 与 terminal 导航分别封顶 15 秒，错误可重试；页面加载失败不更换 native session。R10：Zellij 的
+  controls/terminal WebContentsView 关闭 backgroundThrottling，防止长时间不可见的 tab 被 Chromium 节流导致导航超时。
 - [更新重启后 Zellij 阻塞半天，新开 tab 报 operation-failed](issues/zellij-update-restart-blocks-and-new-tab-fails.md) — R1–R6 + R9 已落盘；
   `[zellij]` 现在每阶段一行带 `elapsedMs`（之前 80 分钟日志里整个子系统只有 3 行），`code=` 被自己的脱敏器擦成 `***` 的问题一并修掉；
   瞬态 IPC 失败与所有权审计超时各自自愈一次；2026-09-17 接手补齐上面三条修复，代码验证完成，待打包复验。

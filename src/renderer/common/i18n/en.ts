@@ -1115,6 +1115,7 @@ export const en = {
     dismiss: 'Dismiss',
     title: 'Zellij',
     opening: 'Opening terminal…',
+    reconnecting: 'Reconnecting…',
     retry: 'Retry',
     settings: 'Terminal settings',
     splitDown: 'Split down',
@@ -1133,6 +1134,7 @@ export const en = {
       idle: 'Opening…',
       starting: 'Opening…',
       ready: 'Connected',
+      reconnecting: 'Reconnecting…',
       error: 'Needs attention'
     },
     errors: {

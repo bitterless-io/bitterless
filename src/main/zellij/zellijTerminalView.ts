@@ -80,8 +80,7 @@ export class ZellijTerminalView {
 
   /** Attach against the current runtime state; safe to call repeatedly (host show/activate). */
   sync(): void {
-    // An exhausted recovery attempt stays failed until the user explicitly presses Retry.
-    if (this.disposed || this.state.status === 'error') return;
+    if (this.disposed) return;
     void this.initialize();
   }
 
@@ -99,7 +98,8 @@ export class ZellijTerminalView {
       return Promise.resolve(this.snapshot());
     if (this.pending) return this.pending;
     const generation = this.generation;
-    this.state = { status: 'starting', error: null };
+    const wasError = this.state.status === 'error';
+    this.state = { status: wasError ? 'reconnecting' : 'starting', error: null };
     this.publish();
     const pending = (async () => {
       try {

@@ -39,7 +39,7 @@ export type ZellijErrorCode =
   | 'operation-failed';
 
 export interface ZellijSnapshot {
-  status: 'idle' | 'starting' | 'ready' | 'error';
+  status: 'idle' | 'starting' | 'ready' | 'reconnecting' | 'error';
   error: ZellijErrorCode | null;
   configDirectory: string;
   configFile: string;

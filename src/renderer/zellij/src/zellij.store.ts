@@ -44,6 +44,12 @@ class ZellijState {
     return i18nHelper.zellij.status[this.snapshot?.status ?? 'starting'];
   }
 
+  get loadingLabel(): string {
+    return this.snapshot?.status === 'reconnecting'
+      ? i18nHelper.zellij.reconnecting
+      : i18nHelper.zellij.opening;
+  }
+
   get opening(): boolean {
     return !this.errorMessage && this.snapshot?.status !== 'ready';
   }
@@ -51,7 +57,7 @@ class ZellijState {
   apply(snapshot: ZellijSnapshot | null): void {
     if (
       !snapshot ||
-      !['idle', 'starting', 'ready', 'error'].includes(snapshot.status) ||
+      !['idle', 'starting', 'ready', 'reconnecting', 'error'].includes(snapshot.status) ||
       !snapshot.shortcuts
     ) {
       // A malformed snapshot looks identical to a thrown call from the UI, so say which one it was.

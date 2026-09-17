@@ -39,7 +39,7 @@
         aria-live="polite"
       >
         <IconLoader2 :size="28" class="zellij__loading-icon" aria-hidden="true" />
-        <p>{{ i18nHelper.zellij.opening }}</p>
+        <p>{{ zellijStore.loadingLabel }}</p>
       </div>
     </main>
   </div>

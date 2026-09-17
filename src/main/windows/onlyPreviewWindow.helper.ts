@@ -1573,11 +1573,20 @@ export class OnlyPreviewWindowHelper {
 
 export const onlyPreviewWindowHelper = new OnlyPreviewWindowHelper();
 
-// 退出时 `app.quit()` 会对每个窗口发 `'close'`,而那一次不是「用户把 OnlyPreview 收起来」。
-// `once` 就够:这一位只会从 false 变 true。
-app.once('before-quit', () => {
-  shuttingDown = true;
-});
+/**
+ * 退出时 `app.quit()` 会对每个窗口发 `'close'`,而那一次不是「用户把 OnlyPreview 收起来」。
+ *
+ * **不能挂在 `before-quit` 上。** 这个 app 的第一发 `before-quit` 必然 `preventDefault()`
+ * (`app.main.ts:704-707`),真正的退出要等 `quitAfterCleanup()` 把它自己那面 `isQuitting` 置真之后
+ * 才发生 —— 而退出是**可以被取消**的:退出确认对话框点取消(`:717-720`)、清理失败
+ * (`:695-699`)。挂在 `before-quit` 上,一次「取消退出」就把这一位永久钉在 true,之后整个进程
+ * 生命里关窗接管都静默失效,症状和它要防的那件事一模一样,且重启前不恢复。
+ *
+ * 所以由 app 在设置 `isQuitting` 的同一处显式驱动,两面旗同真同假。
+ */
+export const setOnlyPreviewShuttingDown = (value: boolean): void => {
+  shuttingDown = value;
+};
 
 // Registered at module load, not at window creation: the menu exists for the whole application
 // lifetime, and an unclaimed chord has to resolve to `false` (so it can be replayed to the window

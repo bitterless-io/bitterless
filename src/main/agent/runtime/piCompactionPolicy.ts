@@ -1,35 +1,90 @@
-const CODEX_COMPACTION_MODELS = new Set([
-  'gpt-6-astra',
-  'gpt-5.6-sol',
-  'gpt-5.6-terra',
-  'gpt-5.6-luna',
-]);
+export type PiCompactionBudget = number | { readonly ratio: number };
 
-// Pi 0.85.1 defaults remain the fallback for every unlisted provider/model.
+export interface PiCompactionBudgetConfig {
+  readonly reserveTokens?: PiCompactionBudget;
+  readonly keepRecentTokens?: PiCompactionBudget;
+}
+
+export interface PiCompactionConfig extends PiCompactionBudgetConfig {
+  readonly modelOverrides?: Readonly<Record<string, PiCompactionBudgetConfig>>;
+}
+
+// Pi consumes absolute token counts. Ratios are a host configuration convenience.
 const DEFAULT_RESERVE_TOKENS = 16384;
-const KEEP_RECENT_TOKENS = 20000;
+const DEFAULT_KEEP_RECENT_TOKENS = 20000;
 
-/**
- * Host override for the current Codex presets: reserve 20% of the resolved
- * model's real window, retaining Pi's fixed 20k recent tail. Pi still owns
- * scheduling; pass these settings at session creation and model switches.
- */
-export const resolvePiCompactionSettings = (
-  model: { provider: string; id: string; contextWindow: number },
-  enabled = true,
-): { enabled: boolean; reserveTokens: number; keepRecentTokens: number } => {
-  if (model.provider !== 'openai-codex' || !CODEX_COMPACTION_MODELS.has(model.id)) {
-    return { enabled, reserveTokens: DEFAULT_RESERVE_TOKENS, keepRecentTokens: KEEP_RECENT_TOKENS };
-  }
+export const PI_COMPACTION_CONFIG: PiCompactionConfig = {
+  reserveTokens: DEFAULT_RESERVE_TOKENS,
+  keepRecentTokens: DEFAULT_KEEP_RECENT_TOKENS,
+  modelOverrides: {
+    'openai-codex/gpt-6-astra': { reserveTokens: { ratio: 0.2 } },
+    'openai-codex/gpt-5.6-sol': { reserveTokens: { ratio: 0.2 } },
+    'openai-codex/gpt-5.6-terra': { reserveTokens: { ratio: 0.2 } },
+    'openai-codex/gpt-5.6-luna': { reserveTokens: { ratio: 0.2 } },
+  },
+};
 
+type CompactionModel = { provider: string; id: string; contextWindow: number };
+
+const validateWindow = (model: CompactionModel): void => {
   if (!Number.isSafeInteger(model.contextWindow) || model.contextWindow <= 0) {
     throw new RangeError(`Invalid context window for ${model.provider}/${model.id}: expected a positive safe integer`);
   }
+};
 
-  const reserveTokens = Math.floor(model.contextWindow / 5);
-  if (model.contextWindow - reserveTokens <= KEEP_RECENT_TOKENS) {
-    throw new RangeError(`Context window for ${model.provider}/${model.id} is too small for the 20% reserve and 20000-token recent tail`);
+const resolveBudget = (value: PiCompactionBudget, field: string, model: CompactionModel): number => {
+  if (typeof value === 'number') {
+    if (Number.isSafeInteger(value) && value >= 0) return value;
+    throw new RangeError(`Invalid ${field}: expected a non-negative safe integer`);
+  }
+  if (value && typeof value === 'object' && !Array.isArray(value)
+    && Object.keys(value).length === 1 && Object.hasOwn(value, 'ratio')) {
+    const { ratio } = value;
+    if (typeof ratio !== 'number' || !Number.isFinite(ratio) || ratio < 0 || ratio >= 1) {
+      throw new RangeError(`Invalid ${field}.ratio: expected a number in [0, 1)`);
+    }
+    validateWindow(model);
+    return Math.floor(model.contextWindow * ratio);
+  }
+  throw new TypeError(`Invalid ${field}: expected an absolute token count or { ratio: number }`);
+};
+
+/**
+ * Resolve each exact provider/model override independently, then ordinary
+ * configuration, then Pi defaults. Pass only numbers to SettingsManager at
+ * session creation/model switches; Pi still owns scheduling.
+ */
+export const resolvePiCompactionSettings = (
+  model: CompactionModel,
+  enabled = true,
+  config: PiCompactionConfig = PI_COMPACTION_CONFIG,
+): { enabled: boolean; reserveTokens: number; keepRecentTokens: number } => {
+  // Validate ordinary values even when a model override replaces them.
+  const ordinaryReserve = config.reserveTokens === undefined ? DEFAULT_RESERVE_TOKENS : config.reserveTokens;
+  const ordinaryRecent = config.keepRecentTokens === undefined ? DEFAULT_KEEP_RECENT_TOKENS : config.keepRecentTokens;
+  let reserveTokens = resolveBudget(ordinaryReserve, 'reserveTokens', model);
+  let keepRecentTokens = resolveBudget(ordinaryRecent, 'keepRecentTokens', model);
+  const modelKey = `${model.provider}/${model.id}`;
+  const override = config.modelOverrides && Object.hasOwn(config.modelOverrides, modelKey)
+    ? config.modelOverrides[modelKey] : undefined;
+  if (override !== undefined) {
+    if (!override || typeof override !== 'object' || Array.isArray(override)) {
+      throw new TypeError(`Invalid modelOverrides[${modelKey}]: expected a budget configuration`);
+    }
+    validateWindow(model);
+    if (override.reserveTokens !== undefined) {
+      reserveTokens = resolveBudget(override.reserveTokens, `${modelKey}.reserveTokens`, model);
+    }
+    if (override.keepRecentTokens !== undefined) {
+      keepRecentTokens = resolveBudget(override.keepRecentTokens, `${modelKey}.keepRecentTokens`, model);
+    }
   }
 
-  return { enabled, reserveTokens, keepRecentTokens: KEEP_RECENT_TOKENS };
+  // Keep the explicit model/ratio policy usable without silently clamping it.
+  // Untouched absolute Pi defaults retain Pi's behavior for unlisted models.
+  if ((override !== undefined || typeof ordinaryReserve !== 'number' || typeof ordinaryRecent !== 'number')
+    && model.contextWindow - reserveTokens <= keepRecentTokens) {
+    throw new RangeError(`Context window for ${modelKey} is too small for reserveTokens=${reserveTokens} and keepRecentTokens=${keepRecentTokens}`);
+  }
+  return { enabled, reserveTokens, keepRecentTokens };
 };

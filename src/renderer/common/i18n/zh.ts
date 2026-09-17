@@ -1096,6 +1096,7 @@ export const zh: typeof en = {
     dismiss: '暂时关闭',
     title: 'Zellij',
     opening: '正在打开终端…',
+    reconnecting: '正在重新连接终端…',
     retry: '重试',
     settings: '终端设置',
     splitDown: '向下分屏',
@@ -1114,6 +1115,7 @@ export const zh: typeof en = {
       idle: '正在打开…',
       starting: '正在打开…',
       ready: '已连接',
+      reconnecting: '正在重新连接…',
       error: '需要处理'
     },
     errors: {

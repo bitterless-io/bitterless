@@ -33,6 +33,21 @@ export class ChannelStoreState {
   private creatingSession = false
   private authGeneration = 0
 
+  /**
+   * 构造期就把恢复出来的 id 同步给 `messageStore.activeSessionId`(而不是等 `syncActiveSession()`)。
+   *
+   * `markUnread` 的判据读的是后者,而恢复链(`init` → `ensureMaestroSession` →
+   * `loadPersistedSession`)是异步的、且内部会重放该会话未送达的回复——原来
+   * `messageStore.activeSessionId` 停在默认值 `''` 直到 `syncActiveSession()` 在整条恢复链末尾
+   * 才写,重放期间任何一条对着"即将变成当前会话"的回复跑 markUnread,判据看到的都是
+   * `'' !== restoringId`,于是被误判成"另一个会话的"而置未读
+   * (docs/issues/maestro-unread-badge-active-session-race.md)。这一行把窗口收窄到"构造之前"——
+   * 事实上不存在。照搬 cowork 同一处修复(2026-09-17,同一天的对齐)。
+   */
+  constructor() {
+    if (this.activeSessionId) messageStore.activeSessionId = this.activeSessionId
+  }
+
   reset(): void {
     this.authGeneration += 1
     this.initialized = false
@@ -132,9 +147,19 @@ export class ChannelStoreState {
 
   async selectMaestroHistorySession(sessionId: string): Promise<boolean> {
     const generation = this.authGeneration
-    const session = await messageStore.loadPersistedSession(sessionId)
-    if (generation !== this.authGeneration) return false
-    if (!session || session.archivedAt) return false
+    // 已在内存里的会话不必等落库读——这条短路是 cowork 原有的,bl 的港口漏掉了它
+    // (`git show ec0ba426`),于是 bl 每次点击都要过 await,cowork 只在冷加载时才过。
+    // 早写 `messageStore.activeSessionId`、失败回滚:见构造函数处的注释,`loadPersistedSession`
+    // 内部会重放这个会话的未送达回复,重放期间 markUnread 判据必须已经看到这个 id
+    // (docs/issues/maestro-unread-badge-active-session-race.md)。
+    const previousActiveId = messageStore.activeSessionId
+    messageStore.activeSessionId = sessionId
+    const session = messageStore.getSession(sessionId) || (await messageStore.loadPersistedSession(sessionId))
+    if (generation !== this.authGeneration) { messageStore.activeSessionId = previousActiveId; return false }
+    if (!session || session.archivedAt) {
+      messageStore.activeSessionId = previousActiveId
+      return false
+    }
     this.activeSource = 'cowork'
     this.activeSessionId = session.id
     this.syncActiveSession()

@@ -50,8 +50,11 @@ Cowork 窗口正在启动那一刻,把另一个窗口提到前台正好与用户
 
 反转落在一行:`OnlyPreviewCoworkMount.destroyHost()` 从 `this.deps.close()` 改成
 `this.deps.defer()`,并且 `teardownSource('cowork')` 里那个 `closeTab` 循环整段删掉。
-`getDisplayedFile()` 在 `deferred` 下返回 `null`,于是 `isMountedOnCoworkTab()` 仍然把工作区 chip
-的点击路由到**窗口**,不会路由到占位页。
+`getDisplayedFile()` 在 `deferred` 下返回 `null`。**理由更正(2026-09-17,评审纠正)**:它的消费方是
+`maestroBrowserView.service.ts` 的 `describeTabContent` —— agent 面向的 `list_tabs` / 当前 tab 描述,
+返回 null 才不会告诉 agent「一个占位 tab 正在显示某个文件」。**与工作区 chip 的路由无关**:
+`isMountedOnCoworkTab()` 只看 `getMountKind(hostToken) === 'cowork'`,不读这个值;占位态下 chip 仍然
+路由到窗口,是因为 `getStandaloneHost()` 还指着 standalone 承载。判据本身不变,错的是最初写下的理由。
 
 ## #3 前往
 

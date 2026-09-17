@@ -11,7 +11,7 @@ const output = ts.transpileModule(readFileSync(file, 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 new Function('module', 'exports', output)(module, module.exports);
-const { resolvePiCompactionSettings } = module.exports;
+const { PI_COMPACTION_CONFIG, resolvePiCompactionSettings } = module.exports;
 const model = (id = 'gpt-6-astra', contextWindow = 272000, provider = 'openai-codex') => ({
   provider, id, contextWindow,
 });
@@ -59,7 +59,7 @@ test('known models reject invalid context windows without inventing a fallback',
   }
 });
 
-test('small known windows fail explicitly when the fixed recent tail consumes the threshold', () => {
+test('small configured windows fail explicitly when the selected budgets consume the threshold', () => {
   for (const contextWindow of [1, 20000, 25000]) {
     assert.throws(() => resolvePiCompactionSettings(model('gpt-6-astra', contextWindow)), {
       name: 'RangeError', message: /too small/,
@@ -77,4 +77,115 @@ test('each resolution is independent when callers update their SettingsManager',
   assert.deepEqual(resolvePiCompactionSettings(model()), {
     enabled: true, reserveTokens: 54400, keepRecentTokens: 20000,
   });
+});
+
+test('the shipped explicit config keeps Codex reserve ratios and independently inherited recent defaults', () => {
+  assert.equal(PI_COMPACTION_CONFIG.reserveTokens, 16384);
+  assert.equal(PI_COMPACTION_CONFIG.keepRecentTokens, 20000);
+  assert.deepEqual(Object.keys(PI_COMPACTION_CONFIG.modelOverrides), [
+    'openai-codex/gpt-6-astra', 'openai-codex/gpt-5.6-sol',
+    'openai-codex/gpt-5.6-terra', 'openai-codex/gpt-5.6-luna',
+  ]);
+  for (const override of Object.values(PI_COMPACTION_CONFIG.modelOverrides)) {
+    assert.deepEqual(override, { reserveTokens: { ratio: 0.2 } });
+  }
+});
+
+test('ordinary absolute counts and each omitted field fall back independently to Pi defaults', () => {
+  for (const [config, reserveTokens, keepRecentTokens] of [
+    [{}, 16384, 20000],
+    [{ reserveTokens: 4096 }, 4096, 20000],
+    [{ keepRecentTokens: 8192 }, 16384, 8192],
+    [{ reserveTokens: 4096, keepRecentTokens: 8192 }, 4096, 8192],
+    [{ reserveTokens: 0, keepRecentTokens: 0 }, 0, 0],
+  ]) {
+    assert.deepEqual(resolvePiCompactionSettings(model(), true, config), {
+      enabled: true, reserveTokens, keepRecentTokens,
+    });
+  }
+});
+
+test('both ordinary budgets support ratios, mixed forms and floor rounding against the actual window', () => {
+  for (const [config, reserveTokens, keepRecentTokens] of [
+    [{ reserveTokens: { ratio: 0.2 }, keepRecentTokens: { ratio: 0.1 } }, 13107, 6553],
+    [{ reserveTokens: 4096, keepRecentTokens: { ratio: 0.1 } }, 4096, 6553],
+    [{ reserveTokens: { ratio: 0.2 }, keepRecentTokens: 20000 }, 13107, 20000],
+    [{ reserveTokens: { ratio: 0 }, keepRecentTokens: { ratio: 0 } }, 0, 0],
+  ]) {
+    assert.deepEqual(resolvePiCompactionSettings(model('fixture', 65536), true, config), {
+      enabled: true, reserveTokens, keepRecentTokens,
+    });
+  }
+  assert.deepEqual(resolvePiCompactionSettings(model('fixture', 101), true, {
+    reserveTokens: { ratio: 0.2 }, keepRecentTokens: { ratio: 0.1 },
+  }), { enabled: true, reserveTokens: 20, keepRecentTokens: 10 });
+});
+
+test('exact provider/model overrides support slash IDs and independent override > ordinary > native fallback', () => {
+  const candidate = model('family/model', 65536, 'provider');
+  const key = 'provider/family/model';
+  for (const [config, reserveTokens, keepRecentTokens] of [
+    [{ modelOverrides: { [key]: { reserveTokens: 2048 } } }, 2048, 20000],
+    [{ reserveTokens: 4096, modelOverrides: { [key]: { keepRecentTokens: 8192 } } }, 4096, 8192],
+    [{ keepRecentTokens: 8192, modelOverrides: { [key]: { reserveTokens: { ratio: 0.2 } } } }, 13107, 8192],
+    [{ reserveTokens: 4096, modelOverrides: { [key]: { keepRecentTokens: { ratio: 0.1 } } } }, 4096, 6553],
+    [{ modelOverrides: { [key]: { reserveTokens: { ratio: 0.2 }, keepRecentTokens: { ratio: 0.1 } } } }, 13107, 6553],
+  ]) {
+    assert.deepEqual(resolvePiCompactionSettings(candidate, false, config), {
+      enabled: false, reserveTokens, keepRecentTokens,
+    });
+  }
+  const config = { reserveTokens: 4096, modelOverrides: { [key]: { reserveTokens: 2048 } } };
+  assert.equal(resolvePiCompactionSettings(model('family/model/extra', 65536, 'provider'), true, config).reserveTokens, 4096);
+  assert.equal(resolvePiCompactionSettings(model('family/model', 65536, 'Provider'), true, config).reserveTokens, 4096);
+  const inherited = Object.create({ [key]: { reserveTokens: 123 } });
+  assert.equal(resolvePiCompactionSettings(candidate, true, { modelOverrides: inherited }).reserveTokens, 16384);
+});
+
+test('absolute budgets reject invalid values in ordinary and model configuration without coercion', () => {
+  for (const field of ['reserveTokens', 'keepRecentTokens']) {
+    for (const value of [-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, '4096', null, [], {}, { percent: 20 }]) {
+      assert.throws(() => resolvePiCompactionSettings(model(), true, { [field]: value }), /Invalid/);
+      assert.throws(() => resolvePiCompactionSettings(model(), true, {
+        modelOverrides: { 'openai-codex/gpt-6-astra': { [field]: value } },
+      }), /Invalid/);
+    }
+  }
+});
+
+test('ratios reject invalid values and ambiguous shapes in either budget', () => {
+  for (const field of ['reserveTokens', 'keepRecentTokens']) {
+    for (const ratio of [-0.1, 1, 1.1, NaN, Infinity, '0.2', null, undefined]) {
+      assert.throws(() => resolvePiCompactionSettings(model(), true, { [field]: { ratio } }), /Invalid/);
+      assert.throws(() => resolvePiCompactionSettings(model(), true, {
+        modelOverrides: { 'openai-codex/gpt-6-astra': { [field]: { ratio } } },
+      }), /Invalid/);
+    }
+    assert.throws(() => resolvePiCompactionSettings(model(), true, { [field]: { ratio: 0.2, tokens: 4096 } }), /Invalid/);
+  }
+});
+
+test('ordinary invalid fields are not hidden by a valid model override', () => {
+  for (const field of ['reserveTokens', 'keepRecentTokens']) {
+    assert.throws(() => resolvePiCompactionSettings(model(), true, {
+      [field]: -1,
+      modelOverrides: { 'openai-codex/gpt-6-astra': { [field]: 1000 } },
+    }), /Invalid/);
+  }
+});
+
+test('ratios validate unknown model windows and configured budgets never auto-clamp', () => {
+  for (const contextWindow of [0, -1, NaN, Infinity, 65536.5, Number.MAX_SAFE_INTEGER + 1]) {
+    for (const field of ['reserveTokens', 'keepRecentTokens']) {
+      assert.throws(() => resolvePiCompactionSettings(model('fixture', contextWindow), true, {
+        [field]: { ratio: 0.2 },
+      }), /expected a positive safe integer/);
+    }
+  }
+  for (const config of [
+    { reserveTokens: { ratio: 0.5 }, keepRecentTokens: { ratio: 0.5 } },
+    { modelOverrides: { 'openai-codex/fixture': { reserveTokens: 30000, keepRecentTokens: 40000 } } },
+  ]) {
+    assert.throws(() => resolvePiCompactionSettings(model('fixture', 65536), true, config), /too small/);
+  }
 });

@@ -432,7 +432,21 @@ test('source guards: the takeover hangs off the cancellable close, and quitting 
   const armBody = arm.slice(0, arm.indexOf('\n  }\n'));
   assert.match(armBody, /if \(shuttingDown\) return;/, '退出应用时拒绝 —— app.quit() 对每个窗口发 close');
   assert.match(armBody, /kind !== 'standalone'\) return;/, '只有独立窗口那一种会被接管');
-  assert.match(helper, /app\.once\('before-quit', \(\) => \{\n\s*shuttingDown = true;/);
+  /**
+   * 这一位**不许**挂在 `before-quit` 上。第一发 `before-quit` 必然被 `preventDefault()`,而退出
+   * 可以被取消(确认对话框点取消、清理失败)—— 挂那里的话一次「取消退出」就把关窗接管永久关掉,
+   * 症状和它要防的那件事一样,且重启前不恢复。改由 app 在设置自己那面 `isQuitting` 的同一处驱动。
+   */
+  assert.doesNotMatch(
+    helper,
+    /before-quit/,
+    'shuttingDown 不许由 before-quit 驱动 —— 那是个永久闩锁'
+  );
+  assert.match(helper, /export const setOnlyPreviewShuttingDown = \(value: boolean\): void => \{/);
+  const appMain = codeOnly(readSource('src/main/app.main.ts'));
+  // 同真同假:isQuitting 置真处置真,置假处置假。
+  assert.match(appMain, /isQuitting = true;\n\s*(\/\/[^\n]*\n\s*)*setOnlyPreviewShuttingDown\(true\);/);
+  assert.match(appMain, /isQuitting = false;\n\s*(\/\/[^\n]*\n\s*)*setOnlyPreviewShuttingDown\(false\);/);
 
   // `closeOnRendererFailure` **先**布防再 `destroyStandalone()`:那一支走 `destroy()`,发不出
   // `'close'`,而它是三个非用户来源里唯一应该升格的那一个。

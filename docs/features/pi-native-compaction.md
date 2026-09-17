@@ -6,7 +6,7 @@
 
 ## Contract
 
-Pi AgentSession is the sole automatic compaction scheduler. Use the installed Pi 0.85.1 native threshold/overflow logic with SettingsManager.inMemory({ compaction: resolvePiCompactionSettings(model) }). For the exact openai-codex keys gpt-6-astra, gpt-5.6-sol, gpt-5.6-terra and gpt-5.6-luna, reserveTokens=floor(model.contextWindow/5) and keepRecentTokens=20000. Use the active model’s real window and resolve again for every new/model-switched session; other provider/model keys retain Pi defaults16384/20000. The policy rejects invalid or unusably small windows for the listed models; disabled child sessions remain disabled. Retire the host's old automatic and custom five-part compaction path for Pi; manual chat compaction also delegates to native Pi. Preserve existing stored histories.
+Pi AgentSession is the sole automatic compaction scheduler. Use the installed Pi 0.85.1 native threshold/overflow logic with SettingsManager.inMemory({ compaction: resolvePiCompactionSettings(model) }). The explicit PI_COMPACTION_CONFIG below resolves each budget independently against the active model's real window, again for every new/model-switched session. Pass only integer token counts into Pi; disabled child sessions remain disabled. Retire the host's old automatic and custom five-part compaction path for Pi; manual chat compaction also delegates to native Pi. Preserve existing stored histories.
 
 The complete main system prompt (including prompt-structure table 2) stays outside summary input and unchanged under unchanged effective configuration. D1-D4 remain historical message snapshots and can be summarized.
 
@@ -16,7 +16,30 @@ Register one built-in session_before_compact extension through the existing reso
 
 Normalize native compaction_start/end including estimatedTokensAfter, aborted and sanitized errorMessage. Pass native retry callbacks to compact; expose scheduled attempt/maxAttempts/delay/error and clear retry status on attempt start, retry finished, end, cancellation and reset. Ignore progress from a previous session; manual and isolated-test paths also report status without a running ordinary turn. Preserve steering, failure reporting, effective context preview and persistence/reload behavior. Do not migrate, erase or reinterpret historical raw messages.
 
-No new chunker, alternate summarization model, dependency upgrade, fixed five-segment budget or absolute never-overflow guarantee. The listed-model budget policy above is the explicitly approved settings override. Pi may still fail if the summary request itself exceeds the model window; fail visibly without committing a partial compaction.
+No new chunker, alternate summarization model, dependency upgrade, fixed five-segment budget or absolute never-overflow guarantee. The explicit model budget configuration below is the approved settings override. Pi may still fail if the summary request itself exceeds the model window; fail visibly without committing a partial compaction.
+
+## Explicit model budget configuration
+
+`src/main/agent/runtime/piCompactionPolicy.ts` exports a typed `PI_COMPACTION_CONFIG`. Its ordinary values and exact `provider/model` overrides follow Pi's per-field precedence: matching model field, ordinary field, then native default (reserve16384, recent20000). A model id containing `/` remains part of the complete exact key. Omitting either override field leaves its independent fallback intact.
+
+```ts
+export const PI_COMPACTION_CONFIG: PiCompactionConfig = {
+  reserveTokens: 16384,
+  keepRecentTokens: 20000,
+  modelOverrides: {
+    'openai-codex/gpt-6-astra': { reserveTokens: { ratio: 0.2 } },
+    'openai-codex/gpt-5.6-sol': { reserveTokens: { ratio: 0.2 } },
+    'openai-codex/gpt-5.6-terra': { reserveTokens: { ratio: 0.2 } },
+    'openai-codex/gpt-5.6-luna': { reserveTokens: { ratio: 0.2 } },
+  },
+};
+```
+
+Both `reserveTokens` and `keepRecentTokens`, in either ordinary or model configuration, accept an absolute non-negative safe integer or `{ ratio: number }` with `0 <= ratio < 1`. Ratio is a host convenience, not a Pi SDK field: resolve it with `floor(model.contextWindow * ratio)` before calling SettingsManager. For example, `{ reserveTokens: 8192, keepRecentTokens: { ratio: 0.1 } }` is valid. This is code configuration only; no new settings UI or SDK upgrade.
+
+The shipped configuration preserves the existing four Codex budgets:20% reserve and inherited20000 recent tokens; other keys inherit16384/20000. Invalid values are rejected without coercion, including invalid ordinary values masked by a valid override. Ratios and matched overrides require a positive safe-integer model window; if their selected reserve plus recent count leaves no room, fail explicitly instead of clamping. Unlisted models using ordinary absolute values retain native behavior. A future change to the recent value or ratio is a configuration edit, not an invariant of the compaction implementation.
+
+The configuration follow-up is code-verified:14 policy cases plus the existing native/harness cases pass (35 total), and the scoped runtime TypeScript check passes. No live provider or Electron test was run for this change; see the task record for exact commands.
 
 ## Manual command
 

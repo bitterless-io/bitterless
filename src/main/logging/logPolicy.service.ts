@@ -23,6 +23,10 @@ const FIRST_PARTY_RENDERER_ENTRIES = [
   { path: '/onlypreview/preview/index.html', process: 'renderer:onlypreviewPreview' },
   { path: '/onlypreview/settings/index.html', process: 'renderer:onlypreviewSettings' },
   { path: '/onlypreview/guide/index.html', process: 'renderer:onlypreviewGuide' },
+  // 占位页(task 181)。`spyFirstPartyRenderer` 对没登记的 renderer 直接 `if (!proc) return;`,
+  // 于是它的 console 一行都不会进日志文件 —— 这张表里 zellij 和 maestro tabAlias 两处注释记的就是
+  // 这个坑各害过一次。这一页尤其怕:它用 `await import('./App.vue')` 起,失败时本身就不报错。
+  { path: '/onlypreview/detached/index.html', process: 'renderer:onlypreviewDetached' },
   { path: '/fileSearch/index.html', process: 'renderer:fileSearch' },
   { path: '/coin/index.html', process: 'renderer:coin' },
   // Without this entry the Zellij renderer is not spied, so nothing it logs — including a failed

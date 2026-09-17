@@ -15,6 +15,8 @@ User scope addition: `/test_auto_compact [absolute local text path]` with isolat
 
 User scope addition: compaction status bar, queued messages until safe delivery, tool-batch/background-result boundaries, workflow subagent internal compaction disabled.
 
+Completed follow-up: replace the implicit Codex budget formula with explicit Pi-style ordinary/model configuration. Both budget fields independently accept an absolute count or a host `{ ratio }` extension, resolved to integers before native settings. Current effective values are unchanged; focused verification is recorded below.
+
 ## Delivery evidence — 2026-09-17
 
 Implemented in the current checkout; no branch switch, commit, independent review, Electron E2E or app launch.
@@ -52,3 +54,15 @@ PASS77/77 (17 new focused cases in this follow-up):
 The installed SDK tests cover repeatedly produced prefix-only split preparations, retained prior summary and usage/details, one-run focus addition, retry success/exhaustion/cancel with redacted credentials, manual/threshold/overflow sharing the resolved budget, capped known-model policy and retry forwarding. Host/UI tests cover exact command boundaries, model-switch/child settings, manual progress without ordinary turns, stale-session suppression, countdown/clear/chat isolation. Retry status uses both existing zh/en i18n dictionaries.
 
 PASS: `yarn tsc -p tests/maestro/tsconfig.pi-compaction.json --pretty false` (4.25s). PASS: `yarn vue-tsc -p tests/maestro/tsconfig.pi-compaction-web.json --pretty false` (5.35s; ChatPanel, ControlApp, ResponseStatus, WorkbenchModelsView and their dependencies). The initial temporary Vue scope omitted the existing Maestro env.d.ts ambient declaration and reported fileBridge; the checked-in scope includes it and passes. No provider call, app launch, Electron E2E or independent review in this follow-up. Root owns the authorized repository sync after handoff.
+
+## Explicit absolute/ratio budget configuration — 2026-09-17 (complete)
+
+Replaced the implicit model set/formula with exported typed `PI_COMPACTION_CONFIG`: ordinary reserve16384/recent20000 plus exact `provider/model` overrides. Each budget independently falls back from model override to ordinary configuration to native default. Both fields accept non-negative safe-integer absolute counts or the host-only `{ ratio }` form (`0 <= ratio < 1`, floored against the selected model's actual window). Only resolved integers reach Pi. The four current Codex entries override reserve with ratio0.2 and inherit recent20000, preserving current behavior. Existing callsites and the isolated capped-model harness keep using the same resolver; no new UI or dependency changes.
+
+Validation rejects invalid absolute/ratio values without coercion and validates ordinary values even when an override replaces them. Exact matching preserves slash-containing model IDs. Ratio/model policies retain an explicit small-window failure without clamps; unknown ordinary absolute defaults keep Pi behavior. Both disabled and enabled resolutions preserve the caller's flag.
+
+- PASS35/35 (policy14, native17, isolated harness4;8 additional policy cases): `node --test tests/maestro/maestroPiCompactionPolicy.test.mjs tests/maestro/maestroPiNativeCompaction.test.mjs tests/maestro/maestroPiAutoCompactionTest.test.mjs` (3.06s). Includes absolute, ratio in both fields, mixed, partial and unknown fallback, exact/slash keys, floor boundaries, invalid values/windows, existing real SDK manual/threshold/overflow/persistence and capped policy paths with simulated streams.
+- PASS: `yarn tsc -p tests/maestro/tsconfig.pi-compaction.json --pretty false` (4.53s).
+- PASS: scoped `git diff --check` for this policy, its tests and these feature/task documents.
+
+Only the policy, policy test and these two documents changed in this follow-up. No provider calls, app launch, Electron E2E, independent review or Git sync by this worker. The root task owns the requested final sync. Existing owner desktop testing remains the human handoff; this configuration-only change does not add another test requirement.

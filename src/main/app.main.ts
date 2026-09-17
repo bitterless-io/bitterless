@@ -64,6 +64,7 @@ import {
   uninstallOnlyPreviewProtocol,
 } from '@main/miniapps/onlypreview/onlyPreviewProtocol.service';
 import { registerOnlyPreviewCoworkTab } from '@main/windows/onlyPreviewCoworkTab';
+import { setOnlyPreviewShuttingDown } from '@main/windows/onlyPreviewWindow.helper';
 import { registerTrenchCoworkTab } from '@main/windows/trenchCoworkTab';
 import { registerZellijCoworkTab } from '@main/windows/zellijCoworkTab';
 import { openOnlyPreviewOsTarget, registerOnlyPreviewMaestroOpener } from '@main/windows/onlyPreviewMaestroOpener';
@@ -689,10 +690,14 @@ const quitAfterCleanup = async (): Promise<void> => {
   try {
     await cleanupResources();
     isQuitting = true;
+    // OnlyPreview 的关窗接管从这一刻起闭嘴 —— 退出时每个窗口都会收到 'close'。
+    setOnlyPreviewShuttingDown(true);
     if (updateService.isUpdating) updateService.installAfterCleanup();
     else app.quit();
   } catch (error) {
     isQuitting = false;
+    // 退出没成 —— 关窗接管必须恢复,否则这一发失败会把它永久关掉。
+    setOnlyPreviewShuttingDown(false);
     hasShownQuitDialog = false;
     updateService.isUpdating = false;
     console.error('[app] Quit blocked: resource cleanup was not confirmed', error);
@@ -708,6 +713,7 @@ app.on('before-quit', (event) => {
   quitAttempt = (async () => {
     if (isHelperMode) {
       isQuitting = true;
+      setOnlyPreviewShuttingDown(true);
       app.quit();
       return;
     }
