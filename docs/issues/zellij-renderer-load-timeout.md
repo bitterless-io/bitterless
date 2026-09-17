@@ -52,30 +52,66 @@ No Electron launch, Electron E2E, live Claude session, process termination, or p
   `projects/micromeet-cowork/docs/issues/zellij-renderer-load-timeout.md` 的 R11 收尾一节。
 
 本仓本轮复验：`yarn test:zellij` 258 条 **257 通过**，`yarn check:zellij-tab-chrome` ok，
-`yarn typecheck` 106 条诊断中 **zellij 相关 0 条**。唯一红的那条
+`yarn typecheck` 106 条诊断中 **zellij 相关 0 条**。当时唯一红的那条
 （`quit and logout dispose all other terminal hosts before the final Zellij runtime drain`）与 R11 无关，
-是登出拆卸契约的冲突，见下节。
+是登出拆卸契约的冲突；Ral 已于同日裁决，守卫已按下节改形状，套件现已全绿。
 
-### ⚠ 待 Ral 裁决 —— 登出不再拆 Zellij/Omni，与守卫测试冲突（2026-09-17 发现）
+### 登出不得让不依赖账号的能力不可用（Ral 2026-09-17 裁决）
 
-`src/main/xpc/auth.handler.ts` 现在只拆账号绑定的窗口，注释写着「OnlyPreview 和 Zellij 是公共/本地
-窗口，必须保持可用，故意不做全窗口清扫」；`omniWindowHelper.destroy()` 与
-`zellijWindowService.destroy()` 在 `a38a641f`（09-17 19:39 的 sync 提交，随 `requestLogin()` /
-`prepareForAuthShutdown()` 那套改造一起）被移出登出路径。
+**裁决原文**：「omni 和 zellij 都不依赖账号登录，所以首先登出不应该导致 zellij 和 omni 不可用，
+可能之前某个过时需求导致这么做了，更新文档并优化。」
 
-而 `tests/zellij/zellijGlobalLifecycle.test.mjs:272` 的守卫仍要求 `auth.handler.ts` 里按序出现
-`maestroWindowHandler._destroyForAuth` → `omniWindowHelper.destroy` → `zellijWindowService.destroy`，
-理由是「drain 之后不能再有活着的 terminal host 能接受关闭」。退出路径（`app.main.ts`）仍然齐全、
-仍然通过；**只有登出这一侧对不上**。
+所以**现行代码是对的**，过时的是守卫测试与文档。`src/main/xpc/auth.handler.ts` 的
+`deactivateSession()` 只收回账号绑定的那几个窗口（coin / todo / eyesOnAgents / maestro）；
+`omniWindowHelper.destroy()` 与 `zellijWindowService.destroy()` 已在 `a38a641f` 移出登出路径。
 
-两边都有道理，且这是安全形状的取舍（登出后本地终端/Omni 继续可用），不由 agent 单方面定：
+**为什么这条比「少关一个窗口」重要**：登出不只是手动那一下。后端 401 会走
+`invalidateSession()` → 广播 `auth/invalidated` → renderer 在 `auth.subscriber.ts:27` 回调里调
+`deactivateSession()`。也就是说 token 每次过期都会走同一条路；若在这里 drain，
+`zellijWindowService.destroy()` 会 `stopZellijRuntime()` 停掉**共享 web server**，等于每次过期
+把所有终端界面一起断掉。
 
-- **若新行为为准**：守卫应收窄到「有 drain 的那条路径（退出）」，登出侧改为断言「只拆账号绑定窗口」，
-  并把这条契约写进文档（目前它只活在一行代码注释里，`custom-homepage-tab.md` 只覆盖了
-  `prepareForAuthShutdown` 那一步，没说登出不再拆 Zellij/Omni）。
-- **若守卫为准**：登出需要恢复 drain 这两个 host。
+**核实过的三件事**（2026-09-17）：
 
-在 Ral 裁决前，本轮**两边都没动**——既没改守卫，也没改登出路径。
+| 判据 | 结论 |
+| --- | --- |
+| 登出会不会间接拆掉承载 Zellij 的 Maestro tab | 不会。`prepareForAuthShutdown()` 只是 `applicationAuth.invalidate()`，后者仅重置自身的 auth 就绪快照（`readGeneration`、`setReady(false, true)`），不碰窗口 |
+| 登出后还能不能**重新打开** Zellij / Omni | 能。`zellijWindow.handler.ts`、`src/main/zellij/**`、`omniWindow.helper.ts` 里都没有 `sessionShouldBeActive` / `requiresAuth` / `isAuthenticated` 之类的门槛 |
+| 终端里跑的 shell 会不会丢 | 不会。native `--server` 会话按 Ral 2026-09-12 的约定始终保留，连应用退出都保留 |
+
+**守卫测试相应改形状**（`tests/zellij/zellijGlobalLifecycle.test.mjs`），拆成两条而不是删掉：
+
+1. `app quit disposes every terminal host before the final Zellij runtime drain` —— 退出路径
+   （`src/main/app.main.ts`）**保留原有的顺序断言**。顺序本身就是保护：只有退出会 drain，
+   而 host 若在 drain 之后还活着，就可能对一个已停的 runtime 发起 close。
+2. `logout revokes only account-bound owners and never makes Zellij or Omni unusable` ——
+   登出路径改成**反向断言**：账号绑定的四个仍须被收回，且 `omniWindowHelper.destroy` /
+   `zellijWindowService.destroy` / `stopZellijRuntime` **一个都不许出现**。这样将来谁把它们加回
+   登出路径，测试立刻红。已做变异验证：临时加回 `zellijWindowService.destroy()` → 红；还原 → 绿。
+
+**同一条裁决覆盖 OnlyPreview 与 browser**（Ral 2026-09-17 追加：「登出不应影响 onlypreview 及 browser 的
+功能」）。核实结果是现状已满足，链条如下：
+
+- 登出仍会调 `maestroWindowHandler._destroyForAuth()`，但它并不销毁 Maestro 运行时（那是退出路径的
+  `destroyMaestroRuntime` / `shutdown`）。它走 `performAuthCleanup()` →
+  `maestroWindowHelper.suspendAuthenticatedSession()`：停 agent、清 agent 侧的 browser 自动化状态
+  （`browserUse` / `browserSessions` / `browserToolOwners`），注释原文「browser tabs and local tool
+  mounts are retained」。
+- 唯一会动 tab 的是 `browserView.suspendProtectedTabs()`，而它 `if (!spec.requiresAuthentication) continue`
+  ——全仓**只有一个** spec 标了这个标记：`src/main/windows/trenchCoworkTab.ts:17`（Trench，确实是账号绑定的
+  加密货币数据），且是 suspend + `resumeProtectedTabs()` 还原，不是销毁。Zellij / OnlyPreview / 普通
+  browser tab / translator / motto / submodules 全部被跳过。
+- OnlyPreview 的 `destroyOnlyPreviewForAuth()` 现在**只被退出路径**调用
+  （`destroyOnlyPreviewForHostQuit`），登出侧没有调用点。（函数名里的 `ForAuth` 已名不符实，属可选的
+  改名，未在本轮动。）
+
+守卫相应加了第三条 `only account-bound composite tabs are suspended on logout`：钉住「全仓有且仅有
+Trench 一个 spec 标 `requiresAuthentication`」。两条反向断言都做过变异验证——把 `zellijWindowService.destroy()`
+加回登出路径、或把 zellij 的 tab spec 标成需要登录，都会立刻变红，还原后恢复绿。
+
+**Cowork 侧无需改动**（配对开发规则下已评估）：`micromeet-cowork` 里根本没有
+`deactivateSession` / `_destroyForAuth` / `destroyForHostQuit`，没有等价守卫测试，也没有 Omni ——
+这条契约在那边不存在对应物。
 
 ## R10 — stop Chromium from throttling a hidden Zellij tab (2026-09-17)
 

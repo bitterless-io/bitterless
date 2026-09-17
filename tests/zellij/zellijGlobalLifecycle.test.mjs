@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- Production-method lifecycle harness. */
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
@@ -269,33 +270,92 @@ test('only Darwin requires an owned web namespace; Windows retains matching-serv
   assert.equal(await context.probe(), 'occupied');
 });
 
-test('quit and logout dispose all other terminal hosts before the final Zellij runtime drain', () => {
-  for (const [file, maestroMethod] of [
-    ['src/main/app.main.ts', 'destroyForHostQuit'],
-    ['src/main/xpc/auth.handler.ts', '_destroyForAuth']
-  ]) {
-    const parsed = ts.createSourceFile(
-      file,
-      readFileSync(file, 'utf8'),
-      ts.ScriptTarget.Latest,
-      true
-    );
-    const expected = [
-      `maestroWindowHandler.${maestroMethod}`,
-      'omniWindowHelper.destroy',
-      'zellijWindowService.destroy'
-    ];
-    const calls = [];
-    const visit = (node) => {
-      if (ts.isCallExpression(node) && expected.includes(node.expression.getText(parsed)))
-        calls.push(node.expression.getText(parsed));
-      ts.forEachChild(node, visit);
-    };
-    visit(parsed);
-    assert.deepEqual(
-      calls,
-      expected,
-      `${file}: no live terminal host can admit a close after the drain`
-    );
-  }
+/** Which of `names` this file actually calls, in source order. */
+const callsIn = (file, names) => {
+  const parsed = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
+  const calls = [];
+  const visit = (node) => {
+    if (ts.isCallExpression(node) && names.includes(node.expression.getText(parsed)))
+      calls.push(node.expression.getText(parsed));
+    ts.forEachChild(node, visit);
+  };
+  visit(parsed);
+  return calls;
+};
+
+test('app quit disposes every terminal host before the final Zellij runtime drain', () => {
+  // The ORDER is the protection, and only quit drains: `zellijWindowService.destroy()` calls
+  // `stopZellijRuntime()`, which stops the shared web server. A host still alive after that could
+  // admit a close against a drained runtime.
+  const file = 'src/main/app.main.ts';
+  const expected = [
+    'maestroWindowHandler.destroyForHostQuit',
+    'omniWindowHelper.destroy',
+    'zellijWindowService.destroy'
+  ];
+  assert.deepEqual(
+    callsIn(file, expected),
+    expected,
+    `${file}: no live terminal host can admit a close after the drain`
+  );
+});
+
+test('logout revokes only account-bound owners and never makes Zellij or Omni unusable', () => {
+  // Ral 2026-09-17:「omni 和 zellij 都不依赖账号登录,所以首先登出不应该导致 zellij 和 omni 不可用,
+  // 可能之前某个过时需求导致这么做了」。This replaces the older contract, which required logout to
+  // tear these down too — the assertion below is deliberately INVERTED so re-adding them fails.
+  //
+  // Why it matters more than "one extra window closes": logout is not only the manual button. A 401
+  // broadcasts `auth/invalidated`, and the renderer answers it by calling `deactivateSession()`
+  // (src/renderer/home/src/xpc/auth.subscriber.ts). Draining here would therefore cut every open
+  // terminal's surface loose each time a token expires — and `stopZellijRuntime()` would take the
+  // shared web server with it.
+  const file = 'src/main/xpc/auth.handler.ts';
+  const accountBound = [
+    'coinWindowHandler._destroyForAuth',
+    'todoWindowHandler._destroyForAuth',
+    'eyesOnAgentsWindowHandler._destroyForAuth',
+    'maestroWindowHandler._destroyForAuth'
+  ];
+  assert.deepEqual(
+    callsIn(file, accountBound),
+    accountBound,
+    `${file}: every account-bound owner must still be revoked on logout`
+  );
+  // Ral 2026-09-17 扩展到同一类能力:「登出不应影响 onlypreview 及 browser 的功能」。
+  const accountFree = [
+    'omniWindowHelper.destroy',
+    'zellijWindowService.destroy',
+    'stopZellijRuntime',
+    'destroyOnlyPreviewForAuth'
+  ];
+  assert.deepEqual(
+    callsIn(file, accountFree),
+    [],
+    `${file}: logout must not tear down capabilities that do not depend on the account`
+  );
+});
+
+test('only account-bound composite tabs are suspended on logout', () => {
+  // The browser / Zellij / OnlyPreview tabs survive logout for exactly one reason:
+  // `maestroBrowserView.service.ts` `suspendProtectedTabs()` skips every spec that does not set
+  // `requiresAuthentication`, and `maestroWindowHandler._destroyForAuth()` reaches nothing else that
+  // closes a tab (it ends in `suspendAuthenticatedSession()`, whose own comment reads "browser tabs
+  // and local tool mounts are retained"). Marking one more spec would silently close that surface on
+  // every 401, so the set is pinned here rather than left to review.
+  const marked = [];
+  const walk = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const full = join(directory, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith('.ts') && /requiresAuthentication:\s*true/u.test(readFileSync(full, 'utf8')))
+        marked.push(full);
+    }
+  };
+  walk('src/main');
+  assert.deepEqual(
+    marked,
+    ['src/main/windows/trenchCoworkTab.ts'],
+    'only account-bound surfaces may be suspended on logout — Zellij/OnlyPreview/browser must not be'
+  );
 });

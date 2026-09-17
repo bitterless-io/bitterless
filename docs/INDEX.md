@@ -88,8 +88,14 @@
 - [Zellij 更新后仍识别已拥有的终端进程](issues/zellij-update-owner-file-identity.md) — implemented; code-verified, packaged human acceptance pending;
   首次认领核对 bundled binary，后续以进程实际映射的文件编号识别搬动或已删除的旧程序文件，保留进程与 socket 校验。
 - [Zellij renderer 加载超时与恢复](issues/zellij-renderer-load-timeout.md) — implemented; code-verified, packaged human acceptance pending;
-  controls 与 terminal 导航分别封顶 15 秒，错误可重试；页面加载失败不更换 native session。R10：Zellij 的
-  controls/terminal WebContentsView 关闭 backgroundThrottling，防止长时间不可见的 tab 被 Chromium 节流导致导航超时。
+  controls 与 terminal 导航分别封顶 15 秒，错误可重试；页面加载失败不更换 native session。
+  **R10（关 backgroundThrottling）已被 Ral 否决并回退** —— Electron 文档载明：同一窗口里只要有一个
+  webContents 关了它，整个窗口的其他 tab 都跟着不再节流。替代方案 R11：tab 重新激活时自动重连，
+  loading 状态显示为「Reconnecting…」，不碰节流。
+  登出契约（Ral 2026-09-17 裁决）：omni 与 zellij 不依赖账号，**登出/401 失效都不得让它们不可用**；
+  同一裁决覆盖 OnlyPreview 与 browser（现状已满足：登出只 suspend 唯一标了 `requiresAuthentication`
+  的 Trench tab，其余一律跳过）。守卫已改为「退出保留顺序断言 + 登出反向钉住不拆这些能力 + 钉住只有
+  Trench 需要登录」，三条都经变异验证；Cowork 无对应物、无需改动。
 - [更新重启后 Zellij 阻塞半天，新开 tab 报 operation-failed](issues/zellij-update-restart-blocks-and-new-tab-fails.md) — R1–R6 + R9 已落盘；
   `[zellij]` 现在每阶段一行带 `elapsedMs`（之前 80 分钟日志里整个子系统只有 3 行），`code=` 被自己的脱敏器擦成 `***` 的问题一并修掉；
   瞬态 IPC 失败与所有权审计超时各自自愈一次；2026-09-17 接手补齐上面三条修复，代码验证完成，待打包复验。
