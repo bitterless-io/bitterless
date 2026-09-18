@@ -64,6 +64,16 @@ export interface WorkflowSupervisorProcessDependencies {
   terminationTimeoutMs?: number
 }
 const terminalRun = (run: WorkflowRunSnapshot): boolean => run.status !== 'running' && run.status !== 'stopping'
+/**
+ * 已终结 run 的保留条数。同仓先例:`MAX_FINISHED_TASKS = 20`(task.api.ts,taskRegistry 对已完成
+ * task 用的就是这个形状)。
+ *
+ * 为什么必须有上限:`publish()` 把**全部** run clone + stringify + 落盘 + 广播,而它的调用点
+ * 包含每条 agent 动作和每条日志行。`runs` 原本只增不减、且 `restore()` 跨重启整体读回,于是
+ * 每条动作的代价 = O(全部历史字节数),随使用平方级增长。实测 4 个 run 就 95,550 字节。
+ * 见 docs/issues/workflow-snapshot-republishes-all-history.md。
+ */
+const MAX_FINISHED_RUNS = 20
 const limit = (text: string): string => text.slice(0, 64_000)
 async function waitBounded(operation: Promise<void>, ms: number, message?: string): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -89,6 +99,9 @@ export class WorkflowSupervisor {
   private live = new Map<string, LiveRun>()
   private initialized: Promise<void>
   private writes: Promise<void> = Promise.resolve()
+  /** 最新一份待落盘内容。latest-wins —— 在途的旧快照会被下一份整个覆盖,留着只是浪费。 */
+  private pendingContents: string | undefined
+  private writing = false
   private changed = new Set<() => void>()
   private disposed = false
   private persistenceError: Error | undefined
@@ -133,17 +146,47 @@ export class WorkflowSupervisor {
   private snapshot(sessionId?: string): WorkflowSnapshot {
     return structuredClone({ runs: sessionId ? this.runs.filter(run => run.sessionId === sessionId) : this.runs, revision: this.revision })
   }
+  /**
+   * 淘汰最旧的已终结 run,把 `runs` 封在「未终结的全部 + 最近 MAX_FINISHED_RUNS 个已终结」。
+   * **永不淘汰未终结的 run** —— 否则正在跑的 workflow 会从 UI 上消失。
+   */
+  private trimRuns(): void {
+    if (this.runs.length <= MAX_FINISHED_RUNS) return
+    const finished = this.runs.filter(terminalRun)
+    if (finished.length <= MAX_FINISHED_RUNS) return
+    const evict = new Set(finished.slice(0, finished.length - MAX_FINISHED_RUNS).map(run => run.id))
+    this.runs = this.runs.filter(run => !evict.has(run.id))
+  }
+
   private publish(): void {
     this.revision++
+    this.trimRuns()
     const snapshot = this.snapshot()
-    const contents = JSON.stringify(snapshot)
-    this.writes = this.writes.then(async () => {
-      const file = join(this.deps.storageDir, 'runs.json')
-      await writeFile(`${file}.tmp`, contents, { mode: 0o600 })
-      await rename(`${file}.tmp`, file)
-    }).catch(error => { this.persistenceError = error instanceof Error ? error : new Error(String(error)) })
+    // latest-wins:只记住最新内容。原来是 `this.writes = this.writes.then(...)`,每次 append 一个
+    // 链节、每个链节闭包捕获一份完整快照字符串 —— publish 快于磁盘时就按字节无界堆积。
+    this.pendingContents = JSON.stringify(snapshot)
+    this.scheduleWrite()
     this.deps.broadcast(snapshot)
     for (const notify of this.changed) notify()
+  }
+
+  /** 同一时刻最多一个在途写入;期间到达的 publish 只更新 `pendingContents`。 */
+  private scheduleWrite(): void {
+    if (this.writing) return
+    this.writing = true
+    this.writes = this.writes.then(async () => {
+      const file = join(this.deps.storageDir, 'runs.json')
+      try {
+        while (this.pendingContents !== undefined) {
+          const contents = this.pendingContents
+          this.pendingContents = undefined
+          await writeFile(`${file}.tmp`, contents, { mode: 0o600 })
+          await rename(`${file}.tmp`, file)
+        }
+      } finally {
+        this.writing = false
+      }
+    }).catch(error => { this.persistenceError = error instanceof Error ? error : new Error(String(error)) })
   }
   private async flush(): Promise<void> { await this.writes; if (this.persistenceError) throw this.persistenceError }
   async list(sessionId?: string): Promise<WorkflowSnapshot> { await this.initialized; return this.snapshot(sessionId) }

@@ -115,6 +115,11 @@ const loadBaseAgent = () => {
           }
         }
       }
+      // 回合超时的编排,不是本守卫要盯的东西 —— 直接跑 operation,不加时限。
+      // (没有这个桩,守卫在 require 阶段就抛 Cannot find module,一条断言都跑不到。)
+      if (specifier === './runtime/compactionAwareTimeout') {
+        return { withCompactionAwareTimeout: async (operation) => await operation() }
+      }
       // 真实语义的轻桩:cwd 必填这条是本守卫要盯的契约之一,桩里也必须保持,否则
       // 「BaseAgent 把 cwd 传下去」这类断言会在一个宽松的桩上假绿。
       if (specifier === './runtime/runtimeSystemPrompt') {

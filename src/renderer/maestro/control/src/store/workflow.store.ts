@@ -1,5 +1,6 @@
 import { reactive } from 'vue'
 import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer'
+import { subscribeControlChannel } from '../controlSubscriptions.service'
 import type { WorkflowActivitySummary, WorkflowWaitState, WorkflowIpcApi, WorkflowDescriptor, WorkflowRunSnapshot, WorkflowSnapshot, WorkflowStartRequest } from '@shared/agentWorkflow.api'
 const api = createXpcRendererEmitter<WorkflowIpcApi>('WorkflowHandler')
 class WorkflowStore {
@@ -75,7 +76,8 @@ class WorkflowStore {
     if (!this.authActive || this.initialized) return
     if (!this.subscribed) {
       this.subscribed = true
-      xpcRenderer.subscribe('agent/workflows', payload => {
+      // 同上:message.store 也订阅 agent/workflows,必须共用同一条底层订阅。
+      subscribeControlChannel('agent/workflows', payload => {
         if (this.initialized) this.apply(payload.params as WorkflowSnapshot)
       })
     }

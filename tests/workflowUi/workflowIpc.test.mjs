@@ -23,7 +23,12 @@ function harness(startWorkflow, retryWorkflow = startWorkflow) {
   const owner = bl ? { maestroWindowHelper: { agentService: { getWorkflowHost: () => host } } } : { windowManagerController: { requireMainWindow: () => ({ agent: { getWorkflowHost: () => host } }) } }
   load('src/main/xpc/workflow.handler.ts', { 'electron-xpc/main': xpc, [hostModule]: owner })
   const api = new Proxy({}, { get: (_, name) => params => xpc.xpcMain.send('WorkflowHandler/' + name, params) })
-  return load(renderer + 'store/workflow.store.ts', { 'electron-xpc/renderer': { createXpcRendererEmitter: () => api, xpcRenderer: { subscribe() {} } } }).workflowStore
+  // Load the REAL relay, not another stub: workflow.store now subscribes through it because two
+  // stores share agent/workflows and electron-xpc keeps only one callback per channel
+  // (docs/issues/xpc-subscribe-silently-overwrites.md). Stubbing it away would retire the coverage.
+  const rendererXpc = { createXpcRendererEmitter: () => api, xpcRenderer: { subscribe() {} } }
+  const relay = load(renderer + 'controlSubscriptions.service.ts', { 'electron-xpc/renderer': rendererXpc })
+  return load(renderer + 'store/workflow.store.ts', { 'electron-xpc/renderer': rendererXpc, '../controlSubscriptions.service': relay }).workflowStore
 }
 const request = { sessionId: 'chat', entry: { kind: 'builtin', name: 'mini-demo' }, input: 'task' }
 test('host startup cause survives actual electron-xpc exception handling into renderer', async () => {

@@ -8,6 +8,7 @@ import { countTokens } from 'gpt-tokenizer'
 import { iocHelper } from '@maestro-shared/iocHelper/ioc.helper'
 import { AGENT_TURN_CHANNEL, MODEL_RETRY_CHANNEL } from '@maestro-shared/coach.api'
 import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer'
+import { subscribeControlChannel } from '../controlSubscriptions.service'
 import type {
   AgentActivityStep,
   AgentCompactRequest,
@@ -345,7 +346,9 @@ export class MessageStoreState {
         const params = payload.params as { sessionId?: string; workspace?: WorkspaceRef | null }
         void this.applyWorkspaceBroadcast(params)
       })
-      xpcRenderer.subscribe('agent/workflows', payload => {
+      // 经 relay 扇出,不要裸 subscribe:workflow.store 也订阅同一个频道,而 electron-xpc 的
+      // subscribe() 是 set(handleName, cb),两处裸订阅会互相静默顶掉。
+      subscribeControlChannel('agent/workflows', payload => {
         if (this.initialized) void this.applyWorkflowCompletions(payload.params as WorkflowSnapshot)
       })
     }
@@ -916,7 +919,7 @@ export class MessageStoreState {
     } catch {
       return false
     }
-    await this.refreshHistory()
+    await this.refreshHistoryRow(session.id)
     return true
   }
 
@@ -939,9 +942,25 @@ export class MessageStoreState {
   async persistMessages(session: MessageSession, changed: ChatMessage[]): Promise<boolean> {
     if (session.source !== 'cowork') return false
     const persisted = session.messages.filter((message) => !message.localOnly)
-    const ordered = changed
-      .map((message) => ({ message, sortOrder: persisted.indexOf(message) }))
-      .filter((entry) => entry.sortOrder >= 0)
+    // **Match by id, not by object identity.** `session.messages` lives in `reactive()`, so
+    // `filter` hands back PROXIES, while a caller that just built and pushed a message holds the
+    // RAW literal — `indexOf(raw)` is then `-1`. The old code dropped that entry, fell through to
+    // the metadata lane, and **returned `true` for a message it never wrote**
+    // (`applyWorkflowCompletion` retired its own retry on that answer, so the workflow result was
+    // shown on screen and lost on reload). Resolving through the live element also means the row
+    // written is the reactive one, not a stale copy.
+    const ordered: Array<{ message: ChatMessage; sortOrder: number }> = []
+    for (const message of changed) {
+      if (message.localOnly) continue
+      const sortOrder = persisted.findIndex((item) => item.id === message.id)
+      if (sortOrder < 0) {
+        // Not in this session. Never report success for it: the caller decides whether to retry,
+        // and a false "saved" is how an unwritten message stops being retried at all.
+        console.warn('[maestro] persistMessages: message is not in this session, refusing to report it saved', { sessionId: session.id, messageId: message.id })
+        return false
+      }
+      ordered.push({ message: persisted[sortOrder], sortOrder })
+    }
     if (!ordered.length) return this.persistSessionMeta(session)
     return this.queueSessionSave(session.id, () => this.saveSessionNow(session, async () =>
       (await maestroChat.saveMessages({
@@ -1194,6 +1213,41 @@ export class MessageStoreState {
       turnDiagnostics.emit('history', { action: 'refresh', ok: true, count: list.length })
     } catch (err) {
       turnDiagnostics.emit('history', { action: 'refresh', ok: false, error: String(err), kept: this.historySessions.length })
+    }
+  }
+
+  /**
+   * Re-read the history row of the ONE session a save touched, instead of the whole list.
+   *
+   * A save changes one conversation; recomputing `messageCount` and `preview` for every other one
+   * re-reads the entire message table to arrive at values that cannot have changed. That was
+   * invisible while a save itself cost the whole session — now that the write is proportional to
+   * the edit, this read is the remaining whole-database cost on every save
+   * (docs/issues/every-save-recounts-the-whole-history.md).
+   *
+   * Still derived, never cached: the row comes from the same projection `listSessions` uses, so
+   * there is no stored counter to drift out of step with the messages it counts.
+   *
+   * **Empty list ⇒ fall back to the full pull.** An empty `historySessions` means the startup load
+   * never succeeded (sqlite window / preload not ready is a real possibility), and the recovery for
+   * that is precisely "the next write re-pulls"
+   * (docs/issues/maestro-chat-blind-send-path-and-cowork-parity.md #2). Narrowing every save would
+   * quietly remove that recovery, so the narrow path only applies once there is a list to patch.
+   */
+  private async refreshHistoryRow(sessionId: string): Promise<void> {
+    if (!this.authActive) return
+    if (!this.historySessions.length) return await this.refreshHistory()
+    const generation = this.authGeneration
+    try {
+      const summary = await maestroChat.getSessionSummary({ id: sessionId })
+      if (generation !== this.authGeneration) return
+      const rest = this.historySessions.filter((item) => item.id !== sessionId)
+      // Stable sort on `updatedAt` descending reproduces the list query's `ORDER BY s.updated_at
+      // DESC`; ties keep their previous relative order, which is as defined as the query itself is.
+      this.historySessions = (summary ? [...rest, summary] : rest).sort((a, b) => b.updatedAt - a.updatedAt)
+      turnDiagnostics.emit('history', { action: 'row', ok: true, sessionId, found: Boolean(summary), count: this.historySessions.length })
+    } catch (err) {
+      turnDiagnostics.emit('history', { action: 'row', ok: false, sessionId, error: String(err), kept: this.historySessions.length })
     }
   }
 

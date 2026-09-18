@@ -16,6 +16,13 @@ function harness(api) {
       createXpcRendererEmitter: () => api,
       xpcRenderer: { subscribe: (_channel, listener) => { broadcast = listener } }
     }
+    // workflow.store subscribes through the control relay now: two stores share 'agent/workflows' and
+    // electron-xpc keeps only ONE callback per channel, so a bare subscribe would silently take the
+    // channel from message.store (docs/issues/xpc-subscribe-silently-overwrites.md). The relay hands
+    // the listener to the same capture this harness already uses.
+    if (name === '../controlSubscriptions.service') {
+      return { subscribeControlChannel: (_channel, listener) => { broadcast = listener } }
+    }
     return require(name)
   } })
   return { store: module.exports.workflowStore, broadcast: snapshot => broadcast({ params: snapshot }) }
