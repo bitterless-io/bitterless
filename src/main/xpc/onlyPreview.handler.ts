@@ -45,6 +45,7 @@ import type {
 import { onlyPreviewLogService } from '@main/miniapps/onlypreview/onlyPreviewLog.runtime';
 import { onlyPreviewHostRegistry } from '@main/miniapps/onlypreview/onlyPreviewHost.registry';
 import { onlyPreviewWorkspaceRegistry } from '@main/miniapps/onlypreview/onlyPreviewWorkspace.registry';
+import { onlyPreviewStorageStatusService } from '@main/miniapps/onlypreview/onlyPreviewStorageStatus.service';
 import { onlyPreviewSettingsService } from '@main/miniapps/onlypreview/onlyPreviewSettings.service';
 import { onlyPreviewAssetRegistry } from '@main/miniapps/onlypreview/onlyPreviewAsset.registry';
 import { onlyPreviewDocumentRegistry } from '@main/miniapps/onlypreview/onlyPreviewDocument.registry';
@@ -800,6 +801,15 @@ class OnlyPreviewHandler
         confirmLabel: params.confirmLabel,
         tone: params.tone ?? 'notice'
       });
+    });
+  }
+
+  async getStorageStatus(
+    params: ApiParams<'getStorageStatus'>
+  ): ReturnType<OnlyPreviewApi['getStorageStatus']> {
+    return await runOperation('getStorageStatus', async () => {
+      onlyPreviewHostRegistry.require(params?.hostToken, ['content']);
+      return await onlyPreviewStorageStatusService.read();
     });
   }
 

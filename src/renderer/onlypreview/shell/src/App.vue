@@ -470,6 +470,16 @@
         <span aria-hidden="true">·</span>
         {{ formatOnlyPreviewBytes(previewDescriptor.size) }}
       </span>
+      <!-- 磁盘余量与索引占用(Ral 2026-09-18)。**不跟着 previewDescriptor 走** —— 没开文件的时候
+           恰恰是会来看盘的时候。这两个数就是 2026-09-17 把盘撑满那件事的分子和分母:reconcile 需要
+           大约两倍索引大小的空闲,而索引从不淘汰。 -->
+      <span
+        v-if="onlyPreviewStorageStatus.loaded"
+        name="onlypreview__statusStorage"
+        class="onlypreview-shell__storage-state"
+        :title="storageStatusText"
+        >{{ storageStatusText }}</span
+      >
     </footer>
   </div>
 </template>
@@ -534,6 +544,7 @@ import { describeOnlyPreviewError, onlyPreviewErrorDetail } from './onlyPreviewE
 import { onlyPreviewClient } from '../../common/onlyPreviewClient';
 import { OnlyPreviewProjectPasteController, resolveOnlyPreviewPasteShortcut } from './onlyPreviewProjectPaste.service';
 import { onlyPreviewPasteFlash } from './onlyPreviewPasteFlash.store';
+import { onlyPreviewStorageStatus } from './onlyPreviewStorageStatus.store';
 import {
   onlyPreviewTreeSelection,
   copyOnlyPreviewTreeSelection,
@@ -637,6 +648,15 @@ const selectedCharacterStatus = computed(() =>
   interpolateOnlyPreview(onlyPreviewI18n.project.selectedCharacters, {
     count: onlyPreviewShellStore.selectedCharacterCount
   }).toUpperCase()
+);
+
+// 「X 可用 · 索引占用 Y」。用既有的 `formatOnlyPreviewBytes`,footer 里文件大小用的就是它 ——
+// 同一行上两种字节写法会读起来像两种单位。
+const storageStatusText = computed(() =>
+  interpolateOnlyPreview(onlyPreviewI18n.project.storageStatus, {
+    free: formatOnlyPreviewBytes(onlyPreviewStorageStatus.freeBytes),
+    index: formatOnlyPreviewBytes(onlyPreviewStorageStatus.indexBytes)
+  })
 );
 
 const previewDescriptor = computed(() => onlyPreviewShellStore.previewPresentation?.descriptor);
@@ -922,6 +942,7 @@ watch(
 );
 
 onMounted(() => {
+  onlyPreviewStorageStatus.start();
   syncShellFocus();
   window.addEventListener('focus', syncShellFocus);
   window.addEventListener('blur', syncShellFocus);
@@ -956,6 +977,7 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  onlyPreviewStorageStatus.stop();
   window.removeEventListener('focus', syncShellFocus);
   window.removeEventListener('blur', syncShellFocus);
   document.removeEventListener('visibilitychange', syncShellFocus);

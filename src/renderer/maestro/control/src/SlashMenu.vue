@@ -1,9 +1,20 @@
 <script setup lang="ts">
+import { watch } from 'vue'
 import type { ShortcutStore } from './store/shortcut.store'
 import './SlashMenu.less'
 
-defineProps<{ store: ShortcutStore }>()
+const props = defineProps<{ store: ShortcutStore }>()
 defineEmits<{ commit: []; select: [index: number] }>()
+
+// The list scrolls now (420px cap in the Less), so the arrow keys must drag the viewport with them —
+// otherwise selection walks off-screen and the panel looks frozen on the same few rows.
+// `block: 'nearest'` rather than centring: centring makes the list jump on every keypress.
+watch(
+  () => props.store.activeIndex,
+  (index) => {
+    requestAnimationFrame(() => document.getElementById(`maestro-slash-${index}`)?.scrollIntoView({ block: 'nearest' }))
+  }
+)
 </script>
 
 <template>

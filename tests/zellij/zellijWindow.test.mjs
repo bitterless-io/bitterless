@@ -1,11 +1,28 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- Native Node test fixtures. */
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { build } from 'esbuild';
+
+/**
+ * chrome 高度的唯一来源。
+ *
+ * 从 TS 源码里**读**出来而不是 import:这是一个 `.mjs` 测试,而那份契约是 TypeScript —— 它只在
+ * 下面被 esbuild 打进 bundle,拿不到具名导出。抄一个字面量到这里就成了第三处真相
+ * (docs/features/zellij-terminal-chrome.md #2)。
+ */
+const ZELLIJ_CHROME_HEIGHT = Number(
+  readFileSync(new URL('../../src/shared/zellij/zellij.type.ts', import.meta.url), 'utf8').match(
+    /ZELLIJ_CHROME_HEIGHT = (\d+)/
+  )?.[1]
+);
+assert.ok(
+  Number.isFinite(ZELLIJ_CHROME_HEIGHT),
+  'could not read ZELLIJ_CHROME_HEIGHT out of src/shared/zellij/zellij.type.ts'
+);
 
 const root = mkdtempSync(join(tmpdir(), 'zellij-window-test-'));
 const output = join(root, 'window.cjs');
@@ -26,6 +43,7 @@ const modules = {
       addChildView(v){this.children=this.children.filter(x=>x!==v);this.children.push(v);}
       removeChildView(v){this.children=this.children.filter(x=>x!==v);}
       setBounds(b){this.bounds=b;} setVisible(v){this.visible=v;}
+      setBackgroundColor(c){this.backgroundColor=c;}
     }
     class BrowserWindow extends EventEmitter {
       constructor(options){super();this.options=options;this.dead=false;this.visible=false;this.contentView=new View();windows.push(this);}
@@ -168,10 +186,12 @@ test('standalone opening automatically prepares once and attaches only after its
   await flush();
   const terminal = terminalOf('window');
   assert.ok(terminal);
+  // 高度只有一个来源(shared 的 `ZELLIJ_CHROME_HEIGHT`),这里也读它而不是再写一个字面量 ——
+  // 否则改高度要同时改三处,而漏掉的那处只会在首帧闪一下(zellij-terminal-chrome.md #2)。
   assert.equal(
     terminal.bounds.y,
-    48,
-    'native fallback matches the 48px header before renderer measurement'
+    ZELLIJ_CHROME_HEIGHT,
+    'the native fallback matches the chrome header height before the renderer measures it'
   );
   assert.equal(service.snapshot('window').status, 'ready');
   assert.equal(terminal.options.webPreferences.preload, undefined);

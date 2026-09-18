@@ -2,7 +2,7 @@ import { BrowserWindow } from 'electron';
 import { windowStateService, type WindowStateController } from '@main/windows/windowState.service';
 import { ZellijSurface } from './zellijSurface';
 import { closeZellijTerminal, getZellijRuntime, stopZellijRuntime } from './zellijRuntime.service';
-import type { ZellijSnapshot } from '@shared/zellij/zellij.type';
+import { ZELLIJ_CHROME_BACKGROUND, type ZellijSnapshot } from '@shared/zellij/zellij.type';
 import type { ZellijTerminalRect } from './zellijTerminalView';
 import type { MaestroCompositeTabHostApi } from '@maestro-shared/compositeTab.api';
 
@@ -278,6 +278,8 @@ class ZellijWindowService {
       minHeight: 600,
       show: false,
       title: 'Zellij',
+      // chrome 与终端都是暗的,窗口默认的白底会在打开时闪一帧(zellij-terminal-chrome.md #3)。
+      backgroundColor: ZELLIJ_CHROME_BACKGROUND,
       autoHideMenuBar: true
     });
     this.window = created;

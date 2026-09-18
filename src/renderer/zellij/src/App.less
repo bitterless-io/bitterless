@@ -1,3 +1,22 @@
+/* Zellij chrome 的调色板。
+   每一个值都逐字取自 `src/main/zellij/zellijDefaultConfig.constant.ts` 的 `web_client.theme` ——
+   也就是**终端自己正在用的**那套 ANSI 颜色。这不是审美偏好:chrome 的背景与终端的背景是同一个
+   字面值,两块之间才没有接缝可看;换成任何一个「接近的暗色」都会画出一条人眼立刻认得出的分界
+   (docs/features/zellij-terminal-chrome.md #1)。
+
+   Less 没法 import 一个 TS 常量,所以这是一处真实的重复 —— 由
+   `tests/zellij/zellijChromeTheme.test.mjs` 逐值比对钉住,改了一边不改另一边当场红。 */
+@zellij-background: #1a1b26;
+@zellij-foreground: #c0caf5;
+@zellij-green: #9ece6a;
+@zellij-white: #a9b1d6;
+@zellij-bright-black: #414868;
+@zellij-red: #f7768e;
+@zellij-yellow: #e0af68;
+
+/* 等宽 —— 「像终端」这件事一半在字上。跟着终端自己的 `web_client.font "monospace"` 走。 */
+@zellij-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
 html,
 body,
 #app {
@@ -10,47 +29,108 @@ body,
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: oklch(98% 0.004 265);
-  color: var(--color-royalblue-800);
+  background: @zellij-background;
+  color: @zellij-foreground;
+  font-family: @zellij-mono;
 }
+/* 高度来自 shared 的 `ZELLIJ_CHROME_HEIGHT`(main.ts 写进这个 CSS 变量)—— main 侧的首帧兜底
+   `contentBounds.y` 读的是同一个常量。`42px` 只是变量拿不到时的兜底,不是第二份真相。 */
 .zellij__toolbar {
-  height: 48px;
-  min-height: 48px;
-  flex: 0 0 48px;
+  @height: var(--zellij-chrome-height, 42px);
+
+  height: @height;
+  min-height: @height;
+  flex: 0 0 auto;
   box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 0 16px;
+  gap: 8px;
+  padding: 0 12px;
 }
 .zellij__identity,
 .zellij__actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
+}
+/* 图标与字标都用主题绿。16px / 13px 是终端的体量;之前的 20px 图标 + 16px 粗标题是**应用标题栏**
+   的体量,那正是「太高」的观感来源(G4)。 */
+.zellij__identity {
+  color: @zellij-green;
+  min-width: 0;
 }
 .zellij__identity h1 {
-  font-size: 16px;
-  font-weight: 600;
   margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  color: @zellij-green;
 }
 .zellij__status {
-  font-size: 12px;
-  color: var(--color-royalblue-500);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 1;
+  color: @zellij-white;
 }
+/* 状态点是状态的**第二条**通道,不是唯一通道 —— 文字标签一个字都没少。只靠颜色表达状态的界面
+   对色觉障碍者等于没有状态。 */
+.zellij__status-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: @zellij-yellow;
+}
+.zellij__status-dot--ready {
+  background: @zellij-green;
+}
+.zellij__status-dot--error {
+  background: @zellij-red;
+}
+/* 无边框图标按钮。`border: 0` 与底色都写在**这个界面真的会加载的**这份样式里:
+   `IconBtn` 的外观来自它自己的样式表,而这个渲染入口不一定加载得到 —— 少了这两行,Chromium 对一个
+   裸 `<button>` 的 UA 默认恰好是一个带 1px 边框的灰盒子(CLAUDE.md《Borderless UI》记的那次)。 */
+.zellij__settings-button.icon-btn.arco-btn,
 .zellij__settings-button {
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  padding: 0;
   border: 0;
+  border-radius: 4px;
   background: transparent;
+  color: @zellij-white;
 }
+/* 三个类,不是两个:`IconBtn.less` 的规则是 `.icon-btn.arco-btn`(0,2,0),写两个类只是打平、靠
+   加载顺序决胜 —— 而那个顺序这里没人保证。同 `MenuBar.less` 里 `.maestro-menu-bar__tab-close` 的写法。
+   不加这一条,hover 会落回 `var(--color-fill-2)`:亮色主题的浅灰,贴在暗背景上。 */
+.zellij__settings-button.icon-btn.arco-btn:hover,
+.zellij__settings-button:hover {
+  background: @zellij-bright-black;
+  color: @zellij-green;
+}
+.zellij__settings-button.icon-btn.arco-btn:active {
+  background: @zellij-bright-black;
+}
+/* 错误条:不给盒子、不画框,只换文字颜色 —— 它是一句话加一个动作,不是一个区块。 */
 .zellij__error {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 16px;
-  color: oklch(48% 0.17 25);
-  font-size: 13px;
+  padding: 6px 12px;
+  color: @zellij-red;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.zellij__error .arco-btn {
+  color: @zellij-green;
+  font-family: @zellij-mono;
 }
 .zellij__terminal {
   flex: 1;
@@ -64,15 +144,17 @@ body,
   align-items: center;
   justify-content: center;
   gap: 12px;
-  color: var(--color-royalblue-500);
+  color: @zellij-white;
 }
 .zellij__loading p {
   max-width: 460px;
   line-height: 1.6;
   padding: 0 24px;
+  font-size: 12px;
   text-align: center;
 }
 .zellij__loading-icon {
+  color: @zellij-green;
   animation: zellij-loading 1s linear infinite;
 }
 @keyframes zellij-loading {

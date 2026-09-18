@@ -25,6 +25,18 @@ export const ZELLIJ_SURFACE_QUERY = 'surface' as const;
  */
 export const ZELLIJ_CHROME_HEIGHT = 42 as const;
 
+/**
+ * chrome 的背景色 —— 与终端自己的 `web_client.theme.background` **同一个字面值**。
+ *
+ * 用在两处「CSS 还没生效」的地方:chrome `WebContentsView` 与独立窗口的 `backgroundColor`。不设的话
+ * 打开时先闪一帧 Chromium/Electron 默认的白屏,在这套配色下非常刺眼。
+ *
+ * 它在三个地方出现(这里、`App.less`、`zellijDefaultConfig.constant.ts` 的 KDL),由
+ * `tests/zellij/zellijChromeTheme.test.mjs` 逐值比对钉住 —— Less 没法 import TS,KDL 是一段模板字符串,
+ * 所以重复消不掉,只能守住(docs/features/zellij-terminal-chrome.md #1.1)。
+ */
+export const ZELLIJ_CHROME_BACKGROUND = '#1a1b26' as const;
+
 export type ZellijErrorCode =
   | 'binary-missing'
   | 'unsupported-platform'

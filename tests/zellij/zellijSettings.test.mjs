@@ -204,7 +204,7 @@ test('settings preparation failure shows its error and blocks editing when no re
   );
 });
 
-test('terminal chrome compiles with a 48px header and a gear route, while shared settings own the fields', async () => {
+test('terminal chrome compiles with a variable-driven header and a gear route, while shared settings own the fields', async () => {
   const appFile = 'src/renderer/zellij/src/App.vue';
   const settingsFile =
     'src/renderer/home/src/views/setting/components/TerminalSetting/TerminalSetting.vue';
@@ -254,11 +254,15 @@ test('terminal chrome compiles with a 48px header and a gear route, while shared
       declarations[declaration.prop] = declaration.value;
     })
   );
-  assert.equal(declarations.height, '48px');
-  assert.equal(declarations['min-height'], '48px');
-  assert.equal(declarations.flex, '0 0 48px');
+  // 高度必须来自 CSS 变量 —— 那个变量由渲染入口从 shared 的 `ZELLIJ_CHROME_HEIGHT` 写入,
+  // 而 main 的首帧兜底读的是同一个常量。这里只钉「不许写死」;那个数**是**多少由
+  // `zellijChromeTheme.test.mjs` 钉(docs/features/zellij-terminal-chrome.md #2)。
+  const HEIGHT_FROM_VARIABLE = /^var\(--zellij-chrome-height, \d+px\)$/;
+  assert.match(declarations.height, HEIGHT_FROM_VARIABLE);
+  assert.match(declarations['min-height'], HEIGHT_FROM_VARIABLE);
+  assert.equal(declarations.flex, '0 0 auto');
   assert.equal(declarations['box-sizing'], 'border-box');
-  assert.equal(declarations.padding, '0 16px');
+  assert.equal(declarations.padding, '0 12px');
   assert.match(shared.template.content, /terminalSettingStore\.draft\.splitDown/);
   assert.match(shared.template.content, /terminalSettingStore\.configDirectory/);
   assert.doesNotMatch(shared.template.content, /a-switch|terminalEnabled|\.initialize\(/);

@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import { autoOpenZellijDevTools, bindZellijDevTools } from './zellijDevTools.helper';
 import { ZellijTerminalView, type ZellijTerminalRect } from './zellijTerminalView';
 import {
+  ZELLIJ_CHROME_BACKGROUND,
+  ZELLIJ_CHROME_HEIGHT,
   ZELLIJ_SURFACE_QUERY,
   ZELLIJ_SURFACE_STATE_EVENT,
   type ZellijSnapshot
@@ -40,8 +42,14 @@ export class ZellijSurface {
   private prompt: AbortController | null = null;
   private readonly terminal: ZellijTerminalView;
   private hostRect: ZellijTerminalRect = { x: 0, y: 0, width: 0, height: 0 };
-  /** Renderer-measured hole, container-relative. Height 0 means "not measured yet". */
-  private contentBounds: ZellijTerminalRect = { x: 0, y: 48, width: 0, height: 0 };
+  /**
+   * Renderer-measured hole, container-relative. Height 0 means "not measured yet".
+   *
+   * `y` 的首帧兜底读 shared 的 `ZELLIJ_CHROME_HEIGHT` —— chrome 的 CSS 用的是同一个常量,各写一个
+   * 字面量的话漂移**不会报错**:渲染层第一次量完就会把它盖掉,错的那一帧只是闪一下
+   * (docs/features/zellij-terminal-chrome.md #2)。
+   */
+  private contentBounds: ZellijTerminalRect = { x: 0, y: ZELLIJ_CHROME_HEIGHT, width: 0, height: 0 };
   private visible = true;
   private destroyed = false;
   private opened = false;
@@ -119,6 +127,9 @@ export class ZellijSurface {
         sandbox: false
       }
     });
+    // chrome 现在是暗的,而 `WebContentsView` 的默认底色是白 —— 不设的话每次打开都先闪一帧白屏,
+    // 在这套配色下非常刺眼。值与终端背景一致(zellij-terminal-chrome.md #3)。
+    controls.setBackgroundColor(ZELLIJ_CHROME_BACKGROUND);
     bindZellijDevTools(controls.webContents);
     autoOpenZellijDevTools(controls.webContents);
     this.container.addChildView(controls);

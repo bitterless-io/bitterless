@@ -5,6 +5,14 @@
   z-index: 20;
   width: 100%;
   box-sizing: border-box;
+
+  /* Skills are appended after the commands (maestro-slash-commands.md「Skills in the slash menu」),
+     so this list is no longer a fixed handful of rows — it grows with the catalog and was covering
+     the conversation. Cap it and scroll; `overscroll-behavior` keeps a wheel gesture that reaches
+     the end of the list from scrolling the chat behind it. */
+  max-height: 420px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 4px;
   border: 1px solid var(--bl-royalblue-100, #d9ddea);
   border-radius: 8px;

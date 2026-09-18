@@ -1,5 +1,10 @@
 # Bitterless Documentation
 
+- [Zellij chrome 改成终端的样子](features/zellij-terminal-chrome.md) — implemented; owner testing pending;
+  工具条降到 42px(与 Cowork 地址栏一致),配色整条取自终端**自己**的 `web_client.theme`
+  (背景 `#1a1b26`、主题绿 `#9ece6a`),等宽字 + 状态点;高度与背景各收敛成一个 shared 常量,
+  三份调色板副本由 `tests/zellij/zellijChromeTheme.test.mjs` 逐值钉住。
+
 - [The Maestro chat list can scroll sideways as a whole](issues/chat-list-scrolls-sideways.md) — fixed, source-verified;
   the list scroller was `overflow: auto` on both axes and `.message-item__content` had no `min-width`,
   so a descendant's min-content width could widen the row and drag the whole conversation sideways.

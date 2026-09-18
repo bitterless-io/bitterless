@@ -61,6 +61,9 @@ see `micromeet-cowork docs/issues/chat-scrollbars-unstyled-and-list-scrolls-side
 and asserts the scroller is vertical-only, the message column declares `min-width: 0`, and Maestro
 Control still reaches the global scrollbar theme through `common/style.css`.
 
-Per `CLAUDE.md` no Electron E2E was run. In the rebuilt app: open Maestro chat, send enough messages
-to scroll, and confirm no horizontal scrollbar appears under the conversation — including with a
-reply containing a wide code block or table, which must scroll inside its own box.
+`yarn typecheck` passes with 0 errors. Not run (Ral 2026-09-18:「UI 调整而已别跑单位测试了」):
+`yarn lint` and `yarn build`. Per `CLAUDE.md` no Electron E2E was run.
+
+Human acceptance, in the rebuilt app: open Maestro chat, send enough messages to scroll, and confirm
+no horizontal scrollbar appears under the conversation — including with a reply containing a wide
+code block or table, which must scroll inside its own box.

@@ -136,6 +136,13 @@ which is what lets the guard run it outside any DOM.
 A catalog fetch that fails leaves the skill block empty and the commands working. Same requirement as
 [no institution must not block normal function](../plan/tasks/skills-pi-native-loading-001.md).
 
+**Height.** Ral, 2026-09-18:「高度最高 420px，内容太多就滚动」. The list length now follows the skill
+catalog instead of a fixed handful of commands, so the panel is capped at **420px** and scrolls
+(`SlashMenu.less`), with `overscroll-behavior: contain` so a wheel gesture that reaches the end does
+not scroll the conversation behind it. A cap alone would have been half a fix: once the list scrolls,
+`SlashMenu.vue` scrolls the active row into view (`block: 'nearest'`, not centring — centring makes the
+list jump on every keypress) or the arrow keys walk the selection off-screen and the panel looks frozen.
+
 **Removed.** `src/renderer/maestro/control/src/store/skillPicker.store.ts` and the
 `chat-panel__skills` dialog it drove. The **selected-skill chip** (`chat-panel__selected-skill`) stays —
 it is the receipt for "this send will carry this skill", not a picker; without it the attachment would

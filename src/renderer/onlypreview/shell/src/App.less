@@ -685,6 +685,15 @@ select {
   color: var(--onlypreview-ink);
 }
 
+/* footer 右下角的磁盘读数(Ral 2026-09-18)。和旁边的文件状态同一种静默文字样式 —— 它是读数,
+ * 不是控件:没有边框、没有底色、不可点。窄窗口下 rail 本来就截断,完整句子在 `title` 里。 */
+.onlypreview-shell__storage-state {
+  flex: 0 0 auto;
+  color: var(--onlypreview-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .onlypreview-shell__status-rail {
   position: relative;
   height: 25px;

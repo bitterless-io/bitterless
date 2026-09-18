@@ -44,6 +44,11 @@ class ZellijState {
     return i18nHelper.zellij.status[this.snapshot?.status ?? 'starting'];
   }
 
+  /** 原始状态值 —— chrome 的状态点按它上色,标签文字仍然走 `statusLabel`。 */
+  get status(): ZellijSnapshot['status'] {
+    return this.snapshot?.status ?? 'starting';
+  }
+
   get loadingLabel(): string {
     return this.snapshot?.status === 'reconnecting'
       ? i18nHelper.zellij.reconnecting

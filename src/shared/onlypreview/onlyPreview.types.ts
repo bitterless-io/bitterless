@@ -197,6 +197,16 @@ export interface OnlyPreviewNoticeRequest extends OnlyPreviewHostRequest {
   tone?: 'error' | 'notice';
 }
 
+// The footer's storage readout. Two numbers and nothing else: no paths cross this boundary.
+export interface OnlyPreviewStorageStatus {
+  // Free space on the volume holding `userData` — the disk the index is written to, which is not
+  // necessarily the one the workspace is on.
+  freeBytes: number;
+  // Every workspace's search index, summed. The total is the number that reached 16 GB, not the
+  // open workspace's share of it.
+  indexBytes: number;
+}
+
 export interface OnlyPreviewFileRef {
   workspaceId: string;
   relativePath: string;
@@ -754,6 +764,7 @@ export interface OnlyPreviewApi {
    * 文案由渲染进程给 —— 提示语属于发起它的那个界面,而不是 main。
    */
   showNotice(params: OnlyPreviewNoticeRequest): Promise<OnlyPreviewResult<void>>;
+  getStorageStatus(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<OnlyPreviewStorageStatus>>;
   openSettings(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;
   closeSettings(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;
   openAgentSkillGuide(params: OnlyPreviewHostRequest): Promise<OnlyPreviewResult<void>>;
