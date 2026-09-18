@@ -110,6 +110,11 @@
   to and flashed once without opening the preview, and the Copy-detail control becomes a borderless
   tabler icon button.
 
+- [OnlyPreview footer storage status](features/onlypreview-storage-status.md) — implemented;
+  owner verification pending. The footer's right cluster now carries free space on the volume holding
+  `userData` and the total size of every workspace's search index — the numerator and denominator of
+  the 2026-09-17 disk exhaustion, neither of which was visible anywhere until the volume was full.
+
 - [Agent cwd follows the workspace](features/agent-cwd-follows-workspace.md) — implementing; code-verified, human testing pending;
   cwd is resolved per session from the project root (else the shared default workspace), never from process.cwd(); pi gets an in-memory settings manager first.
 

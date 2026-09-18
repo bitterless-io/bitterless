@@ -201,6 +201,7 @@ test('OnlyPreview XPC prototype exposes the exact renderer allowlist and capabil
     'revealInFolder',
     'getSettings',
     'saveSettings',
+    'getStorageStatus',
     'openSettings',
     'closeSettings',
     'openAgentSkillGuide',
