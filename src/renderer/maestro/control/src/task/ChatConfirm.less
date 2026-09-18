@@ -9,6 +9,16 @@
   color: rgb(var(--warning-8));
 }
 .chat-confirm--answered { opacity: 0.72; }
+/**
+ * 失效态(重启后读回)。**整套换成中性灰**,不是把琥珀调淡 —— 琥珀在这套界面里的意思是
+ * 「挡住流程、快来看」,而这张卡已经什么都挡不住了。留一个淡琥珀会让人以为还要处理它。
+ * 边框一并去掉:它现在是历史条目,靠背景和留白分层就够(见 CLAUDE.md 的 Borderless UI)。
+ */
+.chat-confirm--expired { border: 0; background: rgb(var(--gray-2)); color: rgb(var(--gray-8)); }
+.chat-confirm--expired .chat-confirm__rail { background: rgb(var(--gray-4)); }
+.chat-confirm--expired .chat-confirm__head { color: rgb(var(--gray-6)); }
+.chat-confirm--expired .chat-confirm__detail { color: rgb(var(--gray-6)); }
+.chat-confirm__answer--expired { color: rgb(var(--gray-6)); font-weight: 500; }
 .chat-confirm__rail { width: 3px; flex-shrink: 0; align-self: stretch; border-radius: 999px; background: rgb(var(--warning-5)); }
 .chat-confirm__content { min-width: 0; flex: 1; }
 .chat-confirm__head { display: flex; align-items: center; gap: 6px; color: rgb(var(--warning-7)); font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }

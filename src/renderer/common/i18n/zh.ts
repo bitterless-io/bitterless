@@ -632,6 +632,9 @@ export const zh: typeof en = {
     confirm: {
       answeredElsewhere: '该问题已在其他位置回答或已撤回。',
       answered: '已回答',
+      // 重启那一种。刻意不写成"已回答" —— 没人回答过它。
+      expired: '未回答',
+      expiredDetail: '没来得及回答 —— 应用重启后这一问已失效。',
       waitingForYou: '等待你处理',
       selected: '已选择“{label}”',
       answerInActionPanel: '↓ 请在下方操作面板中回答',

@@ -1328,6 +1328,9 @@ export class MessageStoreState {
       this.confirmMessages.set(task.id, pending.id)
       this.stickToBottom = true
       this.scrollToBottom(true)
+      // 这一处仍走全量:`appendTimelineEntry` 会顺手封口上一个助手段落,那一条不在任何
+      // `changed` 里,换成窄通道会把它的终稿留到回合结束才写
+      // (docs/issues/turn-and-compaction-saves-still-rewrite.md 的第 4 步)。
       void this.persistSession(session)
       return
     }
@@ -1339,7 +1342,8 @@ export class MessageStoreState {
     if (message?.confirm && !message.confirm.answer) {
       message.confirm.answer = 'elsewhere'
       this.turnService.touchForTask(session.id)
-      void this.persistSession(session)
+      // 撤回这一支只改一条已有消息,没有追加、没有封口 → 走窄通道(审计的第 2 步)。
+      void this.persistMessages(session, [message])
     }
   }
 
@@ -1353,7 +1357,9 @@ export class MessageStoreState {
       .respondTaskConfirm({ taskId: card.taskId, confirmId: card.confirmId, confirm })
       .catch(() => ({ ok: false }))
     if (!result.ok) card.answer = 'elsewhere'
-    if (session) await this.persistSession(session)
+    // 一条消息、没有追加 → 窄通道(审计的第 2 步)。落库在 await 之后:写的是最终答案,
+    // 包含失败时改成的 `elsewhere`,不然库里会留一个乐观的 confirm 而那次投递其实失败了。
+    if (session) await this.persistMessages(session, [message])
     return result
   }
 
@@ -1875,7 +1881,13 @@ export class MessageStoreState {
           error: message.error,
           activity: message.activity,
           tasks: message.tasks,
-          confirm: message.confirm ? { ...message.confirm } : undefined,
+          // 历史里的确认卡一律按【已了结】读回:任务注册表是内存态,重开之后没有任何东西还在等
+          // 这个答案,留一对能点的按钮只会让人以为还能影响什么 —— 点下去发给一个已经不存在的
+          // 任务,失败,再弹一句"已在别处回答",而那句话与实情无关。
+          //
+          // 了结成 `expired` 而不是 `elsewhere`:没人回答过它,是进程没了。说成"别处答了"
+          // 是在编造一件没发生的事(docs/issues/confirm-card-survives-restart.md)。
+          confirm: message.confirm ? { ...message.confirm, answer: message.confirm.answer || 'expired' } : undefined,
           errorCard: message.errorCard ? { ...message.errorCard } : undefined,
           compressed: message.compressed,
           promptExcluded: message.promptExcluded,

@@ -128,15 +128,19 @@ directly), which is why a grep for `persistSession(` missed them:
 All are `meta`. They are the cheapest conversions in either file and carry no dirty-set question.
 They keep their hand-rolled fences and rollbacks, which is the only reason they are not a one-liner.
 
-### Parity note for Ral — a real divergence, not a conversion artifact
+### Parity note — RESOLVED 2026-09-18
 
-Bitterless persists a confirm card when it appears, when it is answered elsewhere, and when the user
-answers it. **Cowork does none of the three.** Today a Cowork confirm card and its answer survive a
-crash only if some later full rewrite happens to run. That is pre-existing, and it becomes a *loss*
-rather than a *latency* the moment Cowork's turn-lifecycle sites stop being full rewrites. Under the
-paired-development rule this is common functionality with a one-sided implementation; nothing was
-changed, because closing it is a product decision about what a pending confirmation means after a
-restart.
+Bitterless persisted a confirm card when it appeared, when it was answered elsewhere, and when the
+user answered it. **Cowork did none of the three** — it reached the database only by riding a later
+full rewrite, which these conversions remove. Ral ruled on it the same day: keep the history, and
+retire an unanswered card as `expired` rather than as answered.
+
+Done, both sides, in
+[confirm-card-survives-restart.md](confirm-card-survives-restart.md) — which also applies **step 2 of
+the corrected order above** to the three one-message confirm sites and documents why the
+card-appears site stays a full rewrite (it seals an assistant segment, i.e. step 4). It is the first
+piece of this issue's remaining work to land, and the reason it could land is
+[the `persistMessages` identity fix](incremental-save-reports-unwritten-messages-as-saved.md).
 
 ## Verification
 

@@ -640,6 +640,9 @@ export const en = {
     confirm: {
       answeredElsewhere: 'This question was answered elsewhere or withdrawn.',
       answered: 'answered',
+      // The restart case. Deliberately NOT worded as an answer — nobody answered it.
+      expired: 'not answered',
+      expiredDetail: 'Never answered — the app restarted before you could.',
       waitingForYou: 'waiting for you',
       selected: 'Selected “{label}”',
       answerInActionPanel: '↓ Answer in the action panel below',

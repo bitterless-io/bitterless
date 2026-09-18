@@ -13,7 +13,13 @@ export interface MaestroChatConfirm {
   detail?: string
   confirmLabel: string
   cancelLabel: string
-  answer?: 'confirm' | 'cancel' | 'elsewhere'
+  /**
+   * 这张卡怎么了结的。`expired` 是**重启后读回**的那种:没人回答过它,是主进程的任务注册表
+   * 随进程消失了,所以这一问再也答不了。它和 `elsewhere` 必须分开 —— 后者是"有人替你答了/
+   * 任务自己撤回了",把重启说成那个是在编造一件没发生的事
+   * (docs/issues/confirm-card-survives-restart.md)。
+   */
+  answer?: 'confirm' | 'cancel' | 'elsewhere' | 'expired'
   payload?: MaestroTaskConfirm['payload']
 }
 
