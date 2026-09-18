@@ -1,5 +1,8 @@
 # Bitterless Documentation
 
+- [Every save recounts every message of every session](issues/every-save-recounts-the-whole-history.md) — open; identical here, same LEFT JOIN + COUNT + preview subquery after every save.
+- [Turn and compaction saves still rewrite the whole session](issues/turn-and-compaction-saves-still-rewrite.md) — open; same call sites over queueSessionSave/saveSessionNow, convert together with Cowork.
+
 - [Reading the workspace announced a change](issues/workspace-read-announces-a-change.md) — hardened with Cowork; same query-announces-a-change defect here, loop never closed only because the skill catalog reads through a pure lookup.
 
 - [Control login inherits OnlyPreview Project](features/control-login-preview-workspace.md) — implemented; 88/88 scoped tests and independent review passed after repairing a fenced-adoption tool-binding leak; paired with Cowork, Maestro host adapter preserved.
