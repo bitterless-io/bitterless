@@ -40,6 +40,7 @@ import { MaestroAgent } from '@main/agent/MaestroAgent'
 import { DelegateAgent } from '@main/agent/DelegateAgent'
 import { readHostToolCatalog } from '@main/agent/hostToolCatalog'
 import { DEEP_FETCH_BUILTIN_SKILL } from '@main/agent/deepFetch.skill'
+import { DRILL_BUILTIN_SKILL } from '@main/agent/drill.skill'
 import { extractVariablesFromMessage } from '@main/agent/naturalLanguageVariables'
 import {
   hasRequiredInputs,
@@ -254,30 +255,6 @@ interface ActiveAgentTurn extends AgentTurnSnapshot {
 
 type AgentTurnIdentity = Pick<AgentTurnSnapshot, 'sessionId' | 'turnId' | 'generation'>
 
-/**
- * Maestro's agent runtime and session boundary.
- *
- * Tool implementations stay in their owning domains. This service owns agent instances, session
- * hydration, media and attachment registration, turn results, model targeting, host-tool policy,
- * approval history, and shutdown disposal.
- */
-/**
- * 内置「钻探」技能 —— **常驻目录项**,不依赖用户录过什么。
- * 从 cowork 逐字搬入(`drill-001`);`id` 是稳定标识,触发词中英文都要有。
- */
-const DRILL_BUILTIN_SKILL: AgentSkillBrief = {
-  id: 'builtin:drill',
-  name: '钻探 (Drill)',
-  triggers: ['钻探', 'drill', '探站', 'explore this site', '钻探这个站', 'map this site', '自动探站', 'probe the site', 'discover the endpoints'],
-  description:
-    '对当前站点做一次完整钻探,产出站点地图(sitemap)+ 接口文档(apidoc),会覆盖已有产物。' +
-    '内置流程,不用 get_skill_contract —— 按系统提示的钻探步骤做:start_recording→explore_session begin/循环/end→ingest_recording。',
-  // bl 的 `AgentSkillBrief` 这三项是必填(cowork 那边可选)。内置技能没有 recipe 文件,
-  // 所以没有输入契约、没有种子、也没有缺项 —— 给空值而不是省略。
-  inputs: [],
-  seed: {},
-  missing: []
-}
 
 @injectable()
 export class MaestroAgentService extends CommonService<MaestroAgentServiceState> {

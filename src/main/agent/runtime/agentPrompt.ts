@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path'
 import moment from 'moment'
 import { renderChainPathLine } from '@main/agent/userChainStore.service'
 import { DEEP_FETCH_BROWSER_WORKFLOW } from '@main/agent/deepFetch.skill'
+import { DRILL_ROUTE } from '@main/agent/drill.skill'
 import { extname } from 'path'
 import { clipText, summarizeActionApiCorrelations } from '@maestro-main/capture/traceTimeline'
 import type {
@@ -366,62 +367,7 @@ export const buildAgentTurnPrompt = (params: {
     //    存在的字样。改动任何一句之前先读 cowork 的 `check-auto-explore` 与那几份 drill issue。
     //    其中「永不反问下一个钻哪个」那几条是 Ral 2026-09-10 加的:那不是澄清,是把决策推回给人,
     //    而钻探能跑两小时,每一次反问都让它停在那里等一个不必要的回答。
-    '钻探 (DRILL) an unfamiliar site — the user may ask for this as 钻探 / 探站 / drill / explore / map / probe this site (中文或英文都算). There is no one-shot tool; YOU run the flow:',
-    '1. start_recording {"mode":"api"} — 钻探 needs the traffic recorded, or there is nothing to ingest. SKIP this only if a recording is already running (the Capture 钻探 button starts it for you — explore_session state shows the recording dir). ' +
-      'ONE recording spans the WHOLE drill. The host ingests it in WINDOWS as you go — a window closes when you mark a module done, and drilling continues into the SAME recording afterwards. So never stop or restart the recording between modules: a restart would orphan the traffic the next window is supposed to cover. ' +
-      'If start_recording comes back with capturing:false it now tells you WHY in "error" — report that to the operator and stop; do not keep drilling into a recording that never started, because every endpoint you would have captured is lost silently.',
-    '2. explore_session {"action":"begin"}, then run a perception→action LOOP: OBSERVE the page (snapshot) → DECIDE → ACT with',
-    '   ui_act → OBSERVE the new page → repeat. NAVIGATE BY CLICKING menu items / buttons (ui_act the [ref]), NOT by changing the',
-    '   url. USE INPUTS too: fill a search/filter with a value the page shows and apply it — it only re-reads, and it exercises',
-    '   the list/query APIs. Say',
-    '   briefly what you LEARNED each step. Full loop in the begin guidance.',
-    // Ral 2026-09-10:「这种反问不该出现,cowork 会自行判断的」—— 他收到的是
-    // 「已进入 X。目前可继续查看:A / B / C ── 你想先钻探哪一项?」。
-    // 那不是一次澄清,而是**把决策推回给人**:候选就是 frontier,顺序由主机的队列决定,
-    // 人没有比 agent 更多的信息可以拿来回答。而钻探能跑两小时,每一次这样的反问都让它**停在那里**
-    // 等一个不必要的回答 —— 覆盖率因此永远到不了。
-    '   NEVER ask the operator which place/module to drill next, or whether to continue. The frontier IS the answer and the host',
-    '   orders it — you have strictly more information than they do, so a question like "which one first?" only stalls the drill',
-    '   (it can run for two hours; every such question freezes it until someone happens to look). Pick the next place and go.',
-    '   Ask ONLY when you are BLOCKED and the block needs a human: a login wall (use explore_session {"action":"need_login"}),',
-    '   or a control you must not activate. Narrate what you chose in one line instead of offering a menu.',
-    '   COMPLETION IS COVERAGE OF PLACES, NOT LABELS. A place = anywhere the site can take you; the host harvests them from the',
-    '   links on every page you open, collapsing repeats. Your job: OPEN EVERY PLACE. Each one usually reveals more — there is NO',
-    '   depth limit, the tree is as deep as this site actually is. Two kinds the harvester cannot see, so they are on you:',
-    '   entries that are not links (JS nav / buttons / tabs), and anything behind a control that does not change the url. Count a',
-    '   page\'s sub-entries and pass {"module":{...,"expectedChildren":N}} — the host reports the gap vs what it harvested, and',
-    '   that gap IS the non-link nav to click. {module} / {"module_done"} are LABELS that organise the sitemap; they never end the',
-    '   drill. DONE (mechanical) = no branch open AND the host\'s harvested queue empty (or each leftover settled with',
-    '   {"uncovered":{"url","reason"}}). Taking longer is fine; finishing early is not. The ONE control you never activate is a COMMIT CONTROL — one whose activation itself persists a change.',
-    '   That is about what it DOES, never what it is called; anything that only opens or loads is fair game, and those loads are',
-    '   where most endpoints live. Which controls count depends on PAGE STATE: with nothing typed into a page, activate anything',
-    '   (an untouched form has nothing to persist); once you HAVE typed, anything that could persist it is a commit control —',
-    '   leave it and navigate away. Never activate the final confirmation step of an irreversible action.',
-    '   explore_visit {"url"}/{"tab"} is RECOVERY ONLY (go "back", reach a same-site tab) — not your main way to move; move by',
-    '   clicking. explore_session {"action":"state"} whenever unsure where you are.',
-    '   LOGIN WALL: if the app requires login and you are BLOCKED from its content (a login page you cannot get past, a session-expired screen, an SSO redirect — a password field is a hint), do NOT wander or try to log in yourself. Call explore_session {"action":"need_login"} — it PAUSES the drill and asks the user to log in; it returns once they have (they click "继续", or it auto-detects login). Then continue from where you are. (Only if you are genuinely blocked — visiting a login link while already signed in elsewhere is not blocked; switch to the signed-in tab instead.)',
-    '   NEW TABS = BRANCH DRILL: some controls open a NEW TAB. When a click does, the host tells you so in the ui_act result, switches you to that tab, and opens a BRANCH. Drill the branch NOW — but a branch is ONE PAGE, not a second way into the site: explore_record {module} for it, work through THAT PAGE\'s own controls (buttons, forms, expandable sections — observe→click/fill→observe), then explore_record {"module_done":{"url"}}. Do NOT navigate its menus or wander into other sections from there: such a tab carries the same sidebar as the main line, and the main line reaches those on its own — the host does not even queue links harvested inside a branch. If a branch genuinely opens a whole sub-system that the main line cannot reach, record its url with worklist_add and let it be drilled as a normal place instead. The host then CLOSES that tab and returns you to the main line by itself — do not close or switch away yourself, and do not leave a branch open (end is refused while one is). Off-site new tab → explore_visit {"tab":"home"} to return (NOT "back": a fresh tab has no history); it goes on the off-site list.',
-    '   NARRATE AS YOU GO: pass note ".." with every explore_record — one short sentence, in the operator\'s language, on what you just learned or are about to do. The operator watches those live; a single summary at the end is not enough.',
-    '3. explore_session {"action":"end"} — writes the sitemap.',
-    '4. ingest_recording {"api": true, "ui": false} — API-ONLY: turn the recorded traffic into the apidoc. Do NOT ask for ui — a drill builds the apidoc, not UI skills, and ui-ingest would run an LLM pass over the WHOLE recording (HTML/JS included). It ingests only API requests (fetch/xhr/json/api-path), in batches, and judges auth BEFORE extracting. It runs in the BACKGROUND and returns a task id immediately.',
-    '   Most drills document the traffic AS THEY GO (a window per module), so this call usually answers "already ingested" instead of starting anything — that is SUCCESS, not a failure, and the completion report is posted either way. Call it exactly once regardless; never call it a second time to "make sure".',
-    'COMPLETION: the drill is complete ONLY when the API ingest finishes — NOT when the sitemap is written. The ingest is a background task, so after you call ingest_recording just report briefly that the sitemap is done and the apidoc ingest has started (with its task id) + any black/whitelist advice. Do NOT write a "完成钻探" summary yourself — the SYSTEM posts the fixed-format 完成钻探 report (target site · sitemap modules/functions · API count) automatically when the ingest actually finishes. Your job ends at "ingest started".',
-    // 「完成」只能有一个发布者 —— 宿主的机械判定(地点台账)。agent 说了不算,因为它拿不到那份台账:
-    // 续跑次数用完时宿主会单方面兜底收尾,而 agent 记得的最后一件事是"我调了 end",于是照自己的理解
-    // 播报"钻探已完成",同一屏上进度却写着 88/125、气泡还是红色错误样式。三处互相矛盾时人只信正文。
-    'WHO SAYS "DONE": never you. Whether the site was fully covered is the HOST\'s mechanical verdict from its own ledger of places — you cannot see that ledger, so any completion claim from you is a guess. Describe only what YOU did ("sitemap written, ingest started as task-N"). Do not write 钻探已完成 / drill complete / fully explored / 站点地图已生成并完成 — not even when end succeeded, because end also succeeds when the host wraps up a run that did NOT finish. If the host tells you a run was wrapped up incomplete, say exactly that and repeat its numbers; do not soften it.',
-    'A FAILED TURN IS NOT A FINISHED DRILL: if this turn ends with an error (replay-failed, aborted, provider error), say the run ended abnormally and what is unfinished. Never end an errored turn with wording that reads like success.',
-    'That is 钻探: sitemap first, apidoc second, and it OVERWRITES the site\'s existing sitemap + apidoc. Report progress briefly the whole way.',
-    'DO NOT STOP until every harvested place is opened (or settled with uncovered) and no branch is open (or the 120-min budget',
-    'trips) — do NOT conclude after a few. This is',
-    'ENFORCED: explore_session {"action":"end"} is REFUSED while any of those is outstanding (and while you have',
-    'discovered zero) — keep discovering + drilling + marking done. NEVER end your turn with a text summary while explore_session',
-    'is open (that skips the apidoc); if anything is left, call the next tool.',
-    'Finish ONLY via explore_session {"action":"end"} → ingest_recording. (If you stop early the host RE-PROMPTS you to keep going',
-    'until every module is done — so there is no point stopping.)',
-    // 「接着钻某几块」是常见的第二轮诉求(第一轮预算到顶/被兜底收尾之后)。不给它一个显式入口的话,
-    // agent 只能重钻整站,把已经探过的地方再走一遍(Ral 2026-08-14)。
-    'CONTINUING PART OF A SITE: when the user names which parts to drill ("接着钻 Settings 和 Billing", "只钻 Reports 相关的", "钻一下权限那块"), pass them as focus: explore_session {"action":"begin","focus":"Settings, Billing"}. RESOLVE THEIR WORDING TO REAL LABELS FIRST: read the page, find the entries they actually mean, and pass those entries\' own text verbatim — the host matches focus as plain substrings against each place\'s name and url, so a paraphrase that appears nowhere on the site matches nothing and you would drill an empty scope. If their wording is ambiguous between two entries, take both. That SCOPES the run — a place counts only if it matches one of those or was reached by clicking through one that did, so the named parts still get drilled to full depth while the rest of the site is skipped. The begin output tells you the run is scoped; when it is, "no places left" means THAT FOCUS is covered, not the site. Say so when you report. Omit focus for a normal full drill — and never invent a focus to make a run finish sooner.',
+    DRILL_ROUTE,
     '',
     'Workspace:',
     workspaceContext,

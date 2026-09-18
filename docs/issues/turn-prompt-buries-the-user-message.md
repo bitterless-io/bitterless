@@ -3,8 +3,8 @@
 **报告日期**：2026-09-18，Ral：「说个 hi 调用了几十次无意义的 bash 调用，肯定有问题」、
 「为什么导出 context 的时候，提示词的部分显示到最后，而不是会话」。
 
-**状态**：根因已定（证据为 Ral 提供的 agent-io 实录）。P2/P3 本次实施并红灯验证。P1（钻探块与
-技能目录的无条件注入）、P4（导出显示会话）未动，理由与前置条件见文末。
+**状态**：根因已定（证据为 Ral 提供的 agent-io 实录）。P2/P3/P1-钻探 已实施并红灯验证。
+P1-技能目录（72.4%）、P3b（单轮工具预算）、P4（导出显示会话）未动，理由见文末。
 
 **证据**：`~/Library/Application Support/COWORK_TEST_DEBUG/agent-io/20260918174106964-9wkjcu7ohrkmu6rqkue`
 
@@ -101,11 +101,28 @@ Active tab when this message was sent:
 `toolCall` 事件并到顶收尾 —— 那是新机制，上限取多少是产品判断，需要 Ral 定。没有它，P2/P3 仍然是
 提示词级的说服，不是强制。
 
-**P1-钻探 · 钻探块按需注入。**（本次**未**实施）2026-09-16 的定案仍然成立，但它**不是这次的直接
-起因**：证据里模型跑的是 `bash` / `read_file`，一次 `page_snapshot` 都没有 —— 它照着的是指令墙的
-整体语气，不是钻探那一节。而按需注入需要一个「钻探进行中」的信号从 `DrillService` 穿到
-`buildAgentTurnPrompt`（`exploreSession.isExploring` 目前到不了那里）；只按消息关键词开关，会把跑到
-一半的多轮钻探在下一轮打断。那是一次有边界的独立改动，不该塞进这次的回归修复里。
+**P1-钻探 · 钻探改为 builtin 技能。**（2026-09-18 已实施，Ral 当天追加「现在就做」）执行 2026-09-16
+的定案。**没有用"按需开关"那条路** —— 它需要一个「钻探进行中」的信号从 `DrillService` 穿到
+`buildAgentTurnPrompt`，只按关键词开关会把跑到一半的多轮钻探在下一轮打断。
+
+实际走的是更简单也更准的一条：**那 10,464 字符里的大部分本来就是重复的**。
+`explore_session {"action":"begin"}` 的回包 `BEGIN_GUIDANCE`（cowork 7,582 / bitterless 7,956 字符）
+已经完整交付了循环怎么跑 —— observe→act、`ui_act`、`explore_record` 的 plan/module/module_done/
+expectedChildren、登录墙、分支新标签页、commit control、覆盖率判据。**那是按需交付，时机也更对**：
+人真的开钻时才读到。
+
+所以：
+
+- 新建 `drill.skill.ts`（形状照 `deepFetch.skill.ts`），把 `DRILL_BUILTIN_SKILL` 从 service 搬进来，
+  和 `DRILL_ROUTE` 放在一起；
+- 每轮提示词里只留 `DRILL_ROUTE` —— `begin` **之前**必须知道的四步路由，和 `end` **之后**才用得上的
+  收尾纪律（完成播报归谁说、失败回合不许写成成功、`focus` 续钻、已探站点走 sitemap）。
+  实测 `BEGIN_GUIDANCE` 这两头一个字都没有（`start_recording` / `ingest_recording` / `apidoc` /
+  完成播报 命中数全为 0），所以它们必须留下；
+- `BEGIN_GUIDANCE` 也缺的两条（`uncovered` 结算、`end` 的强制前置）补进 `DRILL_ROUTE` —— 不补的话
+  模型只能靠撞 `end` 的拒绝才知道自己还没完，可恢复，但白跑一轮。
+
+结果：空 briefs 下的 user 消息从 ~20.4k 降到 **9,861 字符**。钻探正文不再每轮发、steering 不再重发一遍。
 
 **P1-技能目录 · 需要 Ral 定夺。**（本次不动）它占 72.4%，是真正的大头。但"完整目录"是**刻意的
 设计不变量** —— `refreshModelSkillCatalog` 在超预算时硬失败并声明「no skills were silently
