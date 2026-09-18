@@ -31,6 +31,7 @@ import {
 import type { PiToolSpec } from '@main/agent/BaseAgent'
 import { buildFileTools } from '@main/agent/tools/fileTools'
 import { buildSkillCreatorTools } from '@main/agent/tools/skillCreatorTools'
+import { skillAuthoringRuntime } from '@main/agent/runtime/skillAuthoring'
 import { buildArchiveTools } from '@main/agent/tools/archiveTools'
 import { buildWebFetchTools } from '@main/agent/tools/webFetchTools'
 import { buildWebSearchTools } from '@main/agent/tools/webSearchTools'
@@ -1431,7 +1432,14 @@ class MaestroWindowController
         workspace: () => this.workspaceFile.projectRootForSession(sessionKey),
         sharedRoot: () => this.ensureServices().registry.scopeStorage.shared,
         libraryRoot: () => this.ensureServices().registry.scopeStorage.library,
-        changed: () => this.ensureServices().registry.invalidate()
+        changed: () => this.ensureServices().registry.invalidate(),
+        // The Chat's own usable catalog, so `run_skill_file` can only reach a package this Chat
+        // actually has — including workspace-layer ones, hence the workspace binding.
+        skills: () => {
+          const registry = this.ensureServices().registry
+          return registry.withWorkspace(this.workspaceFile.projectRootForSession(sessionKey), () => registry.listSkills())
+        },
+        bunPath: () => skillAuthoringRuntime(this.ensureServices().registry.scopeStorage.shared).bunPath
       }),
       {
         name: 'skill_diagnose',

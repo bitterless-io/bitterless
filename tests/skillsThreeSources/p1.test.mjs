@@ -15,7 +15,7 @@ const compiled = await build({ tsconfig: join(app, 'tsconfig.node.json'), stdin:
   "export { selectedSkillPrompt } from './src/main/maestro/skills/skillSelection'",
   "export { resolveAuthorizedSkill } from './src/main/maestro/skills/skillScope.context'",
   "export { diagnoseSkill } from './src/main/maestro/skills/skillDiagnostics'",
-  "export { SkillPickerStore } from './src/renderer/maestro/control/src/store/skillPicker.store'"
+  "export { skillShortcutRows, ShortcutStore } from './src/renderer/maestro/control/src/store/shortcut.store'"
 ].join('\n'), resolveDir: app, loader: 'ts' }, bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external', external: ['virtual:bitterless-pi-skills'], plugins: [{ name: 'scope', setup(builder) {
   builder.onResolve({ filter: /assetScope\.service$/ }, () => ({ path: 'scope', namespace: 'host' }))
   builder.onLoad({ filter: /.*/, namespace: 'host' }, () => ({ contents: 'export const assetScope=globalThis.__assetScope' }))
@@ -32,16 +32,28 @@ const fixture = t => {
   return { root, data, workspace, registry, scope, ...module.exports }
 }
 
-test('qualified picker selection binds the exact source and loads explicit-only current instructions', async t => {
+// The entry point is now the `/` menu, not a separate picker (docs/features/maestro-slash-commands.md
+// 「Skills in the slash menu」). What must stay true is unchanged: picking a *qualified* row binds that
+// exact source, and an explicit-only skill is still selectable by hand.
+test('qualified slash-menu selection binds the exact source and loads explicit-only current instructions', async t => {
   const f = fixture(t)
   skill(f.registry.scopeStorage.shared, 'shared-copy', 'Shared instructions')
   skill(join(f.workspace, '.agents/skills'), 'workspace-copy', 'Workspace explicit instructions', 'disable-model-invocation: true\n')
-  const catalog = f.registry.catalog(f.workspace), picker = new f.SkillPickerStore({ skillCatalog: async () => catalog }, () => 'chat-a')
-  await picker.open(); assert.equal(picker.filtered.length, 2)
-  const selected = picker.filtered.find(row => row.layer === 'workspace')
-  assert.equal(selected.allowImplicitInvocation, false); picker.pick(selected)
-  assert.equal(picker.selected.reference, selected.reference); assert.equal(picker.selected.layer, 'workspace')
-  const prompt = await f.registry.withWorkspace(f.workspace, () => f.selectedSkillPrompt(f.registry, picker.selected.reference))
+  const catalog = f.registry.catalog(f.workspace)
+  const rows = f.skillShortcutRows(catalog.skills, row => `${row.layer} · ${row.path}`)
+  assert.equal(rows.length, 2)
+  const selected = catalog.skills.find(row => row.layer === 'workspace')
+  assert.equal(selected.allowImplicitInvocation, false)
+  const row = rows.find(item => item.skill.layer === 'workspace')
+  assert.ok(row, 'an explicit-only skill must still be listed — the user chose it by hand')
+  assert.equal(row.skill.reference, selected.reference)
+  const store = new f.ShortcutStore([])
+  store.registerSkills(rows)
+  store.update({ query: '', start: 0, end: 1 })
+  store.activeIndex = rows.findIndex(item => item.skill.layer === 'workspace')
+  const commit = await store.commit({})
+  assert.ok(commit.ok && commit.skill, 'committing a skill row hands back the skill to attach')
+  const prompt = await f.registry.withWorkspace(f.workspace, () => f.selectedSkillPrompt(f.registry, row.skill.reference))
   assert.match(prompt, /Workspace explicit instructions/); assert.ok(!prompt.includes('Shared instructions'))
   await assert.rejects(f.registry.withWorkspace(f.workspace, () => f.selectedSkillPrompt(f.registry, 'same-name')), /unavailable/)
   fs.unlinkSync(selected.path)
@@ -58,15 +70,20 @@ test('institution selection is rejected after revocation without falling back to
   assert.equal(f.registry.catalog().skills.length, 1)
 })
 
-test('picker ignores stale requests after changing Chat and leaves unavailable rows unselected', async t => {
-  const f = fixture(t); let release, sessionId = 'first'
-  const pending = new Promise(resolve => { release = resolve })
-  const picker = new f.SkillPickerStore({ skillCatalog: async () => pending }, () => sessionId)
-  const opened = picker.open(); sessionId = 'second'; picker.reset()
-  release({ skills: [{ name: 'stale' }] }); await opened
-  assert.equal(picker.items.length, 0)
-  picker.pick({ reference: 'shared:error', name: 'broken', status: 'error' }); assert.equal(picker.selected, undefined)
-  picker.pick({ reference: 'shared:disabled', name: 'disabled', status: 'ready', enabled: false }); assert.equal(picker.selected, undefined)
+// The stale-request guard moved into ChatPanel's loader (a request counter); what is still a pure,
+// guardable contract is **which rows may reach the menu at all** — an unusable skill must never be
+// offered, because the menu is the list of things that work.
+test('the slash menu refuses unusable rows: broken, disabled, unassigned and reference-less', async t => {
+  const f = fixture(t)
+  const rows = f.skillShortcutRows([
+    { reference: 'shared:ok', name: 'usable', layer: 'global', path: '/g/usable/SKILL.md', status: 'ready' },
+    { reference: 'shared:error', name: 'broken', layer: 'global', path: '/g/broken/SKILL.md', status: 'error' },
+    { reference: 'shared:disabled', name: 'disabled', layer: 'global', path: '/g/disabled/SKILL.md', status: 'ready', enabled: false },
+    { reference: 'unassigned:x', name: 'unassigned', layer: 'global', path: '/g/unassigned/SKILL.md', status: 'ready', scope: 'unassigned' },
+    { name: 'no-reference', layer: 'global', path: '/g/none/SKILL.md', status: 'ready' }
+  ], () => 'hint')
+  assert.deepEqual([...rows].map(row => row.name), ['/usable'])
+  assert.equal(rows[0].skill.reference, 'shared:ok')
 })
 
 test('disabled stable identities survive restart and revisions while management and namesakes remain available', async t => {

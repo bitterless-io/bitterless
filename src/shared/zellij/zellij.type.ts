@@ -13,6 +13,18 @@ export const ZELLIJ_WINDOW_HANDLER_NAME = 'ZellijWindowHandler' as const;
  */
 export const ZELLIJ_SURFACE_QUERY = 'surface' as const;
 
+/**
+ * chrome 那条工具条的高度(px)—— 也就是「终端从哪一行开始」。
+ *
+ * 和 Cowork 地址栏一致(`MenuBar.less` 的 `.maestro-menu-bar__address-row` 也是 42,Ral 2026-09-18)。
+ *
+ * 一个常量两处消费:main 用它做 `contentBounds` 的**首帧兜底**,渲染层在 `main.ts` 里把它写成 CSS
+ * 变量 `--zellij-chrome-height` 交给 Less。各写一个字面量的话,漂移**不会报错** —— 首帧之后渲染层的
+ * `ResizeObserver` 会用真实矩形盖掉那个兜底值,错的那一帧只是闪一下
+ * (docs/features/zellij-terminal-chrome.md #2)。
+ */
+export const ZELLIJ_CHROME_HEIGHT = 42 as const;
+
 export type ZellijErrorCode =
   | 'binary-missing'
   | 'unsupported-platform'

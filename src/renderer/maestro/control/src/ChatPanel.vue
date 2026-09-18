@@ -18,10 +18,10 @@ import IconBtn from '../../../common/components/IconBtn/IconBtn.vue'
 import ChatErrorModal from './task/ChatErrorModal.vue'
 import MessageList from './MessageList.vue'
 import SlashMenu from './SlashMenu.vue'
-import { ShortcutStore, slashTokenAt, parseCompactCommand } from './store/shortcut.store'
+import { ShortcutStore, skillShortcutRows, slashTokenAt, parseCompactCommand } from './store/shortcut.store'
 import { channelStore } from './store/channel.store'
 import { messageStore } from './store/message.store'
-import { SkillPickerStore } from './store/skillPicker.store'
+import type { ShortcutSkill } from './store/shortcut.type'
 import type { ChatAttachment, MessageSession } from './store/message.type'
 import { isRejection } from './store/turn.service'
 import { parseWorkflowCommand } from '@shared/agentWorkflow.api'
@@ -33,8 +33,27 @@ const tasksVisible = ref(false)
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
 const props = defineProps<{ session: MessageSession; sendDisabled?: boolean }>()
 const emit = defineEmits<{ sent: [reply: AgentReply] }>()
-const skillPicker = reactive(new SkillPickerStore(coach, () => props.session.id))
-skillPicker.selected = props.session.detail.draft?.skill
+// 选中的技能。挂载入口是 `/` 面板的 skill 条目(maestro-slash-commands.md「Skills in the slash
+// menu」),不再有独立的选择器面板;这枚状态只负责「下一次发送会带哪个技能」。
+const selectedSkill = ref<ShortcutSkill | null>(props.session.detail.draft?.skill ?? null)
+let skillCatalogRequest = 0
+/**
+ * 技能目录 → `/` 面板的 skill 条目。拉取留在面板这一侧,`ShortcutStore` 仍然只有一条 `import type`。
+ * 只列**能用的**:坏包、未归属、停用的不进面板 —— 诊断在 Workbench,不在输入框。
+ * 拉取失败不弹错:技能块空着,命令块照常工作(无机构 / 离线不该阻塞正常功能)。
+ */
+async function loadSkillShortcuts(): Promise<void> {
+  const request = ++skillCatalogRequest
+  const sessionId = props.session.id
+  try {
+    const snapshot = await coach.skillCatalog({ sessionId })
+    if (request !== skillCatalogRequest || props.session.id !== sessionId) return
+    shortcutStore.registerSkills(skillShortcutRows(snapshot.skills, skill =>
+      `${skillLayerLabel(skill.layer)} · ${skill.path}${skill.allowImplicitInvocation === false ? ` · ${i18nHelper.maestroControl.chat.skillExplicitOnly}` : ''}`))
+  } catch {
+    if (request === skillCatalogRequest) shortcutStore.registerSkills([])
+  }
+}
 
 const input = ref(props.session.detail.draft?.text || '')
 // Composer attachments: picked/dropped files, kept as {name, absolute path}. On send the
@@ -47,14 +66,14 @@ const composerCaret = ref(0)
 // 数组顺序只是阅读顺序(按加入时间):面板显示时 `ShortcutStore.matches` 按命令名 ASCII 重排,
 // 所以新命令追加在末尾就行,不必为了菜单里的位置去插队。
 const shortcutStore = reactive(new ShortcutStore([
-  { name: '/test_auto_compact', hint: 'Test automatic compaction in an isolated conversation' },
-  { name: '/compact', hint: 'Compact now; optional focus instructions' },
-  { name: '/clear', get hint() { return i18nHelper.maestroControl.chat.slashClear } },
-  { name: '/view_context', get hint() { return i18nHelper.maestroControl.chat.slashViewContext } },
-  { name: '/copy_session_path', get hint() { return i18nHelper.maestroControl.chat.slashCopySessionPath } },
-  { name: '/test_show_error', get hint() { return i18nHelper.maestroControl.chat.slashTestShowError } },
-  { name: '/view_context_graph', get hint() { return i18nHelper.maestroControl.chat.slashViewContextGraph } },
-  { name: '/workflow', get hint() { return i18nHelper.workflow.commandHint } }
+  { kind: 'command', name: '/test_auto_compact', hint: 'Test automatic compaction in an isolated conversation' },
+  { kind: 'command', name: '/compact', hint: 'Compact now; optional focus instructions' },
+  { kind: 'command', name: '/clear', get hint() { return i18nHelper.maestroControl.chat.slashClear } },
+  { kind: 'command', name: '/view_context', get hint() { return i18nHelper.maestroControl.chat.slashViewContext } },
+  { kind: 'command', name: '/copy_session_path', get hint() { return i18nHelper.maestroControl.chat.slashCopySessionPath } },
+  { kind: 'command', name: '/test_show_error', get hint() { return i18nHelper.maestroControl.chat.slashTestShowError } },
+  { kind: 'command', name: '/view_context_graph', get hint() { return i18nHelper.maestroControl.chat.slashViewContextGraph } },
+  { kind: 'command', name: '/workflow', get hint() { return i18nHelper.workflow.commandHint } }
 ]))
 const slashToken = computed(() => slashTokenAt(input.value, composerCaret.value))
 const slashVisible = computed(() => shortcutStore.open && shortcutStore.matches.length > 0)
@@ -65,12 +84,12 @@ let composerDisposed = false
 let newChatPending = false
 const workflowCommandPending = ref(false)
 watch(input, () => { draftRevision += 1 }, { flush: 'sync' })
-watch([input, selectedFiles, () => skillPicker.selected], () => {
-  props.session.detail.draft = { text: input.value, files: selectedFiles.value.slice(), skill: skillPicker.selected ? { ...skillPicker.selected } : undefined }
+watch([input, selectedFiles, selectedSkill], () => {
+  props.session.detail.draft = { text: input.value, files: selectedFiles.value.slice(), skill: selectedSkill.value ? { ...selectedSkill.value } : undefined }
 }, { deep: true, flush: 'sync' })
 watch([input, composerCaret], () => shortcutStore.update(slashToken.value), { flush: 'post' })
-watch(() => props.session.id, () => { draftRevision += 1; shortcutStore.close(); skillPicker.reset() }, { flush: 'sync' })
-onBeforeUnmount(() => { composerDisposed = true; shortcutStore.close(); skillPicker.reset(true) })
+watch(() => props.session.id, () => { draftRevision += 1; shortcutStore.close(); selectedSkill.value = null }, { flush: 'sync' })
+onBeforeUnmount(() => { composerDisposed = true; shortcutStore.close() })
 const shortcut = (key: string): string => `${navigator.platform.toLowerCase().includes('mac') ? '⌘' : 'Ctrl+'}${key}`
 
 // i18n 文案里的 `{count}` 占位替换。不用 `$t()` / `useI18n()` —— 本项目一律走 i18nHelper。
@@ -82,6 +101,8 @@ const stopEnabled = computed(() => Boolean(props.session.compacting || (props.se
 const skillLayerLabel = (layer?: string): string => layer === 'workspace' ? i18nHelper.maestroControl.chat.skillWorkspace : layer === 'institution' ? i18nHelper.maestroControl.chat.skillInstitution : i18nHelper.maestroControl.chat.skillGlobal
 
 const workspace = computed(() => props.session.detail.workspace)
+// 目录随会话(以及它的工作区)变:工作区层的技能只属于那个目录。
+watch(() => [props.session.id, workspace.value?.path], () => { void loadSkillShortcuts() }, { immediate: true })
 const workspaceLabel = computed(() => workspace.value?.name || 'Workspace')
 const workspaceTitle = computed(() => workspace.value?.path || 'Set workspace')
 const openWorkspaceLabel = computed(() =>
@@ -136,10 +157,10 @@ async function send(): Promise<void> {
   }
   const steering = Boolean(props.session.turn)
   const files = !steering && selectedFiles.value.length ? selectedFiles.value.slice() : undefined
-  const selectedSkill = skillPicker.selected
-  const context = selectedSkill ? { ...messageStore.buildAgentContext(props.session, undefined, files?.map(file => file.path)), selectedSkillRef: selectedSkill.reference } : undefined
+  const sentSkill = selectedSkill.value
+  const context = sentSkill ? { ...messageStore.buildAgentContext(props.session, undefined, files?.map(file => file.path)), selectedSkillRef: sentSkill.reference } : undefined
   input.value = ''
-  skillPicker.selected = undefined
+  selectedSkill.value = null
   if (!steering) selectedFiles.value = []
   await nextTick()
   if (composerDisposed) return
@@ -153,7 +174,7 @@ async function send(): Promise<void> {
   if (!input.value.trim()) {
     input.value = message
     if (files?.length) selectedFiles.value = files.slice()
-    skillPicker.selected = selectedSkill
+    selectedSkill.value = sentSkill
     await nextTick()
     resizeComposer()
   }
@@ -527,6 +548,8 @@ async function commitShortcut(): Promise<void> {
     shortcutStore.update(slashToken.value)
     return
   }
+  // 技能只是挂上,不执行:token 照常被删掉,草稿其余部分由下面那两行原样写回。
+  if (result.skill) selectedSkill.value = result.skill
   input.value = draft
   composerCaret.value = token.start
   await nextTick()
@@ -644,22 +667,9 @@ async function stopUsingWorkspace(): Promise<void> {
     </Modal>
 
     <div class="chat-panel__composer">
-      <section v-if="skillPicker.visible" name="chat-panel__skills" class="chat-panel__skills" role="dialog" :aria-label="i18nHelper.maestroControl.chat.skills" @keydown.esc="skillPicker.visible = false">
-        <div class="chat-panel__skills-heading"><b>{{ i18nHelper.maestroControl.chat.skills }}</b><IconBtn :aria-label="i18nHelper.maestroControl.chat.closeErrorDetail" @click="skillPicker.visible = false"><IconX :size="16" /></IconBtn></div>
-        <Input v-model="skillPicker.search" size="small" allow-clear :placeholder="i18nHelper.maestroControl.chat.skillSearch" :aria-label="i18nHelper.maestroControl.chat.skillSearch" />
-        <p v-if="skillPicker.error" class="chat-panel__skills-error" role="alert">{{ skillPicker.error }}</p>
-        <div name="chat-panel__skills-list" class="chat-panel__skills-list" :aria-busy="skillPicker.loading">
-          <button v-for="skill in skillPicker.filtered" :key="skill.reference || skill.id" name="chat-panel__skill-row" class="chat-panel__skill-row" type="button" :disabled="!skillPicker.available(skill)" @click="skillPicker.pick(skill)">
-            <span><b>{{ skill.displayName || skill.name }}</b> · {{ skillLayerLabel(skill.layer) }}</span>
-            <small v-if="!skillPicker.available(skill)">{{ i18nHelper.maestroControl.chat.skillUnavailable }}</small><small v-else-if="skill.allowImplicitInvocation === false">{{ i18nHelper.maestroControl.chat.skillExplicitOnly }}</small>
-            <code>{{ skill.path }}</code>
-          </button>
-          <p v-if="!skillPicker.loading && !skillPicker.filtered.length">{{ i18nHelper.maestroControl.chat.skillEmpty }}</p>
-        </div>
-      </section>
-      <div v-if="skillPicker.selected" name="chat-panel__selected-skill" class="chat-panel__selected-skill" :title="skillPicker.selected.path">
-        <span>{{ skillPicker.selected.name }} · {{ skillLayerLabel(skillPicker.selected.layer) }}</span>
-        <IconBtn :aria-label="i18nHelper.maestroControl.chat.removeSkillSelection" @click="skillPicker.selected = undefined"><IconX :size="14" /></IconBtn>
+      <div v-if="selectedSkill" name="chat-panel__selected-skill" class="chat-panel__selected-skill" :title="selectedSkill.path">
+        <span>{{ selectedSkill.name }} · {{ skillLayerLabel(selectedSkill.layer) }}</span>
+        <IconBtn :aria-label="i18nHelper.maestroControl.chat.removeSkillSelection" @click="selectedSkill = null"><IconX :size="14" /></IconBtn>
       </div>
       <slot name="before-composer"></slot>
       <div
@@ -706,7 +716,6 @@ async function stopUsingWorkspace(): Promise<void> {
       </div>
       <div class="chat-panel__composer-footer">
         <div v-if="session.allowFiles" name="maestro__composer__context" class="chat-panel__composer-tools">
-          <Button name="chat-panel__choose-skill" class="chat-panel__choose-skill" type="text" size="mini" :disabled="turnLocked || Boolean(session.archivedAt)" @click="skillPicker.open()">{{ i18nHelper.maestroControl.chat.skills }}</Button>
           <!-- The duplicate Skills shortcut is intentionally hidden. The Workbench Skills pane
                and its internal coach/workbench-pane broadcast remain available in Workbench. -->
           <!-- 不套 Tooltip(Ral 2026-09-09)。它原来弹的是 "Set workspace",而按钮上写着

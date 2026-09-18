@@ -7,9 +7,15 @@
   background: transparent;
 }
 
+/*
+ * **只竖着滚**(Ral 2026-09-18:「聊天页不应该出现整体横向滚动的滚动条」)。横向滚动条一旦挂在
+ * 这一层,它拖的就不是某条消息而是整段对话;宽内容(代码块、表格、附件条)各自带 `overflow-x`,
+ * 该在自己的盒子里滚 —— 配合 `.message-item__content` 的 `min-width: 0`,行宽就再也不会被某个后代
+ * 的最小内容宽顶开(docs/issues/chat-list-scrolls-sideways.md)。
+ */
 .message-list__scroll {
   height: 100%;
-  overflow: auto;
+  overflow: hidden auto;
   padding: 8px;
 }
 

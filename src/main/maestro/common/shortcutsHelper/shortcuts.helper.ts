@@ -1,27 +1,57 @@
-import { app, session, webContents } from 'electron'
+import { app, webContents } from 'electron'
 import type { WebContents } from 'electron'
-import { MAESTRO_PARTITION } from '@maestro-main/data/maestroDataRoot'
 import { dispatchApplicationFindCommand } from '@main/menu/applicationFindMenu.service'
 
 export interface ShortcutActions {
   newTab: () => void
   closeActiveTab: () => void
   searchSessions: () => boolean
+  /**
+   * Is the Maestro window the focused one right now?
+   *
+   * This is the ONLY test for whether the tab chords apply — see the module comment. It is asked per
+   * keystroke because focus moves, and answered by the window's owner rather than here so this
+   * module keeps no handle on `maestroWindowHelper`.
+   */
+  ownsFocusedWindow: () => boolean
 }
 
+/**
+ * Cmd+T / Cmd+W / Cmd+F for the Maestro window.
+ *
+ * **The claim is a property of the WINDOW, not of the view.** `Cmd+W` means "close the active tab"
+ * exactly when the focused window is the one that HAS tabs; in every other window it is not ours and
+ * must reach the application menu's inherited `fileMenu` `close` role, which closes that window.
+ *
+ * That sentence is the whole design, and it replaced a per-view registry (a session/partition test
+ * plus an `enrollMaestroShortcutContents` allowlist) that had to be remembered by every surface that
+ * renders inside the Maestro window. Forgetting it was silent and the symptom was severe — the key
+ * fell through and took the WHOLE window down instead of one tab:
+ *
+ *  - OnlyPreview's composite views, three separate entries (Ral 2026-09-11);
+ *  - the Zellij mini app's chrome, missed by that same round
+ *    (`docs/issues/maestro-zellij-chrome-cmd-w-closes-window.md`, Ral 2026-09-18).
+ *
+ * A registry cannot be complete by construction, and neither miss was visible to typecheck, to
+ * review, or to any test — the enrolled surfaces kept working. Asking "is the Maestro window
+ * focused?" needs nothing registered, so a new view inside it is correct the moment it exists. This
+ * is `micromeet-cowork`'s arbitration (`apps/cowork/src/main/common/shortcutsHelper/shortcuts.helper.ts`),
+ * minus its menu ownership: Bitterless keeps the host application menu, and its terminal proves it
+ * still receives Cmd+W through `setIgnoreMenuShortcuts(true)`.
+ *
+ * Two explicit exceptions remain, and they are behaviours rather than permissions:
+ * `terminalKeyboardOwners` (the view wants the key itself) and `windowCloseGuards` (the key must do
+ * nothing at all).
+ */
 const shortcutContents = new WeakSet<WebContents>()
 const shortcutDedupeMs = 120
 const lastShortcutAt = new Map<string, number>()
 let activated = false
-// Enrollment can happen before or after `activateShortcuts`, so the actions are remembered rather
-// than captured: a view enrolled first would otherwise get no binding at all.
-let pendingActions: ShortcutActions | null = null
 
 /**
  * Views that want Cmd+W themselves — the Zellij terminal, where it closes a PANE.
  *
- * Registering here is not the same as `enrollMaestroShortcutContents`: an enrolled view gets the
- * tab chords, this one takes Cmd+W away from them.
+ * Not a permission: this one takes Cmd+W AWAY from the tab chords for the view that registers it.
  */
 const terminalKeyboardOwners = new WeakSet<WebContents>()
 export const setTerminalKeyboardOwner = (contents: WebContents): void => {
@@ -31,11 +61,10 @@ export const setTerminalKeyboardOwner = (contents: WebContents): void => {
 /**
  * Views where Cmd+W must do NOTHING — Omni cells (Ral 2026-09-11).
  *
- * An Omni cell is not in Maestro's partition and is not enrolled, so Cmd+W used to fall past this
- * handler entirely and land on the application menu's inherited `fileMenu` `close` role, which
- * closes the WINDOW. Omni has no tabs, so there is nothing for the key to mean there; swallowing it
- * is the whole fix. This registry exists because "do nothing" still has to be an explicit decision
- * made here — silence is what produced the bug.
+ * Omni is its own window with no tabs, so neither branch of the rule above fits it: closing the
+ * active Maestro tab is wrong (that is a different window) and closing the Omni window is what Ral
+ * asked NOT to happen. "Do nothing" is therefore a third, explicit answer, and it has to be stated
+ * somewhere — silence is what produced the original bug.
  */
 const windowCloseGuards = new WeakSet<WebContents>()
 export const guardWindowCloseShortcut = (contents: WebContents): void => {
@@ -43,44 +72,30 @@ export const guardWindowCloseShortcut = (contents: WebContents): void => {
 }
 
 const runShortcut = (key: string, actions: ShortcutActions, contents: WebContents): boolean => {
+  // Find is already window-resolved by its own dispatchers (`dispatchApplicationFindCommand` picks
+  // the foreground owner, and `searchSessions` refuses unless the Maestro window is focused), so it
+  // needs no test here.
   if (key === 'f') return dispatchApplicationFindCommand('find-in-file') || actions.searchSessions()
   if (key !== 't' && key !== 'w') return false
+  // Swallowed, but still `true` so the caller preventDefaults — that is what keeps it off the menu's
+  // window-close role.
+  if (windowCloseGuards.has(contents)) return true
+  // Not the tabbed window ⇒ not our key. Returning false (no preventDefault) is the POINT: the menu
+  // then closes that window, which is what every other window wants.
+  if (!actions.ownsFocusedWindow()) return false
   const now = Date.now()
   const last = lastShortcutAt.get(key) || 0
   if (now - last < shortcutDedupeMs) return true
   lastShortcutAt.set(key, now)
   if (key === 't') actions.newTab()
-  // Swallowed, but still `true` so the caller preventDefaults — that is what keeps it off the menu's
-  // window-close role.
-  else if (windowCloseGuards.has(contents)) return true
   else actions.closeActiveTab()
   return true
 }
 
-/**
- * Contents that are Maestro's for chord purposes without being in Maestro's partition.
- *
- * A composite mini-app tab (OnlyPreview) creates its views with no `partition`, so they run in the
- * default session and the partition test below skips them. With focus inside such a view, Cmd+W
- * reached neither `closeActiveTab` nor any mini-app binding and fell through to the application
- * menu's inherited `fileMenu` `close` role — closing the whole Cowork window instead of the tab.
- *
- * The partition test stays the default on purpose: it is what stops arbitrary web content in a tab
- * from claiming Bitterless chords. Enrollment grants a keystroke, not a session — the host enrolls
- * each view of a mini app it registered, and nothing else can.
- */
-const enrolledContents = new WeakSet<WebContents>()
-
-export const enrollMaestroShortcutContents = (contents: WebContents): void => {
-  enrolledContents.add(contents)
-  if (pendingActions) installShortcutsForWebContents(contents, pendingActions)
-}
-
+// Installed on EVERY WebContents — see the module comment. What a view is allowed to do is decided
+// per keystroke, so there is nothing to register and nothing to forget.
 const installShortcutsForWebContents = (contents: WebContents, actions: ShortcutActions): void => {
-  const isMaestroSession = contents.session === session.fromPartition(MAESTRO_PARTITION)
-  const claimsShortcuts =
-    isMaestroSession || enrolledContents.has(contents) || windowCloseGuards.has(contents)
-  if (!claimsShortcuts || shortcutContents.has(contents)) return
+  if (shortcutContents.has(contents)) return
   shortcutContents.add(contents)
   contents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown' || input.isComposing) return
@@ -96,10 +111,8 @@ const installShortcutsForWebContents = (contents: WebContents, actions: Shortcut
   })
 }
 
-// Bitterless retains the application menu and Cmd/Ctrl+Q. Only WebContents in Maestro's
-// persistent partition receive the tab shortcuts.
+// Bitterless retains the application menu and Cmd/Ctrl+Q.
 export const activateShortcuts = (actions: ShortcutActions): void => {
-  pendingActions = actions
   if (activated) return
   activated = true
   app.on('web-contents-created', (_event, contents) => installShortcutsForWebContents(contents, actions))

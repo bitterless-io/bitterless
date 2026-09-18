@@ -18,7 +18,11 @@ export const piSkillSdkPlugin = (projectRoot: string) => {
       return [
         `export { loadSkillsFromDir, formatSkillsForPrompt } from ${JSON.stringify(resolve(sdk, 'core/skills.js'))};`,
         `export { parseFrontmatter } from ${JSON.stringify(resolve(sdk, 'utils/frontmatter.js'))};`,
-        `export { createSyntheticSourceInfo } from ${JSON.stringify(resolve(sdk, 'core/source-info.js'))};`
+        `export { createSyntheticSourceInfo } from ${JSON.stringify(resolve(sdk, 'core/source-info.js'))};`,
+        // Pi's own shell resolution (Git Bash hunting on Windows, /bin/bash elsewhere). A skill's
+        // non-JavaScript helper runs through it, so `./scripts/x.sh` behaves the way it does under
+        // Pi rather than needing a second, divergent copy of that lookup here.
+        `export { getShellConfig, getPowerShellConfig } from ${JSON.stringify(resolve(sdk, 'utils/shell.js'))};`
       ].join('\n')
     },
     transform(_code: string, id: string) {

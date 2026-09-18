@@ -83,3 +83,19 @@ Dependencies were added with Yarn only: production isomorphic-git 1.42.2, explic
 Supported managed sources are public HTTPS GitHub/npm/Git. Embedded credentials, SSH sources, unknown arbitrary CLI commands and shell expansions are rejected. Automatic private-source authentication setup, app-private runtime provisioning and full dependency-environment/behavior validation are not implemented. Source installation proves validated owned files/catalog availability, not successful execution. Diagnostic package lookup checks declared package presence, not semver/runtime compatibility. For local changes, preserve or reconcile them before requesting managed update/remove; there is no force-overwrite path.
 
 Root owns the cross-project assessment and human handoff. Owner acceptance: select same-name Global/Workspace skills (including explicit-only), disable/restart/re-enable, observe declared missing conditions, paste a supported source command, inspect and install chosen candidates, then exercise update/remove, local modification refusal, confirmation and Stop. Public real-network and private-account-specific cases were not exercised by the fixture tests. Ordinary turns must continue using cached skills and work without a valid institution.
+
+## 2026-09-18 addendum — P1-1's picker is superseded by the `/` menu
+
+Ral, 2026-09-18:「技能要能用/触发，及将技能列表拼到现有 slash short cut 后面 不需要单独的 skill select
+组件」. The composer skill picker this task shipped (the `[Skills ▾]` control and its search panel in the
+UI contract above) has been **removed**; skills are now rows in the existing `/` command menu, appended
+after the commands. The selected-skill chip stays — it is the receipt for "this send carries this
+skill", not a picker.
+
+Everything P1-1 actually contracted still holds and is still what must be accepted: qualified
+references, duplicate names distinguishable by source and path, explicit-only skills selectable, and a
+deleted/revoked/disabled selection failing clearly instead of falling back to a same-name package. Only
+the entry point changed. Contract: `docs/features/maestro-slash-commands.md`.
+
+**This changes manual-acceptance step 2**: exercise skill selection from the `/` menu, not from a
+`[Skills ▾]` button — there is no such button any more.

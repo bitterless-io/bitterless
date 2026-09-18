@@ -1,5 +1,10 @@
 # Bitterless Documentation
 
+- [The Maestro chat list can scroll sideways as a whole](issues/chat-list-scrolls-sideways.md) — fixed, source-verified;
+  the list scroller was `overflow: auto` on both axes and `.message-item__content` had no `min-width`,
+  so a descendant's min-content width could widen the row and drag the whole conversation sideways.
+  Paired with Cowork (whose scrollbars also had no styling at all and now mirror this repo's).
+
 - [Every save recounts every message of every session](issues/every-save-recounts-the-whole-history.md) — open; identical here, same LEFT JOIN + COUNT + preview subquery after every save.
 - [Turn and compaction saves still rewrite the whole session](issues/turn-and-compaction-saves-still-rewrite.md) — open; same call sites over queueSessionSave/saveSessionNow, convert together with Cowork.
 
@@ -87,9 +92,12 @@
   ([task 183](plan/tasks/onlypreview-index-scratch-and-leaks-183.md)); owner verification pending.
   A reconcile copies the whole index before rebuilding it, so a 5.6 GB index silently needed 11.2 GB
   free, retried the copy until the volume hit zero, and turned `SQLITE_FULL` into `SQLITE_CORRUPT` —
-  that, not the payload latch, is what actually broke search. It now plans against free space and
+  that, not the payload latch, is what actually broke search. Now it plans against free space and
   refuses, falls back to the copy-free build, caps the WAL, and reclaims the orphan journals the
   regex never matched. Measurements: [disk efficiency review](design/onlypreview-index-disk-efficiency.md).
+  Phase 2 ([184](plan/tasks/onlypreview-index-derived-copies-184.md)) drops two derived copies behind
+  a benchmark and carries the in-place v8→v9 migration; phase 3
+  ([185](plan/tasks/onlypreview-index-cache-budget-185.md)) is blocked on the cache cap.
 
 - [OnlyPreview paste feedback](features/onlypreview-paste-feedback.md) — implemented
   ([task 186](plan/tasks/onlypreview-paste-feedback-186.md)); owner verification pending. A paste
@@ -1044,6 +1052,11 @@ earlier review rounds were remediated; Ral's runtime/visual verification remains
 - [Todoist-style Todo sync delivery analysis](plan/analysis/todoist-sync.md)
 
 ## Issues
+
+- [Zellij tab 里焦点不在终端上时 `Cmd+W` 关掉整扇窗](issues/maestro-zellij-chrome-cmd-w-closes-window.md) — fixed, code-verified;
+  owner verification pending: 迷你应用的 chrome 跑在 default session,Maestro 的 partition 判定看不见它,
+  于是 `Cmd+W` 穿到应用菜单的 `close` role。认领改成按键当刻求值的判定,chrome 只在 docked 进 Maestro
+  tab 时认领 —— 独立 Zellij 窗口照旧关窗。cowork 侧核对过:它的仲裁结构不同,不存在这个缺陷。
 
 - [External file tabs and current-preview identity](issues/onlypreview-external-file-tab-and-current-preview.md) — implemented; owner testing pending: OS files open new tabs without OnlyPreview history; footer and current Recents highlight follow the live preview.
 

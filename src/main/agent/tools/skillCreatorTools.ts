@@ -1,13 +1,20 @@
-import { lstatSync, realpathSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { AgentToolSpec } from '../runtime/agentRuntime.types'
 import { checkSkill, initializeSkill } from '../../maestro/skills/skillCreator'
+import { runSkillScript, SKILL_SCRIPT_EXTENSIONS } from '../../maestro/skills/skillScriptRunner.service'
+import { assertSkillContext, authorizeSkillReference } from '../../maestro/skills/skillScope.context'
+import type { SkillSummary } from '@maestro-shared/coach.api'
 
 interface SkillCreatorHost {
   workspace(): string | undefined
   sharedRoot(): string
   libraryRoot(): string
   changed(): void
+  /** Current Chat's usable catalog — a script may only run from a package that is actually available. */
+  skills(): SkillSummary[]
+  /** Bundled Bun, staged with the app. Null in a checkout that never ran the runtime staging. */
+  bunPath(): string | null
 }
 const inside = (root: string, file: string): boolean => file === root || file.startsWith(root + sep)
 const canonical = (file: string): string => {
@@ -20,6 +27,26 @@ const canonical = (file: string): string => {
     }
   }
   return resolve(realpathSync(ancestor), relative(ancestor, resolve(file)))
+}
+
+/**
+ * The authoring root — the one place this Chat may create or edit a skill.
+ * Selected workspace → `<workspace>/.agents/skills`, otherwise profile Shared. Same rule as
+ * micromeet-cowork, and the same rule `skill_creator` has always used; it is factored out here so
+ * `write_skill_file` cannot drift from it.
+ */
+const authoringScope = (host: SkillCreatorHost): { root: string; checkPath: (path: string) => void } => {
+  const workspace = host.workspace(), shared = resolve(host.sharedRoot()), library = canonical(host.libraryRoot())
+  const root = workspace ? join(resolve(workspace), '.agents', 'skills') : shared
+  const actualRoot = canonical(root), actualShared = canonical(shared)
+  if (!inside(library, actualShared) || (workspace && !inside(canonical(workspace), actualRoot))) throw new Error('Skill authoring root escapes its configured workspace or Shared storage')
+  const checkPath = (path: string): void => {
+    const actual = canonical(path)
+    if (!inside(actualRoot, actual)) throw new Error('Skill creator only accesses the current authoring root')
+    if ((inside(library, actual) && !inside(actualShared, actual)) || inside(join(actualShared, 'cloud'), actual)) throw new Error('Institution and cloud-managed skill packages are read-only for the creator')
+  }
+  checkPath(root)
+  return { root, checkPath }
 }
 
 export const buildSkillCreatorTools = (host: SkillCreatorHost): AgentToolSpec[] => [{
@@ -39,16 +66,7 @@ export const buildSkillCreatorTools = (host: SkillCreatorHost): AgentToolSpec[] 
   ],
   execute: async args => {
     try {
-      const workspace = host.workspace(), shared = resolve(host.sharedRoot()), library = canonical(host.libraryRoot())
-      const root = workspace ? join(resolve(workspace), '.agents', 'skills') : shared
-      const actualRoot = canonical(root), actualShared = canonical(shared)
-      if (!inside(library, actualShared) || (workspace && !inside(canonical(workspace), actualRoot))) throw new Error('Skill authoring root escapes its configured workspace or Shared storage')
-      const checkPath = (path: string): void => {
-        const actual = canonical(path)
-        if (!inside(actualRoot, actual)) throw new Error('Skill creator only accesses the current authoring root')
-        if ((inside(library, actual) && !inside(actualShared, actual)) || inside(join(actualShared, 'cloud'), actual)) throw new Error('Institution and cloud-managed skill packages are read-only for the creator')
-      }
-      checkPath(root)
+      const { root, checkPath } = authoringScope(host)
       if (args.action === 'init') {
         checkPath(resolve(root, String(args.name ?? '')))
         const result = initializeSkill({ root, name: String(args.name ?? ''), description: String(args.description ?? ''), template: String(args.template ?? 'instruction') as 'instruction' | 'script' })
@@ -61,6 +79,79 @@ export const buildSkillCreatorTools = (host: SkillCreatorHost): AgentToolSpec[] 
       return JSON.stringify(checkSkill(path))
     } catch (error) {
       return JSON.stringify({ ok: false, generated: false, formatChecked: false, behaviorVerified: false, diagnostics: [(error as Error).message] })
+    }
+  }
+}, {
+  name: 'write_skill_file',
+  description: 'Write one complete UTF-8 file into a skill package in the current authoring root (selected Chat workspace `.agents/skills`, otherwise profile Shared). ' +
+    'Use <skill-name>/<file> or an absolute path inside that root. Creates parent directories. Overwrites the named file, so send the whole content, never a fragment. ' +
+    'Institution and cloud-managed packages are read-only. Edited content enters the catalog after Skills Refresh or a new Chat.',
+  params: [
+    { name: 'path', required: true, description: '<skill-name>/<file>, or an absolute path inside the authoring root.' },
+    { name: 'content', required: true, description: 'Complete UTF-8 file content.' }
+  ],
+  execute: async args => {
+    try {
+      const { root, checkPath } = authoringScope(host)
+      const input = String(args.path ?? '')
+      if (!input || input.includes('\\') || input.split('/').includes('..')) throw new Error('Use <skill-name>/<file> inside the skill authoring root')
+      const file = isAbsolute(input) ? resolve(input) : resolve(root, input)
+      const parts = relative(root, file).split(sep)
+      if (parts.length < 2 || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(parts[0]) || parts.some(part => part === '.' || part === '..')) throw new Error('Use <skill-name>/<file> inside the skill authoring root')
+      checkPath(file)
+      // A symlink anywhere on the way out is refused rather than followed: the authoring root is a
+      // boundary, and following a link is exactly how a write escapes one.
+      let cursor = root
+      for (const part of parts) {
+        cursor = join(cursor, part)
+        try { if (lstatSync(cursor).isSymbolicLink()) throw new Error('Skill writes cannot follow symbolic links') }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
+      }
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(file, String(args.content ?? ''), 'utf8')
+      host.changed()
+      return JSON.stringify({ ok: true, path: file })
+    } catch (error) {
+      return JSON.stringify({ ok: false, error: (error as Error).message })
+    }
+  }
+}, {
+  name: 'run_skill_file',
+  description: 'Run one script that belongs to a skill available in this Chat. JavaScript/TypeScript (.mjs, .js, .ts) runs on the bundled Bun, which every install ships, so no developer environment is needed; ' +
+    'a shell helper (.sh, .bash) or PowerShell (.ps1) falls back to the same shell resolution Pi uses. Runs with the skill package as the working directory, so relative resources resolve. ' +
+    'args_json is a JSON array of string arguments; input_json is a JSON object sent on stdin. Returns stdout, stderr and the exit code, with a 60s timeout. ' +
+    'Requires operator approval: this is trusted local code with normal user permissions, not a sandbox. No shell command, runtime choice or dependency install.',
+  params: [
+    { name: 'path', required: true, description: 'Script path inside an available skill package.' },
+    { name: 'args_json', required: false, description: 'Optional JSON array of string arguments.' },
+    { name: 'input_json', required: false, description: 'Optional JSON object sent on stdin.' }
+  ],
+  execute: async (args, signal) => {
+    try {
+      const input = String(args.path ?? '')
+      if (!input) throw new Error('Skill script path is required')
+      const file = isAbsolute(input) ? resolve(input) : resolve(authoringScope(host).root, input)
+      if (!SKILL_SCRIPT_EXTENSIONS.test(file)) throw new Error('Skill scripts must be .mjs, .js, .ts, .sh, .bash or .ps1 files')
+      const argv: unknown = args.args_json ? JSON.parse(String(args.args_json)) : []
+      const stdin: unknown = args.input_json ? JSON.parse(String(args.input_json)) : {}
+      if (!Array.isArray(argv) || !argv.every(value => typeof value === 'string')) throw new Error('args_json must be an array of strings')
+      if (!stdin || typeof stdin !== 'object' || Array.isArray(stdin)) throw new Error('input_json must be an object')
+      // The script must belong to a package this Chat can actually use — availability is the
+      // catalog's answer, not the filesystem's, so a disabled or unassigned package cannot run.
+      const owner = host.skills().find(skill => skill.status === 'ready' && skill.scope !== 'unassigned' && skill.enabled !== false && inside(canonical(dirname(skill.path)), canonical(file)))
+      if (!owner) throw new Error('Script must belong to a skill that is available in this Chat')
+      const reference = owner.reference || owner.id
+      // Authorize before running AND re-assert after, so an institution revoked mid-call cannot be
+      // the one whose script completed.
+      const expected = await authorizeSkillReference(reference)
+      const result = await runSkillScript({
+        scriptPath: file, packageRoot: dirname(owner.path), bunPath: host.bunPath(),
+        args: argv as string[], input: stdin as Record<string, unknown>, signal
+      })
+      assertSkillContext(expected)
+      return JSON.stringify(result)
+    } catch (error) {
+      return JSON.stringify({ ok: false, error: (error as Error).message })
     }
   }
 }]

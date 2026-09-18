@@ -188,6 +188,7 @@
     "typecheck:workflow-library": "tsc -p tests/workflowLibrary/tsconfig.json && vue-tsc -p tests/workflowLibrary/tsconfig.web.json",
     "test:skill-scopes": "node --test tests/skillScopes/*.test.mjs",
     "test:slash-skills": "node --test tests/maestro/slashSkills.test.mjs",
+    "test:skill-script": "node --test tests/maestro/skillScriptInterpreter.test.mjs",
     "typecheck:skill-scopes": "tsc --noEmit -p tests/skillScopes/tsconfig.node.json && vue-tsc --noEmit -p tests/skillScopes/tsconfig.web.json"
   },
   "dependencies": {
@@ -322,7 +323,7 @@
     "rigs/*",
     "rig_dev/*"
   ],
-  "name": "Bitterless_PREVIEW",
+  "name": "Bitterless_DEBUG_PROD",
   "version": "0.0.123",
-  "version_code": "260917231504"
+  "version_code": "260918115351"
 }

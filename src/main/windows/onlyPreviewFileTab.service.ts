@@ -3,7 +3,6 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { is } from '@electron-toolkit/utils';
 import { xpcMain } from 'electron-xpc/main';
-import { enrollMaestroShortcutContents } from '@maestro-main/common/shortcutsHelper/shortcuts.helper';
 import { fileSearchWindowService } from '@main/fileSearch/fileSearchWindow.service';
 import { onlyPreviewHostRegistry } from '@main/miniapps/onlypreview/onlyPreviewHost.registry';
 import { onlyPreviewWorkspaceRegistry } from '@main/miniapps/onlypreview/onlyPreviewWorkspace.registry';
@@ -174,7 +173,6 @@ export class OnlyPreviewFileTabSurface {
 
   private bindShortcuts(contents: WebContents): void {
     this.shortcutContents.add(contents);
-    enrollMaestroShortcutContents(contents);
     contents.on('before-input-event', (event, input) => {
       if (!this.active || input.type !== 'keyDown' || event.defaultPrevented || input.isComposing) return;
       const command = process.platform === 'darwin' ? input.meta : input.control;

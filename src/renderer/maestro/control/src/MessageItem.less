@@ -42,8 +42,17 @@
   }
 }
 
+/*
+ * `min-width: 0` 让这一列的宽度**只由上面的 max-width 说了算**。弹性项默认 `min-width: auto`,
+ * 行宽会被后代的最小内容宽顶开 —— markstream 的渲染根在从未排过版就被跳过时报的是 800px 固有宽
+ * (它自带的 `contain-intrinsic-size: 800px 600px`;下面那条 `.message-item__markdown
+ * .markdown-renderer` 用的是后代选择符,而渲染根与 `.message-item__markdown` 是**同一个元素**,
+ * 所以那条覆盖从来没生效过)。顶开之后横向滚的是整段对话
+ * (docs/issues/chat-list-scrolls-sideways.md)。
+ */
 .message-item__content {
   display: flex;
+  min-width: 0;
   max-width: 88%;
   flex-direction: column;
   align-items: flex-start;

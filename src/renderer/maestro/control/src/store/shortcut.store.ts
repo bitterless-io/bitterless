@@ -1,4 +1,4 @@
-import type { ShortcutCommit, ShortcutItem, ShortcutRunContext, SlashToken } from './shortcut.type'
+import type { ShortcutCommit, ShortcutItem, ShortcutRunContext, ShortcutSkillItem, SlashToken } from './shortcut.type'
 
 /** Exact host command; a path or longer command name stays ordinary input. */
 export const parseCompactCommand = (text: string): { instructions?: string } | null => {
@@ -15,19 +15,64 @@ export const slashTokenAt = (text: string, caret: number): SlashToken | null => 
   return { query: match[1], start: caret - match[1].length - 1, end: caret }
 }
 
+/**
+ * 技能目录 → `/` 面板的技能条目。**纯函数**,所以「哪些技能能进面板」这条判据可以脱离 DOM 被直接测 ——
+ * 它原来藏在已删除的 SkillPicker 的 `available()` 里,那是上一版唯一被守卫钉住的地方。
+ *
+ * 只收**当前可用**的:坏包、未归属、被停用的不进面板 —— 面板是"能用的东西"的清单,诊断在 Workbench。
+ * 入参按结构收(不 import `SkillSummary`),这个 store 至今只有一条 `import type`,守卫因此能把它当纯
+ * 模块跑;拖进 app 的类型链就没有这个性质了。
+ */
+export interface SkillCatalogRow {
+  reference?: string
+  name: string
+  displayName?: string
+  layer?: string
+  path: string
+  status?: string
+  scope?: string
+  enabled?: boolean
+  allowImplicitInvocation?: boolean
+}
+export const skillShortcutRows = (
+  skills: readonly SkillCatalogRow[],
+  describe: (row: SkillCatalogRow) => string
+): ShortcutSkillItem[] =>
+  skills
+    .filter((skill) => Boolean(skill.reference) && skill.status === 'ready' && skill.scope !== 'unassigned' && skill.enabled !== false)
+    .map((skill) => ({
+      kind: 'skill' as const,
+      name: `/${skill.name}`,
+      hint: describe(skill),
+      skill: { reference: skill.reference!, name: skill.displayName || skill.name, layer: skill.layer || 'global', path: skill.path }
+    }))
+
 export class ShortcutStore {
   open = false
   query = ''
   activeIndex = 0
   pending = false
 
+  /**
+   * 技能条目。**与 `items` 分开存**(契约「Skills in the slash menu」):命令那份是编译期就闭合的
+   * 字面量集合,技能来自磁盘、随会话变;混在一起就没法再断言"命令集合没有被悄悄改大"。
+   * 由 `ChatPanel` 拉到目录后喂进来 —— store 仍然只有一条 `import type`,可脱离 DOM 直接跑。
+   */
+  skills: ShortcutSkillItem[] = []
+
   constructor(readonly items: ShortcutItem[]) {}
 
   get matches(): ShortcutItem[] {
     const query = this.query.toLowerCase()
-    return this.items.filter((item) => `${item.name} ${item.hint}`.toLowerCase().includes(query))
-      .sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
+    const byName = (a: ShortcutItem, b: ShortcutItem): number => a.name < b.name ? -1 : a.name > b.name ? 1 : 0
+    const matching = (list: ShortcutItem[]): ShortcutItem[] =>
+      list.filter((item) => `${item.name} ${item.hint}`.toLowerCase().includes(query)).sort(byName)
+    // 命令块 ASCII 有序,技能块 ASCII 有序,命令全部在技能之前。
+    // 没有技能时结果与只排 `items` 时逐字节相同。
+    return [...matching(this.items), ...matching(this.skills)]
   }
+
+  registerSkills(skills: ShortcutSkillItem[]): void { this.skills = skills }
 
   get active(): ShortcutItem | undefined { return this.matches[this.activeIndex] }
 
@@ -50,6 +95,10 @@ export class ShortcutStore {
     if (!this.open || !item || this.pending) return { ok: false }
     this.pending = true
     this.close()
+    // 技能不是命令:没有执行体,只把选中的那个交回给面板去挂。放在 try 之前是因为它不会抛 ——
+    // 下面那个 switch 的每一条都是一次真的调用,这条不是。
+    if (item.kind === 'skill') { this.pending = false; return { ok: true, skill: item.skill } }
+    const { name } = item
     try {
       // **每条命令都显式分派。** 原来是「不是 /clear 就当 copyContext」的兜底 ——
       // 那种写法在加第三条命令的那一刻就会静默跑错一条,而且不会有任何类型错误。
@@ -82,7 +131,9 @@ export class ShortcutStore {
           await context.openContextGraph()
           return { ok: true }
         default:
-          return { ok: false, error: `unknown command ${item.name}` }
+          // `item` 在这里被收窄成 `never`(每个命令名都已分派),所以名字要从收窄之前取 ——
+          // 这正是「漏接一条 = 可见的失败」那条设计还活着的证据。
+          return { ok: false, error: `unknown command ${name}` }
       }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }

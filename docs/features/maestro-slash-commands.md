@@ -103,3 +103,44 @@ AI-CRMS runtime guard passed. Scoped diff checks passed. Scoped lint retains two
 unused `AgentConversationContext` imports in controller/handler and existing formatting warnings.
 The old agent-runtime guard still fails its outdated steering prompt string assertion at line151;
 it was not changed as part of this task. No Electron/E2E, full build, installation or sync was run.
+
+## Skills in the slash menu (2026-09-18)
+
+Ral, 2026-09-18: 「bl cowork 中 技能要能用/触发,及将技能列表拼到现有 slash short cut 后面
+不需要单独的 skill select 组件」. Same contract as micromeet-cowork's
+[#10](../../micromeet-cowork/docs/features/cowork-slash-commands.md); this section records BL's own
+file placement. Paired change, implemented in both.
+
+**Third item kind.** `ShortcutItem` becomes a discriminated union on `kind`:
+`command` (the existing closed set of literal names, unchanged behaviour) and `skill`. A `skill` row
+carries `{ reference, name, layer, path }` — the exact shape the composer already keeps in
+`session.detail.draft.skill`.
+
+**Ordering.** Commands first in ASCII order, then skills in ASCII order. Two flat blocks, no group
+header and no separator between them, so the menu keeps its single-list look. With no skills the menu
+is byte-identical to before.
+
+**Committing a skill attaches it; it does not execute.** The `/xxx` token is removed and the rest of
+the draft is left alone — a skill almost always needs a sentence of intent with it. The attachment
+rides the mechanism that already exists end to end: `draft.skill` → `context.selectedSkillRef` →
+`selectedSkillPrompt(registry, ref)` in `src/main/maestro/skills/skillSelection.ts`, which reads that
+skill's current `SKILL.md` body into the turn and states that the user chose this exact one,
+*including when it is explicit-only*. So "技能要能用/触发" needs no new machinery — this change moves
+the entry point, not the execution.
+
+**Catalog source.** `ChatPanel` fetches `coach.skillCatalog({ sessionId })` when the session changes and
+maps the usable rows (no `status !== 'ready'`, no `scope === 'unassigned'`, no `enabled === false`) into
+skill rows. `ShortcutStore` stays dependency-free — it receives a prepared array and never calls XPC,
+which is what lets the guard run it outside any DOM.
+
+A catalog fetch that fails leaves the skill block empty and the commands working. Same requirement as
+[no institution must not block normal function](../plan/tasks/skills-pi-native-loading-001.md).
+
+**Removed.** `src/renderer/maestro/control/src/store/skillPicker.store.ts` and the
+`chat-panel__skills` dialog it drove. The **selected-skill chip** (`chat-panel__selected-skill`) stays —
+it is the receipt for "this send will carry this skill", not a picker; without it the attachment would
+be invisible state.
+
+Verification: `tests/maestro/slashSkills.test.mjs` drives the real `ShortcutStore` outside any DOM —
+command/skill ordering, empty-skill byte-identity, commit returning the skill rather than running a
+command, and skills never entering the command registry.

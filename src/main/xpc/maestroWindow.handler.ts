@@ -208,7 +208,14 @@ class MaestroWindowHandler extends XpcMainHandler {
     activateShortcuts({
       newTab: () => void maestroWindowHelper.newTab(),
       closeActiveTab: () => void maestroWindowHelper.closeActiveTab(),
-      searchSessions
+      searchSessions,
+      // The tab chords belong to the window that HAS tabs. Same test `searchSessions` already makes
+      // above — stated once more here because it is now the only thing standing between Cmd+W and
+      // the menu's window-close role.
+      ownsFocusedWindow: () => {
+        const window = maestroWindowHelper.browserWindow
+        return Boolean(window && !window.isDestroyed() && BrowserWindow.getFocusedWindow() === window)
+      }
     })
     this.runtimeInitialized = true
   }

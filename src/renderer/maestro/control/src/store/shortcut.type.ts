@@ -1,9 +1,32 @@
-export interface ShortcutItem {
+export interface ShortcutCommandItem {
+  kind: 'command'
   // 名字用下划线而不是空格:开菜单的 token 正则是 `\/([\w-]*)`,带空格的名字根本不会被识别成命令。
   // 与既有的 `/view_context` 同一个写法。
   name: '/test_auto_compact' | '/compact' | '/clear' | '/view_context' | '/copy_session_path' | '/test_show_error' | '/view_context_graph' | '/workflow'
   hint: string
 }
+
+/** 挂到下一次发送的技能 —— 与 `MaestroChatDetail['draft'].skill` 同形,composer 已经在存它。 */
+export interface ShortcutSkill {
+  reference: string
+  name: string
+  layer: string
+  path: string
+}
+
+/**
+ * 技能条目(2026-09-18,契约 `docs/features/maestro-slash-commands.md`「Skills in the slash menu」)。
+ * 名字是**技能名前面加斜杠**,所以它和命令共用同一套渲染与键盘处理;`name` 不受命令那个字面量
+ * 联合的约束,因为技能名来自磁盘。
+ */
+export interface ShortcutSkillItem {
+  kind: 'skill'
+  name: string
+  hint: string
+  skill: ShortcutSkill
+}
+
+export type ShortcutItem = ShortcutCommandItem | ShortcutSkillItem
 
 export interface ShortcutRunContext {
   compact: () => Promise<void>
@@ -30,7 +53,14 @@ export interface ShortcutRunContext {
   openContextGraph: () => Promise<void>
 }
 
-export type ShortcutCommit = { ok: true } | { ok: false; error?: string }
+export type ShortcutCommit =
+  /**
+   * `skill` 在场 = 选中了一个技能,要把它挂到下一次发送。面板只删掉 `/xxx` 这个 token,
+   * **草稿其余部分留着** —— 技能几乎总要带一句意图,清空输入框等于让人重打一遍。
+   * 这条路不执行任何东西:真正的注入在 main 的 `selectedSkillPrompt`。
+   */
+  | { ok: true; skill?: ShortcutSkill }
+  | { ok: false; error?: string }
 
 export interface SlashToken {
   query: string

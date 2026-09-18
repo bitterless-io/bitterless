@@ -9,7 +9,12 @@ const appMain = readProject('src/main/app.main.ts')
 
 assert(shortcuts.includes("app.on('web-contents-created'"), 'Maestro shortcuts should attach to created WebContents')
 assert(shortcuts.includes("contents.on('before-input-event'"), 'Maestro shortcuts should use before-input-event')
-assert(shortcuts.includes('session.fromPartition(MAESTRO_PARTITION)'), 'Maestro shortcuts must be scoped to its persistent partition')
+// Scope used to be the view's session/partition plus an enrollment allowlist. It is now the FOCUSED
+// WINDOW, because a per-view registry has to be remembered by every surface that renders inside the
+// Maestro window and twice was not — each miss let Cmd+W close the whole window
+// (docs/issues/maestro-zellij-chrome-cmd-w-closes-window.md).
+assert(shortcuts.includes('actions.ownsFocusedWindow()'), 'Maestro tab chords must be scoped to the focused window')
+assert(!shortcuts.includes('enrollMaestroShortcutContents') || !shortcuts.includes('const enrolledContents'), 'the per-view enrollment registry must not come back')
 assert(shortcuts.includes("key !== 't' && key !== 'w'"), 'embedded shortcuts should handle only tab open/close')
 assert(shortcuts.includes('shortcutDedupeMs') && shortcuts.includes('lastShortcutAt'), 'shortcut paths should dedupe one physical keypress')
 assert(!shortcuts.includes('globalShortcut'), 'embedded shortcuts must never steal keys from other apps')

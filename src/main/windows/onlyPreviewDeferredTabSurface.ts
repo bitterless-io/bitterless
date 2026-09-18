@@ -2,7 +2,6 @@ import { View, WebContentsView, type BaseWindow } from 'electron';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { is } from '@electron-toolkit/utils';
-import { enrollMaestroShortcutContents } from '@maestro-main/common/shortcutsHelper/shortcuts.helper';
 import { configureOnlyPreviewNavigationFence } from '@main/miniapps/onlypreview/views/onlyPreviewRendererTarget.service';
 
 /**
@@ -74,9 +73,6 @@ export class OnlyPreviewDeferredTabSurface {
         }
       });
       configureOnlyPreviewNavigationFence(this.page.webContents, entryUrl, false);
-      // 与 composite 的那四层同一个理由:这个 view 不在 Maestro 的 session 里,不登记的话 Cmd+W
-      // 会穿到菜单的 `close` role 上,把整个窗口带走。
-      enrollMaestroShortcutContents(this.page.webContents);
       this.container.addChildView(this.page);
       this.owner.attach(this.container);
       this.refresh();

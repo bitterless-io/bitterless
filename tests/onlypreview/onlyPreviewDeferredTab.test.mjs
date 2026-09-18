@@ -207,7 +207,10 @@ test('a live standalone host makes the tab build a placeholder instead of refusi
     assert.equal(page.options.webPreferences[key], true);
   }
   assert.equal(page.options.webPreferences.nodeIntegration, false);
-  assert.deepEqual(h.shortcuts.enrolled, [page.webContents], 'Cmd+W 要落在这一格,不是整个窗口');
+  // 这一格**不再需要登记**:Cmd+W 现在按「焦点窗口是不是 Maestro 窗口」当刻判定,窗口里的任何
+  // view 一出生就是对的。那张每个 surface 都得记得去登记的名单正是被漏掉两次的东西
+  // (docs/issues/maestro-zellij-chrome-cmd-w-closes-window.md)。
+  assert.deepEqual(h.shortcuts.enrolled, [], '登记表已经没有了 —— 再冒出来就是回潮');
 });
 
 test('the placeholder holds no host token, workspace or file authority', async () => {

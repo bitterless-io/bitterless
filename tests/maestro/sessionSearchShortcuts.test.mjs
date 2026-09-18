@@ -201,12 +201,16 @@ const harness = (platform = 'darwin') => {
   });
   let allowed = true;
   let authLocked = false;
+  // The tab chords are scoped to the focused WINDOW now, and the window's owner answers this — the
+  // helper deliberately holds no handle on it.
+  let owns = true;
   exports.activateShortcuts({
     isAuthLocked: () => authLocked,
     newTab: () => calls.push('new'),
     closeActiveTab: () => calls.push('close'),
     reloadActiveTab: () => calls.push('reload'),
-    searchSessions: () => { if (!allowed) return false; calls.push('search'); return true; }
+    searchSessions: () => { if (!allowed) return false; calls.push('search'); return true; },
+    ownsFocusedWindow: () => owns
   });
   const contents = (owned = true) => {
     const wc = new EventEmitter();
@@ -225,7 +229,8 @@ const harness = (platform = 'darwin') => {
   return { contents, press, calls, exports, get menu() { return menu; },
     setFindHandled(value) { findHandled = value; },
     setAuthLocked(value) { authLocked = value; },
-    setAllowed(value) { allowed = value; }, setFocused(value) { focused = value; } };
+    setAllowed(value) { allowed = value; }, setFocused(value) { focused = value; },
+    setOwnsFocusedWindow(value) { owns = value; } };
 };
 
 test('CmdF and CtrlF dispatch session search once; IME and modified Find pass through', () => {
@@ -259,14 +264,52 @@ test('unclaimed Find remains available to the focused surface', () => {
   assert.equal(h.press(h.contents()), false);
   assert.deepEqual(h.calls, []);
 });
-test('standalone preview is untouched, and an enrolled preview tab uses file Find', () => {
+test('a preview tab in its own session uses file Find with nothing registered', () => {
   const h = harness();
   const preview = h.contents(false);
-  assert.equal(h.press(preview), false);
-  h.exports.enrollMaestroShortcutContents(preview);
   h.setFindHandled(true);
   assert.equal(h.press(preview), true);
-  assert.deepEqual(h.calls, ['preview']);
+  assert.deepEqual(h.calls, ['preview'], 'Find picks its owner itself; the session is not a gate');
+});
+
+// The bug this replaced a registry to prevent: a surface rendering INSIDE the Maestro window that
+// nobody remembered to enrol got no handler at all, so Cmd+W reached the menu's `close` role and
+// took the whole window down — OnlyPreview's composite views (Ral 2026-09-11), then the Zellij mini
+// app's chrome (docs/issues/maestro-zellij-chrome-cmd-w-closes-window.md).
+test('an unregistered view in the Maestro window still closes the tab, not the window', () => {
+  const h = harness();
+  const foreign = h.contents(false);
+  assert.equal(h.press(foreign, { key: 'w' }), true, 'swallowed — the menu must never see it');
+  assert.deepEqual(h.calls, ['close']);
+});
+
+test('outside the Maestro window the tab chords are not ours and stay unswallowed', () => {
+  const h = harness();
+  const wc = h.contents();
+  h.setOwnsFocusedWindow(false);
+  for (const key of ['w', 't']) {
+    assert.equal(h.press(wc, { key }), false, `${key} must reach the menu so it can close THAT window`);
+  }
+  assert.deepEqual(h.calls, [], 'no tab in another window may be touched');
+});
+
+test('an Omni cell swallows Cmd+W in its own window and opens no Maestro tab', () => {
+  const h = harness();
+  const cell = h.contents(false);
+  h.exports.guardWindowCloseShortcut(cell);
+  h.setOwnsFocusedWindow(false);
+  assert.equal(h.press(cell, { key: 'w' }), true, 'Ral 2026-09-11: here Cmd+W does nothing at all');
+  assert.equal(h.press(cell, { key: 't' }), true, 'and a new tab would land in a window you cannot see');
+  assert.deepEqual(h.calls, []);
+});
+
+test('a terminal keeps Cmd+W for its own pane but not Cmd+T', () => {
+  const h = harness();
+  const terminal = h.contents(false);
+  h.exports.setTerminalKeyboardOwner(terminal);
+  assert.equal(h.press(terminal, { key: 'w' }), false, 'the terminal closes a PANE with it');
+  assert.equal(h.press(terminal, { key: 't' }), true);
+  assert.deepEqual(h.calls, ['new']);
 });
 
 test('a consumed Preview Find is never also dispatched to Session search', () => {

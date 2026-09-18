@@ -108,6 +108,20 @@ export const HOST_TOOL_CATALOG: HostToolCatalogEntry[] = [
     safety: 'Read-only; no script execution, secret inspection or software installation. Successful diagnostics do not prove behavior.'
   },
   {
+    name: 'write_skill_file',
+    scopes: ['cowork'], category: 'training', risk: 'write',
+    summary: 'Write one complete file into a skill package in the current authoring root.',
+    useWhen: 'Use while building or repairing a skill after skill_creator scaffolds it.',
+    safety: 'Confined to the Chat workspace .agents/skills or profile Shared; institution and cloud packages are read-only; symlinks are refused.'
+  },
+  {
+    name: 'run_skill_file',
+    scopes: ['cowork'], category: 'skill', risk: 'write',
+    summary: 'Run a script belonging to a skill available in this Chat (bundled Bun, or Pi’s shell for .sh/.ps1).',
+    useWhen: 'Use when a skill documents a helper script as the way to perform its task.',
+    safety: 'Requires operator approval; trusted local code with normal user permissions, not a sandbox. Confined to the package, clean environment, 60s timeout.'
+  },
+  {
     name: 'skill_creator',
     scopes: ['cowork'], category: 'skill', risk: 'write',
     summary: 'Initialize a standard skill template or check its format with Pi.',

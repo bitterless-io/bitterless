@@ -1,5 +1,4 @@
 import type { BaseWindow, View, WebContents } from 'electron';
-import { enrollMaestroShortcutContents } from '@maestro-main/common/shortcutsHelper/shortcuts.helper';
 import type { MaestroCompositeTabHostApi } from '@maestro-shared/compositeTab.api';
 import type {
   OnlyPreviewMount,
@@ -151,11 +150,12 @@ export class OnlyPreviewCoworkMount implements OnlyPreviewMount {
     this.deps.defer();
   }
 
-  registerSurfaceView(webContents: WebContents): void {
-    // The composite's views carry no partition, so Maestro's tab chords skip them by default and
-    // Cmd+W would fall through to the menu's `close` role and take the whole window. Enrollment
-    // grants exactly the keystroke, not the session: the composite stays in its own session.
-    enrollMaestroShortcutContents(webContents);
+  registerSurfaceView(): void {
+    // Nothing to register. Maestro's tab chords are decided per keystroke from the FOCUSED WINDOW,
+    // so a view inside the Maestro window is covered the moment it exists — the enrollment this
+    // used to perform was exactly the step whose omission broke Zellij
+    // (maestro-zellij-chrome-cmd-w-closes-window.md). Kept as a no-op because the mount interface
+    // is shared with the standalone mount, which also has nothing to do here.
   }
 
   reportTitle(title: string): void {

@@ -153,10 +153,19 @@ for (const hasInstitution of [true, false]) test(`real view_context and Pi reque
     './sessionIoInitialization': { SessionIoInitialization: class {} },
     '@main/agent/runtime/hostApprovalHistory': { HostApprovalHistory: class {} },
     'virtual:bitterless-pi-skills': { ...nativePi, loadSkillsFromDir: options => { nativeScans++; return nativePi.loadSkillsFromDir(options) } },
+    // The send path gained `applicationAuth.assertReady()` after this harness was written; the
+    // harness returns `{}` for any un-listed service import, so the call landed on `undefined` and
+    // both parity cases failed. Auth readiness is desktop shell, exactly what this harness replaces.
+    '@main/auth/applicationAuth.service': { applicationAuth: { assertReady: () => {} } },
     './runtime/inputBudget': { inputBudget: {} },
     './runtime/skillAuthoring': { skillAuthoringRuntime: globalRoot => ({ globalRoot, bunPath: '/fixture/bun' }) },
     './runtime/modelIoLog': { modelIoLog: log },
-    './prompt/projectInstructions': { readProjectInstructions: () => { throw Error('No project instruction IO is needed for this test') } },
+    // Was a throw asserting "this test needs no project-instruction IO". That assumption is stale:
+    // `BaseAgent.setProjectRoot` reads the project's AGENTS.md **between turns** by design
+    // (BaseAgent.ts:252-258), and this harness now drives a real turn, so the throw fired on a
+    // legitimate call. Still a stub — the harness replaces shell IO, and reading AGENTS.md is shell
+    // IO — but it returns empty instead of failing, so the subject (catalog parity) is what is tested.
+    './prompt/projectInstructions': { readProjectInstructions: async () => '' },
     '@maestro-main/llm/llmPaths': { maestroUserChainDir: () => join(data, 'chain') },
     '@earendil-works/pi-coding-agent': {
       ...nativePi,
