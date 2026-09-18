@@ -32,6 +32,7 @@ export class ChannelStoreState {
   initialized = false
   private creatingSession = false
   private authGeneration = 0
+  private selectionGeneration = 0
 
   /**
    * 构造期就把恢复出来的 id 同步给 `messageStore.activeSessionId`(而不是等 `syncActiveSession()`)。
@@ -95,16 +96,21 @@ export class ChannelStoreState {
   async init(_tabs: TabInfo[] = []): Promise<void> {
     if (this.initialized) return
     const generation = this.authGeneration
+    const selection = this.selectionGeneration
     this.initialized = true
     messageStore.resume()
     await messageStore.init()
     if (generation !== this.authGeneration) return
-    await this.ensureMaestroSession()
+    const session = await this.ensureMaestroSession()
     if (generation !== this.authGeneration) return
     this.syncActiveSession()
+    if (session) await messageStore.adoptPreviewWorkspace(session.id, () =>
+      generation === this.authGeneration && selection === this.selectionGeneration
+      && this.activeSessionId === session.id && messageStore.activeSessionId === session.id)
   }
 
   selectSource(source: ChannelSource): void {
+    this.selectionGeneration++
     this.activeSource = source
     this.syncActiveSession()
   }
@@ -115,6 +121,7 @@ export class ChannelStoreState {
     if (this.activeSessionId !== sessionId) return false
     const previous = messageStore.getSession(sessionId)
     if (!previous || previous.archivedAt) return false
+    this.selectionGeneration++
     this.creatingSession = true
     try {
       const session = messageStore.createSession({ title: 'New chat', intent: 'chat', autoTitlePending: true })
@@ -131,6 +138,7 @@ export class ChannelStoreState {
   }
 
   async startFreshMaestroSession(title?: string): Promise<MessageSession | undefined> {
+    this.selectionGeneration++
     const generation = this.authGeneration
     this.activeSource = 'cowork'
     const currentId = this.activeSessionId
@@ -146,6 +154,7 @@ export class ChannelStoreState {
   }
 
   async selectMaestroHistorySession(sessionId: string): Promise<boolean> {
+    this.selectionGeneration++
     const generation = this.authGeneration
     // 已在内存里的会话不必等落库读——这条短路是 cowork 原有的,bl 的港口漏掉了它
     // (`git show ec0ba426`),于是 bl 每次点击都要过 await,cowork 只在冷加载时才过。
@@ -167,6 +176,7 @@ export class ChannelStoreState {
   }
 
   async selectAfterArchive(sessionId: string): Promise<void> {
+    this.selectionGeneration++
     const generation = this.authGeneration
     if (this.activeSessionId !== sessionId) return
     await this.ensureMaestroSession()

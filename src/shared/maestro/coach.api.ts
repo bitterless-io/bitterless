@@ -143,6 +143,9 @@ export interface CoachXpcContract {
   // Used for pasted screenshots: no image bytes cross renderer↔main or model boundaries.
   attachClipboardImage(params?: { sessionId?: string }): Promise<AttachFileResult>
   chooseWorkspaceDirectory(params?: { sessionId?: string }): Promise<WorkspaceRefResult>
+  adoptPreviewWorkspaceDirectory(params: { sessionId: string }): Promise<WorkspaceRefResult>
+  // Drops one session's binding without touching the remembered default.
+  releaseWorkspaceBinding(params: { sessionId: string; path: string }): Promise<{ ok: true }>
   setWorkspaceDirectory(params: { sessionId?: string; path?: string }): Promise<WorkspaceRefResult>
   getWorkspaceDirectory(params?: { sessionId?: string }): Promise<WorkspaceRefResult>
   getFileStatuses(params: { paths: string[] }): Promise<FileStatusResult[]>

@@ -122,6 +122,49 @@ const toSessionBase = (row: SessionRow): Omit<MaestroChatSession, 'messages'> =>
   detail: normalizeDetail(parseJson(row.detail_json, { compressedContext: '' }))
 })
 
+const MESSAGE_COLUMNS = '(id, session_id, source, role, type, content, files_json, skill_json, skills_json, replay_json, activity_json, streaming, error, compressed, prompt_excluded, compact_summary, compact_until_message_id, token_count, ts, sort_order, tasks_json, confirm_json)'
+
+const MESSAGE_INSERT_SQL = `INSERT INTO cowork_chat_message ${MESSAGE_COLUMNS} VALUES (${new Array(22).fill('?').join(', ')})`
+
+// `sort_order` is intentionally absent from the update list: history is append-only, so a row that
+// already exists keeps the position it was inserted with.
+const MESSAGE_UPSERT_SQL = `${MESSAGE_INSERT_SQL}
+  ON CONFLICT(id) DO UPDATE SET
+   source = excluded.source, role = excluded.role, type = excluded.type, content = excluded.content,
+   files_json = excluded.files_json, skill_json = excluded.skill_json, skills_json = excluded.skills_json,
+   replay_json = excluded.replay_json, activity_json = excluded.activity_json, streaming = excluded.streaming,
+   error = excluded.error, compressed = excluded.compressed, prompt_excluded = excluded.prompt_excluded,
+   compact_summary = excluded.compact_summary, compact_until_message_id = excluded.compact_until_message_id,
+   token_count = excluded.token_count, ts = excluded.ts, tasks_json = excluded.tasks_json,
+   confirm_json = excluded.confirm_json`
+
+// One binding for both write paths, so an incremental write and a full rewrite can never disagree
+// about what a row contains.
+const messageRowValues = (message: MaestroChatMessage, sessionId: string, sortOrder: number): unknown[] => [
+  message.id,
+  sessionId,
+  message.source,
+  message.role,
+  message.type || 'text',
+  message.content,
+  JSON.stringify(message.files || []),
+  message.skill ? JSON.stringify(message.skill) : '',
+  JSON.stringify(message.skills || []),
+  message.replay ? JSON.stringify(message.replay) : '',
+  JSON.stringify(message.activity || []),
+  message.streaming ? 1 : 0,
+  message.error ? 1 : 0,
+  message.compressed ? 1 : 0,
+  message.promptExcluded ? 1 : 0,
+  message.compactSummary || '',
+  message.compactUntilMessageId || '',
+  message.tokenCount || 0,
+  message.ts,
+  sortOrder,
+  JSON.stringify(message.tasks || []),
+  message.confirm ? JSON.stringify(message.confirm) : ''
+]
+
 export class MaestroChatDao extends XpcPreloadHandler implements MaestroChatApi {
   async listSessions(params?: { operationTabId?: string }): Promise<MaestroChatSessionSummary[]> {
     const args: unknown[] = []
@@ -183,10 +226,10 @@ export class MaestroChatDao extends XpcPreloadHandler implements MaestroChatApi 
     return { ...toSessionBase(row), messages: messages.map(toMessage) }
   }
 
-  async saveSession(params: { session: MaestroChatSession }): Promise<{ ok: boolean }> {
-    const db = sqliteManager.db
-    const session = params.session
-    const upsertSession = db.prepare(
+  // Synchronous on purpose: better-sqlite3 transactions run sync, so this has to be callable from
+  // inside one without an await.
+  private writeSessionRow(session: MaestroChatSessionMeta): void {
+    sqliteManager.db.prepare(
       `INSERT INTO cowork_chat_session (id, operation_tab_id, title, created_at, updated_at, archived_at, detail_json)
        VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
@@ -195,50 +238,61 @@ export class MaestroChatDao extends XpcPreloadHandler implements MaestroChatApi 
         updated_at = excluded.updated_at,
         archived_at = excluded.archived_at,
         detail_json = excluded.detail_json`
+    ).run(
+      session.id,
+      session.operationTabId,
+      session.title,
+      session.createdAt,
+      session.updatedAt,
+      session.archivedAt || null,
+      JSON.stringify(normalizeDetail(session.detail))
     )
-    const deleteMessages = db.prepare('DELETE FROM cowork_chat_message WHERE session_id = ?')
-    const insertMessage = db.prepare(
-      `INSERT INTO cowork_chat_message
-       (id, session_id, source, role, type, content, files_json, skill_json, skills_json, replay_json, activity_json, streaming, error, compressed, prompt_excluded, compact_summary, compact_until_message_id, token_count, ts, sort_order, tasks_json, confirm_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
+  }
 
+  /**
+   * The session row alone. Used by every save whose change was metadata — title, archive flag,
+   * workspace binding, plan — so those never touch message rows at all
+   * (docs/issues/session-save-rewrites-the-whole-session.md).
+   */
+  async saveSessionMeta(params: { session: MaestroChatSessionMeta }): Promise<{ ok: boolean }> {
+    this.writeSessionRow(params.session)
+    return { ok: true }
+  }
+
+  /**
+   * Upsert exactly the messages handed over, by primary key, plus the session row. `sortOrder` is
+   * written on insert and deliberately left alone on conflict: chat history is append-only, so an
+   * existing message's position never changes, and re-stamping it would be the rewrite this exists
+   * to avoid.
+   */
+  async saveMessages(params: {
+    session: MaestroChatSessionMeta
+    messages: Array<MaestroChatMessage & { sortOrder: number }>
+  }): Promise<{ ok: boolean }> {
+    const db = sqliteManager.db
+    const upsertMessage = db.prepare(MESSAGE_UPSERT_SQL)
     const run = db.transaction(() => {
-      upsertSession.run(
-        session.id,
-        session.operationTabId,
-        session.title,
-        session.createdAt,
-        session.updatedAt,
-        session.archivedAt || null,
-        JSON.stringify(normalizeDetail(session.detail))
-      )
+      this.writeSessionRow(params.session)
+      for (const message of params.messages) upsertMessage.run(...messageRowValues(message, params.session.id, message.sortOrder))
+    })
+    run()
+    return { ok: true }
+  }
+
+  /**
+   * Full rewrite. Retained for creation, import and explicit repair only — an ordinary save goes
+   * through `saveSessionMeta` / `saveMessages`, whose cost is proportional to what changed.
+   */
+  async saveSession(params: { session: MaestroChatSession }): Promise<{ ok: boolean }> {
+    const db = sqliteManager.db
+    const session = params.session
+    const deleteMessages = db.prepare('DELETE FROM cowork_chat_message WHERE session_id = ?')
+    const insertMessage = db.prepare(MESSAGE_INSERT_SQL)
+    const run = db.transaction(() => {
+      this.writeSessionRow(session)
       deleteMessages.run(session.id)
       session.messages.forEach((message, index) => {
-        insertMessage.run(
-          message.id,
-          session.id,
-          message.source,
-          message.role,
-          message.type || 'text',
-          message.content,
-          JSON.stringify(message.files || []),
-          message.skill ? JSON.stringify(message.skill) : '',
-          JSON.stringify(message.skills || []),
-          message.replay ? JSON.stringify(message.replay) : '',
-          JSON.stringify(message.activity || []),
-          message.streaming ? 1 : 0,
-          message.error ? 1 : 0,
-          message.compressed ? 1 : 0,
-          message.promptExcluded ? 1 : 0,
-          message.compactSummary || '',
-          message.compactUntilMessageId || '',
-          message.tokenCount || 0,
-          message.ts,
-          index,
-          JSON.stringify(message.tasks || []),
-          message.confirm ? JSON.stringify(message.confirm) : ''
-        )
+        insertMessage.run(...messageRowValues(message, session.id, index))
       })
     })
     run()

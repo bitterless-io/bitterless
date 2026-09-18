@@ -357,6 +357,14 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
     return await maestroWindowHelper.chooseWorkspaceDirectory(params)
   }
 
+  async adoptPreviewWorkspaceDirectory(params: { sessionId: string }): Promise<WorkspaceRefResult> {
+    return await maestroWindowHelper.adoptPreviewWorkspaceDirectory(params)
+  }
+
+  async releaseWorkspaceBinding(params: { sessionId: string; path: string }): Promise<{ ok: true }> {
+    return await maestroWindowHelper.releaseWorkspaceBinding(params)
+  }
+
   async setWorkspaceDirectory(params: { sessionId?: string; path?: string }): Promise<WorkspaceRefResult> {
     return await maestroWindowHelper.setWorkspaceDirectory(params)
   }

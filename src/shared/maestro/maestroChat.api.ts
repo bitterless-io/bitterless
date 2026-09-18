@@ -71,7 +71,10 @@ export interface MaestroChatDetail {
   workspace?: WorkspaceRef
 }
 
-export interface MaestroChatSession {
+// Everything about a conversation except its messages. A save whose change was metadata carries
+// only this, so it cannot cost anything proportional to the history
+// (docs/issues/session-save-rewrites-the-whole-session.md).
+export interface MaestroChatSessionMeta {
   id: string
   operationTabId: string
   title: string
@@ -79,6 +82,9 @@ export interface MaestroChatSession {
   updatedAt: number
   archivedAt?: number
   detail: MaestroChatDetail
+}
+
+export interface MaestroChatSession extends MaestroChatSessionMeta {
   messages: MaestroChatMessage[]
 }
 
@@ -96,6 +102,15 @@ export interface MaestroChatSessionSummary {
 export interface MaestroChatApi {
   listSessions(params?: { operationTabId?: string }): Promise<MaestroChatSessionSummary[]>
   getSession(params: { id: string }): Promise<MaestroChatSession | null>
+  // Metadata only — title, archive flag, workspace binding, plan. Touches no message row.
+  saveSessionMeta(params: { session: MaestroChatSessionMeta }): Promise<{ ok: boolean }>
+  // Upsert exactly these messages by id, plus the session row. `sortOrder` is the message's index
+  // among the session's persisted messages; it is written on insert and kept on conflict.
+  saveMessages(params: {
+    session: MaestroChatSessionMeta
+    messages: Array<MaestroChatMessage & { sortOrder: number }>
+  }): Promise<{ ok: boolean }>
+  // Full rewrite: creation, import and explicit repair only.
   saveSession(params: { session: MaestroChatSession }): Promise<{ ok: boolean }>
   deleteSession(params: { id: string; onlyIfEmpty?: boolean }): Promise<{ ok: boolean }>
 }

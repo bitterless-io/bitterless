@@ -88,6 +88,7 @@ const harness = () => {
   })
   h.main = new WorkspaceHarness()
   h.main.workspaceRefs = new Map()
+  h.main.defaultWorkspaceWrites = Promise.resolve()
   h.main._state = { browserWindow: {}, agentSessionKey: (sessionId) => sessionId || 'default' }
   const coach = {
     chooseWorkspaceDirectory: (params) => h.main.chooseWorkspaceDirectory(params),
@@ -97,9 +98,17 @@ const harness = () => {
   }
   const { RendererHarness } = evaluate(`export class RendererHarness { ${rendererMethods} }`, { coach })
   h.store = new RendererHarness()
+  h.store.authActive = true
+  h.store.authGeneration = 0
+  h.store.generation = 0
+  h.store.workspaceSelectionGeneration = 0
   h.session = { id: 'session', detail: { retained: 'existing detail' }, updatedAt: 1 }
   h.store.getSession = (id) => id === h.session.id ? h.session : undefined
   h.store.persistSession = (session) => { h.saves.push(session); return h.save(session) }
+  // Metadata-only saves go down their own lane now; for these tests "did it save" is the same
+  // observable, so both lanes record identically.
+  h.store.persistSessionMeta = (session) => { h.saves.push(session); return h.save(session) }
+  h.store.persistMessages = (session) => { h.saves.push(session); return h.save(session) }
   // Old BL chooseWorkspace called its own wrapper; retain the boundary so duplicates fail by count.
   h.store.openWorkspaceInPreview = async (value) => h.opens.push(value)
   return h

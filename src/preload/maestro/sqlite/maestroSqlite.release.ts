@@ -92,6 +92,11 @@ const CREATE_MAESTRO_CHAT_MESSAGE = `
     sort_order INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (session_id) REFERENCES cowork_chat_session(id) ON DELETE CASCADE
   );
+  -- Every per-session read and write filters on session_id, and the history list LEFT JOINs the
+  -- whole table. Without this they scan every message of every session. IF NOT EXISTS also builds
+  -- it on databases that already exist.
+  CREATE INDEX IF NOT EXISTS idx_cowork_chat_message_session
+    ON cowork_chat_message(session_id, sort_order);
 `
 
 const CREATE_INJECT_BTNS = `

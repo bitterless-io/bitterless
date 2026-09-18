@@ -60,6 +60,13 @@ export type LogScope =
    */
   | 'deep-fetch'
   /**
+   * 主进程健康心跳:事件循环延迟、本次 tick 实际间隔、内存与各进程占用。
+   * 它存在的理由是「卡住」在日志里本来只是一段空白 —— 空白既可能是主进程被阻塞,也可能只是在等
+   * 网络,两者产物一模一样。这个 scope 让那段空白自己说话
+   * (与 cowork 同源,docs/issues/main-process-hang-has-no-diagnostics.md)。
+   */
+  | 'health'
+  /**
    * Tab 别名表单的整条链:菜单点击 → 请求 → 覆盖层建/载/挂 → 渲染层答复 → 写回 tab。
    *
    * 每一步一行,**包括成功的步**。理由是一次真实失败:`promptTabAlias` 把 controller 的方法摘进

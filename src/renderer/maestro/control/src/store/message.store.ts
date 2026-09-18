@@ -26,7 +26,7 @@ import type {
   WorkspaceRef,
   WorkspaceRefResult
 } from '@maestro-shared/coach.api'
-import type { MaestroChatApi, MaestroChatDetail, MaestroChatMessage, MaestroChatSession, MaestroCompactionApi } from '@maestro-shared/maestroChat.api'
+import type { MaestroChatApi, MaestroChatDetail, MaestroChatMessage, MaestroChatSession, MaestroChatSessionMeta, MaestroCompactionApi } from '@maestro-shared/maestroChat.api'
 import type { MaestroTask, MaestroTaskPart } from '@maestro-shared/task.api'
 import type {
   ChatAttachment,
@@ -255,6 +255,7 @@ export class MessageStoreState {
   compressionRemainingPercent = DEFAULT_COMPRESSION_REMAINING_PERCENT
   initialized = false
   private authGeneration = 0
+  private workspaceSelectionGeneration = 0
   private authActive = true
   private subscriptionsBound = false
   activeAgentTurnSnapshots: AgentTurnSnapshot[] = []
@@ -380,14 +381,16 @@ export class MessageStoreState {
     if (!session) return // The persisted run remains replayable when this chat is available.
     const id = workflowCompletionId(run)
     if (session.messages.some(message => message.id === id)) {
-      if (this.workflowUnsaved.has(id) && await this.persistSession(session)) this.workflowUnsaved.delete(id)
+      const existing = session.messages.find((message) => message.id === id)
+      if (this.workflowUnsaved.has(id) && existing && await this.persistMessages(session, [existing])) this.workflowUnsaved.delete(id)
       return
     }
     this.workflowUnsaved.add(id)
-    session.messages.push(this.withTokenCount({ id, source: 'cowork', role: 'ai', content: workflowCompletionChatText(run, workflowText()), streaming: false,
+    const appended = this.withTokenCount({ id, source: 'cowork', role: 'ai', content: workflowCompletionChatText(run, workflowText()), streaming: false,
       // Main inserts this result into its own context, independently of the renderer's hydration.
-      promptExcluded: true, ts: run.endedAt ?? run.createdAt }))
-    if (await this.persistSession(session)) this.workflowUnsaved.delete(id)
+      promptExcluded: true, ts: run.endedAt ?? run.createdAt })
+    session.messages.push(appended)
+    if (await this.persistMessages(session, [appended])) this.workflowUnsaved.delete(id)
     if (this.activeSessionId === session.id) this.scrollToBottom()
 
   }
@@ -853,8 +856,32 @@ export class MessageStoreState {
 
   async persistSession(session: MessageSession): Promise<boolean> {
     if (session.source !== 'cowork') return false
+    // this.reportAbnormalSaveRate()  // diagnostic, see below
     return this.queueSessionSave(session.id, () => this.saveSessionNow(session))
   }
+
+  // Disabled 2026-09-18 at Ral's request. Kept because it is what named the runaway
+  // caller during the workspace-changed incident; re-enable by uncommenting the call above.
+//   /**
+//    * A save costs the WHOLE session: every message is deep-cloned and the DAO rewrites every row. At
+//    * a handful per second that is enough to burn a core and churn gigabytes, and the caller is
+//    * invisible afterwards because the work happens inside the write queue's async callback — which is
+//    * exactly why a runaway rate shows up in a CPU profile but cannot be attributed to anyone. Naming
+//    * the caller costs one stack capture per window, and only while the rate is already abnormal.
+//    */
+//   private saveRate = { since: 0, count: 0, stack: '' }
+
+//   private reportAbnormalSaveRate(): void {
+//     const now = Date.now()
+//     if (now - this.saveRate.since >= 2000) {
+//       if (this.saveRate.count > 5) {
+//         console.warn(`[persist-probe] persistSession ${this.saveRate.count}x in ${now - this.saveRate.since}ms — caller:\n${this.saveRate.stack}`)
+//       }
+//       this.saveRate = { since: now, count: 0, stack: '' }
+//     }
+//     this.saveRate.count += 1
+//     if (this.saveRate.count === 4) this.saveRate.stack = String(new Error('persist-probe').stack || '').split('\n').slice(1, 8).join('\n')
+//   }
 
   private queueSessionSave(id: string, operation: () => Promise<boolean>): Promise<boolean> {
     const generation = this.authGeneration
@@ -869,14 +896,23 @@ export class MessageStoreState {
     return next
   }
 
-  private async saveSessionNow(session: MessageSession): Promise<boolean> {
+  /**
+   * One set of fences, three payload sizes. `write` decides what actually crosses the bridge;
+   * the account fence, the identity check, the usage refresh and the history reload are identical
+   * no matter how much is written, so a caller can pick the narrowest payload without having to
+   * re-implement any of the guarantees
+   * (docs/issues/session-save-rewrites-the-whole-session.md).
+   */
+  private async saveSessionNow(session: MessageSession, write?: () => Promise<boolean>): Promise<boolean> {
     if (!this.authActive || toRaw(this.getSession(session.id)) !== toRaw(session)) return false
     const generation = this.authGeneration
     this.updateSessionContextUsage(session)
     try {
-      const result = await maestroChat.saveSession({ session: this.toStoredSession(session) })
+      const ok = write
+        ? await write()
+        : (await maestroChat.saveSession({ session: this.toStoredSession(session) }))?.ok
       if (generation !== this.authGeneration) return false
-      if (!result?.ok) return false
+      if (!ok) return false
     } catch {
       return false
     }
@@ -884,7 +920,38 @@ export class MessageStoreState {
     return true
   }
 
+  /**
+   * The session row only: title, archive flag, workspace binding, plan. Costs nothing proportional
+   * to the history, which is what a metadata change should cost.
+   */
+  async persistSessionMeta(session: MessageSession): Promise<boolean> {
+    if (session.source !== 'cowork') return false
+    return this.queueSessionSave(session.id, () => this.saveSessionNow(session, async () =>
+      (await maestroChat.saveSessionMeta({ session: this.toStoredSessionMeta(session) }))?.ok === true))
+  }
+
+  /**
+   * The messages that actually changed, upserted by id, plus the session row. `sortOrder` is the
+   * message's index among the session's PERSISTED messages — `localOnly` ones are never written, so
+   * the index has to be counted over the same filter `toStoredSession` applies, or a later full
+   * rewrite would renumber the rows this wrote.
+   */
+  async persistMessages(session: MessageSession, changed: ChatMessage[]): Promise<boolean> {
+    if (session.source !== 'cowork') return false
+    const persisted = session.messages.filter((message) => !message.localOnly)
+    const ordered = changed
+      .map((message) => ({ message, sortOrder: persisted.indexOf(message) }))
+      .filter((entry) => entry.sortOrder >= 0)
+    if (!ordered.length) return this.persistSessionMeta(session)
+    return this.queueSessionSave(session.id, () => this.saveSessionNow(session, async () =>
+      (await maestroChat.saveMessages({
+        session: this.toStoredSessionMeta(session),
+        messages: ordered.map(({ message, sortOrder }) => ({ ...this.toStoredMessage(message), sortOrder }))
+      }))?.ok === true))
+  }
+
   async chooseWorkspace(sessionId: string): Promise<WorkspaceRefResult | null> {
+    this.workspaceSelectionGeneration++
     const session = this.getSession(sessionId)
     if (!session) return null
     const result = await coach.chooseWorkspaceDirectory({ sessionId: session.id }).catch(() => null)
@@ -893,11 +960,12 @@ export class MessageStoreState {
     session.detail = { ...session.detail, workspace: result.workspace }
     session.updatedAt = Date.now()
     // Main already opened Preview; saving history must not delay its failure feedback either.
-    void this.persistSession(session).catch(() => undefined)
+    void this.persistSessionMeta(session).catch(() => undefined)
     return result
   }
 
   async stopUsingWorkspace(sessionId: string): Promise<void> {
+    this.workspaceSelectionGeneration++
     const session = this.getSession(sessionId)
     if (!session) return
     // 解绑**之前**先把路径拿在手上 —— 下面要用它去比对预览里开着的是不是同一个目录。
@@ -906,16 +974,44 @@ export class MessageStoreState {
     this.defaultWorkspace = undefined
     session.detail = { ...session.detail, workspace: undefined }
     session.updatedAt = Date.now()
-    await this.persistSession(session)
+    await this.persistSessionMeta(session)
     // Main 只解绑匹配的 Project,保留预览 tab/窗口和独立外部文件。
     if (previousPath) await coach.closeWorkspacePreview({ path: previousPath }).catch(() => null)
+  }
+
+  async adoptPreviewWorkspace(sessionId: string, isCurrent: () => boolean): Promise<void> {
+    const session = this.getSession(sessionId)
+    if (!session || !this.authActive || !isCurrent()) return
+    const generation = this.authGeneration
+    const selection = this.workspaceSelectionGeneration
+    const current = () => this.authActive && generation === this.authGeneration
+      && selection === this.workspaceSelectionGeneration && toRaw(this.getSession(sessionId)) === toRaw(session) && isCurrent()
+    const result = await coach.adoptPreviewWorkspaceDirectory({ sessionId }).catch(() => null)
+    if (!current()) {
+      // Main already bound the session, so drop it: this Chat never adopted that Project and
+      // `refreshWorkspace` cannot undo it — it re-pushes an existing path and returns early
+      // without one. Main compares before releasing, so a newer explicit choice for this session
+      // survives; releasing falls back to the shared default workspace until the Chat's own path
+      // is re-pushed before its next send.
+      if (result?.workspace) await coach.releaseWorkspaceBinding({ sessionId, path: result.workspace.path }).catch(() => null)
+      // Main may already have committed the default. Re-read its current value without touching
+      // the newer Chat, while logout must not publish anything into the next account's stores.
+      if (this.authActive && generation === this.authGeneration) await this.refreshDefaultWorkspace()
+      return
+    }
+    if (!result?.ok || !result.workspace) return
+    this.defaultWorkspace = this.cloneWorkspace(result.workspace)
+    session.detail = { ...session.detail, workspace: this.cloneWorkspace(result.workspace) }
+    session.updatedAt = Date.now()
+    await this.persistSessionMeta(session)
   }
 
   async refreshDefaultWorkspace(): Promise<void> {
     if (!this.authActive) return
     const generation = this.authGeneration
+    const selection = this.workspaceSelectionGeneration
     const result = await coach.getWorkspaceDirectory({}).catch(() => null)
-    if (generation !== this.authGeneration) return
+    if (generation !== this.authGeneration || selection !== this.workspaceSelectionGeneration) return
     this.defaultWorkspace = result?.ok && result.workspace ? this.cloneWorkspace(result.workspace) : undefined
   }
 
@@ -933,7 +1029,7 @@ export class MessageStoreState {
       if (this.defaultWorkspace?.path === session.detail.workspace.path) this.defaultWorkspace = undefined
       session.detail = { ...session.detail, workspace: undefined }
       session.updatedAt = Date.now()
-      await this.persistSession(session)
+      await this.persistSessionMeta(session)
     }
   }
 
@@ -947,7 +1043,7 @@ export class MessageStoreState {
     if (!session) return
     session.detail = { ...session.detail, workspace: params.workspace || undefined }
     session.updatedAt = Date.now()
-    await this.persistSession(session)
+    await this.persistSessionMeta(session)
   }
 
   /**
@@ -1638,7 +1734,7 @@ export class MessageStoreState {
     }
   }
 
-  private toStoredSession(session: MessageSession): MaestroChatSession {
+  private toStoredSessionMeta(session: MessageSession): MaestroChatSessionMeta {
     return {
       id: session.id,
       operationTabId: session.operationTabId,
@@ -1660,32 +1756,44 @@ export class MessageStoreState {
         // 而 `persistSession` 把它 `catch { /* best effort */ }` 吞了,于是
         // **只要绑了工作区,会话就一直静默存不进库**(2026-09-10 与发送失败同一根因)。
         workspace: this.cloneWorkspace(session.detail.workspace)
-      },
-      messages: session.messages.filter((message) => !message.localOnly).map((message) => ({
-        id: message.id,
-        source: 'cowork',
-        role: message.role,
-        type: message.type || 'text',
-        content: message.content,
-        files: plainFiles(message.files),
-        skill: message.skill ? jsonSafe(message.skill) : undefined,
-        skills: message.skills?.length ? jsonSafe(message.skills) : undefined,
-        replay: message.replay ? jsonSafe(message.replay) : undefined,
-        streaming: message.streaming,
-        error: message.error,
-        activity: plainActivity(message.activity),
-        tasks: message.tasks?.length ? jsonSafe(message.tasks) : undefined,
-        confirm: message.confirm ? jsonSafe(message.confirm) : undefined,
-        // 同 confirm:走 jsonSafe —— 它同样来自响应式状态,直接递会撞 structured clone
-        // (与本文件 workspace 那两处同一根因)。
-        errorCard: message.errorCard ? jsonSafe(message.errorCard) : undefined,
-        compressed: message.compressed,
-        promptExcluded: message.promptExcluded,
-        compactSummary: message.compactSummary,
-        compactUntilMessageId: message.compactUntilMessageId,
-        tokenCount: message.tokenCount,
-        ts: message.ts
-      }))
+      }
+    }
+  }
+
+  // One message, in exactly the shape the row binding expects. Shared by the full rewrite and
+  // the incremental upsert so the two paths cannot drift apart.
+  private toStoredMessage(message: ChatMessage): MaestroChatMessage {
+    return {
+      id: message.id,
+      source: 'cowork',
+      role: message.role,
+      type: message.type || 'text',
+      content: message.content,
+      files: plainFiles(message.files),
+      skill: message.skill ? jsonSafe(message.skill) : undefined,
+      skills: message.skills?.length ? jsonSafe(message.skills) : undefined,
+      replay: message.replay ? jsonSafe(message.replay) : undefined,
+      streaming: message.streaming,
+      error: message.error,
+      activity: plainActivity(message.activity),
+      tasks: message.tasks?.length ? jsonSafe(message.tasks) : undefined,
+      confirm: message.confirm ? jsonSafe(message.confirm) : undefined,
+      // 同 confirm:走 jsonSafe —— 它同样来自响应式状态,直接递会撞 structured clone
+      // (与本文件 workspace 那两处同一根因)。
+      errorCard: message.errorCard ? jsonSafe(message.errorCard) : undefined,
+      compressed: message.compressed,
+      promptExcluded: message.promptExcluded,
+      compactSummary: message.compactSummary,
+      compactUntilMessageId: message.compactUntilMessageId,
+      tokenCount: message.tokenCount,
+      ts: message.ts
+    }
+  }
+
+  private toStoredSession(session: MessageSession): MaestroChatSession {
+    return {
+      ...this.toStoredSessionMeta(session),
+      messages: session.messages.filter((message) => !message.localOnly).map((message) => this.toStoredMessage(message))
     }
   }
 

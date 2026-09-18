@@ -974,6 +974,14 @@ class MaestroWindowController
     return await this.workspaceFile.chooseWorkspaceDirectory(params)
   }
 
+  async adoptPreviewWorkspaceDirectory(params: { sessionId: string }): Promise<WorkspaceRefResult> {
+    return await this.workspaceFile.adoptPreviewWorkspaceDirectory(params)
+  }
+
+  async releaseWorkspaceBinding(params: { sessionId: string; path: string }): Promise<{ ok: true }> {
+    return await this.workspaceFile.releaseWorkspaceBinding(params)
+  }
+
   async setWorkspaceDirectory(params: { sessionId?: string; path?: string }): Promise<WorkspaceRefResult> {
     return await this.workspaceFile.setWorkspaceDirectory(params)
   }

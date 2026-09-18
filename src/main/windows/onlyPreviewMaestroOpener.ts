@@ -57,6 +57,14 @@ export const registerOnlyPreviewMaestroOpener = (): void => {
   });
   registerMaestroPreviewOpener({
     displayName: 'OnlyPreview',
+    currentProjectDirectory: () => {
+      const host = onlyPreviewWindowHelper.getStandaloneHost();
+      const project = host && onlyPreviewWorkspaceRegistry.restore(host.hostToken);
+      if (!host || !project) return undefined;
+      return onlyPreviewWorkspaceRegistry.getProjectAuthorityRootRef(
+        host.hostToken, project.workspaceId
+      ).workspace.rootRealPath;
+    },
     openInTab: openOnlyPreviewOsTarget,
     createFileTabSpec: (absolutePath) => {
       let surface: OnlyPreviewFileTabSurface | null = null;

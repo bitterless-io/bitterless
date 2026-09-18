@@ -28,6 +28,8 @@ export type MaestroLocalPreviewTarget =
   | { readonly kind: 'missing'; readonly fileUrl: string }
 
 export interface MaestroPreviewOpener {
+  /** Settled Project root only; an external single-file preview does not supply a workspace. */
+  currentProjectDirectory?(): string | undefined
   /** A per-file tab with independent preview authority and no OnlyPreview history. */
   createFileTabSpec?(absolutePath: string): MaestroCompositeTabSpec
   /** Address-bar targets use file tabs; directories keep the Project route. */

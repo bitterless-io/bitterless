@@ -1,5 +1,13 @@
 # Bitterless Documentation
 
+- [Reading the workspace announced a change](issues/workspace-read-announces-a-change.md) — hardened with Cowork; same query-announces-a-change defect here, loop never closed only because the skill catalog reads through a pure lookup.
+
+- [Control login inherits OnlyPreview Project](features/control-login-preview-workspace.md) — implemented; 88/88 scoped tests and independent review passed after repairing a fenced-adoption tool-binding leak; paired with Cowork, Maestro host adapter preserved.
+
+- [Cowork Project authority parity](issues/onlypreview-cowork-project-authority-parity.md) — canonical script-free fileSearch HTML already present; paired Cowork repair and reference verification.
+
+- [Context-window lookup logs a timeout after success](issues/context-window-timeout-false-warning.md) — fixed; losing timers are cleared; independent review and 8/8 tests passed; paired with Cowork.
+
 - [Plain Escape stops the running turn](features/maestro-chat-escape-to-stop.md) — implemented, code-verified;
   net-new port of cowork's contract, built against cowork's own 2026-09-17 correction (tooltip-selector
   fix included from the start). No drill-confirmation branch (bl has no explore_session feature) and

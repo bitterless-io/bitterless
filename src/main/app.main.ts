@@ -57,6 +57,8 @@ import {
   withTodoXpcTimeout,
 } from '@shared/todoistSync/todoXpcCall.shared';
 import { initializeApplicationLogging } from '@main/logging/log.setup';
+import { startMainHealthMonitor } from '@main/logging/mainHealth.service';
+import { installRemoteDebugging } from '@main/diagnostics/remoteDebugging';
 import { installApplicationFindMenu } from '@main/menu/applicationFindMenu.service';
 import {
   installOnlyPreviewProtocol,
@@ -647,6 +649,8 @@ if (isLegacyCodingAgentHookHelperMode) {
   );
   app.exit(2);
 } else if (isMcpHelperMode) {
+  // Must run before ready: Chromium reads its switches at startup.
+  installRemoteDebugging();
   void app.whenReady().then(runLegacyMcpHelper).catch((err: unknown) => {
     console.error('[bitterless-mcp] legacy helper startup failed:', err);
     app.exit(2);
@@ -669,6 +673,8 @@ if (isLegacyCodingAgentHookHelperMode) {
     }
   });
   void app.whenReady().then(async () => {
+    // Before anything slow runs, so a stall during boot is measured too.
+    startMainHealthMonitor();
     installOnlyPreviewProtocol();
     // Teach Cowork that OnlyPreview can be one of its tabs. Registered from here rather than from
     // Maestro because only the host side may know both halves — see `check:maestro`'s alias

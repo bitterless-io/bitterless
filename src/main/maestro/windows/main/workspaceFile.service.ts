@@ -139,9 +139,11 @@ export interface WorkspaceFileServiceState {
 
 const configStore = createXpcMainEmitter<ConfigApi>('ConfigDao')
 
+
 @injectable()
 export class WorkspaceFileService extends CommonService<WorkspaceFileServiceState> {
   private workspaceRefs = new Map<string, WorkspaceRef>()
+  private defaultWorkspaceWrites: Promise<void> = Promise.resolve()
   private readonly workspaceArchive = new WorkspaceArchiveService({
     resolveWorkspacePath: (sessionKey, pathArg) =>
       this.resolveWorkspacePath(sessionKey, pathArg),
@@ -170,7 +172,25 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
     }
   }
 
-  async setWorkspaceDirectory(params: { sessionId?: string; path?: string }): Promise<WorkspaceRefResult> {
+  async adoptPreviewWorkspaceDirectory(params: { sessionId: string }): Promise<WorkspaceRefResult> {
+    const path = getMaestroPreviewOpener()?.currentProjectDirectory?.()
+    if (!path) return { ok: true }
+    return this.setWorkspaceDirectory({ sessionId: params.sessionId, path }, false)
+  }
+
+  // Undo an adoption its renderer fenced. Compare-and-release: only drops the binding while it is
+  // still exactly what adoption set, so a newer explicit choice for the same session is never
+  // clobbered. The remembered default is a separate concern and stays untouched.
+  async releaseWorkspaceBinding(params: { sessionId: string; path: string }): Promise<{ ok: true }> {
+    const key = this._state.agentSessionKey(params.sessionId)
+    if (this.workspaceRefs.get(key)?.path === params.path) this.clearWorkspaceRef(key)
+    return { ok: true }
+  }
+
+  // Login adoption commits in its renderer only after checking its account/selection generation.
+  // The service-only flag suppresses both broadcasts and preserves an existing binding if its
+  // Preview candidate disappeared. Ordinary setters keep their existing behavior.
+  async setWorkspaceDirectory(params: { sessionId?: string; path?: string }, notify = true): Promise<WorkspaceRefResult> {
     const key = this._state.agentSessionKey(params.sessionId)
     const raw = String(params.path || '').trim()
     if (!raw) {
@@ -183,6 +203,7 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
       const stats = statSync(abs)
       if (!stats.isDirectory()) return { ok: false, error: 'not-a-directory' }
     } catch {
+      if (!notify) return { ok: false, missing: true, error: 'workspace-not-found' }
       this.clearWorkspaceRef(key)
       await this.removeDefaultWorkspaceIfPathMatches(abs)
       return { ok: false, missing: true, error: 'workspace-not-found' }
@@ -190,8 +211,8 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
     const workspace = this.workspaceRefFromPath(abs)
     this.workspaceRefs.set(key, workspace)
     this.workspaceRefs.set('default', workspace)
-    await this.persistDefaultWorkspace(workspace)
-    this.broadcastWorkspaceChanged(key, workspace)
+    await this.persistDefaultWorkspace(workspace, notify)
+    if (notify) this.broadcastWorkspaceChanged(key, workspace)
     return { ok: true, workspace }
   }
 
@@ -215,10 +236,13 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
       await this.removeDefaultWorkspaceIfPathMatches(workspace.path)
       return { ok: false, missing: true, error: 'workspace-not-found' }
     }
-    const fresh = { ...workspace, exists: true, updatedAt: Date.now() }
+    // A read reports; it does not announce. This used to stamp a fresh `updatedAt`, persist it and
+    // broadcast it as a change on EVERY call, which makes every reader look like a writer: any
+    // subscriber that refetches on the notification closes a feedback loop and re-announces the same
+    // unchanged workspace. Cowork had a caller that closed exactly that loop; this side never did,
+    // which is luck rather than design (docs/issues/workspace-read-announces-a-change.md).
+    const fresh = { ...workspace, exists: true }
     this.workspaceRefs.set(key, fresh)
-    if (key === 'default') await this.persistDefaultWorkspace(fresh)
-    this.broadcastWorkspaceChanged(key, fresh)
     return { ok: true, workspace: fresh }
   }
 
@@ -317,25 +341,25 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
     return typeof options?.path === 'string' ? options.path : ''
   }
 
-  private async persistDefaultWorkspace(workspace?: WorkspaceRef): Promise<void> {
-    if (!workspace?.path) {
-      await configStore
-        .remove({ domain: WORKSPACE_CONFIG_DOMAIN, key: WORKSPACE_DEFAULT_KEY })
-        .catch(() => undefined)
-      this.workspaceRefs.delete('default')
-      this.broadcastWorkspaceChanged('default')
-      return
-    }
-    const normalized = this.workspaceRefFromPath(workspace.path)
-    this.workspaceRefs.set('default', normalized)
-    await configStore
-      .upsert({
-        domain: WORKSPACE_CONFIG_DOMAIN,
-        key: WORKSPACE_DEFAULT_KEY,
-        options: normalized
-      })
-      .catch(() => undefined)
-    this.broadcastWorkspaceChanged('default', normalized)
+  private async persistDefaultWorkspace(workspace?: WorkspaceRef, notify = true): Promise<void> {
+    const normalized = workspace?.path ? this.workspaceRefFromPath(workspace.path) : undefined
+    // Edge-triggered for the same reason as `clearWorkspaceRef`: the value listeners care about is
+    // the path, so re-announcing an identical one is noise a re-checking listener can loop on.
+    const changed = this.workspaceRefs.get('default')?.path !== normalized?.path
+    if (normalized) this.workspaceRefs.set('default', normalized)
+    else this.workspaceRefs.delete('default')
+    // A later explicit choice/clear must be the final durable value even if adoption is still saving.
+    const write = this.defaultWorkspaceWrites.then(async () => {
+      if (normalized) {
+        await configStore.upsert({ domain: WORKSPACE_CONFIG_DOMAIN, key: WORKSPACE_DEFAULT_KEY, options: normalized }).catch(() => undefined)
+      } else {
+        await configStore.remove({ domain: WORKSPACE_CONFIG_DOMAIN, key: WORKSPACE_DEFAULT_KEY }).catch(() => undefined)
+      }
+    })
+    // The chain only orders writes; a failed one must not stop every later write from running.
+    this.defaultWorkspaceWrites = write.catch(() => undefined)
+    await write
+    if (notify && changed && this.workspaceRefs.get('default') === normalized) this.broadcastWorkspaceChanged('default', normalized)
   }
 
   private async removeDefaultWorkspaceIfPathMatches(path?: string): Promise<void> {
@@ -415,6 +439,7 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
     return resolved.insideWorkspace ? relative(resolved.root, abs) || basename(abs) : abs
   }
 
+
   private broadcastWorkspaceChanged(sessionId: string, workspace?: WorkspaceRef): void {
     xpcMain.broadcast('coach/workspace-changed', {
       sessionId,
@@ -423,8 +448,10 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
     })
   }
 
+  // Edge-triggered: clearing what is already clear is not a change, and announcing it anyway lets
+  // any caller that re-checks in response repeat the "transition" forever.
   private clearWorkspaceRef(sessionId: string): void {
-    this.workspaceRefs.delete(sessionId)
+    if (!this.workspaceRefs.delete(sessionId)) return
     this.broadcastWorkspaceChanged(sessionId)
   }
 

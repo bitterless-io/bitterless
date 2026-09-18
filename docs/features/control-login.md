@@ -1,5 +1,8 @@
 # Control-owned application login
 
+Workspace continuity across this login boundary is defined in
+[Control login inherits OnlyPreview Project](control-login-preview-workspace.md).
+
 Status: implemented and code-verified; human acceptance pending · 2026-09-17
 
 ## Contract
