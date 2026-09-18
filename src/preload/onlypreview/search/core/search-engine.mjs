@@ -20,6 +20,10 @@ import { executeOnlyPreviewGlobalSearch } from './global-search-executor.mjs';
 import { previewOnlyPreviewGlobalSearchResult } from './global-search-preview.mjs';
 import { reclaimInterruptedSqliteArtifacts } from './sqlite-artifacts.mjs';
 import {
+  onlyPreviewDiskFullMessage,
+  planOnlyPreviewIndexBuild
+} from './disk-space.mjs';
+import {
   isSqliteCorruption,
   openRecoverableSqliteIndex,
   quarantineSqliteIndex,
@@ -487,9 +491,31 @@ export class OnlyPreviewSearchEngine {
     };
     try {
       await removeSqliteArtifacts(candidatePath);
+      // Decide what the volume can actually hold BEFORE writing anything. A reconcile copies the
+      // whole index first, so it needs ~2x; a fresh build needs ~1x. Without this the copy was
+      // attempted regardless, and a workspace whose index no longer fitted retried it forever,
+      // writing gigabytes per attempt until the disk hit zero and the index corrupted.
+      const plan = await planOnlyPreviewIndexBuild({
+        databasePath: this.databasePath,
+        directoryPath: dirname(this.databasePath),
+        reconcile: reconcileExisting
+      });
+      this.diagnostics.emit('candidate-plan', {
+        tag: diagnostic.tag,
+        mode: plan.mode,
+        indexBytes: plan.indexBytes,
+        freeBytes: plan.freeBytes,
+        requiredBytes: plan.requiredBytes
+      });
+      if (plan.mode === 'none') {
+        // Refuse, do not start. The existing index stays exactly as it is and keeps serving.
+        // `INDEX_FAILED` is in the search wire's admitted code set, and the message carries no path
+        // separator, which that validator forbids.
+        throw Object.assign(new Error(onlyPreviewDiskFullMessage(plan)), { code: 'INDEX_FAILED' });
+      }
       let corruptionCode = 0;
       try {
-        await buildCandidate(reconcileExisting);
+        await buildCandidate(reconcileExisting && plan.mode === 'reconcile');
       } catch (error) {
         if (buildEpoch !== this.buildEpoch) throw cancelledError();
         if (!reconcileExisting || !isSqliteCorruption(error)) throw error;

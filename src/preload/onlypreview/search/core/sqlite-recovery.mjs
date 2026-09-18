@@ -22,6 +22,21 @@ export const isSqliteCorruption = (error) => {
   return code === 11 || code === 26;
 };
 
+/**
+ * `SQLITE_FULL` — the volume, not the database, is out of room.
+ *
+ * Deliberately NOT folded into `isSqliteCorruption`, even though the owner's log shows the two
+ * arriving together (13 seven times, then 11 nine times, 2026-09-17). Corruption recovery
+ * quarantines the database and rebuilds it. Doing that for a full disk is precisely backwards: it
+ * throws away an index that is not damaged, and then tries to rebuild it in the space that was
+ * already insufficient. The 11s in that log are the *consequence* of the 13s — writes torn off
+ * mid-page once the volume hit zero — so treating 13 as corruption would destroy a good index on
+ * the way down.
+ *
+ * A full disk is reported, never recovered from. The caller stops instead of retrying.
+ */
+export const isSqliteDiskFull = (error) => sqlitePrimaryErrorCode(error) === 13;
+
 const readSqliteArtifacts = async (databasePath, io) => {
   const sources = [];
   for (const suffix of SQLITE_SUFFIXES) {

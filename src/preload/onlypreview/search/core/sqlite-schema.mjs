@@ -1,5 +1,20 @@
 import { SEARCH_SCHEMA_VERSION, SEARCH_STATE_SCHEMA_VERSION } from './constants.mjs';
 
+/**
+ * Cap on the retained `-wal` file.
+ *
+ * SQLite's default is `journal_size_limit = -1`, meaning the WAL is checkpointed but **never
+ * truncated** — it keeps whatever high-water mark a large transaction drove it to, for the life of
+ * the connection. A bulk index build is exactly such a transaction, so on the owner's 98k-file
+ * workspace the WAL is free to grow into the gigabytes and stay there, on top of the database and
+ * on top of the candidate copy a reconcile already makes. That is a third claim on the same volume
+ * during the window that ran it out of space (2026-09-17).
+ *
+ * `wal_autocheckpoint` is already 1000 pages, so checkpoints happen; this is what makes the file
+ * give the space back afterwards rather than merely being reusable inside the same file.
+ */
+const WAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024;
+
 const CONTENT_SCHEMA_OBJECTS = [
   'files',
   'files_project_path',
@@ -115,6 +130,7 @@ export const configureSearchDatabase = (database) => {
     PRAGMA temp_store = FILE;
     PRAGMA cache_size = -32768;
     PRAGMA mmap_size = 268435456;
+    PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};
   `);
   const previousVersion = Number(database.prepare('PRAGMA user_version').get().user_version);
   const tables = readSchemaTables(database);

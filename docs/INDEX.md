@@ -83,6 +83,14 @@
   class, and a raw `error.message` cannot be forwarded (`onlyPreviewCore.test.mjs` locks that a leaked
   path must not cross the boundary).
 
+- [OnlyPreview index disk budget](features/onlypreview-index-disk-budget.md) — phase 0+1 implemented
+  ([task 183](plan/tasks/onlypreview-index-scratch-and-leaks-183.md)); owner verification pending.
+  A reconcile copies the whole index before rebuilding it, so a 5.6 GB index silently needed 11.2 GB
+  free, retried the copy until the volume hit zero, and turned `SQLITE_FULL` into `SQLITE_CORRUPT` —
+  that, not the payload latch, is what actually broke search. It now plans against free space and
+  refuses, falls back to the copy-free build, caps the WAL, and reclaims the orphan journals the
+  regex never matched. Measurements: [disk efficiency review](design/onlypreview-index-disk-efficiency.md).
+
 - [Agent cwd follows the workspace](features/agent-cwd-follows-workspace.md) — implementing; code-verified, human testing pending;
   cwd is resolved per session from the project root (else the shared default workspace), never from process.cwd(); pi gets an in-memory settings manager first.
 
