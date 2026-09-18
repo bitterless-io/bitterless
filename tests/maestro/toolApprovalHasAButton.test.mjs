@@ -71,3 +71,28 @@ test('the action sheet caps its detail so the buttons cannot be pushed out of vi
   )
   assert.match(detail.slice(0, 400), /overflow-y[:-]\s*auto|overflow-y-auto/, 'the capped detail must scroll')
 })
+
+/**
+ * 「等你确认」和那张能点的卡必须同源。Ral 2026-09-18:「不能只有 waiting on you 而没 confirm 入口,
+ * 点击允许/拒绝后 waiting on you 也就不能再被显示(之前还是会显示)」。
+ *
+ * 两个方向都出过错:卡还没生成时状态条已经在喊(指向一个不存在的按钮);人点完之后
+ * `resolveConfirm` 万一没对上会返回 ok:false,任务上的 `pendingConfirm` 永不清除,状态条就一直挂着。
+ * 所以判据必须是**未被回答的 confirm 消息**,而不是任务注册表上的那个字段。
+ */
+test('the waiting indicator is driven by an unanswered confirm card, never by the registry alone', () => {
+  const status = stripComments(readFileSync(
+    join(root, bl ? 'src/renderer/maestro/control/src/ResponseStatus.vue' : 'src/renderer/control/src/ResponseStatus.vue'), 'utf8'
+  ))
+  // 判据抽成了 store 上的 `pendingConfirmMessages`(按钮、状态条、会话列表黄点共用一条),
+  // 所以状态条这边断言「用了那条共用判据」,判据本身的 `!answer` 在 store 里断言。
+  assert.match(status, /pendingConfirmMessages\(/, 'the status must read the same pending predicate the sheet renders from')
+  const storeSource = stripComments(readFileSync(join(root, bl ? 'src/renderer/maestro/control/src/store/message.store.ts' : 'src/renderer/control/src/store/message.store.ts'), 'utf8'))
+  assert.match(storeSource, /type === 'confirm'/, 'the shared predicate reads the confirm messages')
+  assert.match(storeSource, /!\s*\w+\.confirm\.answer/, 'an ANSWERED card must stop the indicator')
+  assert.doesNotMatch(
+    status,
+    /const confirming = computed\(\(\) => live\.value\.find\(\(task\) => task\.state\.pendingConfirm\)\)/,
+    'confirming must not come from pendingConfirm alone — that is what showed a prompt with no button, and kept showing it after the click'
+  )
+})

@@ -7,25 +7,47 @@ Owner decision 2026-09-10 (Ral:「不要区分会话,实际工作的时候 n 个
 shared directory**:
 
 ```
-~/.bitterless-<runtime profile id>/default-workspace
+~/.bitterless_<edition>/default_workspace
 ```
 
-## Why the profile id keys the path
+## 目录名带环境,和 userData 同一条轴(2026-09-18)
 
-`<runtime profile id>` is the axis that already splits `userData`
-(`docs/features/desktop-release-channels.md`), so each edition keeps its own default workspace and
-Preview can never write into Production's files — the two hold different real data by design:
+Ral 2026-09-18:「~/.micromeet 或 .bitterless 文件名要带上环境例如 bitterless_preview 和 userdata
+类似……具体参考现在的情况」。
 
-| profile id | userData | default workspace |
+profile 的 `appName` **就是** userData 的目录名,所以工作空间根直接取它的小写形式 ——
+一条轴、一个来源,不存在第二张表可以走偏:
+
+| profile id | userData(`appName`) | default workspace |
 | --- | --- | --- |
-| `production` | `Bitterless` | `~/.bitterless-production/default-workspace` |
-| `production-preview` | `Bitterless_PREVIEW` | `~/.bitterless-production-preview/default-workspace` |
-| `production-debug` | `Bitterless_DEBUG_PROD` | `~/.bitterless-production-debug/default-workspace` |
-| `test-debug` | `Bitterless_DEBUG_DEV` | `~/.bitterless-test-debug/default-workspace` |
-| `test-release` | `Bitterless_DEV` | `~/.bitterless-test-release/default-workspace` |
+| `production` | `Bitterless` | `~/.bitterless/default_workspace` |
+| `production-preview` | `Bitterless_PREVIEW` | `~/.bitterless_preview/default_workspace` |
+| `production-debug` | `Bitterless_DEBUG_PROD` | `~/.bitterless_debug_prod/default_workspace` |
+| `test-debug` | `Bitterless_DEBUG_DEV` | `~/.bitterless_debug_dev/default_workspace` |
+| `test-release` | `Bitterless_DEV` | `~/.bitterless_dev/default_workspace` |
+
+生产取裸名,其余版本一律带后缀 —— **Preview 因此不会写进 Production 的文件**,两者本来就持有
+不同的真实数据。从 `appName` 推导而不是从 `id` 推导是刻意的:要求是「和 userdata 类似」,
+而 `appName` 正是给 userData 命名的那个值;将来新增版本自动获得自己的目录,两张清单不可能对不上。
+
+目录名与文件名的写法保持 owner 给的形态:`default_workspace`(下划线)。
 
 The root resolves through `app.getPath('home')`, not `os.homedir()`, because E2E redirects the home
-path (`BITTERLESS_E2E_HOME_DIR`) — a test run must not touch the real `~/.bitterless-*`.
+path (`BITTERLESS_E2E_HOME_DIR`) — a test run must not touch a real `~/.bitterless*`。
+**这条保留**:测试隔离是工程纪律,不是产品决定。
+
+## 进系统提示词(2026-09-18)
+
+Ral:「默认 workspace 要进系统提示词,且 onlypreview 和 chat 默认都不选中 default_workspace」。
+
+- 提示词那一行原来只说「有一个默认工作空间在用」却**不说是哪个**,模型因此不知道自己写的文件落在哪。
+  现在带上绝对路径:`- Active workspace: none selected — the shared default workspace is in use: <path>`。
+- **界面仍然显示「未选择」**:默认工作空间只出现在主进程的 cwd / 文件根回退里,从不写进任何
+  workspace ref —— 它是隐式回退,不是一次选择。`tests/maestro/defaultWorkspace.test.mjs` 有守卫:
+  渲染层一旦引用 `defaultWorkspaceRoot` / `ensureDefaultWorkspace` 就判红。
+
+验证:`yarn test:default-workspace`(3/3)—— 五个版本的目录逐个对照、ensure 幂等(已存在就复用,
+不重建)、以及渲染层守卫。micromeet-cowork 侧同一套规则。
 
 ## Contract
 
@@ -64,3 +86,19 @@ path (`BITTERLESS_E2E_HOME_DIR`) — a test run must not touch the real `~/.bitt
 Cowork carries the same contract against `~/.micromeet-<env>/default-workspace`
 (`micromeet-cowork/docs/features/cowork-workspace-files.md` § Default Workspace); the two apps are
 deliberately separate roots.
+
+
+## 进系统提示词(2026-09-18)
+
+Ral:「默认 workspace 要进系统提示词,且 onlypreview 和 chat 默认都不选中 default_workspace」。
+
+- 提示词里那一行原来只说「有一个默认工作空间在用」却**不说是哪个**,模型因此不知道自己写的文件
+  落在哪、也没法把路径告诉人。现在带上绝对路径:
+  `- Active workspace: none selected — the shared default workspace is in use: <path>`。
+- **界面仍然显示「未选择」**。默认工作空间只出现在主进程的 cwd / 文件根回退里,
+  从不写进任何 workspace ref —— 它是隐式回退,不是一次选择。
+  `tests/maestro/defaultWorkspace.test.mjs` 有一条守卫:渲染层一旦引用
+  `defaultWorkspaceRoot` / `ensureDefaultWorkspace` 就判红。
+
+验证:`yarn test:default-workspace`(3/3)—— 固定路径、ensure 幂等(已存在就复用,不重建)、
+以及上面那条渲染层守卫。micromeet-cowork 侧同一套规则,路径为 `~/.micromeet/default_workspace`。

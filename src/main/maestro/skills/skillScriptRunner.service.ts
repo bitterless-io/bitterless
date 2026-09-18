@@ -31,6 +31,9 @@ const MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 const JWT_RE = /eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}/g
 export const SKILL_SCRIPT_EXTENSIONS = /\.(mjs|js|ts|sh|bash|ps1)$/
 
+/** How many in-flight output lines reach the activity strip — enough to show it is moving, not a flood. */
+const MAX_STREAMED_LINES = 200
+
 export interface RunSkillScriptOptions {
   scriptPath: string
   /** Package root; the script must live inside it. */
@@ -40,6 +43,18 @@ export interface RunSkillScriptOptions {
   input?: Record<string, unknown>
   timeoutMs?: number
   signal?: AbortSignal
+  /**
+   * Every line the script prints WHILE it runs.
+   *
+   * Ral 2026-09-18:「技能脚本执行过程中，要能依据打印，给用户持续的反馈，而不是脚本执行完了
+   * 一次性给反馈」. A script that syncs dozens of submodules prints progress for minutes; buffering
+   * all of it until exit shows the person a silent wait that is indistinguishable from a hang.
+   *
+   * Called per COMPLETE line, not per chunk — a chunk boundary is not a line boundary, so forwarding
+   * chunks would split one line across two callbacks or glue ten lines into one. Paired with
+   * micromeet-cowork's skillMjsRunner.
+   */
+  onOutput?: (line: string, stream: 'stdout' | 'stderr') => void
 }
 export interface SkillScriptResult { ok: boolean; stdout?: string; stderr?: string; exitCode?: number; error?: string }
 
@@ -107,15 +122,40 @@ export const runSkillScript = (opts: RunSkillScriptOptions): Promise<SkillScript
     const timer = setTimeout(() => { stop(); finish({ ok: false, error: `script timed out after ${opts.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms` }) }, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS)
     timer.unref?.()
 
+    // Live progress (see RunSkillScriptOptions.onOutput). Line-buffered and capped: a chatty script
+    // must not flood the activity strip, so only the first MAX_STREAMED_LINES are forwarded and each
+    // is truncated. The buffered stdout/stderr returned to the caller is unchanged.
+    let streamedLines = 0
+    const emitLine = (line: string, stream: 'stdout' | 'stderr'): void => {
+      const text = line.trim()
+      if (!text || !opts.onOutput || streamedLines >= MAX_STREAMED_LINES) return
+      streamedLines++
+      opts.onOutput(text.length > 300 ? `${text.slice(0, 300)}…` : text, stream)
+    }
+    const lineFeeder = (stream: 'stdout' | 'stderr') => {
+      let carry = ''
+      return (chunk: string, flush = false): void => {
+        if (!opts.onOutput) return
+        carry += chunk
+        const parts = carry.split(/\r?\n/)
+        carry = flush ? '' : parts.pop() ?? ''
+        for (const line of parts) emitLine(line, stream)
+        if (flush && carry) emitLine(carry, stream)
+      }
+    }
+    const feedOut = lineFeeder('stdout'), feedErr = lineFeeder('stderr')
+
     const collect = (chunk: Buffer, onto: 'out' | 'err'): void => {
       bytes += chunk.length
       if (bytes > MAX_OUTPUT_BYTES) { stop(); finish({ ok: false, error: 'script produced too much output' }); return }
-      if (onto === 'out') stdout += chunk.toString(); else stderr += chunk.toString()
+      const text = chunk.toString()
+      if (onto === 'out') { stdout += text; feedOut(text) } else { stderr += text; feedErr(text) }
     }
     child.stdout.on('data', (chunk: Buffer) => collect(chunk, 'out'))
     child.stderr.on('data', (chunk: Buffer) => collect(chunk, 'err'))
     child.on('error', (error) => finish({ ok: false, error: redact(`could not start the script: ${error.message}`) }))
-    child.on('close', (code) => finish({ ok: code === 0, exitCode: code ?? undefined, stdout: redact(stdout), stderr: redact(stderr).slice(0, 4000), ...(code === 0 ? {} : { error: `script exited with code ${code}` }) }))
+    // Flush a trailing line with no newline — a script's last line is often its conclusion.
+    child.on('close', (code) => { feedOut('', true); feedErr('', true); return finish({ ok: code === 0, exitCode: code ?? undefined, stdout: redact(stdout), stderr: redact(stderr).slice(0, 4000), ...(code === 0 ? {} : { error: `script exited with code ${code}` }) }) })
     // Input arrives on stdin only — never argv or env, so it cannot leak through a process listing.
     try { child.stdin.end(JSON.stringify(opts.input ?? {})) } catch { /* the close handler reports it */ }
   })

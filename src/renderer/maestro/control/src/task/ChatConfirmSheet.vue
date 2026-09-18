@@ -9,16 +9,14 @@ import {
   IconHelpCircle
 } from '@tabler/icons-vue'
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
-import { messageStore } from '../store/message.store'
+import { messageStore, pendingConfirmMessages } from '../store/message.store'
 import type { ChatMessage, MessageSession } from '../store/message.type'
 import './ChatConfirmSheet.less'
 
 const props = defineProps<{ session: MessageSession }>()
-const pending = computed<ChatMessage[]>(() =>
-  props.session.messages.filter(
-    (message) => message.type === 'confirm' && message.confirm && !message.confirm.answer
-  )
-)
+// 判据共用(`pendingConfirmMessages`):按钮、状态条、会话列表黄点必须是同一条,
+// 否则会出现「状态条在喊、底下没按钮」或「点完了黄点还亮着」。
+const pending = computed<ChatMessage[]>(() => pendingConfirmMessages(props.session))
 const current = computed(() => pending.value[0] || null)
 const card = computed(() => current.value?.confirm || null)
 const queued = computed(() => Math.max(0, pending.value.length - 1))

@@ -1,8 +1,9 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { AgentToolSpec } from '../runtime/agentRuntime.types'
 import { checkSkill, initializeSkill } from '../../maestro/skills/skillCreator'
 import { runSkillScript, SKILL_SCRIPT_EXTENSIONS } from '../../maestro/skills/skillScriptRunner.service'
+import { broadcastAgentActivity } from '../runtime/agentBroadcast'
 import { assertSkillContext, authorizeSkillReference } from '../../maestro/skills/skillScope.context'
 import type { SkillSummary } from '@maestro-shared/coach.api'
 
@@ -192,9 +193,14 @@ export const buildSkillCreatorTools = (host: SkillCreatorHost): AgentToolSpec[] 
       // Authorize before running AND re-assert after, so an institution revoked mid-call cannot be
       // the one whose script completed.
       const expected = await authorizeSkillReference(reference)
+      // Report progress WHILE the script runs, not only when it exits (Ral 2026-09-18). These lines
+      // go to the activity strip only — they are progress for the person to watch; feeding them back
+      // to the model would just crowd the context, and it still receives the complete stdout/stderr.
+      const label = basename(file)
       const result = await runSkillScript({
         scriptPath: file, packageRoot: packaged ? dirname(owner.path) : resolve(host.workspace() as string), bunPath: host.bunPath(),
-        args: argv as string[], input: stdin as Record<string, unknown>, signal
+        args: argv as string[], input: stdin as Record<string, unknown>, signal,
+        onOutput: (line, stream) => broadcastAgentActivity('tool', `${label}: ${line}`, stream !== 'stderr')
       })
       assertSkillContext(expected)
       return JSON.stringify(result)

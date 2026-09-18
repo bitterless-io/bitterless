@@ -52,6 +52,15 @@
   background: #f8fafc;
 }
 
+// `…` 与 `+` 的分组。工具条是 `space-between`,所以三个以上孩子时中间的会被均分推到中央;
+// 成组之后这 8px 是**组内**间距,与工具条自身的 gap 无关。
+.chat-panel__toolbar-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
 .chat-panel__new-chat.arco-btn {
   color: var(--color-text-2);
 }
@@ -439,6 +448,26 @@
   border-radius: 999px;
   animation: chat-panel-spin 0.9s linear infinite;
 }
+
+/* 待答 confirm 的琥珀点 —— 与确认卡/状态条同一套色,表示「卡在你这儿」。 */
+.chat-panel__sessions-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: rgb(var(--warning-6));
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.chat-panel__sessions-confirm-dot,
+.chat-panel__history-item-confirm {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgb(var(--warning-6));
+}
+
+.chat-panel__history-item-confirm { flex: 0 0 auto; }
 
 .chat-panel__sessions-running-count {
   font-variant-numeric: tabular-nums;

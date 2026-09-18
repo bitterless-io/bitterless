@@ -145,12 +145,25 @@ const sessionStartTimeoutMs = (): number => {
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_SESSION_START_TIMEOUT_MS
 }
 
-// Per-tool-call wall clock. A single tool that hangs (a stuck read/parse, a runaway
-// scan, a wedged page action) would otherwise freeze the whole turn with no error;
-// this makes it surface as a tool error the agent can react to. Override via env.
-const toolTimeoutMs = (): number => {
+/**
+ * **The host does not put a wall clock on a tool call.** Ral 2026-09-18:「超时是工具层面的 120s,
+ * 我们工具调用不该设置超时,如果工具自己内部超时报错,我们捕获并提示才对」.
+ *
+ * This used to fall back to `120_000` for EVERY tool. The intent — a wedged tool must not silently
+ * freeze a turn — was right, but the placement was wrong: 120s is an eternity for `read_file` and
+ * barely a start for a script syncing dozens of submodules, and cutting the wait does not cut the
+ * work. The tool keeps running while the model is told it "timed out", which is worse than slow.
+ *
+ * Now a budget applies only when the tool DECLARES one (`spec.timeoutMs` — the skill script runner
+ * declares 60s) or an operator sets `COACH_TOOL_TIMEOUT_MS` to clamp everything. Otherwise the
+ * tool's own timeout is the real boundary and the host's job is to report it faithfully.
+ *
+ * The turn still has a wall clock and Stop still cancels immediately; what is gone is the
+ * one-size-fits-all per-tool cut-off. Paired with micromeet-cowork's BaseAgent.
+ */
+const envToolTimeoutMs = (): number => {
   const raw = Number(process.env.COACH_TOOL_TIMEOUT_MS)
-  return Number.isFinite(raw) && raw > 0 ? raw : 120_000
+  return Number.isFinite(raw) && raw > 0 ? raw : 0
 }
 
 /**
@@ -455,12 +468,13 @@ export class BaseAgent {
     // A tool may declare its own budget. The env override still wins when explicitly set, so an
     // operator can clamp everything; otherwise a long-by-nature tool keeps its declared wall clock
     // instead of being cut off at 120 s while its work carries on unseen.
-    const envOverride = Number(process.env.COACH_TOOL_TIMEOUT_MS)
-    const ms = Number.isFinite(envOverride) && envOverride > 0 ? envOverride : spec.timeoutMs || toolTimeoutMs()
+    const ms = envToolTimeoutMs() || spec.timeoutMs || 0
     const hint = spec.timeoutHint || 'it may be reading a very large file or scanning a huge directory. Try a narrower path or a specific file.'
     return {
       ...spec,
       execute: async (args: Record<string, unknown>, signal?: AbortSignal, context?: Parameters<PiToolSpec['execute']>[2]): Promise<string> => {
+        // A tool that declares no budget is not timed — its own timeout is the real boundary.
+        if (!ms) return await spec.execute(args, signal, context)
         const timeout = new AbortController()
         const combined = signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal
         try {

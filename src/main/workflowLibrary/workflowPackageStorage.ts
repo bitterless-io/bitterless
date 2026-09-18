@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync, rmSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync, rmSync, statSync, openSync, readSync, closeSync } from 'node:fs'
+import { dirname, join, sep } from 'node:path'
 import { inflateRawSync } from 'node:zlib'
 import AdmZip from 'adm-zip'
-import type { CloudWorkflow, InstalledWorkflow } from '../../shared/workflowLibrary.type'
+import type { CloudWorkflow, InstalledWorkflow, WorkflowSource } from '../../shared/workflowLibrary.type'
 import { parseWorkflowManifest, safePackagePath, WORKFLOW_LIMITS } from '../../shared/workflowPackage'
 
 const crcTable = Array.from({ length: 256 }, (_, value) => {
@@ -38,6 +38,33 @@ export class WorkflowPackageStorage {
   }
 
   read(id: number): InstalledWorkflow | undefined { return this.list().find(row => row.id === id) }
+
+  source(id: number, max: number): WorkflowSource {
+    const row = this.read(id)
+    if (!row) throw new Error('Download this workflow before viewing its source.')
+    const directory = join(this.root, row.directory)
+    const name = safePackagePath(row.manifest.entry)
+    const path = join(directory, name)
+    // safePackagePath already rejects `..`; this keeps the read inside the package even if that ever changes.
+    if (!path.startsWith(directory + sep) || path !== row.entry) throw new Error('Unsafe workflow entry path.')
+    const info = statSync(path)
+    if (!info.isFile()) throw new Error('The workflow entry file is missing.')
+    if (!info.size) throw new Error('The workflow entry file is empty.')
+    const buffer = Buffer.alloc(Math.min(info.size, max))
+    const handle = openSync(path, 'r')
+    let filled = 0
+    try {
+      while (filled < buffer.length) {
+        const count = readSync(handle, buffer, filled, buffer.length - filled, filled)
+        if (!count) break
+        filled += count
+      }
+    } finally { closeSync(handle) }
+    const data = buffer.subarray(0, filled)
+    if (!data.length) throw new Error('The workflow entry file is empty.')
+    if (data.includes(0)) throw new Error('The workflow entry file is not readable text.')
+    return { path, name, text: data.toString('utf8'), bytes: info.size, truncated: info.size > max }
+  }
 
   install(meta: Pick<CloudWorkflow, 'id' | 'revision' | 'size' | 'hash'>, bytes: Buffer, isCurrent: () => boolean = () => true): InstalledWorkflow {
     if (!Number.isSafeInteger(meta.id) || meta.id < 1 || !Number.isSafeInteger(meta.revision) || meta.revision < 1) throw new Error('Invalid workflow identity.')

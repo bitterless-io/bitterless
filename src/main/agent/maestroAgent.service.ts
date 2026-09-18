@@ -1157,6 +1157,8 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         currentUrl,
         catalog: registry.catalogPrompt(this._state.projectRootForSession(sessionKey)),
         skillAuthoring: skillAuthoringRuntime(registry.scopeStorage.shared),
+        // Where the model is actually working when nothing is selected (Ral 2026-09-18).
+        defaultWorkspacePath: ensureDefaultWorkspace(),
         briefs: this.agentSkillBriefs(message, recordings, registry)
       })
       // 组装走 SDK 的 entry 级实现(`@main/agent/contextExport.service`),与 cowork 同一份:
@@ -1263,6 +1265,8 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         currentUrl,
         catalog: registry.catalogPrompt(this._state.projectRootForSession(sessionKey)),
         skillAuthoring: skillAuthoringRuntime(registry.scopeStorage.shared),
+        // Where the model is actually working when nothing is selected (Ral 2026-09-18).
+        defaultWorkspacePath: ensureDefaultWorkspace(),
         briefs: this.agentSkillBriefs(message, recordings, registry)
       })
       const graph = buildContextGraph({
@@ -1968,6 +1972,8 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       userChainPath: chainFilePath(maestroUserChainDir(), sessionKey), currentUrl,
       catalog: registry.catalogPrompt(this._state.projectRootForSession(sessionKey)),
       skillAuthoring: skillAuthoringRuntime(registry.scopeStorage.shared),
+        // Where the model is actually working when nothing is selected (Ral 2026-09-18).
+        defaultWorkspacePath: ensureDefaultWorkspace(),
         briefs: this.agentSkillBriefs(message, recordings, registry)
     })
   }

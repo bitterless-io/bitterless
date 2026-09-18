@@ -12,7 +12,14 @@ import './SessionsDrawer.less'
 const emit = defineEmits<{ close: [] }>()
 const historyVisible = computed({ get: () => sessionActions.historyVisible, set: (visible: boolean) => { sessionActions.historyVisible = visible } })
 const historyList = ref<HTMLElement | null>(null)
-const historyCursor = ref(0)
+// 游标记的是**会话 id**,不是下标:`sessionListItems` 会按 未读 → 进行中 → 已读 重排,而打开
+// 抽屉时还会异步 `refreshHistory()` —— 打开那一刻算出来的下标,等刷新落地就指向另一个会话了
+// (表现为「打开时没有默认选中当前会话」)。游标那条会话离开列表(归档/删除)时退回第一行。
+const cursorSessionId = ref('')
+const historyCursor = computed(() => {
+  const index = messageStore.sessionListItems.findIndex((item) => item.id === cursorSessionId.value)
+  return index >= 0 ? index : 0
+})
 const shortcut = (key: string): string => `${navigator.platform.toLowerCase().includes('mac') ? '⌘' : 'Ctrl+'}${key}`
 
 const formatSessionTime = (ts: number): string => {
@@ -35,12 +42,9 @@ function scrollHistoryCursor(): void {
 
 watch(historyVisible, (visible) => {
   if (!visible) { emit('close'); return }
-  historyCursor.value = Math.max(0, messageStore.sessionListItems.findIndex((item) => item.id === channelStore.activeSessionId))
+  cursorSessionId.value = channelStore.activeSessionId
   scrollHistoryCursor()
   void messageStore.refreshHistory().then(scrollHistoryCursor)
-})
-watch(() => messageStore.sessionListItems.length, (count) => {
-  historyCursor.value = Math.min(historyCursor.value, Math.max(0, count - 1))
 })
 
 function onDrawerKeydown(event: KeyboardEvent): void {
@@ -78,9 +82,9 @@ function onDrawerKeydown(event: KeyboardEvent): void {
     const item = messageStore.sessionListItems[historyCursor.value]
     if (item) void selectHistory(item.id)
   } else {
-    const count = messageStore.sessionListItems.length
-    if (!count) return
-    historyCursor.value = (historyCursor.value + (event.key === 'ArrowDown' ? 1 : -1) + count) % count
+    const items = messageStore.sessionListItems
+    if (!items.length) return
+    cursorSessionId.value = items[(historyCursor.value + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].id
     scrollHistoryCursor()
   }
 }
@@ -150,7 +154,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onDrawerKeydown, tru
               <span class="chat-panel__history-item-preview">{{ item.preview || formatSessionTime(item.updatedAt) }}</span>
             </span>
             <span
-              v-if="item.running"
+              v-if="item.awaitingConfirm"
+              name="maestro__history-item-confirm"
+              class="chat-panel__history-item-confirm"
+              :title="i18nHelper.maestroControl.chat.awaitingConfirmSession"
+            ></span>
+            <span
+              v-else-if="item.running"
               name="maestro__history-item-running"
               class="chat-panel__history-item-running"
               :title="i18nHelper.maestroControl.chat.sessionRunning"

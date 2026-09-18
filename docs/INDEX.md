@@ -454,7 +454,7 @@ design document.
 
 - [Maestro default workspace](features/maestro-default-workspace.md) — implemented 2026-09-10; owner E2E pending:
   with nothing bound, EVERY workspace tool (`write_file` / `create_artifact` included) resolves against ONE shared
-  `~/.bitterless-<profile id>/default-workspace`, `mkdir -p` at boot and keyed by the same axis that splits userData.
+  `~/.bitterless_<edition>/default_workspace` (2026-09-18: the directory name carries the edition the same way userData does — derived from the profile's `appName`, so Production is `~/.bitterless` and Preview is `~/.bitterless_preview`; its absolute path is named in the system prompt while the UI still shows "none selected"), `mkdir -p` at boot.
   Retires the per-chat `<userData>/cowork/chat_workspaces/<chat id>` fallback and `resolveWritablePath`; relative reads
   now share the writes base. Explicit workspace still wins; `isInsideRoot` + realpath checks unchanged.
 
@@ -1072,6 +1072,13 @@ earlier review rounds were remediated; Ral's runtime/visual verification remains
 
 ## Issues
 
+- [聊天工具条的 `…` 飘到中间,Session tabs 先隐藏](issues/chat-toolbar-overflow-drifts-to-the-middle.md) — fixed;
+  owner verification pending。工具条是 `space-between`,它自己的注释早就写明**只能有两个孩子**,
+  却长到了四个 —— 中间两个被均分推到三等分处。所以这不是间距问题,调 `gap` 永远修不好它。
+  把 `…` 与 `+` 收进一个 `chat-panel__toolbar-actions` 组(组内 8px),两孩子不变量就回来了。
+  Session tabs 是**注释掉**而非删除,`import` 必须一起注释(否则 `noUnusedLocals` 直接编译报错)。
+  cowork 同改。
+
 - [Zellij tab 里焦点不在终端上时 `Cmd+W` 关掉整扇窗](issues/maestro-zellij-chrome-cmd-w-closes-window.md) — fixed, code-verified;
   owner verification pending: 迷你应用的 chrome 跑在 default session,Maestro 的 partition 判定看不见它,
   于是 `Cmd+W` 穿到应用菜单的 `close` role。认领改成按键当刻求值的判定,chrome 只在 docked 进 Maestro
@@ -1266,6 +1273,7 @@ earlier review rounds were remediated; Ral's runtime/visual verification remains
 - [EyesOnAgents Desktop Focus](issues/archived/eyes-on-agents-desktop-focus.md) - fixed: active Codex Desktop tasks
 - [A skill's declared entry outside its package could not run](issues/skill-declared-entry-outside-package.md) — fixed here too; same run_skill_file confinement. No shell gap on this side: bitterless has only PiRuntimeAdapter, so pi's `bash` is live.
 - [Tool approval had no clickable button](issues/tool-approval-has-no-clickable-button.md) — not present here (confirm sync already precedes the task binding); the unbounded detail height was, and is capped.
+- [斜杠命令回执、工具超时与脚本流式输出](issues/command-notice-tool-timeout-and-script-streaming.md) — fixed here too; same per-tool timeout removal, script output streaming and muted command receipts, paired with Cowork.
   missing from Focus when lifecycle observation is absent or expires too early.
 
 ## Legacy references

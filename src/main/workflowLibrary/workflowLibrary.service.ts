@@ -2,7 +2,8 @@ import { createHash, randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import AdmZip from 'adm-zip'
 import type { CustomerSessionPayload } from '../../shared/auth/auth.type'
-import type { CloudWorkflow, InstalledWorkflow, WorkflowLibraryDetail, WorkflowLibrarySnapshot, WorkflowLibraryItem } from '../../shared/workflowLibrary.type'
+import type { CloudWorkflow, InstalledWorkflow, WorkflowLibraryDetail, WorkflowLibrarySnapshot, WorkflowLibraryItem, WorkflowSource } from '../../shared/workflowLibrary.type'
+import { MAX_SOURCE_BYTES } from '../../shared/workflowLibrary.type'
 import { sharedWorkflowDemoFiles } from '../../shared/sharedWorkflowDemo'
 import { WORKFLOW_LIMITS } from '../../shared/workflowPackage'
 import { WorkflowPackageStorage } from './workflowPackageStorage'
@@ -92,6 +93,16 @@ export class WorkflowLibraryService {
         throw error
       }
     })
+  }
+
+  async source(params: { ref: string }): Promise<WorkflowSource> {
+    const parts = typeof params?.ref === 'string' ? params.ref.split(':') : []
+    if (parts[0] === 'shared' && parts.length === 2 && positive(Number(parts[1]))) return this.sharedStorage().source(Number(parts[1]), MAX_SOURCE_BYTES)
+    if (parts[0] === 'institution' && parts.length === 3 && positive(Number(parts[1])) && positive(Number(parts[2]))) {
+      if (Number(parts[1]) !== this.state.institutionId || !this.storage) throw new Error('Select an institution and refresh its workflows.')
+      return this.storage.source(Number(parts[2]), MAX_SOURCE_BYTES)
+    }
+    throw new Error('Select a valid workflow.')
   }
 
   importShared(bytes: Buffer): WorkflowLibraryDetail {

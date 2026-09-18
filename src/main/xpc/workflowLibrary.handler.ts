@@ -28,6 +28,7 @@ const reply = async <T>(operation: () => Promise<T>): Promise<WorkflowLibraryRep
 class WorkflowLibraryHandler extends XpcMainHandler implements WorkflowLibraryApi {
   snapshot(params?: { institutionId?: number }) { return reply(() => service.snapshot(params)) }
   preview(params: { id: number; context: string; scope?: 'shared' | 'institution' }) { return reply(() => service.preview(params)) }
+  source(params: { ref: string }) { return reply(() => service.source(params)) }
   importShared() {
     return reply(async () => {
       const selected = await dialog.showOpenDialog({ title: 'Import shared workflow package', filters: [{ name: 'Workflow ZIP', extensions: ['zip'] }], properties: ['openFile'] })

@@ -209,6 +209,12 @@ test('stable drawer owns history navigation, search, IME guards and editable und
     key('h', { metaKey: true })
     await flush()
     assert.equal(cursorTitle(), 'Session b')
+    // 打开时的 refreshHistory 会让列表按 未读 → 进行中 → 已读 重排:游标记 id,不记下标。
+    fixture.messages.sessionListItems = [...fixture.messages.sessionListItems].reverse()
+    await flush()
+    assert.equal(cursorTitle(), 'Session b')
+    fixture.messages.sessionListItems = [...fixture.messages.sessionListItems].reverse()
+    await flush()
     key('ArrowUp'); key('ArrowUp')
     await flush()
     assert.equal(cursorTitle(), 'Session c')

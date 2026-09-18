@@ -1,6 +1,8 @@
 import { reactive } from 'vue'
 import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer'
-import { WORKFLOW_LIBRARY_CHANGED, WORKFLOW_LIBRARY_HANDLER, type WorkflowLibraryApi, type WorkflowLibrarySnapshot, type WorkflowLibraryDetail } from '@shared/workflowLibrary.type'
+import { WORKFLOW_LIBRARY_CHANGED, WORKFLOW_LIBRARY_HANDLER, type WorkflowLibraryApi, type WorkflowLibrarySnapshot, type WorkflowLibraryDetail, type WorkflowSource } from '@shared/workflowLibrary.type'
+
+export type WorkflowLibraryTab = 'flow' | 'details' | 'source'
 
 const api = createXpcRendererEmitter<WorkflowLibraryApi>(WORKFLOW_LIBRARY_HANDLER)
 export class WorkflowLibraryState {
@@ -14,11 +16,16 @@ export class WorkflowLibraryState {
   loadingDetail = false
   error = ''
   detailError = ''
-  activeTab: 'flow' | 'details' = 'flow'
+  activeTab: WorkflowLibraryTab = 'flow'
+  source: WorkflowSource | null = null
+  loadingSource = false
+  sourceError = ''
+  sourceCopied = false
   private active = false
   private subscribed = false
   private request = 0
   private detailRequest = 0
+  private sourceRequest = 0
   constructor(private readonly client: WorkflowLibraryApi = api) {}
 
   get items() {
@@ -40,7 +47,7 @@ export class WorkflowLibraryState {
     }
     await this.refresh()
   }
-  destroy(): void { this.active = false; this.request++; this.detailRequest++; this.loading = false; this.loadingDetail = false }
+  destroy(): void { this.active = false; this.request++; this.detailRequest++; this.loading = false; this.loadingDetail = false; this.clearSource() }
 
   apply(snapshot: WorkflowLibrarySnapshot): void {
     const contextChanged = snapshot.context !== this.snapshot?.context
@@ -52,6 +59,7 @@ export class WorkflowLibraryState {
       this.selectedRef = null
       this.selectedNodeId = ''
       this.loadingDetail = false
+      this.clearSource()
     }
     this.snapshot = snapshot
     this.error = snapshot.error ?? ''
@@ -67,6 +75,7 @@ export class WorkflowLibraryState {
       this.detail = null
       this.selectedRef = null
       this.snapshot = null
+      this.clearSource()
     }
     try {
       const reply = await this.client.snapshot(institutionId === undefined ? undefined : { institutionId })
@@ -83,6 +92,7 @@ export class WorkflowLibraryState {
     if (!context || !item) return
     const request = ++this.detailRequest
     if (this.selectedRef !== ref) { this.detail = null; this.selectedNodeId = '' }
+    this.clearSource()
     this.selectedRef = ref
     this.loadingDetail = true
     this.detailError = ''
@@ -92,8 +102,44 @@ export class WorkflowLibraryState {
       if (!reply?.ok) throw new Error(reply?.error || 'Workflow preview was not acknowledged.')
       this.detail = reply.value
       this.selectedNodeId = reply.value.manifest.graph.nodes[0]?.id ?? ''
+      if (this.activeTab === 'source') void this.loadSource()
     } catch (error) { if (request === this.detailRequest) this.detailError = error instanceof Error ? error.message : String(error) }
     finally { if (request === this.detailRequest) this.loadingDetail = false }
+  }
+
+  setTab(tab: WorkflowLibraryTab): void {
+    this.activeTab = tab
+    if (tab === 'source' && !this.source && !this.loadingSource && !this.sourceError) void this.loadSource()
+  }
+
+  async loadSource(): Promise<void> {
+    const ref = this.selectedRef
+    if (!ref || !this.selected?.installedRevision) return
+    const request = ++this.sourceRequest
+    this.loadingSource = true
+    this.sourceError = ''
+    this.sourceCopied = false
+    try {
+      const reply = await this.client.source({ ref })
+      if (request !== this.sourceRequest) return
+      if (!reply?.ok) throw new Error(reply?.error || 'Workflow source was not acknowledged.')
+      this.source = reply.value
+    } catch (error) { if (request === this.sourceRequest) this.sourceError = error instanceof Error ? error.message : String(error) }
+    finally { if (request === this.sourceRequest) this.loadingSource = false }
+  }
+
+  async copySource(): Promise<void> {
+    if (!this.source) return
+    try { await navigator.clipboard.writeText(this.source.text); this.sourceCopied = true }
+    catch (error) { this.sourceCopied = false; this.sourceError = error instanceof Error ? error.message : String(error) }
+  }
+
+  private clearSource(): void {
+    this.sourceRequest++
+    this.source = null
+    this.sourceError = ''
+    this.loadingSource = false
+    this.sourceCopied = false
   }
 
   async importShared(): Promise<void> {

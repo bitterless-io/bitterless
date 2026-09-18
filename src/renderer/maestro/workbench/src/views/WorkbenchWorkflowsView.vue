@@ -26,7 +26,7 @@
           <div><div class="workbench-workflows__identity"><span class="workbench-workflows__mark"><IconSitemap :size="20" /></span><h2>{{ store.selected.name }}</h2><span class="workbench-workflows__revision">{{ text.scopes[store.selected.scope] }} · r{{ store.selected.revision }}</span></div><p>{{ store.selected.description }}</p></div>
           <a-button size="small" :loading="store.loadingDetail" @click="store.select(store.selected.ref)"><template #icon><IconCloudDownload :size="16" /></template>{{ store.detail ? text.sync : text.download }}</a-button>
         </header>
-        <div class="workbench-workflows__subnav"><div role="tablist"><button type="button" role="tab" :aria-selected="store.activeTab === 'flow'" :class="{ selected: store.activeTab === 'flow' }" @click="store.activeTab = 'flow'">{{ text.flow }}</button><button type="button" role="tab" :aria-selected="store.activeTab === 'details'" :class="{ selected: store.activeTab === 'details' }" @click="store.activeTab = 'details'">{{ text.details }}</button></div><span v-if="store.detail" class="workbench-workflows__engine"><span></span>Kimchi 0.0.9</span></div>
+        <div class="workbench-workflows__subnav"><div role="tablist"><button type="button" role="tab" :aria-selected="store.activeTab === 'flow'" :class="{ selected: store.activeTab === 'flow' }" @click="store.setTab('flow')">{{ text.flow }}</button><button type="button" role="tab" :aria-selected="store.activeTab === 'details'" :class="{ selected: store.activeTab === 'details' }" @click="store.setTab('details')">{{ text.details }}</button><button type="button" role="tab" :aria-selected="store.activeTab === 'source'" :class="{ selected: store.activeTab === 'source' }" @click="store.setTab('source')">{{ text.source }}</button></div><span v-if="store.detail" class="workbench-workflows__engine"><span></span>Kimchi 0.0.9</span></div>
         <div v-if="store.detailError || store.selected.syncError" class="workbench-workflows__notice" role="alert"><IconAlertCircle :size="16" />{{ store.detailError || store.selected.syncError }}<span v-if="store.detail">{{ text.keptPrevious }}</span><button type="button" @click="store.select(store.selected.ref)">{{ text.retry }}</button></div>
         <div v-if="store.loadingDetail && !store.detail" class="workbench-workflows__empty"><a-spin /><span>{{ text.downloading }}</span></div>
         <template v-else-if="store.detail">
@@ -34,6 +34,20 @@
             <WorkflowFlow :graph="store.detail.manifest.graph" :selected="store.selectedNodeId" @select="store.selectedNodeId = $event" />
             <div name="workbench-workflows__step" class="workbench-workflows__step"><div><span class="workbench-workflows__step-label">{{ text.selectedStep }}</span><h3>{{ store.selectedNode?.label || text.selectStep }}</h3><p>{{ store.selectedNode?.description || text.noStepDescription }}</p></div><span v-if="store.selectedNode" class="workbench-workflows__kind">{{ text.kinds[store.selectedNode.kind] }}</span></div>
           </template>
+          <div v-else-if="store.activeTab === 'source'" name="workbench-workflows__source" class="workbench-workflows__source">
+            <div v-if="!store.selected.installedRevision" class="workbench-workflows__empty"><IconCloudDownload :size="28" /><span>{{ text.sourceNotInstalled }}</span></div>
+            <div v-else-if="store.loadingSource && !store.source" class="workbench-workflows__empty"><a-spin /><span>{{ text.loading }}</span></div>
+            <div v-else-if="store.sourceError" class="workbench-workflows__notice" role="alert"><IconAlertCircle :size="16" /><span>{{ text.sourceFailed }}</span><span>{{ store.sourceError }}</span><button type="button" @click="store.loadSource()">{{ text.retry }}</button></div>
+            <template v-else-if="store.source">
+              <div class="workbench-workflows__source-bar">
+                <span class="workbench-workflows__source-name">{{ store.source.name }} · {{ (store.source.bytes / 1024).toFixed(1) }} KB</span>
+                <span v-if="store.source.truncated" class="workbench-workflows__source-truncated">{{ text.sourceTruncated }}</span>
+                <a-button size="mini" type="text" :disabled="store.loadingSource" @click="store.copySource()"><template #icon><IconCopy :size="15" /></template>{{ store.sourceCopied ? text.sourceCopied : text.copySource }}</a-button>
+              </div>
+              <pre class="workbench-workflows__source-text">{{ store.source.text }}</pre>
+            </template>
+            <div v-else class="workbench-workflows__empty"><IconAlertCircle :size="28" /><span>{{ text.sourceEmpty }}</span></div>
+          </div>
           <div v-else class="workbench-workflows__metadata">
             <h3>{{ text.package }}</h3><p>{{ store.detail.manifest.description }}</p>
             <dl><dt>{{ text.engine }}</dt><dd>{{ store.detail.manifest.engine }}</dd><dt>{{ text.cloudRevision }}</dt><dd>{{ store.selected.revision }}</dd><dt>{{ text.localRevision }}</dt><dd>{{ store.detail.installedRevision }}</dd><dt>{{ text.fileName }}</dt><dd>{{ store.selected.file_name }}</dd><dt>{{ text.size }}</dt><dd>{{ (store.selected.size / 1024).toFixed(1) }} KB</dd><dt>SHA-256</dt><dd class="workbench-workflows__hash">{{ store.selected.hash }}</dd><dt>{{ text.entry }}</dt><dd>{{ store.detail.manifest.entry }}</dd></dl>

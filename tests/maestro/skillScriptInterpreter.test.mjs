@@ -104,3 +104,27 @@ test('a failing script reports its exit code instead of looking successful', asy
   assert.equal(result.exitCode, 3)
   assert.match(String(result.stderr ?? ''), /to-stderr/)
 })
+
+// Ral, 2026-09-18:「技能脚本执行过程中，要能依据打印，给用户持续的反馈，而不是脚本执行完了一次性
+// 给反馈」. A long script used to look identical to a hung one: everything it printed was buffered
+// until exit. These pin the streaming contract — per LINE (a chunk boundary is not a line boundary),
+// both streams, and the trailing line that has no newline after it.
+test('a running script reports each line while it runs, not only when it exits', async t => {
+  const s = stage(t)
+  const seen = []
+  const file = put(s.pkg, 'run.sh', '#!/usr/bin/env bash\necho one\necho two >&2\nprintf "three-no-newline"\n')
+  const result = await run(file, s, { onOutput: (line, stream) => seen.push(`${stream}:${line}`) })
+  assert.equal(result.ok, true, `script must run: ${result.error || ''}`)
+  assert.deepEqual(seen, ['stdout:one', 'stderr:two', 'stdout:three-no-newline'],
+    'each line arrives separately, stderr is labelled, and the unterminated last line is flushed')
+})
+
+test('streaming does not change what the caller finally receives', async t => {
+  const s = stage(t)
+  const file = put(s.pkg, 'run.sh', '#!/usr/bin/env bash\necho alpha\necho beta\n')
+  const streamed = await run(file, s, { onOutput: () => {} })
+  const plain = await run(file, s)
+  assert.equal(streamed.ok, true)
+  assert.equal(String(streamed.stdout ?? '').trim(), String(plain.stdout ?? '').trim(),
+    'the buffered result is the model-visible one and must be identical with or without a listener')
+})

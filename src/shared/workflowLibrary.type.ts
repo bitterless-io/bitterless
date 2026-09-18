@@ -27,10 +27,13 @@ export interface WorkflowLibrarySnapshot {
   error: string | null
 }
 export interface WorkflowLibraryDetail { workflow: WorkflowLibraryItem; manifest: WorkflowManifest; entry: string; installedRevision: number }
+export interface WorkflowSource { path: string; name: string; text: string; bytes: number; truncated: boolean }
+export const MAX_SOURCE_BYTES = 256 * 1024
 export type WorkflowLibraryReply<T> = { ok: true; value: T } | { ok: false; error: string }
 export interface WorkflowLibraryApi {
   snapshot(params?: { institutionId?: number }): Promise<WorkflowLibraryReply<WorkflowLibrarySnapshot>>
   preview(params: { id: number; context: string; scope?: 'shared' | 'institution' }): Promise<WorkflowLibraryReply<WorkflowLibraryDetail>>
+  source(params: { ref: string }): Promise<WorkflowLibraryReply<WorkflowSource>>
   importShared(): Promise<WorkflowLibraryReply<WorkflowLibraryDetail | null>>
 }
 export const WORKFLOW_LIBRARY_HANDLER = 'WorkflowLibraryHandler'

@@ -238,6 +238,15 @@ export const buildAgentTurnPrompt = (params: {
   currentUrl: string
   catalog?: string
   skillAuthoring?: { globalRoot: string; bunPath: string }
+  /**
+   * The directory actually in use when no workspace is selected (Ral 2026-09-18:
+   * 「默认 workspace 要进系统提示词」).
+   *
+   * The line used to say a default workspace was in use without naming it, so the model could not
+   * tell where its files landed or report the path back. The UI still shows "none selected" — this
+   * is an implicit fallback, not a selection. Paired with micromeet-cowork.
+   */
+  defaultWorkspacePath?: string
   briefs: AgentSkillBrief[]
 }): string => {
   let domain = params.currentUrl
@@ -305,7 +314,7 @@ export const buildAgentTurnPrompt = (params: {
     `- Message sent at: ${params.nowLocal}`,
     workspace?.path
       ? `- Active workspace: ${workspace.path}`
-      : '- Active workspace: none selected — the ONE shared default workspace is in use',
+      : `- Active workspace: none selected — the shared default workspace is in use${params.defaultWorkspacePath ? `: ${params.defaultWorkspacePath}` : ''}`,
     describeActiveTabLine(params.activeTab),
     'Open tabs when this message was sent:',
     JSON.stringify(params.openTabs ?? []),

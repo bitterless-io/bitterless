@@ -12,7 +12,7 @@ import { isTaskLive, type MaestroTask } from '@maestro-shared/task.api'
 import { workflowActivityFacts } from './workflow.presentation'
 import type { MessageSession } from './store/message.type'
 import { isRejection } from './store/turn.service'
-import { messageStore } from './store/message.store'
+import { messageStore, pendingConfirmMessages } from './store/message.store'
 import { taskStore } from './store/task.store'
 import { workflowStore } from './store/workflow.store'
 import './ResponseStatus.less'
@@ -30,7 +30,23 @@ interface StatusView {
 const tick = ref(Date.now())
 const turn = computed(() => props.session.turn)
 const live = computed(() => taskStore.tasks.filter((task) => task.sessionId === props.session.id && isTaskLive(task)))
-const confirming = computed(() => live.value.find((task) => task.state.pendingConfirm))
+/**
+ * "Waiting on you" has to come from the same place the clickable card does.
+ *
+ * Reading the task registry alone fails in both directions: it can announce a question before any
+ * answerable card exists (the state Ral screenshotted — a status line pointing at no button), and it
+ * keeps announcing one after the click, because the answer lands on the card first and a
+ * `resolveConfirm` that does not match returns `ok:false` and leaves `pendingConfirm` set forever.
+ *
+ * Ral 2026-09-18:「不能只有 waiting on you 而没 confirm 入口，点击允许/拒绝后 waiting on you
+ * 也就不能再被显示」. So the predicate is now exactly ChatConfirmSheet's: an unanswered confirm
+ * message in this session. Paired with micromeet-cowork.
+ */
+const answerableTaskIds = computed(
+  () => new Set(pendingConfirmMessages(props.session).map((m) => m.confirm!.taskId))
+)
+const awaitingAnswer = (task: MaestroTask): boolean => Boolean(task.state.pendingConfirm) && answerableTaskIds.value.has(task.id)
+const confirming = computed(() => live.value.find(awaitingAnswer))
 const waiting = computed(() => live.value.find((task) => task.state.waitingFor))
 
 const taskLabel = (task: MaestroTask): string => task.state.title || task.name

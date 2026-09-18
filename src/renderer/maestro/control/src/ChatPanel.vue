@@ -11,7 +11,9 @@ import type { CoachXpcContract } from '@maestro-shared/coach.api'
 import type { ContextGraphView } from '@maestro-shared/coach.api'
 import ContextGraphModal from './ContextGraphModal.vue'
 import WorkflowTaskBar from './WorkflowTaskBar.vue'
-import AgentBrowserTabs from './AgentBrowserTabs.vue'
+// Session tabs 暂时隐藏(Ral 2026-09-18);模板里那行也一并注释掉了。留着 import 会因
+// `noUnusedLocals` 变成编译错误,所以两处必须一起动。
+// import AgentBrowserTabs from './AgentBrowserTabs.vue'
 import { sessionActions } from './store/sessionActions.store'
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
 import IconBtn from '../../../common/components/IconBtn/IconBtn.vue'
@@ -641,6 +643,18 @@ async function stopUsingWorkspace(): Promise<void> {
             </span>
           </Tooltip>
         </div>
+        <!-- 待答 confirm —— 琥珀点 + 数字(Ral 2026-09-18)。和在跑的灰色并排但颜色不同:
+             在跑是「还没轮到你」,这个是**卡在你这儿**,用确认卡/状态条同一套琥珀色。
+             数字是**会话数**,计数与按钮、状态条同源,答完自动归零。 -->
+        <span
+          v-if="messageStore.awaitingConfirmSessionCount"
+          name="maestro__sessions-confirm"
+          class="chat-panel__sessions-confirm"
+          :title="withCount(i18nHelper.maestroControl.chat.awaitingConfirmSessions, messageStore.awaitingConfirmSessionCount)"
+        >
+          <span class="chat-panel__sessions-confirm-dot"></span>
+          <span class="chat-panel__sessions-running-count">{{ messageStore.awaitingConfirmSessionCount }}</span>
+        </span>
         <!-- 在跑是**灰的**:在跑是「还没到你」,未读才是「等你看」,只有后者用强调色抢注意力。 -->
         <span
           v-if="messageStore.runningSessionCount"
@@ -652,14 +666,20 @@ async function stopUsingWorkspace(): Promise<void> {
           <span class="chat-panel__sessions-running-count">{{ messageStore.runningSessionCount }}</span>
         </span>
       </div>
-      <AgentBrowserTabs :session-id="session.id" :running="Boolean(session.turn)" />
-      <Dropdown trigger="click" position="br">
-        <IconBtn name="maestro__tasks-menu" class="chat-panel__tasks-menu" :aria-label="i18nHelper.workflow.tasks"><IconDotsVertical :size="16" /></IconBtn>
-        <template #content><Doption @click="tasksVisible = true">{{ i18nHelper.workflow.tasks }}</Doption></template>
-      </Dropdown>
-      <Tooltip :content="shortcut('N')" position="bottom" mini>
-        <IconBtn name="maestro__new_chat" class="chat-panel__new-chat" :disabled="Boolean(session.archivedAt)" :aria-label="i18nHelper.maestroControl.chat.newChat" @click="startNewChat"><IconPlus :size="16" stroke="1.8" /></IconBtn>
-      </Tooltip>
+      <!-- Session tabs 暂时隐藏(Ral 2026-09-18)。组件与 store 原样保留,恢复时把下面这行取消注释、
+           连同 <script> 里的 import 一起放回即可。
+           <AgentBrowserTabs :session-id="session.id" :running="Boolean(session.turn)" /> -->
+      <!-- `…` 与 `+` 必须自成一组。这一行是 `justify-between`,**孩子多于两个时中间的会被均分推开** ——
+           那正是 `…` 原来飘在中间的原因。成组之后组内间距由 8px 的 gap 决定,与整行的 gap 无关。 -->
+      <div name="chat-panel__toolbar-actions" class="chat-panel__toolbar-actions">
+        <Dropdown trigger="click" position="br">
+          <IconBtn name="maestro__tasks-menu" class="chat-panel__tasks-menu" :aria-label="i18nHelper.workflow.tasks"><IconDotsVertical :size="16" /></IconBtn>
+          <template #content><Doption @click="tasksVisible = true">{{ i18nHelper.workflow.tasks }}</Doption></template>
+        </Dropdown>
+        <Tooltip :content="shortcut('N')" position="bottom" mini>
+          <IconBtn name="maestro__new_chat" class="chat-panel__new-chat" :disabled="Boolean(session.archivedAt)" :aria-label="i18nHelper.maestroControl.chat.newChat" @click="startNewChat"><IconPlus :size="16" stroke="1.8" /></IconBtn>
+        </Tooltip>
+      </div>
     </div>
     <MessageList :messages="session.messages" />
     <Modal v-model:visible="tasksVisible" :title="i18nHelper.workflow.tasks" :footer="false" :width="620" :mask-closable="true" :unmount-on-close="true" modal-class="chat-panel__tasks-modal">

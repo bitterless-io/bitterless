@@ -146,4 +146,11 @@ export interface SessionListItem {
   running: boolean
   /** 有你没看过的结论 —— 蓝点,排最上。 */
   unread: boolean
+  /**
+   * 这个会话里有**还没回答的 confirm** —— 黄点。
+   *
+   * 和蓝点不是一回事:蓝点是「有新结论要看」,黄点是**挡住流程**,那一轮在等人点允许/拒绝。
+   * 判据与确认卡、状态条同源(未被回答的 `type: 'confirm'` 消息),所以答完三处一起消失。
+   */
+  awaitingConfirm: boolean
 }

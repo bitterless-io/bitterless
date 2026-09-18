@@ -215,6 +215,23 @@ const plainFiles = (files?: ChatFile[]): ChatFile[] | undefined =>
 const jsonSafe = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
 
+/**
+ * The confirm cards in this session that nobody has answered yet.
+ *
+ * This is the ONE predicate for "something is waiting on you", shared by the action sheet (which
+ * draws the buttons), the status line, and the session list / Sessions entry dot. Sharing is not
+ * tidiness: separate copies produce the two self-contradicting states we already shipped once —
+ * a status line with no button under it, and a dot still lit after the click
+ * (issues/tool-approval-has-no-clickable-button.md).
+ *
+ * It keys on the MESSAGE, not the task registry: the answer lands on the card first, and a
+ * `resolveConfirm` that does not match never clears `pendingConfirm` at all.
+ */
+export const pendingConfirmMessages = (session: Pick<MessageSession, 'messages'>): ChatMessage[] =>
+  (session.messages || []).filter((message) => message.type === 'confirm' && message.confirm && !message.confirm.answer)
+
+export const sessionAwaitsConfirm = (session: Pick<MessageSession, 'messages'>): boolean => pendingConfirmMessages(session).length > 0
+
 @injectable()
 export class MessageStoreState {
   editingTitleSessionId = ''
@@ -1182,7 +1199,10 @@ export class MessageStoreState {
         preview,
         updatedAt: session?.updatedAt || updatedAt,
         running: Boolean(session?.turn || this.activeAgentTurnSnapshots.some((turn) => turn.sessionId === id)),
-        unread: this.unreadSessionIds.includes(id)
+        unread: this.unreadSessionIds.includes(id),
+        // Only a live session can hold a pending confirm — the task registry is in memory and a
+        // persisted summary carries no messages.
+        awaitingConfirm: Boolean(session && sessionAwaitsConfirm(session))
       })
     }
     for (const summary of this.historySessions) {
@@ -1199,6 +1219,15 @@ export class MessageStoreState {
   }
 
   /** 有未读结论的会话数 —— Sessions 图标上的蓝色角标。 */
+  /**
+   * Sessions with a confirm still waiting for an answer — the amber count on the Sessions entry
+   * (Ral 2026-09-18:「chat header 操作栏如果需要 confirm 这里应该显示一个黄点+数字，点开的
+   * session 列表应该也有黄点，点进去操作 confirm 或拒绝后更新黄点的展示」).
+   */
+  get awaitingConfirmSessionCount(): number {
+    return this.sessionListItems.filter((item) => item.awaitingConfirm).length
+  }
+
   get unreadSessionCount(): number {
     return this.sessionListItems.filter((item) => item.unread).length
   }

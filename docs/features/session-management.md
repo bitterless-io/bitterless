@@ -173,3 +173,29 @@ Code verification on 2026-09-15: **66 tests passed**.
 - No model calls, app launch, Electron E2E, build or independent review. Provider title quality, language choice and removal of identifying values depend on the fixed instructions plus bounded output validation; they are not semantic guarantees. A timeout/failure or process restart retains the fallback without automatic retry.
 
 Human check: in a new ordinary chat, send a substantive first message and confirm the first-line title appears immediately while the reply starts; after the background task succeeds, a short same-language title replaces it without a notice or selection change. While a title request is pending, manually rename (also rename then undo), open its title editor, or archive that chat; its late result must not overwrite the protected title. Confirm explicitly named/Coaches and existing sessions remain unchanged.
+
+## 2026-09-18 Sessions drawer keyboard: Enter activates, opening selects the current session
+
+Owner request (Ral, 2026-09-18); shared contract with CoWork
+(`micromeet-cowork/docs/features/session-management.md`). In the Sessions drawer, Enter must
+activate the selected row with exactly the effect of clicking it, and opening the drawer must
+pre-select the session that is currently active.
+
+- While the drawer is open it owns Up/Down/Enter/Escape. The listener is registered in the **capture**
+  phase on `window` and stops propagation for those keys, so the composer never sees them. Maestro
+  already did this; CoWork registered in the bubble phase, where the composer textarea handled Enter
+  first (`preventDefault()` then send) and the drawer's `event.defaultPrevented` guard discarded the
+  key.
+- Enter routes through the same `selectHistory(id)` the row's click handler calls, so the two are
+  identical by construction.
+- Opening the drawer puts the cursor on the active session's row and scrolls it into view.
+- The cursor is held as a **session id**, not a list index. `sessionListItems` re-sorts
+  (unread → running → read) and the drawer refreshes history asynchronously while opening, so an
+  index captured at open time silently points at a different session once that refresh lands — the
+  cause of "opening the drawer does not select the current session". A cursor whose session leaves
+  the list (archive, delete) falls back to the first row.
+- Escape closes the drawer. An empty list accepts the keys and selects nothing.
+
+Implementation: `src/renderer/maestro/control/src/SessionsDrawer.vue` only.
+
+Verification: see the run recorded at the end of this document.

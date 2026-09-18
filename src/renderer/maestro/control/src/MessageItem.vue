@@ -81,6 +81,10 @@ const showBubble = computed(() => {
 const messageBubbleClass = (message: ChatMessage): string => {
   if (message.source === 'connector') return 'message-item__bubble--connector'
   if (message.error) return 'message-item__bubble--error'
+  // A slash command's receipt is `role: 'ai'`, so it reads exactly like the model's own answer.
+  // Ral 2026-09-18:「这种快捷指令的输出改成淡灰色文字和 ai 主要回答区分开」. Keyed on `localOnly`,
+  // which only this class of message carries — never on the wording. Paired with micromeet-cowork.
+  if (message.localOnly) return 'message-item__bubble--notice'
   if (isMaestroHuman(message)) return 'message-item__bubble--human'
   return 'message-item__bubble--assistant'
 }
