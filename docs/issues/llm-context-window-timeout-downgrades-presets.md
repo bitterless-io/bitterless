@@ -15,7 +15,7 @@ Reported by Ral 2026-09-17:
 That warning appears on boot — twice at 17:25:09 and again at 17:32:24 in the same session — and
 reads as harmless ("we could not resolve the windows, so we use the default").
 
-## It was not harmless
+## The fallback defect was not harmless
 
 `applyResolvedContextWindows` resolved each preset as
 `resolved[key] || DEFAULT_CONTEXT_WINDOW_TOKENS`, i.e. it **ignored the value configured on the
@@ -32,9 +32,16 @@ micromeet-cowork: configured=266,266,266,266   HEAD=256,256,256,256   fixed=266,
 ```
 
 The compression trigger, the reserve budget and the summary cap are all multiplied by that number,
-so a single 3-second hiccup quietly re-pointed all three — in the same direction the
-`applyResolvedContextWindows` mechanism was introduced to prevent. The log line said the batch fell
-back to a default; what it actually did was discard correct configuration.
+so a genuine timeout or failed lookup could quietly re-point all three — in the same direction the
+`applyResolvedContextWindows` mechanism was introduced to prevent. On that fallback path, correct
+configuration was discarded. The warning by itself does not prove that the fallback path ran.
+
+## Attribution correction — 2026-09-17
+
+The warning is not proof of a slow cold start. The losing timeout arm logs even after a successful
+lookup because its timer was never cleared; see [the follow-up issue](context-window-timeout-false-warning.md).
+The possible slow phases below explain a genuine deadline, not the supplied warning on their own.
+The fallback-value repair remains valid independently.
 
 ## Why the resolve can exceed 3s at all
 
@@ -49,17 +56,16 @@ back to a default; what it actually did was discard correct configuration.
 3. `new pi.ModelRegistry(...)` plus pure `find()` table lookups, which are fast.
 
 So the 3s bound is protecting a boot-critical phase (`renderer-config`, 15s budget) from steps 1–2.
-The timeout firing is a *slow cold start*, not a failure — which is exactly why collapsing the
-configuration on that path was the wrong response.
+A genuine deadline can be caused by a slow cold start; the unconditional timer log did not establish
+that this happened. Collapsing the configuration on an actual deadline was still wrong.
 
 ## Repair
 
 - **An unresolved target keeps its own configured window.** `applyResolvedContextWindows` now reads
   `resolved[key] || preset.contextLengthK * 1024 || DEFAULT_CONTEXT_WINDOW_TOKENS`. pi still wins
   whenever it answers in time, so the drift protection is intact; `DEFAULT_CONTEXT_WINDOW_TOKENS`
-  becomes the last resort for a preset that configures nothing. `ai-crms` models — absent from pi's
-  catalog, so permanently on this path — now get their configured 256K, which is the value they
-  already had.
+  becomes the last resort for a preset that configures nothing. Cowork's `ai-crms` models can
+  resolve from its custom `models.json` catalog; when unresolved they keep their configured 256K.
 - **The two log lines no longer lie.** "整批退 256K" → "沿用预设里配置的窗口".
 - The label is still derived from the same token count, so the number and the label cannot disagree.
 
@@ -86,5 +92,5 @@ both of which survive this change.
 Whether the compression trigger / reserve / summary math should change now that the windows are
 stable — Ral 2026-09-17:「压缩后面再处理」. Also not addressed: moving the resolve off the boot path
 entirely (persist the resolved windows and refresh in the background), which would remove the
-warning rather than make it accurate. With the fallback fixed, the warning is now only a note that
-pi was slow.
+warning on a genuine slow lookup. The later timer-lifecycle investigation above established that
+the warning could also be emitted after a successful fast lookup.

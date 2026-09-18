@@ -259,35 +259,38 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
    * 手写值与 pi 实际用的窗口没有任何同步机制 —— 而压缩的触发线、reserve 预算、summary 上限
    * 全都乘在它上面。1M 的模型被当 256K 会提前压;200K 的被当 1M,压缩**永远不触发直到溢出**。
    *
-   * 解析失败(目录读不到、未登录、provider 不认识)**不阻断配置** —— 整批退回 256K 兜底,
-   * 并留一条日志。配置面板打不开比窗口不准严重得多。
+   * 解析失败或超时**不阻断配置** —— 沿用各预设配置的窗口并留日志。
+   * 个别模型未解析到窗口时也沿用配置。
    */
   private async withResolvedContextWindows(
     presets: LlmTarget[]
   ): Promise<{ presets: LlmTarget[]; windows: Record<string, number> }> {
+    let timeout: ReturnType<typeof setTimeout> | undefined
     try {
       // 封顶,不只 try/catch:catch 只接得住抛出、接不住**挂住**,而
       // `ModelRuntime.create()` 那趟 availability refresh 没登录时能挂几分钟
       // (cowork 2026-09-17 实测 `getLlmConfig` 跑了 333,784ms,把整机启动判定成 stalled;
       //  见 micromeet-cowork/docs/issues/boot-stall-renderer-config-pi-availability-refresh.md)。
-      // 超时退 `{}` 与解析失败同一口径 —— 整批退 256K,不是新的失败模式。
+      // 超时退 `{}` 与解析失败同一口径 —— 沿用各预设配置的窗口。
       const windows = await Promise.race([
         new PiRuntimeAdapter().describeContextWindows({
           authPath: maestroAuthPath(),
           modelsPath: maestroModelsPath(),
           targets: presets.map((preset) => ({ providerId: preset.provider, modelId: preset.model }))
         }),
-        new Promise<Record<string, number>>((resolve) =>
-          setTimeout(() => {
+        new Promise<Record<string, number>>((resolve) => {
+          timeout = setTimeout(() => {
             console.warn(`[llm] 解析上下文窗口超时(${CONTEXT_WINDOW_TIMEOUT_MS}ms),沿用预设里配置的窗口`)
             resolve({})
           }, CONTEXT_WINDOW_TIMEOUT_MS)
-        )
+        })
       ])
       return { presets: applyResolvedContextWindows(presets, windows), windows }
     } catch (err) {
       console.warn('[llm] 解析上下文窗口失败,沿用预设里配置的窗口:', err instanceof Error ? err.message : err)
       return { presets: applyResolvedContextWindows(presets, {}), windows: {} }
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout)
     }
   }
 
