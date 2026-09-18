@@ -339,6 +339,14 @@ export const buildAgentTurnPrompt = (params: {
       'Preserve the complete legal skill package, including scripts/references/assets and binary files, in the authoring root above (selected workspace first, otherwise Shared); never overwrite an existing package implicitly. Use skill_creator check for format evidence, keep behavior verification separate, and use Skills Refresh or a new Chat after file-tool edits. Local installation does not require an institution. If the available tools cannot retrieve, unpack or execute the source, report the exact missing capability rather than claiming installation succeeded.'
     ] : []),
     '',
+    // 逃生阀原来只挡「用户明确说别用浏览器工具」,也只挡浏览器那一组。一句 hi 不触发它的任何一个
+    // 条件,于是模型照着上面的指令墙自己编了个任务、连跑 41 步
+    // (issues/turn-prompt-buries-the-user-message.md,cowork 实录,本仓同一条路径)。
+    // 现在它按**请求本身**判,并覆盖全部工具。
+    'GREETINGS AND SMALL TALK GET A PLAIN REPLY. If the request is a greeting, an acknowledgement, a',
+    'thank-you, a question about you, or anything else that needs no file, no page and no command —',
+    'just answer it in chat and call NO tool at all. The material above describes what you CAN do; it',
+    'never says you must do any of it. Doing "a bit of research first" on a greeting is wrong, not thorough.',
     'If the user explicitly asks for a chat-only answer, a model-token test, or says not to use browser tools,',
     'answer directly in chat and do not call browser tools (including deep_fetch, open_tab, page_snapshot or ui_act) for that turn.',
     'Browser-use status: start_browser_use/end_browser_use require an exact tab_id and only change this task\'s use marker. They never select/show/navigate a page or change drill recording. Page tools automatically begin use; end it explicitly when finished with a tab. Historical targets are not active-use markers.',
@@ -421,8 +429,18 @@ export const buildAgentTurnPrompt = (params: {
     ...memoryBlock,
     '',
     params.catalog || '',
-    'User message:',
-    params.message
+    // 用户那句话是这条消息的**最后 0.02%** —— 2026-09-18 在 cowork 同一条路径上实测 74,547 字符里
+    // 的 2 个字符,`User message:` 落在第 74,531 位。没有围栏时模型分不出「参考资料」和「这一轮要我
+    // 做的事」,一句 hi 就能让它把指令墙当成任务(issues/turn-prompt-buries-the-user-message.md)。
+    //
+    // 围栏不改 pi 边界(`session.prompt(text)` 只收一个字符串),但它给了模型一个**结构判据**,
+    // 而不是靠它在 74k 字符里注意到一行字面量。
+    'Everything above is REFERENCE MATERIAL for this session — your capabilities, the catalogs and the',
+    'current state. None of it is a request, and it is not a task list. The ONLY thing you were asked to',
+    'do is between the two markers below. If it needs none of the material above, use none of it.',
+    '<user_message>',
+    params.message,
+    '</user_message>'
   ].join('\n')
 }
 

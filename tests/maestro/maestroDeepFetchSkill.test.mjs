@@ -48,6 +48,8 @@ test('effective prompt includes the built-in workflow and current timestamp for 
     assert.match(prompt, /id: builtin:deep-fetch/);
     assert.ok(prompt.includes(real.DEEP_FETCH_BROWSER_WORKFLOW), 'Real prompt delivers the complete app text skill');
     assert.match(prompt, /Message sent at: 2026-09-15 14:00:00 \+08:00 \(Asia\/Shanghai\)/);
-    assert.ok(prompt.endsWith(message));
+    // 请求现在有围栏 —— 断言的意图不变(它仍是最后一段),只是形状从「字符串以它结尾」变成「围栏里正好是它」(issues/turn-prompt-buries-the-user-message.md)。
+    assert.ok(prompt.trimEnd().endsWith('</user_message>'));
+    assert.equal(prompt.slice(prompt.indexOf('<user_message>') + '<user_message>'.length, prompt.indexOf('</user_message>')).trim(), message);
   }
 });
