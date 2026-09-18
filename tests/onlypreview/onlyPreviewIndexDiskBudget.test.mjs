@@ -146,3 +146,54 @@ test('reclaim ignores directories and unrelated files', async () => {
     ].sort(), 'the live -wal, an unrelated file and a directory all survive');
   });
 });
+
+/**
+ * Task 187 item 3. A quarantine is a `mkdtemp` *directory* and `recovery` was deliberately excluded
+ * from the candidate sweep, so both were immortal rather than durable — ~10 GB of stacked
+ * quarantines of one 5.6 GB index on the reference machine, on the volume whose fullness had caused
+ * the corruption they record.
+ */
+const DAY_MS = 24 * HOUR_MS;
+
+test('reclaim ages out quarantine directories and recovery copies, and keeps the fresh ones', async () => {
+  await withTemp(async (root) => {
+    const databasePath = join(root, 'index.sqlite');
+    writeFileSync(databasePath, 'db');
+    const staleQuarantine = join(root, 'index.sqlite.quarantine-Ab3Xz9');
+    const staleRecovery = join(root, `index.sqlite.recovery-${UUID_A}`);
+    const staleRecoveryQuarantine = join(root, `index.sqlite.recovery-${UUID_B}.quarantine-Qw8Rt2`);
+    const freshQuarantine = join(root, 'index.sqlite.quarantine-Zz0Yy1');
+    const freshRecovery = join(root, `index.sqlite.recovery-${UUID_B}`);
+    mkdirSync(staleQuarantine);
+    writeFileSync(join(staleQuarantine, 'index.sqlite'), 'corrupt');
+    writeFileSync(staleRecovery, 'corrupt');
+    mkdirSync(staleRecoveryQuarantine);
+    mkdirSync(freshQuarantine);
+    writeFileSync(freshRecovery, 'corrupt');
+    for (const path of [staleQuarantine, staleRecovery, staleRecoveryQuarantine]) age(path, 8 * DAY_MS);
+    await reclaimInterruptedSqliteArtifacts(databasePath);
+    assert.deepEqual(
+      readdirSync(root).sort(),
+      ['index.sqlite', 'index.sqlite.quarantine-Zz0Yy1', `index.sqlite.recovery-${UUID_B}`].sort(),
+      'aged forensic residue is reclaimed; residue younger than the window is kept'
+    );
+  });
+});
+
+test('reclaim drops a quarantine whose database is gone on the orphan clock, not the retention one', async () => {
+  await withTemp(async (root) => {
+    const databasePath = join(root, 'index.sqlite');
+    writeFileSync(databasePath, 'db');
+    const orphan = join(root, 'other.sqlite.quarantine-Ab3Xz9');
+    const owned = join(root, 'index.sqlite.quarantine-Cd4Ww8');
+    mkdirSync(orphan);
+    mkdirSync(owned);
+    for (const path of [orphan, owned]) age(path, 2 * HOUR_MS);
+    await reclaimInterruptedSqliteArtifacts(databasePath);
+    assert.deepEqual(
+      readdirSync(root).sort(),
+      ['index.sqlite', 'index.sqlite.quarantine-Cd4Ww8'].sort(),
+      'forensics on an index that no longer exists answers nothing, so it goes on the orphan clock'
+    );
+  });
+});

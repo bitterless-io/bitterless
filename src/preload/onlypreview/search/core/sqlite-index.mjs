@@ -802,6 +802,12 @@ export class OnlyPreviewSqliteIndex {
   }
 
   close() {
+    // node:sqlite throws ERR_INVALID_STATE on a second close, and the engine closes defensively in
+    // several overlapping paths — since task 187 the reclaim closes the seed handle that its
+    // caller's `finally` then closes again. A double close must be a no-op, not a reported failure,
+    // now that `closeIndex` emits a diagnostic instead of swallowing silently. `=== false` so a
+    // handle that does not report its state is still closed.
+    if (this.database.isOpen === false) return;
     this.database.close();
   }
 }

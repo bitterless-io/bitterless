@@ -10,7 +10,11 @@ const schemas = Object.freeze({
   'initialize-start': { tag: 'tag', generation: 'count' },
   'initialize-terminal': { tag: 'tag', outcome: ['success', 'failure', 'cancelled'], elapsedMs: 'elapsed' },
   'initialize-failure': { tag: 'tag', phase: ['shutdown', 'authority', 'config', 'sqlite-open', 'tree-restore', 'quarantine', 'watch-start', 'root-listing', 'snapshot', 'count', 'rebuild'], sqliteCode: 'count' },
-  'sqlite-recovery': { tag: 'tag', sqliteCode: 'count' },
+  'sqlite-recovery': { tag: 'tag', sqliteCode: 'count', retained: 'boolean' },
+  'sqlite-close-failure': { tag: 'tag', sqliteCode: 'count' },
+  // Sizes are MiB, not bytes: `count` is bounded to 1e9, which a 6 GB index silently saturates.
+  'candidate-plan': { tag: 'tag', mode: ['reconcile', 'fresh', 'none'], indexMiB: 'count', freeMiB: 'count', requiredMiB: 'count' },
+  'candidate-reclaim': { tag: 'tag', reclaimedMiB: 'count', freeMiB: 'count' },
   'sqlite-open': { tag: 'tag', reusable: 'boolean', reconcile: 'boolean', elapsedMs: 'elapsed' },
   'root-listing': { tag: 'tag', count: 'count', elapsedMs: 'elapsed' },
   'full-count': { tag: 'tag', count: 'count', elapsedMs: 'elapsed' },

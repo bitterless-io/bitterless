@@ -1,7 +1,11 @@
-import quarantineIo from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import quarantineIo, { readdir, rm } from 'node:fs/promises';
+import { basename, dirname, join, resolve } from 'node:path';
 
 import { OnlyPreviewSqliteIndex } from './sqlite-index.mjs';
+
+// Matches `disk-space.mjs`'s build headroom: what the volume must still have free after the copy is
+// kept, so that keeping it cannot be what tips the rebuild into failing.
+const QUARANTINE_HEADROOM_BYTES = 512 * 1024 * 1024;
 
 const CORRUPTION_CODES = new Map([
   ['SQLITE_CORRUPT', 11],
@@ -108,10 +112,66 @@ export const renameSqliteIndexArtifacts = async (
   );
 };
 
-// Same-volume rename only: a multi-GB cache must never be copied or deleted during startup.
+const QUARANTINE_PREFIX = '.quarantine-';
+
+// Drop every earlier quarantine of this database before taking a new one. A superseded forensic copy
+// carries nothing the newest one does not, and it is measured in gigabytes: the reference machine
+// held ~10 GB of stacked quarantines of a single 5.6 GB index. Deliberately a behaviour change —
+// the previous contract kept all of them.
+//
+// Reads the real filesystem rather than the injected `io`: `io` exists so a test can fail the
+// rename dance below, and sweeping is not part of that dance.
+const supersedeQuarantines = async (databasePath) => {
+  const directoryPath = dirname(databasePath);
+  const prefix = `${basename(databasePath)}${QUARANTINE_PREFIX}`;
+  let names;
+  try {
+    names = await readdir(directoryPath);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.startsWith(prefix)) continue;
+    await rm(resolve(directoryPath, name), { recursive: true, force: true }).catch(() => undefined);
+  }
+};
+
+/**
+ * Whether the volume can afford to keep the corrupt copy.
+ *
+ * Quarantine is forensic, not functional — nothing reads it, and the rebuild that follows does not
+ * need it. Holding a multi-GB copy on the volume whose fullness caused the corruption is the
+ * opposite of a repair: it is the same mistake the pre-`disk-space.mjs` reconcile made, one layer
+ * down. Below the headroom the copy is dropped and the corrupt artifacts are simply removed.
+ */
+const canRetainQuarantine = async (databasePath, sources, io) => {
+  try {
+    let retainedBytes = 0;
+    for (const source of sources) retainedBytes += (await io.lstat(source)).size;
+    const volume = await io.statfs(dirname(databasePath));
+    return volume.bavail * volume.bsize >= retainedBytes + QUARANTINE_HEADROOM_BYTES;
+  } catch {
+    // An unmeasurable volume is not a reason to throw away evidence. That also covers a partial
+    // `io` — the tests inject one to fail the rename dance, and it carries no `statfs`.
+    return true;
+  }
+};
+
+/**
+ * Move the database and its sidecars aside. Same-volume rename only: a multi-GB cache must never be
+ * copied or deleted during startup.
+ *
+ * Returns the quarantine directory, or `undefined` when the volume could not spare it and the
+ * artifacts were removed instead.
+ */
 export const quarantineSqliteIndex = async (databasePath, io = quarantineIo) => {
   const sources = await readSqliteArtifacts(databasePath, io);
-  const quarantinePath = await io.mkdtemp(`${databasePath}.quarantine-`);
+  await supersedeQuarantines(databasePath);
+  if (!(await canRetainQuarantine(databasePath, sources, io))) {
+    for (const source of sources) await rm(source, { force: true });
+    return undefined;
+  }
+  const quarantinePath = await io.mkdtemp(`${databasePath}${QUARANTINE_PREFIX}`);
   try {
     await moveSqliteArtifacts(sources, (source) => join(quarantinePath, basename(source)), io);
     return quarantinePath;
@@ -157,8 +217,8 @@ export const openRecoverableSqliteIndex = async ({
   } catch (error) {
     if (!isSqliteCorruption(error)) throw error;
     onPhase('quarantine');
-    await quarantineSqliteIndex(databasePath);
-    onRecovery({ sqliteCode: sqlitePrimaryErrorCode(error) });
+    const quarantinePath = await quarantineSqliteIndex(databasePath);
+    onRecovery({ sqliteCode: sqlitePrimaryErrorCode(error), retained: quarantinePath !== undefined });
     // No loop: a failed clean open/build is reported normally, with the original cache preserved.
     return open();
   }

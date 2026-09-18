@@ -103,6 +103,15 @@
   Phase 2 ([184](plan/tasks/onlypreview-index-derived-copies-184.md)) drops two derived copies behind
   a benchmark and carries the in-place v8→v9 migration; phase 3
   ([185](plan/tasks/onlypreview-index-cache-budget-185.md)) is blocked on the cache cap.
+  Phase 1b ([187](plan/tasks/onlypreview-index-reclaim-before-rebuild-187.md)) closes the hole 183
+  opened: the refusal is computed against the index already on disk, so a workspace whose config
+  changed charged its own 6 GB corpse — unreadable and unreconcilable — to the requirement *and* let
+  it occupy the space the rebuild needed, and the only thing that frees it, promotion, is downstream
+  of the refusal. It now reclaims that corpse and re-plans, keeps one quarantine per database instead
+  of stacking ~10 GB of them, ages out the recovery/quarantine residue the sweep never matched, and
+  latches a refusal so the next attempt costs one `statfs` rather than another 1.7M-file walk. No
+  `search-index-v7`: `SEARCH_ENGINE_IDENTITY` already invalidates in place, and a new directory would
+  strand the old one.
 
 - [OnlyPreview paste feedback](features/onlypreview-paste-feedback.md) — implemented
   ([task 186](plan/tasks/onlypreview-paste-feedback-186.md)); owner verification pending. A paste
@@ -1255,6 +1264,8 @@ earlier review rounds were remediated; Ral's runtime/visual verification remains
 - [EyesOnAgents surface hierarchy](issues/archived/eyes-on-agents-surface-hierarchy.md) - fixed:
   decorative borders replaced by Todo-style background-led Domain and thread-item hierarchy.
 - [EyesOnAgents Desktop Focus](issues/archived/eyes-on-agents-desktop-focus.md) - fixed: active Codex Desktop tasks
+- [A skill's declared entry outside its package could not run](issues/skill-declared-entry-outside-package.md) — fixed here too; same run_skill_file confinement. No shell gap on this side: bitterless has only PiRuntimeAdapter, so pi's `bash` is live.
+- [Tool approval had no clickable button](issues/tool-approval-has-no-clickable-button.md) — not present here (confirm sync already precedes the task binding); the unbounded detail height was, and is capped.
   missing from Focus when lifecycle observation is absent or expires too early.
 
 ## Legacy references

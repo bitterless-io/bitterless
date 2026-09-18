@@ -189,6 +189,7 @@
     "test:skill-scopes": "node --test tests/skillScopes/*.test.mjs",
     "test:slash-skills": "node --test tests/maestro/slashSkills.test.mjs",
     "test:skill-script": "node --test tests/maestro/skillScriptInterpreter.test.mjs",
+    "test:tool-approval": "node --test tests/maestro/toolApprovalHasAButton.test.mjs",
     "typecheck:skill-scopes": "tsc --noEmit -p tests/skillScopes/tsconfig.node.json && vue-tsc --noEmit -p tests/skillScopes/tsconfig.web.json"
   },
   "dependencies": {

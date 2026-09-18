@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { AgentToolSpec } from '../runtime/agentRuntime.types'
 import { checkSkill, initializeSkill } from '../../maestro/skills/skillCreator'
@@ -27,6 +27,49 @@ const canonical = (file: string): string => {
     }
   }
   return resolve(realpathSync(ancestor), relative(ancestor, resolve(file)))
+}
+
+/**
+ * 「SKILL.md 说要**跑**这个文件」,不是「提到过这个文件」。
+ *
+ * 只做子串匹配是不够的 —— talk_to_contacts 的 SKILL.md 里同样写着
+ * `areas/contacts/contacts.index.md`(通讯录,一个 markdown 链接)。那是**资料**,不是入口。
+ * 所以要求同一行里、路径**之前**出现解释器名:`node areas/contacts/feishu.mjs …` 命中,
+ * 一个 markdown 链接不命中。扩展名那道闸拦得住 `.md`,但边界应该说清楚是「声明为可执行」,
+ * 而不是靠后面某一道闸兜底。
+ */
+const SKILL_RUNNER = /\b(?:node|bun|deno|bash|sh|zsh|pwsh|powershell)\b/
+const declaresRun = (text: string, declared: string): boolean => text.split(/\r?\n/).some(line => {
+  const at = line.indexOf(declared)
+  return at > 0 && SKILL_RUNNER.test(line.slice(0, at))
+})
+
+/**
+ * The skill that *declares* this script — a package that does not contain the file, but whose
+ * SKILL.md names it, verbatim, as the thing to run.
+ *
+ * Why this exists (Ral 2026-09-18:「cowork bl 能够有路径成功调用 talk_to_contacts 给我发消息，
+ * 而不是重新写入脚本」): in real Agent Skills, SKILL.md is the manual and the engine often lives
+ * elsewhere in the workspace, shared by several skills. `talk_to_contacts` says
+ * `node areas/contacts/feishu.mjs …` twenty-two times, and that engine sits three levels outside
+ * its package. Confining execution to the package made skills of that shape discoverable, readable
+ * and unrunnable — the model's only way out was to write a forwarding script INTO the package,
+ * which turns a read-only skill into one that is rewritten on every use.
+ *
+ * The boundary is re-anchored, not widened: still inside the selected workspace by realpath (a
+ * symlink cannot walk out), and still only a path an AVAILABLE skill's SKILL.md spells out — a
+ * declaration committed in the repository, auditable, not something the model asserts at call time.
+ * Availability, institution authorization, the timeout and the output cap are unchanged.
+ */
+const declaringSkill = (skills: SkillSummary[], workspace: string | undefined, file: string): SkillSummary | undefined => {
+  if (!workspace) return undefined
+  const root = resolve(workspace)
+  if (!inside(canonical(root), canonical(file))) return undefined
+  const declared = relative(root, file).split(sep).join('/')
+  if (!declared || declared.startsWith('..')) return undefined
+  return skills.find(skill => {
+    try { return declaresRun(readFileSync(skill.path, 'utf8'), declared) } catch { return false }
+  })
 }
 
 /**
@@ -138,14 +181,19 @@ export const buildSkillCreatorTools = (host: SkillCreatorHost): AgentToolSpec[] 
       if (!stdin || typeof stdin !== 'object' || Array.isArray(stdin)) throw new Error('input_json must be an object')
       // The script must belong to a package this Chat can actually use — availability is the
       // catalog's answer, not the filesystem's, so a disabled or unassigned package cannot run.
-      const owner = host.skills().find(skill => skill.status === 'ready' && skill.scope !== 'unassigned' && skill.enabled !== false && inside(canonical(dirname(skill.path)), canonical(file)))
-      if (!owner) throw new Error('Script must belong to a skill that is available in this Chat')
+      const available = host.skills().filter(skill => skill.status === 'ready' && skill.scope !== 'unassigned' && skill.enabled !== false)
+      // ① a script inside its own package — the path that always worked. ② an engine outside the
+      // package that an available SKILL.md names (see declaringSkill); the workspace is the root then,
+      // which is what makes `node areas/contacts/feishu.mjs` resolve the way the skill wrote it.
+      const packaged = available.find(skill => inside(canonical(dirname(skill.path)), canonical(file)))
+      const owner = packaged || declaringSkill(available, host.workspace(), file)
+      if (!owner) throw new Error('Script must belong to a skill available in this Chat, or be a path an available SKILL.md declares inside the selected workspace')
       const reference = owner.reference || owner.id
       // Authorize before running AND re-assert after, so an institution revoked mid-call cannot be
       // the one whose script completed.
       const expected = await authorizeSkillReference(reference)
       const result = await runSkillScript({
-        scriptPath: file, packageRoot: dirname(owner.path), bunPath: host.bunPath(),
+        scriptPath: file, packageRoot: packaged ? dirname(owner.path) : resolve(host.workspace() as string), bunPath: host.bunPath(),
         args: argv as string[], input: stdin as Record<string, unknown>, signal
       })
       assertSkillContext(expected)

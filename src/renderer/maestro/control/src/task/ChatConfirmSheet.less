@@ -2,7 +2,10 @@
 .chat-confirm-sheet__head { display: flex; align-items: center; gap: 6px; padding: 8px 12px 0; color: rgb(var(--warning-7)); font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
 .chat-confirm-sheet__queue { margin-left: auto; letter-spacing: 0; text-transform: none; }
 .chat-confirm-sheet__title { padding: 4px 12px 0; font-size: 12.5px; font-weight: 650; line-height: 1.45; }
-.chat-confirm-sheet__detail { padding: 2px 12px 0; color: rgb(var(--warning-7)); font-size: 11px; line-height: 1.45; white-space: pre-wrap; }
+/* The detail is `clipText(…, 4_000)` — four thousand characters at 11px is taller than the window,
+   and this sheet is a `shrink-0` child above the composer, so what it pushes out of view is its own
+   action row. Cap it and let it scroll (paired with micromeet-cowork's ChatConfirmSheet.vue). */
+.chat-confirm-sheet__detail { max-height: 160px; overflow-y: auto; overscroll-behavior: contain; padding: 2px 12px 0; color: rgb(var(--warning-7)); font-size: 11px; line-height: 1.45; white-space: pre-wrap; }
 .chat-confirm-sheet__payload { margin-top: 8px; border-top: 1px solid rgb(var(--warning-3)); }
 .chat-confirm-sheet__payload-toggle { display: flex; width: 100%; align-items: center; gap: 6px; border: 0; background: transparent; padding: 7px 12px; color: inherit; text-align: left; }
 .chat-confirm-sheet__payload-toggle:hover { background: rgb(var(--warning-2)); }

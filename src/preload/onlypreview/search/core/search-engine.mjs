@@ -21,10 +21,12 @@ import { previewOnlyPreviewGlobalSearchResult } from './global-search-preview.mj
 import { reclaimInterruptedSqliteArtifacts } from './sqlite-artifacts.mjs';
 import {
   onlyPreviewDiskFullMessage,
+  onlyPreviewFreeBytes,
   planOnlyPreviewIndexBuild
 } from './disk-space.mjs';
 import {
   isSqliteCorruption,
+  isSqliteDiskFull,
   openRecoverableSqliteIndex,
   quarantineSqliteIndex,
   renameSqliteIndexArtifacts,
@@ -60,9 +62,12 @@ const prospectiveRealPath = async (candidatePath) => {
   }
 };
 
+// The same four suffixes `sqlite-recovery.mjs` and `sqlite-artifacts.mjs` list. `-journal` was
+// missing here, so a candidate's journal outlived the candidate and was only ever collected later by
+// the reclaim sweep. Three lists describing one fact about SQLite must not disagree.
 const removeSqliteArtifacts = async (databasePath) => {
   await Promise.all(
-    ['', '-shm', '-wal'].map((suffix) => rm(`${databasePath}${suffix}`, { force: true }))
+    ['', '-wal', '-shm', '-journal'].map((suffix) => rm(`${databasePath}${suffix}`, { force: true }))
   );
 };
 
@@ -92,13 +97,20 @@ const waitForWriterGate = async (writerGate, isCancelled) =>
     checkCancellation();
   });
 
-const closeIndex = (index) => {
+const closeIndex = (index, onFailure) => {
   try {
     index?.close();
-  } catch {
-    // Closing is idempotent at the engine boundary even though node:sqlite close is not.
+  } catch (error) {
+    // Closing is idempotent at the engine boundary even though node:sqlite close is not. The caller
+    // still cannot act on a failure — but it must not be invisible either. The next line typically
+    // unlinks the file, and a handle that stayed open holds a multi-GB index's blocks for the life
+    // of the process, which looks exactly like a leak with no explanation anywhere.
+    onFailure?.(error);
   }
 };
+
+const MIB = 1024 * 1024;
+const mib = (bytes) => Math.round(bytes / MIB);
 
 export class OnlyPreviewSearchEngine {
   constructor({
@@ -111,6 +123,10 @@ export class OnlyPreviewSearchEngine {
     readWorkspaceConfig = loadOnlyPreviewWorkspaceConfig,
     configClock,
     watchFactory,
+    // Injectable so a test can put the engine on a volume it does not have. Everything these two
+    // decide is about free space, which no fixture can arrange.
+    planIndexBuild = planOnlyPreviewIndexBuild,
+    measureFreeBytes = onlyPreviewFreeBytes,
     onConfigError = () => console.warn(
       '[onlypreview-search] Workspace configuration could not be applied; keeping the previous policy.'
     ),
@@ -125,7 +141,15 @@ export class OnlyPreviewSearchEngine {
     this.readWorkspaceConfig = readWorkspaceConfig;
     this.configClock = configClock;
     this.watchFactory = watchFactory;
+    this.planIndexBuild = planIndexBuild;
+    this.measureFreeBytes = measureFreeBytes;
     this.onConfigError = onConfigError;
+    this.closeFailed = (error) => {
+      this.diagnostics.emit('sqlite-close-failure', { sqliteCode: sqlitePrimaryErrorCode(error) });
+    };
+    // Set by a refused build: what it needed, so the next one can re-check the volume with a single
+    // `statfs` instead of walking the workspace again to reach the same refusal.
+    this.diskShortfall = undefined;
     this.selectedFilePriority = createOnlyPreviewSelectedFilePriorityLane({
       readWorkspaceFile,
       resolveContext: () => this
@@ -340,9 +364,10 @@ export class OnlyPreviewSearchEngine {
         reconcile: canReconcile,
         elapsedMs: this.diagnostics.elapsed(sqliteStartedAt)
       }),
-      onRecovery: ({ sqliteCode }) => this.diagnostics.emit('sqlite-recovery', {
+      onRecovery: ({ sqliteCode, retained }) => this.diagnostics.emit('sqlite-recovery', {
         tag: diagnostic.tag,
-        sqliteCode
+        sqliteCode,
+        retained
       })
     });
     this.index = hasActiveIndex ? seedIndex : undefined;
@@ -405,6 +430,7 @@ export class OnlyPreviewSearchEngine {
       this.emitBuildProgress({ buildRevision, phase: 'counting' });
       diagnostic.phase = 'snapshot';
       await this.emitSnapshot();
+      await this.rejectLatchedDiskShortfall();
       diagnostic.phase = 'count';
       const countStartedAt = this.diagnostics.now();
       const total = await countWorkspaceSearchEntries({
@@ -456,7 +482,7 @@ export class OnlyPreviewSearchEngine {
     } finally {
       // A failed count has no metadata to publish; its build promise carries the actual error.
       resolveInitialTree?.(undefined);
-      if (seedIndex !== this.index) closeIndex(seedIndex);
+      if (seedIndex !== this.index) closeIndex(seedIndex, this.closeFailed);
     }
   }
 
@@ -489,36 +515,89 @@ export class OnlyPreviewSearchEngine {
         diagnostic
       });
     };
+    const directoryPath = dirname(this.databasePath);
+    const emitPlan = (plan) => this.diagnostics.emit('candidate-plan', {
+      tag: diagnostic.tag,
+      mode: plan.mode,
+      indexMiB: mib(plan.indexBytes),
+      freeMiB: mib(plan.freeBytes),
+      requiredMiB: mib(plan.requiredBytes)
+    });
+    let reconcile = reconcileExisting;
     try {
       await removeSqliteArtifacts(candidatePath);
       // Decide what the volume can actually hold BEFORE writing anything. A reconcile copies the
       // whole index first, so it needs ~2x; a fresh build needs ~1x. Without this the copy was
       // attempted regardless, and a workspace whose index no longer fitted retried it forever,
       // writing gigabytes per attempt until the disk hit zero and the index corrupted.
-      const plan = await planOnlyPreviewIndexBuild({
+      let plan = await this.planIndexBuild({
         databasePath: this.databasePath,
-        directoryPath: dirname(this.databasePath),
-        reconcile: reconcileExisting
+        directoryPath,
+        reconcile
       });
-      this.diagnostics.emit('candidate-plan', {
-        tag: diagnostic.tag,
-        mode: plan.mode,
-        indexBytes: plan.indexBytes,
-        freeBytes: plan.freeBytes,
-        requiredBytes: plan.requiredBytes
-      });
+      emitPlan(plan);
+      if (plan.mode === 'none' && this.index === undefined) {
+        // The database on disk is dead weight, and it is dead weight that blocks its own
+        // replacement. Nothing reads it — `this.index` is unset, so the open found an identity it
+        // could not reuse — yet its bytes are charged to `freshNeeds` *and* they occupy the space
+        // the rebuild needs. The ordinary path does delete it, but only after promotion, which is a
+        // moment this branch can never reach: a workspace in this state could never rebuild again,
+        // on any later launch, without a manual delete.
+        //
+        // Close the handle first. An unlinked file whose descriptor is still open returns no blocks
+        // to the volume, which would make the reclaim measure well and free nothing.
+        //
+        // Only reachable from `initialize`. `applyConfig` passes a live `this.index`, so an index
+        // that is currently answering searches is never deleted to make room.
+        const reclaimedBytes = plan.indexBytes;
+        closeIndex(seedIndex, this.closeFailed);
+        await removeSqliteArtifacts(this.databasePath);
+        // Nothing left to reconcile against, and saying otherwise would hand `backup()` a closed
+        // handle to a deleted file — `indexBytes` is now 0, so a `reconcile` plan would fit.
+        reconcile = false;
+        plan = await this.planIndexBuild({
+          databasePath: this.databasePath,
+          directoryPath,
+          reconcile
+        });
+        this.diagnostics.emit('candidate-reclaim', {
+          tag: diagnostic.tag,
+          reclaimedMiB: mib(reclaimedBytes),
+          freeMiB: mib(plan.freeBytes)
+        });
+        emitPlan(plan);
+      }
       if (plan.mode === 'none') {
         // Refuse, do not start. The existing index stays exactly as it is and keeps serving.
         // `INDEX_FAILED` is in the search wire's admitted code set, and the message carries no path
         // separator, which that validator forbids.
+        this.diskShortfall = { databasePath: this.databasePath, requiredBytes: plan.requiredBytes };
         throw Object.assign(new Error(onlyPreviewDiskFullMessage(plan)), { code: 'INDEX_FAILED' });
       }
+      this.diskShortfall = undefined;
       let corruptionCode = 0;
       try {
-        await buildCandidate(reconcileExisting && plan.mode === 'reconcile');
+        await buildCandidate(reconcile && plan.mode === 'reconcile');
       } catch (error) {
         if (buildEpoch !== this.buildEpoch) throw cancelledError();
-        if (!reconcileExisting || !isSqliteCorruption(error)) throw error;
+        if (isSqliteDiskFull(error)) {
+          // The precheck passed and the volume filled anyway — another writer, or an index larger
+          // than the one it was measured against. Report the disk, not "the index returned an
+          // invalid response", and never retry into the same space.
+          const shortfall = await this.planIndexBuild({
+            databasePath: this.databasePath,
+            directoryPath,
+            reconcile: false
+          });
+          this.diskShortfall = {
+            databasePath: this.databasePath,
+            requiredBytes: shortfall.requiredBytes
+          };
+          throw Object.assign(new Error(onlyPreviewDiskFullMessage(shortfall)), {
+            code: 'INDEX_FAILED'
+          });
+        }
+        if (!reconcile || !isSqliteCorruption(error)) throw error;
         candidate?.close();
         candidate = undefined;
         await removeSqliteArtifacts(candidatePath);
@@ -538,7 +617,7 @@ export class OnlyPreviewSearchEngine {
         corruptionCode
       );
     } finally {
-      closeIndex(candidate);
+      closeIndex(candidate, this.closeFailed);
       await removeSqliteArtifacts(candidatePath);
     }
   }
@@ -595,6 +674,28 @@ export class OnlyPreviewSearchEngine {
     };
   }
 
+  /**
+   * A build that was refused for disk space must not pay to reach the same refusal again.
+   *
+   * Counting the workspace runs before the precheck and walks every entry — 1.7M files, tens of
+   * seconds, on the reference machine — only for the plan to refuse afterwards. The refusal is
+   * latched instead, and re-tested with one `statfs`. Recovered space clears the latch and the build
+   * proceeds normally; the latch is per database, because it says nothing about any other workspace.
+   */
+  async rejectLatchedDiskShortfall() {
+    const latched = this.diskShortfall;
+    if (!latched || latched.databasePath !== this.databasePath) return;
+    const freeBytes = await this.measureFreeBytes(dirname(this.databasePath));
+    if (freeBytes >= latched.requiredBytes) {
+      this.diskShortfall = undefined;
+      return;
+    }
+    throw Object.assign(
+      new Error(onlyPreviewDiskFullMessage({ requiredBytes: latched.requiredBytes, freeBytes })),
+      { code: 'INDEX_FAILED' }
+    );
+  }
+
   async promoteCandidate(
     candidate,
     candidatePath,
@@ -628,9 +729,9 @@ export class OnlyPreviewSearchEngine {
         this.index?.close();
         if (seedIndex !== this.index) seedIndex?.close();
       } else {
-        closeIndex(candidate);
-        closeIndex(this.index);
-        if (seedIndex !== this.index) closeIndex(seedIndex);
+        closeIndex(candidate, this.closeFailed);
+        closeIndex(this.index, this.closeFailed);
+        if (seedIndex !== this.index) closeIndex(seedIndex, this.closeFailed);
       }
       this.index = undefined;
       try {
@@ -648,11 +749,14 @@ export class OnlyPreviewSearchEngine {
         throw new TypeError('Promoted Search tree snapshot is not ready');
       }
       if (corruptionCode && movedPrevious) {
-        await quarantineSqliteIndex(previousPath);
-        previousQuarantined = true;
+        // `undefined` means the volume could not spare the forensic copy, so the corrupt artifacts
+        // were removed outright; the `finally` below then finds nothing left to remove.
+        const quarantinePath = await quarantineSqliteIndex(previousPath);
+        previousQuarantined = quarantinePath !== undefined;
         this.diagnostics.emit('sqlite-recovery', {
           tag: diagnostic.tag,
-          sqliteCode: corruptionCode
+          sqliteCode: corruptionCode,
+          retained: previousQuarantined
         });
       }
       this.index = promotedIndex;
@@ -669,8 +773,8 @@ export class OnlyPreviewSearchEngine {
       });
       promotionCommitted = true;
     } catch (error) {
-      closeIndex(promotedIndex);
-      closeIndex(this.index);
+      closeIndex(promotedIndex, this.closeFailed);
+      closeIndex(this.index, this.closeFailed);
       this.index = undefined;
       if (installedCandidate) await removeSqliteArtifacts(this.databasePath).catch(() => undefined);
       let restoredPrevious = false;
@@ -693,7 +797,7 @@ export class OnlyPreviewSearchEngine {
           this.maxDepthReached = recoveredTree.maxDepthReached;
           this.treeMetadataReady = recoveredTree.treeMetadataReady;
         } catch {
-          closeIndex(this.index);
+          closeIndex(this.index, this.closeFailed);
           this.index = undefined;
         }
       }
@@ -979,7 +1083,7 @@ export class OnlyPreviewSearchEngine {
     await watchController?.close({ drain: false });
     const writer = await this.acquireSearchSnapshotWriter();
     try {
-      closeIndex(this.index);
+      closeIndex(this.index, this.closeFailed);
       this.index = undefined;
       this.browseIndex = undefined;
       this.workspaceId = undefined;

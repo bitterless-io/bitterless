@@ -82,8 +82,38 @@ test('quarantine renames only the exact database and sidecars into a unique reco
   await writeFile(databasePath, 'second generation');
   const second = await quarantineSqliteIndex(databasePath);
   assert.notEqual(first, second);
-  assert.equal(await readFile(join(first, 'index.sqlite'), 'utf8'), 'original');
+  // Task 187 item 2, a deliberate contract change: one quarantine per database. This used to assert
+  // that `first` survived. A superseded forensic copy carries nothing the newest one does not, and
+  // the reference machine was holding ~10 GB of them — of a 5.6 GB index, on the volume whose
+  // fullness had caused the corruption they record.
+  await assert.rejects(lstat(first), { code: 'ENOENT' });
   assert.equal(await readFile(join(second, 'index.sqlite'), 'utf8'), 'second generation');
+  assert.deepEqual(
+    (await readdir(directory)).filter((name) => name.includes('.quarantine-')),
+    [basename(second)]
+  );
+});
+
+test('a volume that cannot spare the copy gets the corrupt artifacts removed, not quarantined', async (t) => {
+  const { directory, databasePath } = await fixture(t, true);
+  const quarantinePath = await quarantineSqliteIndex(databasePath, {
+    ...io,
+    statfs: async () => ({ bavail: 16, bsize: 4096 })
+  });
+  assert.equal(quarantinePath, undefined, 'nothing is retained');
+  for (const suffix of suffixes)
+    await assert.rejects(lstat(`${databasePath}${suffix}`), { code: 'ENOENT' });
+  assert.deepEqual(await readdir(directory), [], 'and nothing is left behind either');
+});
+
+test('a volume with room still retains the copy', async (t) => {
+  const { databasePath } = await fixture(t, true);
+  const quarantinePath = await quarantineSqliteIndex(databasePath, {
+    ...io,
+    statfs: async () => ({ bavail: 1024 * 1024, bsize: 4096 })
+  });
+  assert.equal(typeof quarantinePath, 'string');
+  assert.equal(await readFile(join(quarantinePath, 'index.sqlite'), 'utf8'), 'original');
 });
 
 test('partial rename failure restores every moved original and surfaces the filesystem error', async (t) => {
@@ -204,7 +234,7 @@ test('warm tree restore failure closes its handle before one cold reopen, preser
     { hasActiveIndex: true, canReconcile: true },
     { hasActiveIndex: false, canReconcile: false }
   ]);
-  assert.deepEqual(recovered, [{ sqliteCode: 11 }]);
+  assert.deepEqual(recovered, [{ sqliteCode: 11, retained: true }]);
   assert.equal(
     (await readdir(directory)).filter((name) =>
       name.startsWith(`${basename(databasePath)}.quarantine-`)
