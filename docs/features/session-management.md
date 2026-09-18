@@ -196,6 +196,12 @@ pre-select the session that is currently active.
   the list (archive, delete) falls back to the first row.
 - Escape closes the drawer. An empty list accepts the keys and selects nothing.
 
-Implementation: `src/renderer/maestro/control/src/SessionsDrawer.vue` only.
+Implementation: `src/renderer/maestro/control/src/SessionsDrawer.vue` only. Maestro's capture-phase
+registration and Enter routing already satisfied the first two points, so only the cursor identity
+changed here; CoWork needed the keyboard repair as well.
 
-Verification: see the run recorded at the end of this document.
+Verified on 2026-09-18:
+
+- `node --test tests/maestro/maestroSessionsDrawerLifecycle.test.mjs tests/maestro/maestroSessionManagement.test.mjs` — 24/24. The drawer navigation case now also re-sorts `sessionListItems` under an open drawer and asserts the cursor stays on the active session rather than on its former index.
+- `node scripts/typecheck/surfaces.mjs renderer/maestro` — 4 diagnostics, all pre-existing and outside this change (`renderer/home` TS2307 x2, `shared/pathHelper` TS2322 x2). `git diff --check` — ok.
+- No build, lint, Electron E2E or live app launch (`yarn lint` OOMs at HEAD and a whole-project typecheck is a known false green — `docs/issues/typecheck-is-a-false-green.md`).
