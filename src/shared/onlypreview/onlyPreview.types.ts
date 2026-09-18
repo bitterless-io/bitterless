@@ -190,6 +190,11 @@ export interface OnlyPreviewNoticeRequest extends OnlyPreviewHostRequest {
   title: string;
   message: string;
   confirmLabel: string;
+  // Which face of the one alert dialog to wear. Omitted means `notice`, which is what this request
+  // was built for (the bookmarks empty-state question mark). Paste passes `error` for a name
+  // conflict: it is an ordinary outcome of a deliberate action, so it belongs in the alert layer
+  // rather than the Project rail's banner — but it is still an error, not an explanation.
+  tone?: 'error' | 'notice';
 }
 
 export interface OnlyPreviewFileRef {

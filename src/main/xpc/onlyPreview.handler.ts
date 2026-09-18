@@ -798,7 +798,7 @@ class OnlyPreviewHandler
         title: params.title,
         message: params.message,
         confirmLabel: params.confirmLabel,
-        tone: 'notice'
+        tone: params.tone ?? 'notice'
       });
     });
   }

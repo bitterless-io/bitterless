@@ -91,19 +91,42 @@ export class OnlyPreviewProjectAuthoringController {
     ], workspaceId);
   }
 
+  /**
+   * Paste's reveal. Same row-finding as `revealCreatedEntries`, minus the preview.
+   *
+   * Owner, 2026-09-18: 「不用打开预览哦」. `selectedRelativePath` *is* the previewed file, so the
+   * difference between the two methods is exactly that one assignment — New Folder wants the new
+   * folder opened, paste wants the pasted file found. Returns the paths that actually landed in the
+   * index so the caller can scroll to and flash them; a path that is not there has no row to act on.
+   */
+  async revealPastedEntries(
+    entries: OnlyPreviewProjectEntry[],
+    workspaceId: string
+  ): Promise<string[]> {
+    return await this.revealEntries(entries, workspaceId, { preview: false });
+  }
+
   async revealCreatedEntries(entries: OnlyPreviewProjectEntry[], workspaceId: string): Promise<void> {
+    await this.revealEntries(entries, workspaceId, { preview: true });
+  }
+
+  private async revealEntries(
+    entries: OnlyPreviewProjectEntry[],
+    workspaceId: string,
+    options: { preview: boolean }
+  ): Promise<string[]> {
     const workspace = this.host.workspace;
-    if (!workspace || workspace.workspaceId !== workspaceId || !entries.length) return;
+    if (!workspace || workspace.workspaceId !== workspaceId || !entries.length) return [];
     const revision = ++this.revealRevision;
     const isCurrent = (): boolean => this.host.workspace === workspace;
     try {
       const result = await this.host.browseProjection.reloadParentListings(
         entries.map((entry) => entry.relativePath), workspaceId, this.host.expandedPaths
       );
-      if (!isCurrent()) return;
+      if (!isCurrent()) return [];
       if (result.changed) this.host.index = result.index;
       if (result.error) throw result.error;
-      if (!result.loaded || revision !== this.revealRevision) return;
+      if (!result.loaded || revision !== this.revealRevision) return [];
       for (const entry of entries) {
         let parent = getOnlyPreviewParentPath(entry.relativePath);
         while (parent) {
@@ -111,18 +134,24 @@ export class OnlyPreviewProjectAuthoringController {
           parent = getOnlyPreviewParentPath(parent);
         }
       }
-      const entry = entries.find((created) =>
-        this.host.index?.entries.some((item) => item.relativePath === created.relativePath)
-      );
-      if (!entry) return;
+      const landed = entries
+        .map(({ relativePath }) => relativePath)
+        .filter((relativePath) =>
+          this.host.index?.entries.some((item) => item.relativePath === relativePath)
+        );
+      const entry = landed[0];
+      if (entry === undefined) return [];
       this.host.collapseTreeSelection();
-      this.host.treeSelectedRelativePath = entry.relativePath;
-      this.host.selectedRelativePath = entry.relativePath;
-      this.host.focusedRelativePath = entry.relativePath;
+      this.host.treeSelectedRelativePath = entry;
+      // The previewed file. Paste leaves it alone.
+      if (options.preview) this.host.selectedRelativePath = entry;
+      this.host.focusedRelativePath = entry;
+      return landed;
     } catch (error) {
       if (isCurrent() && revision === this.revealRevision) {
         this.host.errorMessage = describeOnlyPreviewError(error);
       }
+      return [];
     }
   }
 

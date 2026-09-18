@@ -426,21 +426,28 @@ select {
   flex: 1;
 }
 
+/* 图标按钮,不是描边按钮(Ral 2026-09-18:「copy 按钮和 copied 都改用 tabler 中合适的 icon
+ * 别用文字了」)。改成图标之后那圈 `border: 1px solid var(--onlypreview-divider)` 就不能留 ——
+ * 工作区规则里图标按钮一律无边框,层次靠留白和背景。形状与旁边的关闭按钮对齐,两个按钮本来就该
+ * 是一对。 */
 .onlypreview-shell__inline-error-copy {
-  flex: 0 0 auto;
-  height: 20px;
-  padding: 0 8px;
-  border: 1px solid var(--onlypreview-divider);
-  border-radius: 4px;
-  background: var(--onlypreview-surface);
-  color: var(--onlypreview-muted);
-  font-size: 11px;
-  line-height: 18px;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: -3px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: currentcolor;
   cursor: pointer;
 }
 
 .onlypreview-shell__inline-error-copy:hover {
-  color: var(--onlypreview-ink);
+  background: #f7dddd;
 }
 
 .onlypreview-shell__inline-error-copy:focus-visible {
@@ -719,9 +726,39 @@ select {
   text-overflow: ellipsis;
 }
 
+/* 粘贴落点的一次性闪烁:无底色 → 蓝 → 无底色(Ral 2026-09-18)。
+ *
+ * 用 `background-color` 动画而不是切换 class 的静态底色 —— 动画结束后属性自动回到规则本来的值,
+ * 所以选中的行会回到它的选中底色、未选中的行回到透明,不需要在这里判断行的状态。
+ * 放在选中规则**之后**,让它在这 900ms 内盖住选中底色;`animation` 只影响这一个属性。 */
+.onlypreview-shell__tree-row--paste-flash {
+  animation: onlypreview-paste-flash 900ms ease-in-out 1;
+}
+
+@keyframes onlypreview-paste-flash {
+  0% {
+    background-color: transparent;
+  }
+
+  35% {
+    /* 选中行用的那个蓝(`--tree-row--selected`, #d6e4ff),不新造颜色。这里写字面值是因为
+     * 这个色在本文件里本来就是字面值,没有对应的 token —— 编过一遍确认过,写 var() 会得到空值。 */
+    background-color: #d6e4ff;
+  }
+
+  100% {
+    background-color: transparent;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .onlypreview-shell__tree-chevron {
     transition: none;
+  }
+
+  /* 行仍然会被滚动到、仍然在树里被选中 —— 只是不闪。 */
+  .onlypreview-shell__tree-row--paste-flash {
+    animation: none;
   }
 
   .onlypreview-shell__index-progress--counting .onlypreview-shell__index-progress-fill {

@@ -171,14 +171,20 @@
             name="onlypreview__copyIndexErrorDetail"
             class="onlypreview-shell__inline-error-copy"
             type="button"
-            :title="onlyPreviewI18n.project.copyErrorDetail"
-            @click="onlyPreviewErrorDetail.copy()"
-          >
-            {{
+            :title="
               onlyPreviewErrorDetail.copied
                 ? onlyPreviewI18n.project.errorDetailCopied
                 : onlyPreviewI18n.project.copyErrorDetail
-            }}
+            "
+            :aria-label="
+              onlyPreviewErrorDetail.copied
+                ? onlyPreviewI18n.project.errorDetailCopied
+                : onlyPreviewI18n.project.copyErrorDetail
+            "
+            @click="onlyPreviewErrorDetail.copy()"
+          >
+            <IconCheck v-if="onlyPreviewErrorDetail.copied" :size="14" aria-hidden="true" />
+            <IconCopy v-else :size="14" aria-hidden="true" />
           </button>
           <button
             name="onlypreview__dismissIndexError"
@@ -255,7 +261,9 @@
               'onlypreview-shell__tree-row--selected':
                 onlyPreviewTreeSelection.isSelected(row.entry.relativePath),
               'onlypreview-shell__tree-row--symlink': row.entry.nodeKind === 'symlink',
-              'onlypreview-shell__tree-row--search-excluded': row.searchExcluded
+              'onlypreview-shell__tree-row--search-excluded': row.searchExcluded,
+              'onlypreview-shell__tree-row--paste-flash':
+                onlyPreviewPasteFlash.isFlashing(row.entry.relativePath)
             }"
             :style="{ '--onlypreview-tree-depth': row.depth }"
             type="button"
@@ -485,6 +493,8 @@ import {
   IconFolder,
   IconFolderOpen,
   IconFolderPlus,
+  IconCheck,
+  IconCopy,
   IconLink,
   IconMarkdown,
   IconMaximize,
@@ -514,11 +524,16 @@ import RecentsPanel from './components/Recents/RecentsPanel.vue';
 import { onlyPreviewRecentsStore } from './onlyPreviewRecents.store';
 import { handleOnlyPreviewProjectDeleteShortcut } from './onlyPreviewProjectDeleteShortcut.service';
 import { onlyPreviewProjectWidthPersistence } from './onlyPreviewProjectWidthPersistence.service';
-import type { OnlyPreviewIndexEntry } from '@shared/onlypreview/onlyPreview.types';
+import type {
+  OnlyPreviewIndexEntry,
+  OnlyPreviewProjectEntry
+} from '@shared/onlypreview/onlyPreview.types';
+import { unwrapOnlyPreviewResult } from '@shared/onlypreview/onlyPreview.contract';
 import { onlyPreviewShellStore } from './onlyPreviewShell.store';
 import { describeOnlyPreviewError, onlyPreviewErrorDetail } from './onlyPreviewErrorDetail.store';
 import { onlyPreviewClient } from '../../common/onlyPreviewClient';
 import { OnlyPreviewProjectPasteController, resolveOnlyPreviewPasteShortcut } from './onlyPreviewProjectPaste.service';
+import { onlyPreviewPasteFlash } from './onlyPreviewPasteFlash.store';
 import {
   onlyPreviewTreeSelection,
   copyOnlyPreviewTreeSelection,
@@ -827,10 +842,45 @@ const handleProjectItemCopyShortcut = (event: KeyboardEvent): boolean => {
   return true;
 };
 
+/**
+ * Paste lands the file, scrolls to it and flashes it — and leaves the preview alone
+ * (Ral 2026-09-18). `revealPastedEntries` is `revealCreatedEntries` without the preview assignment;
+ * it returns the paths that actually reached the index, which are the only ones with a row to act on.
+ */
+const revealPastedEntries = async (
+  entries: OnlyPreviewProjectEntry[],
+  workspaceId: string
+): Promise<void> => {
+  const landed = await onlyPreviewProjectAuthoring.revealPastedEntries(entries, workspaceId);
+  if (!landed.length) return;
+  // Scroll first, flash second: the row has to be on screen for the flash to be the thing that
+  // announces it. `focusTreePath(path, true)` is Locate's existing centring scroll, not a second one.
+  await focusTreePath(landed[0], true);
+  onlyPreviewPasteFlash.flash(landed);
+};
+
 const projectPaste = new OnlyPreviewProjectPasteController(
   onlyPreviewShellStore, onlyPreviewClient, onlyPreviewEnv.hostToken,
-  (entries, workspaceId) => onlyPreviewProjectAuthoring.revealCreatedEntries(entries, workspaceId),
-  describeOnlyPreviewError
+  revealPastedEntries,
+  describeOnlyPreviewError,
+  async (message) => {
+    const hostToken = onlyPreviewEnv.hostToken;
+    if (!hostToken) return;
+    try {
+      unwrapOnlyPreviewResult(
+        await onlyPreviewClient.showNotice({
+          hostToken,
+          title: onlyPreviewI18n.project.pasteConflictTitle,
+          message,
+          confirmLabel: onlyPreviewI18n.project.pasteConflictClose,
+          tone: 'error'
+        })
+      );
+    } catch {
+      // The dialog itself failing is not worth a second error surface; the paste already did not
+      // happen, and the banner is the thing this change exists to keep out of the way.
+    }
+  }
 );
 
 const handleShellKeydown = (event: KeyboardEvent): void => {
@@ -863,6 +913,7 @@ watch(
   () => {
     onlyPreviewTreeSelection.clear();
     onlyPreviewRecentsStore.resetWorkspace();
+    onlyPreviewPasteFlash.clear();
   }
 );
 watch(

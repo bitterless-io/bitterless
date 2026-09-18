@@ -2,7 +2,10 @@ import type {
   OnlyPreviewApi,
   OnlyPreviewProjectEntry
 } from '@shared/onlypreview/onlyPreview.types';
-import { unwrapOnlyPreviewResult } from '@shared/onlypreview/onlyPreview.contract';
+import {
+  OnlyPreviewContractError,
+  unwrapOnlyPreviewResult
+} from '@shared/onlypreview/onlyPreview.contract';
 import type { OnlyPreviewCopyShortcutEvent } from './onlyPreviewCopyShortcut.service';
 
 interface PasteHost {
@@ -44,7 +47,10 @@ export class OnlyPreviewProjectPasteController {
       entries: OnlyPreviewProjectEntry[],
       workspaceId: string
     ) => Promise<void>,
-    private readonly errorMessage: (error: unknown) => string
+    private readonly errorMessage: (error: unknown) => string,
+    // Raising the alert-layer dialog. Injected rather than imported so this controller stays
+    // testable without a client, exactly as `reveal` and `errorMessage` already are.
+    private readonly showConflict: (message: string) => Promise<void> = async () => undefined
   ) {}
 
   async paste(): Promise<void> {
@@ -70,7 +76,19 @@ export class OnlyPreviewProjectPasteController {
         await this.reveal(entries, workspace.workspaceId);
       }
     } catch (error) {
-      if (this.host.workspace === workspace) this.host.errorMessage = this.errorMessage(error);
+      if (this.host.workspace !== workspace) return;
+      // A name conflict is an ordinary outcome of a deliberate paste, so it goes to the alert layer
+      // — the same surface New Folder uses for the same code — and not to the Project rail's banner.
+      // That banner is for index and runtime breakage, and it carries the Copy-detail button, which
+      // would invite a bug report about a file that simply already exists.
+      //
+      // Everything else still lands on the banner: a refused workspace or a failed write IS
+      // breakage, and Copy-detail is the right affordance for it.
+      if (error instanceof OnlyPreviewContractError && error.code === 'NAME_EXISTS') {
+        await this.showConflict(this.errorMessage(error));
+        return;
+      }
+      this.host.errorMessage = this.errorMessage(error);
     } finally {
       this.busy = false;
     }

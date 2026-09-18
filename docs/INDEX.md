@@ -91,6 +91,12 @@
   refuses, falls back to the copy-free build, caps the WAL, and reclaims the orphan journals the
   regex never matched. Measurements: [disk efficiency review](design/onlypreview-index-disk-efficiency.md).
 
+- [OnlyPreview paste feedback](features/onlypreview-paste-feedback.md) — implemented
+  ([task 186](plan/tasks/onlypreview-paste-feedback-186.md)); owner verification pending. A paste
+  name conflict moves off the Project rail's banner into the alert layer, a pasted file is scrolled
+  to and flashed once without opening the preview, and the Copy-detail control becomes a borderless
+  tabler icon button.
+
 - [Agent cwd follows the workspace](features/agent-cwd-follows-workspace.md) — implementing; code-verified, human testing pending;
   cwd is resolved per session from the project root (else the shared default workspace), never from process.cwd(); pi gets an in-memory settings manager first.
 
