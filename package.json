@@ -1,6 +1,6 @@
 {
   "_name": "Bitterless",
-  "_version": "0.0.123",
+  "_version": "0.0.124",
   "anydoc_version": "0.2.4",
   "bun_version": "1.3.14",
   "fd_version": "10.5.0",
@@ -325,7 +325,7 @@
     "rigs/*",
     "rig_dev/*"
   ],
-  "name": "Bitterless_DEBUG_PROD",
-  "version": "0.0.123",
-  "version_code": "260918171855"
+  "name": "Bitterless_PREVIEW",
+  "version": "0.0.124",
+  "version_code": "260918183354"
 }

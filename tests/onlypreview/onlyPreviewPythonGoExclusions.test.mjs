@@ -25,7 +25,9 @@ const names = [
   'site-packages',
   'htmlcov',
   'vendor',
-  'go-build'
+  'go-build',
+  // Rust/Cargo(以及 Maven)的产物目录 —— Ral 2026-09-18 要求两仓默认不索引。
+  'target'
 ];
 const excludedDirectories = [
   ...names,
@@ -36,7 +38,7 @@ const excludedDirectories = [
 ];
 const entry = (isDirectory) => ({ isDirectory: () => isDirectory });
 
-test('Python and Go hard policy matches directory components, inherits and normalizes separators', () => {
+test('the hard dependency policy matches directory components, inherits and normalizes separators', () => {
   const policy = createTraversalPolicy();
   for (const directory of excludedDirectories) {
     for (const prefix of ['', 'nested/source/']) {
@@ -160,6 +162,53 @@ test('traversal and counting prune dependency bodies while retaining ordinary so
         policy.isExcluded(item.relativePath, entry(item.nodeKind === 'directory'))
       ),
       false
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Cargo 的真实布局 —— 上面那几条是按名字表泛化验的,这一条验实际工程长什么样。
+ *
+ * 为什么它值得单独一条:`target/` 通常是一个 Rust 仓里**最大**的一棵树(debug + release +
+ * build script 产物 + 增量编译缓存),而它以前完全进索引 —— 索引体积、每轮 reconcile 的复制
+ * 时间、8G 机器上的 page cache 压力都由它主导。
+ */
+test('Cargo artifacts are pruned by default while Rust sources stay indexed', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'onlypreview-rust-'));
+  try {
+    const includedPaths = [
+      'Cargo.toml',
+      'Cargo.lock',
+      'src/main.rs',
+      'src/lib.rs',
+      'crates/inner/Cargo.toml',
+      'crates/inner/src/lib.rs',
+      // `target` 只作为路径的一部分出现时不受影响 —— 排除判据按**目录分量**匹配,不是子串。
+      'src/target_helpers.rs',
+      'docs/target-audience.md'
+    ];
+    const excludedPaths = [
+      'target/debug/demo',
+      'target/debug/.fingerprint/demo/lib-demo.json',
+      'target/release/build/demo-1a2b/out/generated.rs',
+      'target/.rustc_info.json',
+      // 工作区里每个 crate 各自的 target 也要剪掉,不只是根上那一个。
+      'crates/inner/target/debug/inner'
+    ];
+    for (const path of [...includedPaths, ...excludedPaths]) {
+      await mkdir(dirname(join(root, path)), { recursive: true });
+      await writeFile(join(root, path), 'searchable fixture');
+    }
+    const config = parseOnlyPreviewWorkspaceConfig('version: 1\nexclude: []\n');
+    const traversal = await createWorkspaceTraversal({ rootPath: root, config });
+    const files = [];
+    for await (const file of traversal.entries) files.push(file.relativePath);
+    assert.deepEqual(files.sort(), [...includedPaths].sort());
+    assert.equal(
+      await countWorkspaceSearchEntries({ rootPath: root, config }),
+      includedPaths.length
     );
   } finally {
     await rm(root, { recursive: true, force: true });

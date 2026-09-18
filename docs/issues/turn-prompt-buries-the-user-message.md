@@ -122,7 +122,18 @@ expectedChildren、登录墙、分支新标签页、commit control、覆盖率�
 - `BEGIN_GUIDANCE` 也缺的两条（`uncovered` 结算、`end` 的强制前置）补进 `DRILL_ROUTE` —— 不补的话
   模型只能靠撞 `end` 的拒绝才知道自己还没完，可恢复，但白跑一轮。
 
-结果：空 briefs 下的 user 消息从 ~20.4k 降到 **9,861 字符**。钻探正文不再每轮发、steering 不再重发一遍。
+结果（2026-09-18 19:00 复测，前一版写的 ~20.4k → 9,861 是错的，来源是源码 diff 的字符数而不是渲染出来的提示词）：
+
+| | 改前 | 改后 | 差 |
+| --- | ---: | ---: | ---: |
+| 钻探块本身 | 9,672 | 5,002（`DRILL_ROUTE`） | **−4,670** |
+| 空 briefs 的整条 user 消息 | 14,890 | 10,220 | −4,670（−31%） |
+| 真实会话（66 条技能目录） | 75,415 | 69,471 | −5,944（−7.9%） |
+
+空 briefs 的两个数分别取自 `805da0a` 与 HEAD 的 `buildAgentTurnPrompt`；真实会话两个数取自 Ral 的两份实录
+（`COWORK_TEST_DEBUG/agent-io/20260918182726077-*` 与 `Micromeet Cowork/agent-io/20260918185611709-*`）。
+
+真实会话只降 7.9%，是因为**技能目录 53,4xx 字符一个字没动** —— 那条等 Ral 定。钻探正文不再每轮发、steering 不再重发一遍。
 
 **P1-技能目录 · 需要 Ral 定夺。**（本次不动）它占 72.4%，是真正的大头。但"完整目录"是**刻意的
 设计不变量** —— `refreshModelSkillCatalog` 在超预算时硬失败并声明「no skills were silently

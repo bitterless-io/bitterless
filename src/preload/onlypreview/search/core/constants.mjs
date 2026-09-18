@@ -22,6 +22,12 @@ export const CORE_EXCLUDED_DIRECTORY_NAMES = Object.freeze(new Set([
   'build',
   'out',
   'output',
+  // Rust/Cargo 的产物目录(Ral 2026-09-18:「bl cowork 都要默认不去索引 rust 工程产物的目录」)。
+  // Maven 也用这个名字装产物,所以这一条对两种工程都是对的。和上面几个同一类风险:一个真的叫
+  // `target` 的源码目录会被跳过 —— 与 `build` / `out` / `output` / `vendor` 同一条既有取舍。
+  // 更精确的做法是「只有同级存在 Cargo.toml / pom.xml 时才排除」,代价是每个候选目录多一次 stat,
+  // 而且硬策略就不再是一张纯名字表(引擎标识、traversal、reconcile 判据都按名字表建的),所以不做。
+  'target',
   '.next',
   'coverage',
   '.cache',
