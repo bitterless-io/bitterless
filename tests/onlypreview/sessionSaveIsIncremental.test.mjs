@@ -33,11 +33,14 @@ const evaluate = (source, bindings = {}) => {
 const storeMembers = members(store, [
   ...(bl ? ['queueSessionSave', 'saveSessionNow'] : ['runSessionWrite']),
   'persistSessionMeta', 'persistMessages', 'persistSession',
+  // The real narrow refresh, not a stub: a save ends by re-reading the ONE row it touched, and the
+  // fence assertions below are about that call (docs/issues/every-save-recounts-the-whole-history.md).
+  'refreshHistoryRow',
   'toStoredSessionMeta', 'toStoredMessage', 'toStoredSession'
 ])
 
 function harness() {
-  const h = { metaWrites: 0, messageWrites: 0, rowsWritten: 0, fullRewrites: 0, cloned: 0, last: null }
+  const h = { metaWrites: 0, messageWrites: 0, rowsWritten: 0, fullRewrites: 0, cloned: 0, last: null, summaryReads: [], fullHistoryPulls: 0 }
   // Simulates the account changing while the bridge call is in flight.
   const logout = () => { if (h.logoutDuringWrite) { h.store.generation += 1; h.store.authGeneration += 1 } }
   const chat = {
@@ -47,10 +50,16 @@ function harness() {
       logout()
       return { ok: true }
     },
-    saveSession: async ({ session }) => { h.fullRewrites += 1; h.rowsWritten += session.messages.length; h.last = session; logout(); return { ok: true } }
+    saveSession: async ({ session }) => { h.fullRewrites += 1; h.rowsWritten += session.messages.length; h.last = session; logout(); return { ok: true } },
+    // The post-save read. Counting it is how the fence test tells a save that landed from one that
+    // was dropped, now that the whole-list reload is gone.
+    getSessionSummary: async ({ id }) => { h.summaryReads.push(id); return { id, title: 'T', updatedAt: 2, messageCount: 0, preview: '' } }
   }
   const { Store } = evaluate(`export class Store { ${storeMembers} }`, {
     coworkChat: chat, maestroChat: chat, toRaw: (value) => value,
+    // Bitterless's narrow refresh logs through it; Cowork's does not. Binding it in both keeps the
+    // shared harness host-agnostic.
+    turnDiagnostics: { emit: () => {} },
     // Counting clones is the point: the old path cloned every message on every save.
     plainFiles: (files) => { h.cloned += 1; return files || [] },
     plainActivity: (activity) => activity || [],
@@ -62,7 +71,10 @@ function harness() {
     sessionWrites: { run: (_id, operation) => operation() },
     sessionSaves: new Map(),
     updateSessionContextUsage() {},
-    refreshHistory: async () => {},
+    // Non-empty so the narrow path runs; `refreshHistoryRow` deliberately falls back to the full
+    // pull while the list is empty, and that fallback has its own test.
+    historySessions: [{ id: 's1', title: 'T', updatedAt: 1, messageCount: 0, preview: '' }],
+    refreshHistory: async () => { h.fullHistoryPulls += 1 },
     cloneWorkspace: (value) => value,
     getSession: (id) => (h.session?.id === id ? h.session : undefined)
   })
@@ -141,16 +153,17 @@ test('the incremental payload is byte-identical to what the full rewrite would h
 test('every lane keeps the account/identity fence and the history refresh', async (t) => {
   const h = harness()
   h.session = h.makeSession(2)
-  let refreshed = 0
-  h.store.refreshHistory = async () => { refreshed += 1 }
+  const refreshed = () => h.summaryReads.length
   assert.equal(await h.store.persistSessionMeta(h.session), true)
-  assert.equal(refreshed, 1)
+  assert.equal(refreshed(), 1)
+  assert.deepEqual(h.summaryReads, ['s1'], 'and it re-reads the session it saved, not the whole list')
+  assert.equal(h.fullHistoryPulls, 0, 'a save must not reload every conversation')
   // A save for a session the store no longer holds must be dropped, on every lane.
   const orphan = { ...h.makeSession(1), id: 'gone' }
   assert.equal(await h.store.persistSessionMeta(orphan), false)
   assert.equal(await h.store.persistMessages(orphan, orphan.messages), false)
   assert.equal(await h.store.persistSession(orphan), false)
-  assert.equal(refreshed, 1, 'a fenced save refreshes nothing')
+  assert.equal(refreshed(), 1, 'a fenced save refreshes nothing')
   // A logout that lands WHILE the bridge call is in flight. Both hosts re-check the account after
   // the write returns, so a save that lands for nobody is dropped on every lane.
   h.logoutDuringWrite = true
@@ -160,5 +173,44 @@ test('every lane keeps the account/identity fence and the history refresh', asyn
     await h.store.persistSession(h.session)
   ]
   assert.deepEqual(overtaken, [false, false, false], 'a save overtaken by a logout is dropped on every lane')
-  assert.equal(refreshed, 1, 'and refreshes nothing')
+  assert.equal(refreshed(), 1, 'and refreshes nothing')
+})
+
+/**
+ * The lane resolves a message by **id**, not by object identity, and never claims to have saved one
+ * it did not write.
+ *
+ * `session.messages` lives in `reactive()`, so `filter` yields proxies while a caller that just
+ * built and pushed a message holds the raw literal. Under `indexOf` that mismatch dropped the
+ * entry, degraded the call to a metadata save, and returned `true` — and at least one caller
+ * (`applyWorkflowCompletion`) retires its own retry on that answer, so the message was shown on
+ * screen and never written. The probe that proves the mismatch is real:
+ *
+ *     reactive({m:[]}) → push(raw) → filter(...)[0] !== raw   // true, Vue 3.5
+ *     filter(...).indexOf(raw) === -1
+ */
+test('a message is matched by id, so a caller holding a different object still writes the row', async (t) => {
+  const h = harness()
+  h.session = h.makeSession(3)
+  // What a reactive array hands back: a distinct wrapper around the same logical message.
+  const wrapper = { ...h.session.messages[1] }
+  assert.notEqual(wrapper, h.session.messages[1], 'the test must be about two distinct objects')
+  assert.equal(await h.store.persistMessages(h.session, [wrapper]), true)
+  assert.equal(h.messageWrites, 1)
+  assert.equal(h.rowsWritten, 1, 'the row is written, not silently skipped')
+  assert.equal(h.last.messages[0].id, 'm1')
+  assert.equal(h.last.messages[0].sortOrder, 1, 'and it lands at the position the full rewrite would use')
+})
+
+test('a message that is not in the session is never reported as saved', async (t) => {
+  const h = harness()
+  h.session = h.makeSession(2)
+  const stranger = { id: 'not-here', role: 'human', content: 'x', ts: 9, source: 'cowork' }
+  assert.equal(
+    await h.store.persistMessages(h.session, [stranger]),
+    false,
+    'answering true here is how an unwritten message stops being retried'
+  )
+  assert.equal(h.messageWrites, 0)
+  assert.equal(h.metaWrites, 0, 'and it must not quietly degrade to a metadata save either')
 })

@@ -101,6 +101,10 @@ export interface MaestroChatSessionSummary {
 
 export interface MaestroChatApi {
   listSessions(params?: { operationTabId?: string }): Promise<MaestroChatSessionSummary[]>
+  // One session's summary through the same projection as `listSessions`, so a save can refresh the
+  // row it touched without recounting every other conversation
+  // (docs/issues/every-save-recounts-the-whole-history.md). `null` when the row is gone.
+  getSessionSummary(params: { id: string }): Promise<MaestroChatSessionSummary | null>
   getSession(params: { id: string }): Promise<MaestroChatSession | null>
   // Metadata only — title, archive flag, workspace binding, plan. Touches no message row.
   saveSessionMeta(params: { session: MaestroChatSessionMeta }): Promise<{ ok: boolean }>

@@ -122,6 +122,45 @@ const toSessionBase = (row: SessionRow): Omit<MaestroChatSession, 'messages'> =>
   detail: normalizeDetail(parseJson(row.detail_json, { compressedContext: '' }))
 })
 
+/**
+ * The history-list projection, written once and shared by the whole-list and single-session reads
+ * so the two can never disagree about what a summary is
+ * (docs/issues/every-save-recounts-the-whole-history.md).
+ *
+ * `message_count` is a correlated `COUNT(*)` rather than the previous `LEFT JOIN … GROUP BY`:
+ * identical results (a session with no messages counts 0 either way), but each session's count and
+ * preview are answered from the `(session_id, sort_order)` index for that one session, which is
+ * what makes the single-session form read only its own rows.
+ */
+const SESSION_SUMMARY_COLUMNS = `
+          s.id,
+          s.operation_tab_id,
+          s.title,
+          s.created_at,
+          s.updated_at,
+          s.archived_at,
+          s.detail_json,
+          (SELECT COUNT(*) FROM cowork_chat_message WHERE session_id = s.id) AS message_count,
+          COALESCE((
+            SELECT content FROM cowork_chat_message
+            WHERE session_id = s.id AND content != '' AND prompt_excluded = 0 AND type != 'compact'
+            ORDER BY sort_order DESC
+            LIMIT 1
+          ), '') AS preview`
+
+type SessionSummaryRow = SessionRow & { message_count: number; preview: string }
+
+const toSessionSummary = (row: SessionSummaryRow): MaestroChatSessionSummary => ({
+  id: row.id,
+  operationTabId: row.operation_tab_id,
+  title: row.title,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+  archivedAt: row.archived_at || undefined,
+  messageCount: row.message_count || 0,
+  preview: row.preview || ''
+})
+
 const MESSAGE_COLUMNS = '(id, session_id, source, role, type, content, files_json, skill_json, skills_json, replay_json, activity_json, streaming, error, compressed, prompt_excluded, compact_summary, compact_until_message_id, token_count, ts, sort_order, tasks_json, confirm_json)'
 
 const MESSAGE_INSERT_SQL = `INSERT INTO cowork_chat_message ${MESSAGE_COLUMNS} VALUES (${new Array(22).fill('?').join(', ')})`
@@ -175,39 +214,37 @@ export class MaestroChatDao extends XpcPreloadHandler implements MaestroChatApi 
     }
     const rows = sqliteManager.db
       .prepare(
-        `SELECT
-          s.id,
-          s.operation_tab_id,
-          s.title,
-          s.created_at,
-          s.updated_at,
-          s.archived_at,
-          s.detail_json,
-          COUNT(m.id) AS message_count,
-          COALESCE((
-            SELECT content FROM cowork_chat_message
-            WHERE session_id = s.id AND content != '' AND prompt_excluded = 0 AND type != 'compact'
-            ORDER BY sort_order DESC
-            LIMIT 1
-          ), '') AS preview
+        `SELECT ${SESSION_SUMMARY_COLUMNS}
         FROM cowork_chat_session s
-        LEFT JOIN cowork_chat_message m ON m.session_id = s.id
         ${where}
-        GROUP BY s.id
         ORDER BY s.updated_at DESC`
       )
-      .all(...args) as Array<SessionRow & { message_count: number; preview: string }>
+      .all(...args) as SessionSummaryRow[]
 
-    return rows.map((row) => ({
-      id: row.id,
-      operationTabId: row.operation_tab_id,
-      title: row.title,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      archivedAt: row.archived_at || undefined,
-      messageCount: row.message_count || 0,
-      preview: row.preview || ''
-    }))
+    return rows.map(toSessionSummary)
+  }
+
+  /**
+   * One session's summary, through the SAME projection the list uses.
+   *
+   * A save changes one session, so re-deriving the counts and previews of every OTHER conversation
+   * is work whose result is known in advance to be unchanged. Before the incremental write lanes
+   * that recount was hidden — the save already cost the whole session, so the list query was a
+   * rounding error. It is not any more
+   * (docs/issues/every-save-recounts-the-whole-history.md).
+   *
+   * Sharing `SESSION_SUMMARY_COLUMNS` is what makes "narrow" safe: `messageCount` and `preview`
+   * stay DERIVED, so there is no stored counter that can drift, and the row this returns is
+   * byte-identical to the one the list would have produced for the same session.
+   *
+   * Returns `null` when the session row is gone, so the caller can drop it from the list instead of
+   * leaving a stale entry behind.
+   */
+  async getSessionSummary(params: { id: string }): Promise<MaestroChatSessionSummary | null> {
+    const row = sqliteManager.db
+      .prepare(`SELECT ${SESSION_SUMMARY_COLUMNS} FROM cowork_chat_session s WHERE s.id = ?`)
+      .get(params.id) as SessionSummaryRow | undefined
+    return row ? toSessionSummary(row) : null
   }
 
   async getSession(params: { id: string }): Promise<MaestroChatSession | null> {

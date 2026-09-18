@@ -51,7 +51,11 @@ const messageMembers = members(renderer + 'message.store.ts', [
   'init', 'createSession', 'createEmptySession', 'loadPersistedSession', 'latestActiveSession',
   'getSession', 'adoptPreviewWorkspace', 'chooseWorkspace', 'stopUsingWorkspace',
   'refreshDefaultWorkspace', 'refreshWorkspace', 'applyWorkspaceBroadcast', 'cloneWorkspace',
-  'persistSession', 'persistSessionMeta', ...(bl ? [] : ['runSessionWrite']), 'refreshHistory', ...(bl ? ['queueSessionSave', 'saveSessionNow', 'resume'] : [])
+  'persistSession', 'persistSessionMeta', ...(bl ? [] : ['runSessionWrite']), 'refreshHistory',
+  // A save now re-reads only the row it touched; without the real member here every save in
+  // this file dies on `this.refreshHistoryRow is not a function`
+  // (docs/issues/every-save-recounts-the-whole-history.md).
+  'refreshHistoryRow', ...(bl ? ['queueSessionSave', 'saveSessionNow', 'resume'] : [])
 ])
 const channelAst = ast(renderer + 'channel.store.ts')
 const channelClass = channelAst.statements.find((node) => ts.isClassDeclaration(node)).getText(channelAst).replace(/^export /, '')
@@ -142,6 +146,9 @@ function harness(t, { restore = false, project = true, external = false, pending
   const dao = {
     getSession: async ({ id }) => structuredClone(h.rows.get(id)),
     listSessions: async () => [...h.rows.values()].map((row) => structuredClone(row)),
+    // The narrow post-save read. These fixtures start with an empty `historySessions`, so the
+    // fallback to the full pull is what usually runs — this keeps the narrow path honest too.
+    getSessionSummary: async ({ id }) => (h.rows.has(id) ? structuredClone(h.rows.get(id)) : null),
     saveSession: async ({ session }) => { h.rows.set(session.id, structuredClone(session)); h.saves.push(structuredClone(session)); return { ok: true } },
     // Metadata lane: merge onto the stored row so a later read still sees the messages it never sent.
     saveSessionMeta: async ({ session }) => {
