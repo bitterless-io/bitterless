@@ -63,7 +63,7 @@ const removeCrmsTabs = async (): Promise<number> => {
 const removeOrphanConfigDomains = async (): Promise<number> => {
   let removed = 0;
   for (const domain of ORPHAN_CONFIG_DOMAINS) {
-    const entries = await configStore.list({ domain });
+    const entries = (await configStore.list({ domain })) ?? [];
     for (const entry of entries) {
       await configStore.remove({ domain, key: entry.key });
       removed += 1;

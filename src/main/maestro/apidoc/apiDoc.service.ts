@@ -809,7 +809,7 @@ export class ApiDocService {
     } catch (err) {
       this.debug({ phase: 'apidoc-ledger-list-failed', level: 'warn', message: `Ledger list failed, falling back to stored blobs: ${(err as Error).message}` })
     }
-    const rows = await configStore.list({ domain: APIDOC_CONFIG_DOMAIN })
+    const rows = (await configStore.list({ domain: APIDOC_CONFIG_DOMAIN })) ?? []
     const summaries: ApiDocSummary[] = []
     for (const row of rows) {
       const parsed = parseStoredDoc(row.options)
