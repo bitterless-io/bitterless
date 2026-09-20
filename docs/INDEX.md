@@ -176,6 +176,15 @@
   shell 进程都死亡、cache 目录删除(等价 `delete-session`),所以**关 tab 确实结束会话且不可
   resurrect**。守卫 `tests/zellij/zellijTabCloseConfirm.test.mjs` 真渲染模板来判定。
 
+- [双击 Zellij tab 改名,光标落在终端里](issues/zellij-tab-rename-loses-focus-to-terminal.md) — 根因已定位并逐环取证,**未修**(Ral 2026-09-20 只要根因);
+  Electron 键盘焦点按 WebContents 分,MenuBar 与 Zellij 终端是两个 view。双击派发两次 `click`,
+  而 `onTabClick` 的 `isRenaming` 守卫在 `dblclick` 之前都还是 false —— 两次都走
+  `activateTab`,其 composite 分支**没有「已是活动 tab 就早返回」**,于是
+  `setCompositeActive(true)` → `setTabActive` → `surface.focus()` → `webContents.focus()`
+  把键盘交回终端。`input.focus()` 只是微任务里的 DOM 焦点,XPC 往返必然后到,所以终端稳定胜出。
+  连带:输入框的 `@blur` 会被这次失焦触发,把没改过的名字提交掉、编辑框一闪即逝。
+  修法有两条(看「点已激活的 tab 是否该回到终端」这个语义怎么定),待 Ral 拍板。
+
 - [双击 Zellij tab 就地改名](features/zellij-tab-inline-rename.md) — implemented; owner testing pending;
   chip 里就地编辑,宽度跟着字走、20 字截断,回车/失焦保存、Escape 放弃,清空即退回 `Zellij`;
   落盘复用既有 alias 那条路,跨重启存活。
