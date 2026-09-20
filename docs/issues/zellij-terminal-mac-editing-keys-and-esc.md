@@ -1,8 +1,9 @@
 # Zellij Terminal Swallows Esc, Shift+Enter, and Every macOS Editing Key
 
-Status: all four repairs implemented and unit-tested; they need a rebuild before the owner can
-verify them. The last unknown in the Esc path was deliberately designed around rather than measured
-— see *Why Esc did not wait for the measurement*.
+Status: all four repairs implemented and unit-tested. Layer 3 shipped broken on 2026-09-14 and was
+repaired on 2026-09-20 — see *Layer 3 shipped half-applied*, which also retires this issue's claim
+that a template upgrade needs the server killed. The last unknown in the Esc path was deliberately
+designed around rather than measured — see *Why Esc did not wait for the measurement*.
 
 ## Symptom
 
@@ -127,23 +128,77 @@ them for free. Layer 3 is config, and must be written into the **generated templ
 
 Config template changes:
 
-- Unbind `Alt left` / `Alt right` so word movement reaches the pane.
+- Unbind `Alt left` and `Alt right` **on one node** so word movement reaches the pane — see
+  *Layer 3 shipped half-applied* for why the node count is load-bearing.
 - Set `web_client { mac_option_is_meta true }`. This also revives `Alt h` / `Alt l`, which is where
   left/right pane focus lands once the arrows are freed. Cost: Option+letter no longer types an
   accent — acceptable for this owner, and it is what every terminal-as-editor setup does.
 - The template carries a version stamp and backs up on upgrade, so existing installs migrate.
 
-**Caveat — writing the file is not applying it.** Zellij reads `--config` once, at server start, and
-the server outlives the app: two servers were found alive on `/tmp/bzdx-production-debug/`, started
-11:00 and 14:57, across several app restarts. So on a machine that has already run this app, a
-template upgrade lands on disk and changes nothing until that server exits. First observed as a
-false negative: the owner's 2026-09-14 test reported Option+Right still switching panes, with
-`Bitterless_DEBUG_PROD/zellij/config.kdl` written at 15:32 and its server running since 14:57.
+**Superseded 2026-09-20 — a template upgrade DOES apply to a running server.** This section used to
+claim that Zellij reads `--config` once at server start, so an upgrade could not take effect until
+the server was killed, and it read the owner's 2026-09-14 retest as a false negative caused by that
+staleness. Both halves were wrong, and the real cause is in *Layer 3 shipped half-applied*.
 
-A fresh install has no server yet, so it is unaffected. For an existing one, the server must be
-stopped first — `pkill -f 'bzdx-production-debug'` for a debug build, `-preview` for Preview — which
-also kills every pane in it. Worth a product decision separately: a config template that cannot take
-effect without a manual kill is a migration that silently does not migrate.
+Zellij watches the config file for the life of the session: with `cli_assets.config_file_path` set —
+which `zellijNativeSession.service.ts` always sets — the server spawns `watch_config_file_changes`,
+and each change becomes `ServerInstruction::ConfigWrittenToDisk` → `change_saved_config` →
+`propagate_configuration_changes` (`zellij-server/src/lib.rs:2295`, `:1753`, v0.45.1). Keybinds are
+part of what propagates. It is a poll watcher, so the atomic `renameSync` this app replaces the file
+with is picked up like any other write.
+
+Measured, not inferred: against one live session daemon, swapping `config.kdl` under it moved
+Option+Left from consumed to passed through within seconds, with no restart and no reattach — the
+same run reproduced in *Layer 3 shipped half-applied*. So the owner's requirement that the setting
+take effect after an app update is met by bumping `ZELLIJ_CONFIG_VERSION_CODE`: the app rewrites the
+file on the next start, and every already-running session follows. No pane is killed for it.
+
+## Layer 3 shipped half-applied — Zellij reads only the FIRST global `unbind`
+
+Owner report 2026-09-20: Option+arrow still switches panes, and it should be off by default and stay
+off across app updates. The template had carried the unbind since 2026-09-14, on his machine, in a
+file Zellij validated without complaint:
+
+```kdl
+keybinds {
+  unbind "Alt left"
+  unbind "Alt right"   // ← never read
+}
+```
+
+Zellij takes the global unbind with `kdl_keybinds.children().and_then(|c| c.get("unbind"))`
+(`zellij-utils/src/kdl/mod.rs:5179`, v0.45.1). `KdlDocument::get` returns the **first** node of that
+name; every later one is dropped without a warning. `keys_from_kdl!` (`:341`), by contrast, takes
+*all* arguments of the node it is handed. So one node with two keys unbinds two keys, and two nodes
+with one key each unbind exactly one.
+
+Confirmed against the bundled 0.45.1 binary before the fix, using an invalid key name as a probe for
+whether a node is parsed at all:
+
+| Config | `setup --check` | Meaning |
+| --- | --- | --- |
+| `unbind "Alt left" "Alt bogus"` | exit 1, *Invalid key* | both arguments parsed |
+| `unbind "Alt left"` + `unbind "Alt bogus"` | exit 0 | the second node is never looked at |
+| `unbind "Alt bogus"` + `unbind "Alt left"` | exit 1, *Invalid key* | only the first node is |
+
+And end to end, driving a real `KeyMsg` into a live session daemon over native IPC (the message the
+web client sends; note `KeyMsg.key` carries the *parsed* key, which is what the server matches —
+`raw_bytes` alone does nothing, and an earlier probe that sent only bytes produced a false pass):
+
+| Config | Option+Left | Option+Right |
+| --- | --- | --- |
+| no unbind (control) | consumed | consumed |
+| two `unbind` nodes (what shipped) | passed through | **consumed** |
+| one node, both keys | passed through | passed through |
+
+That is the whole 2026-09-14 retest: the owner reported Option+**Right**, the one key this bug left
+bound. Nothing was stale.
+
+**Repair.** One node, `unbind "Alt left" "Alt right"`, and `ZELLIJ_CONFIG_VERSION_CODE` bumped to
+`260920134020` so existing installs are handed the corrected template. Two guards in
+`tests/zellij/zellijDefaultConfig.test.mjs`: the template must carry exactly one global `unbind`
+node listing both keys, and the binary must still drop a second node — if a future Zellij starts
+reading them all, that test says so instead of the constraint quietly outliving its reason.
 
 ## Out of scope — native-input selection
 

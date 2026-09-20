@@ -240,3 +240,49 @@ test('the seeded binds are the same ones the settings panel calls default', () =
   assert.match(other, /bind "Ctrl Alt w" \{ CloseFocus; \}/);
   assert.doesNotMatch(other, /Super/, 'Super is a macOS-only modifier here');
 });
+
+test('both Option+arrow keys ride the single global unbind node Zellij actually reads', () => {
+  const keybinds = children(parse(buildZellijDefaultConfig({ platform: 'darwin' })), 'keybinds');
+  const unbinds = keybinds.nodes.filter((node) => node.getName() === 'unbind');
+  // Not a style preference. Zellij takes the global unbind with `children().get("unbind")`, which
+  // returns the FIRST node of that name, so a second `unbind` line is not a second unbind — it is
+  // a no-op that Zellij validates happily. The next test pins that behaviour against the binary.
+  assert.equal(unbinds.length, 1, 'a global unbind after the first one is never read by Zellij');
+  assert.deepEqual(
+    unbinds[0].getArguments().map(String),
+    ['Alt left', 'Alt right'],
+    'Option+Left and Option+Right must both reach the pane as word movement'
+  );
+});
+
+test(
+  'Zellij reads only the first global unbind node — the reason both keys share one line',
+  {
+    skip: existsSync(BINARY) ? false : `${BINARY} is not staged — run yarn tools:init`
+  },
+  () => {
+    const accepted = (body, name) => {
+      const file = join(directory, `${name}.kdl`);
+      writeFileSync(file, body);
+      try {
+        execFileSync(BINARY, ['--config', file, 'setup', '--check'], { stdio: 'pipe' });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    // An unparseable key name is rejected wherever Zellij actually looks at it...
+    assert.equal(
+      accepted('keybinds {\n  unbind "Alt left" "Alt bogus"\n}\n', 'unbind-one-node'),
+      false,
+      'Zellij should reject an invalid key on the node it reads'
+    );
+    // ...and sitting on a SECOND unbind node, it is never looked at at all. That silence is what
+    // let `unbind "Alt right"` look shipped while Option+Right kept switching panes.
+    assert.equal(
+      accepted('keybinds {\n  unbind "Alt left"\n  unbind "Alt bogus"\n}\n', 'unbind-two-nodes'),
+      true,
+      'a second global unbind node is dropped without a word — keep every key on the first'
+    );
+  }
+);

@@ -10,7 +10,7 @@
 export const ZELLIJ_THEME_NAME = 'bitterless';
 
 /** Bump when an existing installation must receive a fresh application-owned template. */
-export const ZELLIJ_CONFIG_VERSION_CODE = '260916230933';
+export const ZELLIJ_CONFIG_VERSION_CODE = '260920134020';
 
 /**
  * Replaced with the binds derived from `defaultZellijShortcuts`.
@@ -40,8 +40,14 @@ keybinds {
   // Left/right pane focus keeps working through "Alt h"/"Alt l" — also a Zellij default, and usable
   // only because \`mac_option_is_meta\` is set below. "Alt up"/"Alt down" are deliberately left
   // bound: no editing key needs them, so pane focus keeps a pair of arrows.
-  unbind "Alt left"
-  unbind "Alt right"
+  //
+  // BOTH KEYS MUST STAY ON THIS ONE NODE. Zellij reads the global unbind with
+  // \`kdl_keybinds.children().get("unbind")\`, which returns the FIRST node of that name and drops
+  // every later one (kdl/mod.rs:5179, v0.45.1) — while \`keys_from_kdl!\` takes all arguments of the
+  // node it is given. Written as two lines, "Alt right" was silently ignored and Option+Right kept
+  // switching panes for four days, through a template that looked correct and a config Zellij
+  // validated without complaint. See zellij-terminal-mac-editing-keys-and-esc.md.
+  unbind "Alt left" "Alt right"
 
   normal {
 ${ZELLIJ_BINDS_PLACEHOLDER}

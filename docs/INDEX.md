@@ -343,8 +343,14 @@ design document.
   (3) zellij 默认把 `Alt left/right` 绑成 `MoveFocusOrTab`,吃掉了 word 移动;(4) Esc 落单时
   丢失。修法:Esc 与两个换行键由 `zellijPageKeyPatch.ts` 注入页面、**capture 阶段**直接写字节
   (Esc 发完整 `CSI 27;1u`,换行发 `ESC CR`),Cmd+←/→ 仍走 `zellijKeyBridge` 译成 Ctrl+A/E,
-  Option+←/→ 与 `mac_option_is_meta` 写进配置模板。**注意**:zellij server 只在启动时读一次
-  配置且跨 app 重启存活,模板写到磁盘 ≠ 生效。
+  Option+←/→ 与 `mac_option_is_meta` 写进配置模板。**2026-09-20 修了第 3 层并推翻两个结论**:
+  模板里 `unbind` 写成两行,而 zellij 用 `children().get("unbind")` 只读**第一个**同名节点
+  (`kdl/mod.rs:5179`),`unbind "Alt right"` 被静默丢弃 —— Option+Right 一直在切 pane,配置却
+  校验通过。改成单节点两键 `unbind "Alt left" "Alt right"`,版本码升到 `260920134020`。同时实测
+  证明 zellij **会**监听配置文件热加载(`watch_config_file_changes` → `ConfigWrittenToDisk` →
+  `propagate_configuration_changes`),运行中的 session 换配置几秒内生效,**不需要杀 server**;
+  原「模板写到磁盘 ≠ 生效」与「09-14 复测是陈旧 server 的假阴性」两条都是错的,真因就是上面那个
+  漏键。守卫在 `tests/zellij/zellijDefaultConfig.test.mjs`。
 
 - [从 Zellij 终端复制出来是 Mac OS Roman 乱码](issues/zellij-terminal-copy-is-mac-os-roman-mojibake.md) —
   implemented; owner verification pending(需重新打包);`没有` 复制出来变成 `Ê≤°Êúâ`,屏幕上却是对的。
