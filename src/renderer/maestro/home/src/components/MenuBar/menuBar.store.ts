@@ -76,6 +76,11 @@ class MenuBarState {
   bindAddressInput(el: HTMLInputElement | null): void {
     this.addressInput = el
     browserHistoryStore.bind(el);
+    // 接受一条历史记录会开**后台** tab —— 当前 tab 不导航,所以上面那两条复位路径
+    // (`coach/nav` 与 `applyTabs`)都不会触发,地址栏会留着刚才那串查询词。
+    // 这里把复位能力交给它,方向与 `bind()` 一致(反向 import 会成环)。
+    // docs/features/history-row-opens-background-tab.md #3.2
+    browserHistoryStore.setAddressRestorer(() => { this.url = stripScheme(this.activeTabUrl) });
   }
 
   async focusAddress(): Promise<void> {

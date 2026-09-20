@@ -1,5 +1,24 @@
 # Bitterless Documentation
 
+- [历史记录行一律开后台新 tab](features/history-row-opens-background-tab.md) — implemented; code-verified, human
+  testing pending. 地址栏弹窗的 `accept` 现在按 `entries.some(...)` 分流:一条**历史记录**一律
+  `openTab({ background: true })`,不再看当前 tab 的 `kind` —— 新 tab 立刻出现在 tab 条上并在后台
+  加载完,人停留在当前页。Google 候选行与地址栏直接回车**刻意不动**(Ral 2026-09-20 划的范围)。
+  Paired with micromeet-cowork。
+
+- [One home data root, created at boot](features/app-data-root.md) — implemented, code-verified; owner verification
+  pending. `src/main/paths/appData.ts` is now the only module that resolves a home-level data path: one root per
+  edition, one list of directories under it (`default_workspace`, `workflows`, `skills`), all created at boot. Global
+  skills moved out of `<userData>/cowork/skills` via a one-time move that never overwrites. Paired with micromeet-cowork.
+
+- [Workflows come from a local directory, not a remote library](features/local-workflow-directory.md) — implemented in this repo, code-verified;
+  owner verification pending. The library is now `~/.<appName lowercased>/workflows`, ensured at boot; one package
+  per folder, identity = folder name, no catalog/revision/immutable copy. A broken package is listed with its reason
+  rather than vanishing. Workbench keeps list / flow / details / source and gains **Open workflows folder**.
+  The institution resolution the old remote sync performed as a side effect (the only writer of `assetScope`, which
+  institution skills read) was **extracted, not deleted** — the picker moved to the Skills view.
+  Paired with micromeet-cowork; Cowork's half is blocked on PQ-1 in `areas/agent-runtime/workflow/workflow.html`.
+
 - [Zellij chrome 改成终端的样子](features/zellij-terminal-chrome.md) — implemented; owner testing pending;
   工具条降到 42px(与 Cowork 地址栏一致),配色整条取自终端**自己**的 `web_client.theme`
   (背景 `#1a1b26`、主题绿 `#9ece6a`),等宽字 + 状态点;高度与背景各收敛成一个 shared 常量,

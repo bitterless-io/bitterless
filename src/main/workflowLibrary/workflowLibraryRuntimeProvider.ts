@@ -1,34 +1,26 @@
-import { relative, resolve, sep } from 'node:path'
-import { realpath } from 'node:fs/promises'
 import type { WorkflowLibraryService } from './workflowLibrary.service'
 import type { LibraryRuntimeProvider } from './workflowLibraryRuntime'
+import { renderWorkflowCatalog } from './workflowCatalogPrompt'
 
-export const createWorkflowLibraryRuntime = (service: WorkflowLibraryService, libraryRoot: () => string): LibraryRuntimeProvider => ({
+/**
+ * What the chat host sees of the library. Every call re-reads the directory: the snapshot the
+ * Workbench is showing may predate the owner's last save, and a run must use what is on disk now
+ * (docs/features/local-workflow-directory.md).
+ */
+export const createWorkflowLibraryRuntime = (service: WorkflowLibraryService): LibraryRuntimeProvider => ({
+  // `modelInvocation:false` is withheld from the model everywhere it could pick a workflow, not just
+  // from the prompt — listing it while keeping it out of the catalog would be a distinction without
+  // a difference.
   async list() {
-    const snapshot = await service.snapshot()
-    return snapshot.items.map(row => ({ name: row.ref, displayName: row.name, description: row.description, scope: row.scope, institution_id: row.scope === 'institution' ? row.institution_id : undefined, ref: row.ref, entry: { kind: 'library' as const, ref: row.ref } }))
+    return service.snapshot().items.filter(row => !row.error && row.modelInvocation).map(row => ({
+      name: row.ref, displayName: row.name, description: row.description, scope: 'local' as const, reference: row.ref,
+      entry: { kind: 'library' as const, ref: row.ref }
+    }))
   },
+  catalogPrompt() { return renderWorkflowCatalog(service.items(), item => item.ref) },
   async resolve(ref) {
-    const snapshot = await service.snapshot()
-    const row = snapshot.items.find(item => item.ref === ref)
-    if (!row) throw new Error('Workflow reference is not available in this account and institution.')
-    const detail = await service.preview({ id: row.id, scope: row.scope, context: snapshot.context })
-    return { kind: 'file', path: detail.entry }
+    const { item } = service.detail(ref)
+    return { kind: 'file', path: item.entryPath }
   },
-  async assertPath(path) {
-    const root = await realpath(libraryRoot()).catch(() => resolve(libraryRoot()))
-    const actual = await realpath(path).catch(() => resolve(path))
-    const child = relative(root, actual)
-    if (child === '..' || child.startsWith(`..${sep}`) || resolve(actual) === root || !actual.startsWith(root + sep)) return
-    if (child === 'shared' || child.startsWith(`shared${sep}`)) return
-    const snapshot = await service.snapshot()
-    if (snapshot.status !== 'ready') throw new Error('Institution workflow access is unavailable. Refresh your institution.')
-    const entries = await Promise.all(service.currentInstalled().map(async row => ({ row, path: await realpath(row.entry).catch(() => resolve(row.entry)) })))
-    const installed = entries.find(item => item.path === actual)?.row
-    if (installed) {
-      const detail = await service.preview({ id: installed.id, context: snapshot.context, scope: 'institution' })
-      if (await realpath(detail.entry).catch(() => resolve(detail.entry)) === actual) return
-    }
-    throw new Error('This workflow file does not belong to the current authorized institution.')
-  }
+  async assertPath(path) { service.assertPath(path) }
 })

@@ -196,11 +196,12 @@
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.85.1",
     "@electron-toolkit/utils": "^4.0.0",
-    "@kimchi-dev/kimchi-workflows": "0.0.9",
+    "@quintinshaw/pi-dynamic-workflows": "3.12.0",
     "@sapphire/snowflake": "^3.5.5",
     "@seald-io/nedb": "^4.1.2",
     "better-sqlite3-multiple-ciphers": "12.11.1",
     "compare-versions": "^6.1.1",
+    "decimal.js": "^10.6.0",
     "dingtalk-stream": "^2.1.4",
     "dompurify": "3.4.12",
     "electron-log": "^5.4.4",
@@ -325,7 +326,7 @@
     "rigs/*",
     "rig_dev/*"
   ],
-  "name": "Bitterless_PREVIEW",
+  "name": "Bitterless_DEBUG_DEV",
   "version": "0.0.124",
-  "version_code": "260918183354"
+  "version_code": "260920193424"
 }

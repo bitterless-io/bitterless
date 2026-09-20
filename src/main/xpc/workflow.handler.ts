@@ -18,6 +18,14 @@ class WorkflowHandler extends XpcMainHandler implements WorkflowIpcApi {
     try { return { ok: true, run: await this._host().retryWorkflow(params) } }
     catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) } }
   }
+  /**
+   * Run-level control from the task bar. Returns the reply rather than throwing: electron-xpc turns a
+   * thrown error into `null`, which the renderer cannot tell apart from "it worked but said nothing".
+   */
+  async controlWorkflow(params: { sessionId: string; runId: string; action: 'pause' | 'resume' | 'stop' }) {
+    try { return await this._host().controlWorkflow(params) }
+    catch (error) { return { ok: false, status: error instanceof Error ? error.message : String(error) } }
+  }
   async pauseWorkflowAgent(params: { sessionId: string; runId: string; agentId: string }) { return this._host().pauseWorkflowAgent(params) }
   async resumeWorkflowAgent(params: { sessionId: string; runId: string; agentId: string }) { return this._host().resumeWorkflowAgent(params) }
   async steerWorkflowAgent(params: { sessionId: string; runId: string; agentId: string; message: string }) { return this._host().steerWorkflowAgent(params) }

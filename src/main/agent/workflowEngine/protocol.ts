@@ -86,6 +86,8 @@ export type WorkerCommand =
   | { type: 'agent.turn'; turnId: string; prompt: string }
   | { type: 'abort' }
   | { type: 'agent.stop'; agentId: string }
+  // Run-level control. The engine has no per-agent equivalent — see engine.worker.ts.
+  | { type: 'workflow.pause' | 'workflow.resume' | 'workflow.stop' }
   | { type: 'agent.pause' | 'agent.resume'; agentId: string }
   | { type: 'agent.steer'; agentId: string; message: string }
   | { type: 'agent.pause.state'; agentId: string; paused: boolean }
@@ -109,6 +111,8 @@ export type WorkerEvent =
   | { type: 'tool.cancel'; callId: string }
   | { type: 'process.owned'; pid: number; group: boolean }
   | { type: 'process.released'; pid: number }
+  | { type: 'workflow.state'; runId: string; state: 'started' | 'paused' | 'resumed' | 'stopped' }
+  | { type: 'workflow.control'; action: 'pause' | 'resume' | 'stop'; ok: boolean }
   | { type: 'engine.done'; result?: string; error?: WireError }
 export function wireError(error: unknown): WireError {
   if (error instanceof Error) {

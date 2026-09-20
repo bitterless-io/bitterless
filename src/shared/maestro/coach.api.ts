@@ -180,7 +180,12 @@ export interface CoachXpcContract {
   // Open `url` in a NEW tab and activate it — atomic: the tab is born with the URL and loaded into
   // its OWN view (not the active view), so it can't desync the current tab. Used by Demo / "open in
   // new tab". Empty url → same as newTab().
-  openTab(params: { url: string }): Promise<void>
+  //
+  // `background: true` builds and loads the tab WITHOUT activating it: it appears on the strip and
+  // finishes loading while the operator stays on the current page (history-row-opens-background-tab.md
+  // #3.1). Only meaningful for a plain web tab born with a URL — the empty-url and Workbench-singleton
+  // branches foreground by design and ignore it.
+  openTab(params: { url: string; background?: boolean }): Promise<void>
   /**
    * Open a registered composite mini app as a tab in this window, or bring the existing one forward.
    *

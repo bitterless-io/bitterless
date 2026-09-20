@@ -101,9 +101,46 @@ test('keyboard/Google/history acceptance navigates once; plain Enter keeps origi
   const f = fixture(); f.input.value = ' 搜索 & cats#? '; f.store.focus(); await settle();
   f.store.keydown(key('ArrowDown')); f.store.keydown(key('Enter')); await settle();
   assert.equal(new URL(f.calls.find(([name]) => name === 'navigate')[1].url).searchParams.get('q'), f.input.value);
+  // A history row is accepted into a BACKGROUND tab now, never into the current one, and keyboard
+  // acceptance takes the same path as a click — docs/features/history-row-opens-background-tab.md #3.1.
   f.store.toggle(); await settle(); f.store.keydown(key('ArrowDown')); f.store.keydown(key('Enter')); await settle();
-  assert.equal(f.calls.filter(([name]) => name === 'navigate').at(-1)[1].url, entry().url);
+  assert.equal(f.calls.filter(([name]) => name === 'navigate').length, 1);
+  const accepted = f.calls.filter(([name]) => name === 'openTab').at(-1)[1];
+  assert.equal(accepted.url, entry().url); assert.equal(accepted.background, true);
   f.input.value = 'unselected'; f.store.focus(); assert.equal(f.store.keydown(key('Enter')), false);
+});
+
+test('a history row always opens a background tab, leaves the Workbench alone, and puts the address back', async () => {
+  // Every active-tab kind takes the same path; the old `kind === 'browser'` fork is gone.
+  for (const active of [{ active: true, kind: 'browser' }, { active: true, kind: 'composite' }, undefined]) {
+    const f = fixture();
+    let restored = 0;
+    f.store.setAddressRestorer(() => { restored += 1; });
+    f.coach.getTabs = async () => (active ? [active] : []);
+    f.store.toggle(); await settle();
+    await f.action('accept', entry().url);
+    // The store runs in runInNewContext, so deepStrictEqual fails on prototype identity — assert fields.
+    const opened = f.calls.filter(([name]) => name === 'openTab');
+    assert.equal(opened.length, 1);
+    assert.equal(opened[0][1].url, entry().url);
+    assert.equal(opened[0][1].background, true);
+    assert.equal(f.calls.some(([name]) => name === 'navigate'), false);
+    // Staying on the current page means the Workbench must stay exactly where it is, too.
+    assert.equal(f.calls.some(([name]) => name === 'background'), false);
+    assert.equal(restored, 1);
+  }
+});
+
+test('the Google row keeps the pre-existing branch and still backgrounds the Workbench first', async () => {
+  const f = fixture(); f.input.value = 'cats'; f.store.focus(); await settle();
+  const google = f.store.candidateUrls[0];
+  let restored = 0;
+  f.store.setAddressRestorer(() => { restored += 1; });
+  await f.action('accept', google);
+  assert.equal(f.calls.some(([name]) => name === 'background'), true);
+  assert.equal(f.calls.filter(([name]) => name === 'navigate').at(-1)[1].url, google);
+  assert.equal(f.calls.some(([name]) => name === 'openTab'), false);
+  assert.equal(restored, 0);
 });
 
 test('arrow selection cycles through Google and saved history, and recents contain only history', async () => {
@@ -141,7 +178,9 @@ test('IME clears popup and cannot navigate; Escape, Tab, native dismissal and ta
 test('locked addresses allow recents and open accepted history in a new tab', async () => {
   const f = fixture(); f.input.disabled = true; f.input.value = 'bitterless://only-preview'; f.store.focus(); assert.equal(f.store.open, false);
   f.coach.getTabs = async () => [{ active: true, kind: 'composite' }]; f.store.toggle(); await settle(); await f.action('accept', entry().url);
-  assert.equal(f.calls.find(([name]) => name === 'openTab')[1].url, entry().url); assert.equal(f.input.value, 'bitterless://only-preview');
+  const locked = f.calls.find(([name]) => name === 'openTab')[1];
+  assert.equal(locked.url, entry().url); assert.equal(locked.background, true);
+  assert.equal(f.input.value, 'bitterless://only-preview');
 });
 
 test('address diagnostic lines preserve phases without browsing values or session identities', async () => {

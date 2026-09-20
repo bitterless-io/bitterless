@@ -186,3 +186,24 @@ pi 对 `customPrompt` 只做 truthy 判断（`system-prompt.js:15`），实测�
 真实会话侧的自检（读 `session.systemPrompt` 这个公开 getter，`agent-session.d.ts:299`）、
 `pi-session-start` 日志里打提示词长度 + 短哈希（静默退回会表现为长度跳变 1450 → 2858）、
 以及一条仓库守卫钉住「adapter 必须传 resourceLoader」。Ral 未批，留档待定。
+
+## 2026-09-20：没指定位置时，新资源按 DDD 领域分类找落点
+
+Ral：「系统提示词在 workspace 的部分要增加内容，在上下文中没有指定新文件位置的时候，workspace 下
+新建资源，可以按 DDD 领域分类风格去找的合适的位置创建资源」。
+
+落点是每轮 `Workspace:` 块里的 `NEW_FILE_PLACEMENT`（`runtime/agentPrompt.ts`），**挂在
+`workspaceContext` 的两个分支上**，两仓逐字相同（按字节比对过）。规则只在上下文没点名位置时生效 ——
+用户或前文给了路径就按那个走，这是兜底，不是改写他的选择。
+
+四条判断，理由都记在 `overmind:areas/agent-runtime/chat/prompt-structure.html#new-file-placement`：
+
+- **不进 system。** workspace 的*指导*本来就整块在每轮（D2 取舍列的「指导本身留在原处」），拆一条
+  进 system 会把同一主题劈成两处。这不是缓存理由 —— 它是常量，进 system 并不会让前缀每轮作废。
+- **两个分支都挂。** 共享默认工作区也是工作区；恰恰是没选目录时最容易把文件堆到根目录。
+- **先列树再归位。** 不看现有目录就分类，分出来的是模型自带的分类法，不是这个工作区的。
+- **不留「实在不行就扔根目录」的出口。** 留了那条整个规则就变成可选的；改为要求它建最小的领域目录、
+  并用一句话说清放哪与为什么。
+
+成本 +718 字符（workspace 块 762 → 1,481）。该块目前没有任何守卫或测试断言其内容 —— 已知缺口，
+不是本次引入的。

@@ -14,7 +14,14 @@ function loader(stubs) {
     if (cache.has(file)) return cache.get(file).exports
     const module = { exports: {} }; cache.set(file, module)
     const code = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
-    new Function('require', 'module', 'exports', '__dirname', code)(name => name in stubs ? stubs[name] : name.startsWith('.') ? load(resolve(dirname(file), name)) : require(name), module, module.exports, dirname(file))
+    // `@shared/…` and `@main/…` resolve to real files, exactly as the bundler does. Falling straight
+    // through to `require()` for them made every harness break the moment a main module imported a
+    // shared one — which is what happened when the workflow entry-name contract moved to
+    // `shared/workflowPackage.ts`.
+    const alias = name => name.startsWith('@shared/') ? resolve(root, 'src/shared', name.slice('@shared/'.length))
+      : name.startsWith('@main/') ? resolve(root, 'src/main', name.slice('@main/'.length))
+      : null
+    new Function('require', 'module', 'exports', '__dirname', code)(name => name in stubs ? stubs[name] : name.startsWith('.') ? load(resolve(dirname(file), name)) : (alias(name) ? load(alias(name)) : require(name)), module, module.exports, dirname(file))
     return module.exports
   }
   return load

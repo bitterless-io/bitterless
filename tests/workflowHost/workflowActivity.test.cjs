@@ -280,6 +280,7 @@ test('the host publishes activity with every snapshot and a filtered listing kee
     async dispose() {}
   }
   const { WorkflowHostIntegration } = load('src/main/agent/workflowEngine/hostIntegration.ts', {
+    '../../../shared/workflowPackage': load('src/shared/workflowPackage.ts'),
     electron: { app: { getPath: () => '/test-user-data' } },
     './supervisor': { WorkflowSupervisor: Supervisor },
     './activitySummary': activityModule, './workflowWait': waitModule,

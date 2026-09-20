@@ -9,7 +9,6 @@ import { createJiti } from 'jiti'
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const aliases = { electron: fileURLToPath(new URL('./electronStub.cjs', import.meta.url)) }
 const dependencyResolver = createJiti(import.meta.url)
-for (const name of ['typebox/value','typebox/compile','typebox','@kimchi-dev/kimchi-workflows/flow','@kimchi-dev/kimchi-workflows/engine']) aliases[name] = fileURLToPath(dependencyResolver.esmResolve(name))
 const jiti = createJiti(import.meta.url, { alias: aliases, fsCache: false })
 class Child extends EventEmitter {
  constructor(pid){super();this.pid=pid;this.sent=[]}
@@ -18,7 +17,7 @@ class Child extends EventEmitter {
  exit(){this.emit('exit',0)}
 }
 const runtime={providerId:'fixture',modelId:'fixture',thinkingLevel:'low',authPath:'/not-persisted/auth',systemPrompt:'secret runtime prompt',tools:[{name:'web_fetch',description:'fetch',params:[]}]}
-const request={sessionId:'chat-a',entry:{kind:'builtin',name:'mini-demo'},input:'test',cwd:root}
+const request={sessionId:'chat-a',entry:{kind:'builtin',name:'agent-task'},input:'test',cwd:root}
 const tick=()=>new Promise(resolve=>setImmediate(resolve))
 async function harness(executeTool=async()=> 'result') {
  const storageDir=await mkdtemp(join(tmpdir(),'workflow-supervisor-')),children=[],signals=[]

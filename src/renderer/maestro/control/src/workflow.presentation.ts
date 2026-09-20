@@ -3,13 +3,19 @@ import { isWorkflowAgentActive, workflowActivityFacts, type WorkflowAgentTask, t
 /** Re-exported so a view reads its own module's presentation layer, not the wire contract. */
 export { workflowActivityFacts }
 
-export type WorkflowTaskCategory = 'active' | 'completed' | 'failed' | 'stopped'
+export type WorkflowTaskCategory = 'active' | 'paused' | 'completed' | 'failed' | 'stopped'
 
 export const newestWorkflowRuns = (runs: readonly WorkflowRunSnapshot[]): WorkflowRunSnapshot[] =>
   [...runs].reverse().sort((a, b) => b.createdAt - a.createdAt)
 
 export const workflowRunCategory = (run: WorkflowRunSnapshot): WorkflowTaskCategory => {
   if (run.status === 'running' || run.status === 'stopping') return 'active'
+  // Paused is NOT finished, and it is not a variant of active either — its journal is intact and it
+  // resumes from where it stopped. Falling through to `completed` (which is what happened before the
+  // engine gained run-level pause) made a paused run render as done: the header offered "Rerun"
+  // instead of "Resume", and in the live bar the group was filtered out altogether while the trigger
+  // pill still counted it. A run the owner deliberately paused cannot be one they can no longer see.
+  if (run.status === 'paused') return 'paused'
   if (run.status === 'failed' || (run.status === 'completed' && run.agents.some(agent => agent.status === 'failed'))) return 'failed'
   return run.status === 'stopped' ? 'stopped' : 'completed'
 }
@@ -52,7 +58,9 @@ export function groupWorkflowRuns(runs: readonly WorkflowRunSnapshot[]): Workflo
       activeCount: run.agents.filter(agent => isWorkflowAgentActive(agent.status)).length,
       awaitingUser: run.agents.filter(agent => agent.status === 'approval').length,
       failedCount: run.agents.filter(agent => agent.status === 'failed').length,
-      ended: category !== 'active'
+      // A paused run stays open and controllable: collapsing it by default would hide the very
+      // control that un-pauses it.
+      ended: category !== 'active' && category !== 'paused'
     }
   })
 }

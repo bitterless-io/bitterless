@@ -2212,7 +2212,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     await this.openCompositeTab({ id: spec.id, spec })
   }
 
-  async openTab(params: { url: string }): Promise<void> {
+  async openTab(params: { url: string; background?: boolean }): Promise<void> {
     const url = (params.url || '').trim()
     if (!url) {
       await this.newTab()
@@ -2223,6 +2223,31 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       return
     }
     const tab = await this.claimSpareTab({ url })
+    if (params.background) {
+      /**
+       * **后台开:跳过 activate,但必须手动摆位 + 主动广播。**(history-row-opens-background-tab.md #3.1)
+       *
+       * 摆位:新 slot 建完不可见也没摆过位置,零尺寸视口会让响应式页面按 0×0 布局(列表干脆不
+       * 渲染)。摆位不等于显示 —— 同 `openAgentTab`(:2563)与 `openControlledBlankTab`(:2353)。
+       *
+       * 广播:`claimSpareTab` 只 push 进 `this.tabs`,不播;平时是 `activateTab` 顺手播的。
+       * 不补这一下,chip 要等到 `startTabNavigation` 把 `loading` 翻真才出现,慢站点上就是
+       * "点了历史记录,tab 条上什么都没发生"。
+       *
+       * **不发 `coach/nav` / `coach/title` / `coach/nav-state`**:那三条是"当前 tab 变了"的语义,
+       * 全仓只由 activateTab 与 `sendTabNav`(它自己判 active)发。后台 tab 发它们会把前台那
+       * 一行地址覆盖掉。
+       */
+      if (tab.view) this.applyBounds(tab.view, this._state.opBounds || { x: 0, y: 0, width: 1280, height: 800 })
+      this.broadcastTabs()
+      await this.startTabNavigation(tab, { url }).catch((err) => {
+        const live = tab.view?.webContents
+        if (live && !live.isDestroyed()) {
+          this._state.emitTrace({ kind: 'error', msg: 'open tab: ' + (err as Error).message, ts: Date.now() })
+        }
+      })
+      return
+    }
     await this.activateTab({ id: tab.id, deferNavigation: true })
     const wc = tab.view?.webContents
     if (wc && !wc.isDestroyed()) {

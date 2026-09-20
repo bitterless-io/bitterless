@@ -2,6 +2,8 @@ import { runtimeProfile } from '@main/environment/runtimeProfile.bootstrap';
 import { assertAuthE2EProfile, isAllowedAuthE2ERequest } from '@shared/auth/authE2E.contract';
 import { ensureDefaultWorkspace } from '@maestro-main/files/defaultWorkspace';
 import { ensureWorkflowsRoot } from '@main/workflowLibrary/workflowsRoot';
+import { ensureAppData } from '@main/paths/appData';
+import { startWorkflowLibrary } from '@main/xpc/workflowLibrary.handler';
 import { app, net, session } from 'electron';
 import { appendFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
@@ -282,7 +284,17 @@ if (!isHelperMode) {
   // tool works when no directory is bound (docs/features/maestro-default-workspace.md), so the owner
   // can open it before the agent has put anything there. After configureE2EUserData() — that call
   // redirects the home path under E2E.
+  // One call creates the home data root and every directory under it — default_workspace, workflows,
+  // skills — and moves anything still sitting in a pre-unification location. The owner opens that
+  // root expecting to see what the app keeps there, so none of it may wait for its feature's first
+  // write (Ral 2026-09-20:「首先这些目录都需要 ensure 的」).
+  ensureAppData();
   ensureDefaultWorkspace();
+  ensureWorkflowsRoot();
+  // First scan here, not on first use: it installs the directory watcher and fills the snapshot the
+  // system-prompt workflow catalog is built from (docs/features/workflow-catalog-in-prompt.md).
+  // Fire-and-forget: it awaits an ESM-only module load, and boot must not block on it.
+  void startWorkflowLibrary();
   registerTrenchGmgnIpc(coinResourceService);
   registerSnipingIpc();
   registerMonitoringIpc();

@@ -1,5 +1,57 @@
-import manifest from '../../examples/institution-workflow/workflow.json'
-const row = { scope: 'institution', ref: 'institution:7:1', id: 1, institution_id: 7, revision: 3, name: 'Text essentials', description: 'Prepare an input, count its words and return a clear summary. A small, deterministic workflow to explore Kimchi.', file_name: 'text-essentials.zip', size: 2026, hash: '30e3d47b61897853ba994993b8600398b7196b3aca9e35c5f721f753294fbb3f', created_at: '', updated_at: '' }
-const state = { context: 'visual-fixture', status: 'ready', institutions: [{ id: 7, name: 'Design studio · Fixture', role: 'member' }], institutionId: 7, items: [row, { ...row, id: 2, ref: 'institution:7:2', name: 'Research review', revision: 1, description: 'Compare evidence, explore alternatives and bring findings together.', installedRevision: 1 }, { ...row, id: 3, ref: 'institution:7:3', name: 'Release checklist', revision: 2, description: 'A shared checklist for a deliberate release.' }], error: null, lastChecked: '2026-09-16T12:45:00Z' }
-export const createXpcRendererEmitter = () => ({ snapshot: async () => ({ ok: true, value: state }), preview: async ({ id }: { id: number }) => ({ ok: true, value: { workflow: state.items.find(item => item.id === id), manifest, entry: '/fixture/institution/7/workflow.ts', installedRevision: 3 } }) })
+/**
+ * Renderer XPC stand-in for the Workbench Workflows visual test.
+ *
+ * Serves what the LOCAL DIRECTORY scanner serves: a dynamic workflow's `meta`, read out of its script
+ * without executing it. It used to serve a Kimchi `workflow.json` with a `graph{nodes,edges}` — that
+ * manifest is gone, and with it the JSON tab and the node graph. A fixture still shaped like the old
+ * manifest would keep the test green against a UI nobody ships.
+ */
+const root = '/Users/fixture/.bitterless/workflows'
+const ENTRY = 'workflow.mjs'
+
+const PHASES = [
+  { title: 'Prepare', detail: 'read the input and normalize it' },
+  { title: 'Count', detail: 'count the words' },
+  { title: 'Summarize', detail: 'return one clear summary' }
+]
+
+const pack = (dir: string, name: string, description: string, error: string | null = null) => ({
+  ref: `local:${dir}`, dir, path: `${root}/${dir}`, name, description,
+  entry: ENTRY, entryPath: `${root}/${dir}/${ENTRY}`, bytes: 2026,
+  modifiedAt: '2026-09-20T04:45:00.000Z',
+  // The list carries phase TITLES only; the full phase objects arrive with the detail.
+  phases: error ? [] : PHASES.map(phase => phase.title),
+  error
+})
+
+const state = {
+  root,
+  scannedAt: '2026-09-20T04:45:00.000Z',
+  dropped: 0,
+  error: null,
+  items: [
+    pack('text-essentials', 'Text essentials', 'Prepare an input, count its words and return a clear summary. A small, deterministic workflow.'),
+    pack('research-review', 'Research review', 'Compare evidence, explore alternatives and bring findings together.'),
+    pack('release-checklist', 'Release checklist', 'A shared checklist for a deliberate release.'),
+    { ...pack('broken-package', 'broken-package', '', `The workflow entry file ${ENTRY} is missing.`), entryPath: '' }
+  ]
+}
+
+export const createXpcRendererEmitter = () => ({
+  snapshot: async () => ({ ok: true, value: state }),
+  detail: async ({ ref }: { ref: string }) => {
+    const item = state.items.find(row => row.ref === ref)
+    if (!item || item.error) return { ok: false, error: item?.error || 'Select a valid workflow.' }
+    return { ok: true, value: { item, meta: { name: item.dir, description: item.description, phases: PHASES } } }
+  },
+  source: async () => ({ ok: true, value: { path: `${root}/text-essentials/${ENTRY}`, name: ENTRY, text: "export const meta = { name: 'text-essentials' }\n", bytes: 46, truncated: false } }),
+  openRoot: async () => ({ ok: true, value: root }),
+  reveal: async ({ ref }: { ref: string }) => ({ ok: true, value: `${root}/${ref.slice('local:'.length)}` }),
+  importPackage: async () => ({ ok: true, value: null })
+})
 export const xpcRenderer = { subscribe: () => undefined }
+
+Object.assign(window, {
+  /** Swap the phase list a detail returns, for the "a long workflow still fits" check. */
+  workflowVisualPhases(value: Array<{ title: string; detail?: string }>) { PHASES.length = 0; PHASES.push(...value) }
+})

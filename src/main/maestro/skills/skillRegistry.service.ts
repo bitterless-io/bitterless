@@ -102,10 +102,16 @@ export class SkillRegistryService {
   readonly scopeStorage: SkillScopeStorage
   private readonly localState: SkillState
 
-  constructor(private readonly userDataDir: string, context: SkillScopeContext = skillScopeContext, private readonly externalRevision: () => number = () => 0) {
+  /**
+   * `globalSkillsDir` is passed in rather than derived: global skills are owner-facing and live in
+   * the home data root beside `workflows/` and `default_workspace/` (Ral 2026-09-20), while
+   * `userDataDir` still roots the app's own bookkeeping — scope storage, local state, and the legacy
+   * `.agents/skills` fallback, which stays where it is so an older install keeps resolving.
+   */
+  constructor(private readonly userDataDir: string, context: SkillScopeContext = skillScopeContext, private readonly externalRevision: () => number = () => 0, globalSkillsDir: string = join(userDataDir, 'skills')) {
     this.scopeStorage = new SkillScopeStorage(userDataDir, context)
     this.localState = new SkillState(userDataDir)
-    this.skillsDir = join(userDataDir, 'skills')
+    this.skillsDir = globalSkillsDir
     this.legacySkillsDir = join(userDataDir, '.agents', 'skills')
   }
 

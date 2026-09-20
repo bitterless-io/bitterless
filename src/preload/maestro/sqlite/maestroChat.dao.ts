@@ -1,7 +1,7 @@
 import { XpcPreloadHandler, createXpcPreloadEmitter } from 'electron-xpc/preload'
 import type { CoachXpcContract } from '@maestro-shared/coach.api'
 const coach = createXpcPreloadEmitter<CoachXpcContract>('CoachXpcHandler')
-import type { WorkflowApi } from '@shared/agentWorkflow.api'
+import { isWorkflowRunLive, type WorkflowApi } from '@shared/agentWorkflow.api'
 const workflows = createXpcPreloadEmitter<WorkflowApi>('WorkflowHandler')
 import type {
   MaestroChatApi,
@@ -343,7 +343,11 @@ export class MaestroChatDao extends XpcPreloadHandler implements MaestroChatApi 
     const stopped = await workflows.stopSession({ sessionId: params.id })
     if (!stopped?.ok) throw new Error('Workflow cleanup was not acknowledged; the chat was kept.')
     const snapshot = await workflows.listRuns({ sessionId: params.id })
-    if (!snapshot || snapshot.runs.some((run) => run.status === 'running' || run.status === 'stopping')) {
+    // `isWorkflowRunLive`, not a hand-written status list: a PAUSED run is unfinished — its journal
+    // is intact and resuming continues it — so deleting the chat under it would strand work the
+    // owner deliberately kept. A local list here would have had to be remembered when `paused` was
+    // added, and was not.
+    if (!snapshot || snapshot.runs.some((run) => isWorkflowRunLive(run))) {
       throw new Error('Workflow cleanup did not finish; the chat was kept.')
     }
     const result = db.transaction(() => {

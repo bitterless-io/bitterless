@@ -9,16 +9,14 @@ import { modelIoLog } from '../runtime/modelIoLog'
 import { WorkflowActivitySummaryService, type WorkflowActivityDeps } from './activitySummary'
 import { WorkflowSupervisor } from './supervisor'
 import type { WorkflowRuntimeConfig, WorkflowHostToolRequest } from './protocol'
+import { WORKFLOW_ENTRY_EXTENSIONS, isWorkflowEntryPath } from '../../../shared/workflowPackage'
 
 export const WORKFLOW_DESCRIPTORS: WorkflowDescriptor[] = [
-  { name: 'agent-task', description: 'One independent additional Agent task in this chat; does not change an existing workflow graph.' },
-  { name: 'mini-demo', description: 'Three parallel analysis agents followed by an independent synthesis agent.' },
-  { name: 'code-review', description: 'Review a PR, branch diff, ref range, or focused code target.' },
-  { name: 'refactor-scout', description: 'Find small, defensible refactors without broad rewrites.' },
-  { name: 'diagnose', description: 'Compare competing explanations for a bug or failing command.' },
-  { name: 'perf-review', description: 'Investigate measured bottlenecks rather than performance guesses.' },
-  { name: 'research', description: 'Research external evidence and independently verify claims.' },
-  { name: 'plan-workflow', description: 'Turn a goal into a reviewable workflow plan. Produces a proposal only; it creates and runs nothing.' }
+  { name: 'agent-task', description: 'One independent Agent task, run in the background and reported back into this chat.' },
+  { name: 'plan-workflow', description: 'Turn a goal into a reviewable workflow plan. Produces a proposal only; it creates and runs nothing.' },
+  { name: 'code-review', description: 'Review a diff from seven angles in parallel, verify every candidate, then rank. Advisory: it changes nothing.' },
+  { name: 'research', description: 'Research a question against real sources with web search and fetch, then verify each claim before reporting it.' },
+  { name: 'adversarial-review', description: 'Judge each finding with independent reviewers told to refute it; only findings that survive the agreement threshold are reported.' }
 ]
 
 export interface WorkflowHostOptions {
@@ -131,8 +129,13 @@ export class WorkflowHostIntegration implements WorkflowApi {
     if (entry?.kind === 'builtin') {
       if (!WORKFLOW_DESCRIPTORS.some((workflow) => workflow.name === entry.name)) throw new Error('Unknown built-in workflow.')
     } else if (request.entry?.kind === 'file') {
-      if (!isAbsolute(request.entry.path) || !/\.(?:ts|mts)$/.test(request.entry.path)) {
-        throw new Error('Workflow file must be an absolute .ts or .mts path.')
+      // `isWorkflowEntryPath`, never a literal extension list. This gate said `.ts|.mts` — Kimchi's
+      // Jiti extensions — while the engine moved to `workflow.mjs` and the scanner followed. Every
+      // local package therefore listed correctly, showed its phases and source, and then refused to
+      // start. The catalog and the gate have to read the same contract or the failure is invisible
+      // on both sides.
+      if (!isAbsolute(request.entry.path) || !isWorkflowEntryPath(request.entry.path)) {
+        throw new Error(`Workflow file must be an absolute path ending in ${WORKFLOW_ENTRY_EXTENSIONS.join(', ')}.`)
       }
       await workflowLibraryRuntime.assertPath(request.entry.path)
     } else throw new Error('A built-in name or workflow file is required.')
@@ -208,6 +211,22 @@ export class WorkflowHostIntegration implements WorkflowApi {
     const snapshot = await this.supervisor.list(params.sessionId)
     if (!snapshot.runs.some(run => run.id === params.runId && run.agents.some(agent => agent.id === params.agentId))) throw new Error('Agent does not belong to this chat.')
   }
+  /**
+   * Run-level pause / resume / stop — what the task bar's run controls call.
+   *
+   * Ownership is checked here rather than in the XPC handler or the renderer: both the chat tool and
+   * the task bar reach the supervisor through this method, so one check covers both callers and
+   * neither can be the one that forgets.
+   */
+  async controlWorkflow(params: { sessionId: string; runId: string; action: 'pause' | 'resume' | 'stop' }) {
+    assertWorkflowSession(params.sessionId)
+    const runId = params.runId?.trim()
+    if (!runId) throw new Error('An exact runId is required.')
+    if (!['pause', 'resume', 'stop'].includes(params.action)) throw new Error('action must be pause, resume or stop.')
+    const snapshot = await this.supervisor.list(params.sessionId)
+    if (!snapshot.runs.some(run => run.id === runId)) throw new Error(`No run ${runId} in this chat.`)
+    return this.supervisor.controlWorkflow({ sessionId: params.sessionId, runId, action: params.action })
+  }
   async pauseWorkflowAgent(params: { sessionId: string; runId: string; agentId: string }) {
     await this.requireAgent(params)
     await this.supervisor.pauseAgent(params.sessionId, params.runId, params.agentId)
@@ -218,7 +237,7 @@ export class WorkflowHostIntegration implements WorkflowApi {
     await this.supervisor.resumeAgent(params.sessionId, params.runId, params.agentId)
     return { ok: true as const }
   }
-  async listWorkflows() { return [...WORKFLOW_DESCRIPTORS.map((workflow) => ({ ...workflow, scope: 'shared' as const, ref: `shared:builtin:${workflow.name}` })), ...await workflowLibraryRuntime.list()] }
+  async listWorkflows() { return [...WORKFLOW_DESCRIPTORS.map((workflow) => ({ ...workflow, scope: 'builtin' as const, reference: `builtin:${workflow.name}`, entry: { kind: 'builtin' as const, name: workflow.name as WorkflowBuiltinName } })), ...await workflowLibraryRuntime.list()] }
   async steerWorkflowAgent(params: { sessionId: string; runId: string; agentId: string; message: string }) {
     await this.requireAgent(params)
     if (!params.message?.trim()) throw new Error('A steering instruction is required.')
@@ -257,7 +276,7 @@ export class WorkflowHostIntegration implements WorkflowApi {
     return [
       {
         name: 'workflow_list',
-        description: 'List the available TypeScript workflows. One task represents one agent. Workflow agents have Pi read/bash/edit/write/grep/find/ls and policy-permitted, cancellable web_search/web_fetch. Host browser, skill, and integration tools are not available; missing required tool hints fail explicitly.',
+        description: 'Refresh the workflow list. The installed packages are already in <available_workflows> in this message; call this only when the owner says they just added or changed one, or to see built-ins. One task represents one agent. Workflow agents have Pi read/bash/edit/write/grep/find/ls and policy-permitted, cancellable web_search/web_fetch. Host browser, skill, and integration tools are not available; missing required tool hints fail explicitly.',
         params: [],
         execute: async () => JSON.stringify(await this.listWorkflows())
       },
@@ -265,40 +284,57 @@ export class WorkflowHostIntegration implements WorkflowApi {
         name: 'workflow_run',
         description: 'Start a built-in workflow or an explicitly requested local TypeScript workflow file in the background. Returns a run receipt immediately; completion is delivered into this chat automatically. The user may continue talking and run other workflows concurrently. Supply exactly one of name or path. Available host tools: web_search/web_fetch; browser, skill, and integration actions are unavailable. Workflow subagents cannot recursively start workflows.',
         params: [
-          { name: 'name', description: 'A built-in name or exact shared:<id> / institution:<institution_id>:<id> reference from workflow_list. Never guess scope or choose between duplicate display names.' },
-          { name: 'path', description: 'Absolute path to a local .ts or .mts workflow file explicitly requested by the user.' },
+          { name: 'name', description: 'An exact reference from the resident <available_workflows> catalog or from workflow_list — builtin:<name> or local:<folder>. Never guess a reference or choose between duplicate display names.' },
+          { name: 'path', description: `Absolute path to a local workflow script (${WORKFLOW_ENTRY_EXTENSIONS.join('/')}) explicitly requested by the user.` },
           { name: 'input', required: true, description: 'Workflow task, target, and success criteria.' }
         ],
         timeoutMs: 60_000,
         execute: async (args) => {
           if (Boolean(args.name) === Boolean(args.path)) throw new Error('Supply exactly one of workflow name or path.')
+          // Resolve through the catalog rather than parsing the reference string: a name that is no
+          // longer installed fails here, saying so, instead of at load with a file error — and the
+          // descriptor's own `entry` is what runs, so the two cannot disagree (⑤).
+          const selected = args.name ? (await this.listWorkflows()).find(item => item.name === String(args.name) || item.reference === String(args.name)) : undefined
+          if (args.name && !selected) throw new Error('That workflow is not installed. Call workflow_list for what is available.')
           const run = await this.startWorkflow({
             sessionId,
-            entry: args.path ? { kind: 'file', path: String(args.path) } : String(args.name).startsWith('shared:builtin:') ? { kind: 'builtin', name: String(args.name).slice(15) as WorkflowBuiltinName } : /^(shared|institution):/.test(String(args.name)) ? { kind: 'library', ref: String(args.name) } : { kind: 'builtin', name: String(args.name) as WorkflowBuiltinName },
+            entry: args.path ? { kind: 'file', path: String(args.path) } : selected!.entry!,
             input: String(args.input ?? '')
           })
           return JSON.stringify({ runId: run.id, name: run.name, status: run.status, background: true })
         }
       },
       {
+        name: 'workflow_control',
+        description: 'Pause, resume or stop a background workflow in this chat. Pausing keeps the run\'s journal, so resuming continues from where it stopped rather than restarting — the work already done is not repeated. Use workflow_tasks first to get the exact runId; never guess one. These act on a whole run: this engine has no per-Agent pause or stop.',
+        params: [
+          { name: 'action', required: true, description: 'pause, resume or stop.' },
+          { name: 'runId', required: true, description: 'Exact run ID from workflow_tasks.' }
+        ],
+        execute: async args => {
+          const action = String(args.action ?? '').trim()
+          if (!['pause', 'resume', 'stop'].includes(action)) throw new Error('action must be pause, resume or stop.')
+          const runId = String(args.runId ?? '').trim()
+          // Resolved against THIS chat's runs, not passed straight through. A run ID is a plain
+          // string the model can produce from anywhere — a scrolled-back transcript, another chat,
+          // or nothing at all — and pausing a run the owner is watching in a different chat is not
+          // an error this session could ever see. The per-agent tools this replaced checked the same
+          // way; the run-level tool must not be the one that stops checking.
+          const runs = (await this.listRuns({ sessionId })).runs
+          if (!runs.some(run => run.id === runId)) throw new Error(`No run ${runId || '(none given)'} in this chat. Call workflow_tasks for the exact runId.`)
+          return JSON.stringify(await this.supervisor.controlWorkflow({ sessionId, runId, action: action as 'pause' | 'resume' | 'stop' }))
+        }
+      },
+      {
         name: 'workflow_tasks', description: 'List every Agent task in this chat, including exact runId and agentId, current work and status. Use these identifiers before controlling an Agent; never guess IDs.', params: [],
         execute: async () => JSON.stringify((await this.listRuns({ sessionId })).runs.map(run => ({ runId: run.id, name: run.name, status: run.status, agents: run.agents })))
       },
-      {
-        name: 'workflow_steer', description: 'Update the instructions of one exact active Agent in this chat. Preserves its conversation and delivers at a safe model/tool boundary; while paused the instruction waits until resume. List tasks first and route the user intent to the relevant task.',
-        params: [{ name: 'runId', required: true }, { name: 'agentId', required: true }, { name: 'message', required: true }],
-        execute: async args => JSON.stringify(await this.steerWorkflowAgent({ sessionId, runId: String(args.runId ?? ''), agentId: String(args.agentId ?? ''), message: String(args.message ?? '') }))
-      },
-      ...(['pause', 'resume', 'stop_agent'] as const).map(action => ({
-        name: 'workflow_' + action,
-        description: action === 'pause' ? 'Cooperatively pause one exact Agent, preserving its conversation. Pausing waits for an active model request or tool to finish, then no further model/tool/dependent step runs until resumed. Does not instantly suspend an external command.' : action === 'resume' ? 'Resume the same paused Agent conversation and remaining timeout budget.' : 'Stop one exact Agent in this chat. Other Agents and the main chat continue.',
-        params: [{ name: 'runId', required: true }, { name: 'agentId', required: true }],
-        execute: async (args: Record<string, unknown>) => {
-          const target = { sessionId, runId: String(args.runId ?? ''), agentId: String(args.agentId ?? '') }
-          const result = action === 'pause' ? await this.pauseWorkflowAgent(target) : action === 'resume' ? await this.resumeWorkflowAgent(target) : await this.stopAgent(target)
-          return JSON.stringify(result)
-        }
-      })),
+      // `workflow_steer` stood here: it re-instructed ONE running Agent mid-turn. The engine has no
+      // per-agent channel to deliver that on, so it would have accepted the message and dropped it.
+      // `workflow_pause` / `workflow_resume` / `workflow_stop_agent` stood here: per-AGENT controls
+      // the retired engine supported. This engine's controls are run-level (workflow_control above),
+      // so keeping them would offer the model three tools that cannot do anything — worse than not
+      // having them, because the model would report success it never achieved.
       {
         name: 'workflow_add_task', description: 'Start one additional independent Agent task in this chat and return immediately. Optionally reference an existing run as context. This creates a separate single-Agent run and does not modify the executing workflow graph; its result is delivered into the main chat.',
         params: [{ name: 'input', required: true, description: 'Specific task, constraints, evidence and expected result.' }, { name: 'parentRunId', description: 'Optional exact run ID in this chat to use as context.' }],

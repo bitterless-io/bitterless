@@ -1,7 +1,7 @@
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { app } from 'electron';
-import { getRuntimeProfile } from '@main/environment/runtimeProfile.runtime';
+import { appDataDir } from '@main/paths/appData';
+import { sharedWorkflowDemoFiles } from '@shared/sharedWorkflowDemo';
 
 /**
  * Where workflow packages live — one directory per edition, owned by the user
@@ -24,8 +24,7 @@ import { getRuntimeProfile } from '@main/environment/runtimeProfile.runtime';
  * `app.getPath('home')`, not `os.homedir()`: E2E redirects the home path, and a test run must not
  * write into a real `~/.bitterless*`.
  */
-export const workflowsRoot = (): string =>
-  join(app.getPath('home'), `.${getRuntimeProfile().appName.toLowerCase()}`, 'workflows');
+export const workflowsRoot = (): string => appDataDir('workflows');
 
 /**
  * `mkdir -p` the workflows root and return it. Called at boot, not on first write
@@ -36,5 +35,27 @@ export const workflowsRoot = (): string =>
 export const ensureWorkflowsRoot = (): string => {
   const root = workflowsRoot();
   mkdirSync(root, { recursive: true });
+  seedDemoPackage(root);
   return root;
+};
+
+const SEED_MARKER = '.demo-seeded';
+
+/**
+ * Write the offline demo package once, so a first run has something to look at rather than an empty
+ * pane next to a folder the owner has never heard of. The marker is what makes it **once**: deleting
+ * the demo is a decision, and putting it back on the next launch would override it.
+ */
+const seedDemoPackage = (root: string): void => {
+  const marker = join(root, SEED_MARKER);
+  if (existsSync(marker)) return;
+  try {
+    writeFileSync(marker, '', { flag: 'wx' });
+    if (readdirSync(root, { withFileTypes: true }).some(entry => entry.isDirectory())) return;
+    const target = join(root, 'workflow-demo');
+    mkdirSync(target, { recursive: true });
+    for (const [name, content] of Object.entries(sharedWorkflowDemoFiles)) writeFileSync(join(target, name), content, { flag: 'wx' });
+  } catch {
+    // A seeded demo is a convenience; a failure here must not stop the app from booting.
+  }
 };

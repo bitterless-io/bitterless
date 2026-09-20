@@ -416,8 +416,7 @@ const workflowWorkerPlugin = {
     await esbuild({
       entryPoints: {
         'workflow-engine.worker': resolve('src/main/agent/workflowEngine/engine.worker.ts'),
-        'workflow-agent.worker': resolve('src/main/agent/workflowEngine/agent.worker.ts'),
-        'workflow-author': resolve('src/main/agent/workflowEngine/author.ts')
+        'workflow-agent.worker': resolve('src/main/agent/workflowEngine/agent.worker.ts')
       },
       outdir: resolve('out/main'),
       outExtension: { '.js': '.mjs' },

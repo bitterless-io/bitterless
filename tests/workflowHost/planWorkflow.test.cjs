@@ -19,10 +19,12 @@ function load(relative, modules = {}) {
   return module.exports
 }
 
-// Relative imports have to be mapped: the loader evaluates the source outside its own directory.
-const author = load(`${engine}/author.ts`)
-const planner = load(`${engine}/workflows/plan-workflow.ts`, { '../author': author })
-const { renderWorkflowPlan, WorkflowPlanSchema, WORKFLOW_DESIGN_PROMPT } = planner
+// The planner moved out of the retired Kimchi `workflows/` directory when the engine changed. Its
+// schema, prompt and renderer came with it unchanged — only the wrapper (one structured-output agent
+// plus a formatting step) became a script. These assertions are about that unchanged part, so they
+// follow it rather than being deleted with the directory.
+const planner = load(`${engine}/dynamic/planScript.ts`)
+const { renderWorkflowPlan, WORKFLOW_PLAN_SCHEMA: WorkflowPlanSchema, WORKFLOW_DESIGN_PROMPT } = planner
 
 const plan = {
   goal: '每周把新到的客户资料整理成一份可直接发出的简报。',
@@ -86,22 +88,27 @@ test('the plan schema keeps the field meanings the renderer and the model both r
   }
 })
 
-test('the committed workflow plans only: it declares no write or execute tool', () => {
-  const definition = planner.default
-  assert.equal(definition.name, 'plan-workflow')
-  assert.match(definition.description, /creates and runs nothing/)
-  const source = fs.readFileSync(path.join(root, `${engine}/workflows/plan-workflow.ts`), 'utf8')
-  const tools = /tools: \[([^\]]*)\]/.exec(source)
-  assert.ok(tools, 'the design Agent must declare its tools explicitly')
-  for (const banned of ['write', 'edit', 'bash', 'web_fetch']) {
-    assert.ok(!tools[1].includes(`'${banned}'`), `a planner must not be able to ${banned}`)
-  }
+test('the planner plans only: its run gets no write or execute tool', () => {
+  const script = planner.planWorkflowScript()
+  assert.match(script, /creates and runs nothing/)
+  // This engine has NO per-agent tool list — the package's own capability contract names
+  // label/phase/schema/model/thinking/tier/isolation/cwd/thread/agentType/timeoutMs/retries and
+  // nothing else — so the retired `tools: ['read','grep','find','ls']` could not be carried over as
+  // written. Read-only is enforced for the whole RUN instead, which is the right grain: nothing in a
+  // planning run should write. Losing this in the port is exactly what this test caught.
+  const builtins = fs.readFileSync(path.join(root, `${engine}/builtins.ts`), 'utf8')
+  assert.match(builtins, /const READONLY[^=]*=\s*new Set\(\['plan-workflow'\]\)/, 'the planner must be marked read-only')
+  const worker = fs.readFileSync(path.join(root, `${engine}/engine.worker.ts`), 'utf8')
+  assert.match(worker, /builtinIsReadOnly\(request\.entry\.name\) \? READONLY_TOOLSET/, 'the mark has to actually select the toolset')
+  assert.match(worker, /\[READONLY_TOOLSET\]: \(\) => \[\.\.\.createReadOnlyTools\(/, 'and that toolset has to be read-only tools')
 })
 
 test('a stopped or failed design reports that, instead of rendering an empty proposal', () => {
-  const source = fs.readFileSync(path.join(root, `${engine}/workflows/plan-workflow.ts`), 'utf8')
-  assert.match(source, /outcome\.status !== 'completed'/)
-  assert.match(source, /Workflow planning did not complete/)
+  // Same guarantee, now expressed in the generated script: no plan means say so, never render an
+  // empty proposal that reads as a real one.
+  const script = planner.planWorkflowScript()
+  assert.match(script, /Workflow planning did not complete/)
+  assert.match(script, /if \(!plan\) return/)
 })
 
 test('the planner is registered as a built-in in this app', () => {

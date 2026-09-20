@@ -1,4 +1,5 @@
 import { skillAuthoringRuntime } from './runtime/skillAuthoring'
+import { workflowLibraryRuntime } from '@main/workflowLibrary/workflowLibraryRuntime';
 import { applicationAuth } from '@main/auth/applicationAuth.service';
 import { ensureDefaultWorkspace } from '@maestro-main/files/defaultWorkspace'
 import { skillCloud } from '@maestro-main/skills/skillCloud.runtime'
@@ -1133,6 +1134,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         userChainPath: chainFilePath(maestroUserChainDir(), sessionKey),
         currentUrl,
         catalog: registry.catalogPrompt(this._state.projectRootForSession(sessionKey)),
+        workflows: workflowLibraryRuntime.catalogPrompt(),
         skillAuthoring: skillAuthoringRuntime(registry.scopeStorage.shared),
         // Where the model is actually working when nothing is selected (Ral 2026-09-18).
         defaultWorkspacePath: ensureDefaultWorkspace(),
@@ -1241,6 +1243,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         userChainPath: chainFilePath(maestroUserChainDir(), sessionKey),
         currentUrl,
         catalog: registry.catalogPrompt(this._state.projectRootForSession(sessionKey)),
+        workflows: workflowLibraryRuntime.catalogPrompt(),
         skillAuthoring: skillAuthoringRuntime(registry.scopeStorage.shared),
         // Where the model is actually working when nothing is selected (Ral 2026-09-18).
         defaultWorkspacePath: ensureDefaultWorkspace(),
@@ -1948,6 +1951,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       activeTab: windowTabs.activeTab, openTabs: windowTabs.openTabs,
       userChainPath: chainFilePath(maestroUserChainDir(), sessionKey), currentUrl,
       catalog: registry.catalogPrompt(this._state.projectRootForSession(sessionKey)),
+      workflows: workflowLibraryRuntime.catalogPrompt(),
       skillAuthoring: skillAuthoringRuntime(registry.scopeStorage.shared),
         // Where the model is actually working when nothing is selected (Ral 2026-09-18).
         defaultWorkspacePath: ensureDefaultWorkspace(),
@@ -2019,6 +2023,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       userChainPath: chainFilePath(maestroUserChainDir(), this.agentSessionKey(options?.sessionKey)),
       currentUrl,
       catalog: registry.catalogPrompt(this._state.projectRootForSession(sessionKey)),
+      workflows: workflowLibraryRuntime.catalogPrompt(),
       skillAuthoring: skillAuthoringRuntime(registry.scopeStorage.shared),
       briefs: skillBriefs
     })

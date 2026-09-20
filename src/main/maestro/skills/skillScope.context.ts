@@ -1,4 +1,4 @@
-import { assetScope } from '@main/workflowLibrary/assetScope.service'
+import { assetScope } from '@main/institution/assetScope.service'
 import type { SkillInstitutionContext, SkillScopeContext } from './skillScope.storage'
 import type { SkillSummary } from '@maestro-shared/coach.api'
 

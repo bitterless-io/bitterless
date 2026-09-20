@@ -2,7 +2,17 @@
   <section name="workbench-skills" class="workbench-skills" :class="{ 'workbench-skills--detail': store.skillShowDetail }" @keydown.esc="store.skillShowDetail = false">
     <header name="workbench-skills__context" class="workbench-skills__context">
       <span>{{ store.skillCatalog?.workspace || store.skillsText.defaultWorkspace }}</span>
-      <span>{{ store.skillInstitution?.institutionName || store.skillInstitution?.institutionId || store.skillsText.noInstitution }}</span>
+      <Select
+        v-if="institutions.institutions.length"
+        name="workbench-skills__institution"
+        size="mini"
+        class="workbench-skills__institution"
+        :model-value="institutions.institutionId"
+        :loading="institutions.loading"
+        :aria-label="store.skillsText.institution"
+        @change="changeInstitution"
+      ><Option v-for="option in institutions.institutions" :key="option.id" :value="option.id">{{ option.name }}</Option></Select>
+      <span v-else>{{ store.skillInstitution?.institutionName || store.skillInstitution?.institutionId || store.skillsText.noInstitution }}</span>
     </header>
     <div name="workbench-skills__tabs" class="workbench-skills__tabs" role="tablist" :aria-label="store.skillsText.source">
       <button v-for="(layer, index) in store.skillLayers" :id="'skill-tab-' + layer" :key="layer" name="workbench-skills__tab" type="button" role="tab" class="workbench-skills__tab" :class="{ 'workbench-skills__tab--active': store.skillLayer === layer }" :aria-selected="store.skillLayer === layer" aria-controls="skills-panel" :tabindex="store.skillLayer === layer ? 0 : -1" @click="store.selectSkillLayer(layer)" @keydown="store.moveSkillTab($event, index)">
@@ -82,7 +92,11 @@
 import { Button, Empty, Input, Select, Option } from '@arco-design/web-vue'
 import { IconCopy, IconFolderOpen, IconRefresh } from '@tabler/icons-vue'
 import { renderMarkdown } from '@maestro-renderer/control/src/markdown'
+import { onMounted } from 'vue'
 import { workbenchStore as store } from '../workbench.store'
+import { institutionScopeStore as institutions } from '../institutionScope.store'
+const changeInstitution = (value: unknown): void => { if (typeof value === 'number') void institutions.refresh(value) }
+onMounted(() => void institutions.init())
 </script>
 
 <style lang="less">

@@ -4,6 +4,7 @@ import {
   ONLY_PREVIEW_BOOKMARK_ADD_EVENT,
   ONLY_PREVIEW_BOOKMARKS_CHANGED_EVENT
 } from '@shared/onlypreview/onlyPreviewBookmarks.type';
+import { ONLY_PREVIEW_PROJECT_DELETE_EVENT } from '@shared/onlypreview/onlyPreview.types';
 import { unwrapOnlyPreviewResult } from '@shared/onlypreview/onlyPreview.contract';
 import { onlyPreviewI18n } from '../../common/onlyPreviewI18n';
 import type { OnlyPreviewBookmark, OnlyPreviewBookmarksSnapshot } from '@shared/onlypreview/onlyPreviewBookmarks.type';
@@ -39,6 +40,14 @@ export class OnlyPreviewBookmarksStore {
       );
       xpcRenderer.subscribe(ONLY_PREVIEW_BOOKMARKS_CHANGED_EVENT, ({ params }) =>
         this.receive(params)
+      );
+      // 删掉的文件/目录,书签要跟着走(Ral 2026-09-20)。
+      //
+      // **复用删除那条已有的广播,不新增任何事件。** `announceDeletedEntries` 本来就是一次批量
+      // 广播(一条消息带 `relativePaths[]`,删 1000 行也只有一条),再加一条书签专用事件等于把
+      // 同一件事的消息量翻倍。
+      xpcRenderer.subscribe(ONLY_PREVIEW_PROJECT_DELETE_EVENT, ({ params }) =>
+        void this.pruneDeleted(params)
       );
     }
     this.resetWorkspace();
@@ -88,6 +97,42 @@ export class OnlyPreviewBookmarksStore {
   async remove(relativePath: string): Promise<void> {
     if (relativePath) await this.runAction('removeBookmark', relativePath);
   }
+  /**
+   * 删除落地之后,把指向已删路径的书签一并去掉。
+   *
+   * **先本地算命中,再只为命中的发调用。** 代价因此与"删了多少文件"无关,只与"有多少书签真的
+   * 指向被删路径"有关 —— 删一整棵没被收藏的树时,这里一次 IPC 都不发;最坏情况也只受书签总数
+   * 约束(几个到几十个),不会被删除规模放大。
+   *
+   * 目录要连**子孙**一起剪:以 `path + '/'` 为前缀判断,而不是子串 —— 否则删 `a/b` 会把
+   * `a/bc` 的书签也带走。被删路径自身用等值判断。
+   *
+   * 只在事件属于当前工作区时动手(与 `refresh()` 同一条围栏):删除事件来自 Main 广播,而广播
+   * 没有重放,换了 Project 之后迟到的那一条不该剪掉新工作区的书签。
+   */
+  private async pruneDeleted(params: unknown): Promise<void> {
+    if (!this.active || !params || typeof params !== 'object') return;
+    const event = params as { workspaceId?: unknown; relativePaths?: unknown };
+    const workspaceId = this.host.workspaceId();
+    if (!workspaceId || event.workspaceId !== workspaceId) return;
+    if (!Array.isArray(event.relativePaths)) return;
+    const removed = event.relativePaths.filter(
+      (value): value is string => typeof value === 'string' && value.length > 0
+    );
+    if (!removed.length) return;
+    const matched = this.entries
+      .filter((entry) =>
+        removed.some(
+          (path) => entry.relativePath === path || entry.relativePath.startsWith(`${path}/`)
+        )
+      )
+      .map((entry) => entry.relativePath);
+    for (const relativePath of matched) {
+      if (!this.active || workspaceId !== this.host.workspaceId()) return;
+      await this.remove(relativePath);
+    }
+  }
+
   async showMenu(relativePath: string): Promise<void> {
     if (this.entries.some((entry) => entry.relativePath === relativePath)) {
       await this.runAction('showBookmarkContextMenu', relativePath);

@@ -162,6 +162,7 @@ import type { MaestroTabAliasSnapshot } from '@maestro-shared/tabAlias.api'
 import type { CaptureMode, TraceEvent } from '@maestro-shared/trace.types'
 import type { SkillRecipe } from '@maestro-main/skills/skillRecipe.types'
 import { maestroDataRoot } from '@maestro-main/data/maestroDataRoot'
+import { appDataDir } from '@main/paths/appData';
 import type {
   MaestroOpenBootTrace,
   MaestroOpenStage
@@ -1935,7 +1936,7 @@ class MaestroWindowController
     await this.browserView.closeActiveTab()
   }
 
-  async openTab(params: { url: string }): Promise<void> {
+  async openTab(params: { url: string; background?: boolean }): Promise<void> {
     await this.browserView.openTab(params)
   }
 
@@ -2008,7 +2009,7 @@ class MaestroWindowController
     if (!this.settings) this.settings = new CoachSettingsService(maestroDataRoot())
     if (!this.demo) this.demo = new BookingDemoService(maestroDataRoot())
     if (!this.skillRegistry) {
-      this.skillRegistry = new SkillRegistryService(maestroDataRoot(), undefined, () => skillCloud.revision)
+      this.skillRegistry = new SkillRegistryService(maestroDataRoot(), undefined, () => skillCloud.revision, appDataDir('skills'))
       this.skillRegistry.ensureRuntimeStorage()
     }
     const { pi, piDelegate, piGen } = this.agentService.ensureAgents()

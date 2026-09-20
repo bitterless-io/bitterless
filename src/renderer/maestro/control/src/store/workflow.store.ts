@@ -98,6 +98,19 @@ class WorkflowStore {
     catch { if (generation === this.authGeneration && this.revision === revision) this.loadFailed = true }
     finally { if (generation === this.authGeneration) this.loading = false }
   }
+  /**
+   * Run-level pause / resume / stop.
+   *
+   * The per-Agent calls below are what the task bar used to drive. This engine schedules its own
+   * agents and has no per-agent channel, so a control has to act on the whole run — and pausing keeps
+   * the journal, so resuming continues from where it stopped rather than re-running finished work.
+   */
+  async controlWorkflow(sessionId: string, runId: string, action: 'pause' | 'resume' | 'stop'): Promise<void> {
+    const reply = await api.controlWorkflow({ sessionId, runId, action })
+    // `status` carries the failure text when the main side refused — electron-xpc cannot deliver a
+    // thrown error, so a silent `ok: false` would leave the button looking like it worked.
+    if (reply?.ok !== true) throw new Error(reply?.status || 'Workflow control was not acknowledged')
+  }
   async pauseAgent(sessionId: string, runId: string, agentId: string): Promise<void> {
     const reply = await api.pauseWorkflowAgent({ sessionId, runId, agentId })
     if (reply?.ok !== true) throw new Error('Workflow pause was not acknowledged')

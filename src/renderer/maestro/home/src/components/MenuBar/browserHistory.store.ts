@@ -26,6 +26,14 @@ class BrowserHistoryState {
     return [...(google ? [google] : []), ...this.entries.map((entry) => entry.url)];
   }
   private input: HTMLInputElement | null = null;
+  /**
+   * 把地址栏拨回当前 active tab 的地址。**由 `menuBarStore` 注册,不在这里直接改。**
+   *
+   * 地址栏那串文本住在 `menuBarStore.url`(MenuBar.vue 的 `v-model`),而 `menuBar.store.ts:3`
+   * 已经 `import { browserHistoryStore }` —— 反向 import 就是一个环。所以沿用已有的同向接缝
+   * (`bind()` / `setActiveTab()` 都是 menuBar 往这边推),由那一侧注册一个回调。
+   */
+  private restoreAddress: (() => void) | null = null;
   private activeTabId = '';
   private session = Date.now();
   private revision = 0;
@@ -72,6 +80,11 @@ class BrowserHistoryState {
   setActiveTab(id: string): void {
     if (id !== this.activeTabId) this.hide('tab-change');
     this.activeTabId = id;
+  }
+
+  /** See `restoreAddress`. Registered by `menuBarStore.bindAddressInput`. */
+  setAddressRestorer(restore: () => void): void {
+    this.restoreAddress = restore;
   }
 
   focus(): void {
@@ -174,7 +187,26 @@ class BrowserHistoryState {
     const url = action.url || this.candidateUrls[this.selectedIndex];
     if (!url || !this.candidateUrls.includes(url)) return;
     if (action.action === 'accept') {
+      // 一条**历史记录**被接受 → 一律后台新 tab,不看当前 tab 的 `kind`
+      // (Ral 2026-09-20,docs/features/history-row-opens-background-tab.md #3.1)。
+      // 判据与下面 `remove` 用的是同一条:`candidateUrls` 是 `[googleUrl?, ...entries]`,
+      // 只有落在 `entries` 里的才是存下来的历史记录,Google 候选行刻意留在老分支上。
+      //
+      // **必须在 `hide()` 之前取。** `hide()` 会把 `entries` 清空,之后再问"这个 url 是不是
+      // 一条历史记录"永远是 false —— 分支会静默地一次都不走,而所有既有断言照旧全绿。
+      const isHistoryRow = this.entries.some((entry) => entry.url === url);
       this.hide('accept');
+      if (isHistoryRow) {
+        // **不调 `backgroundWorkbenchTab()`。** 那是"切过去"的前置动作;这里人要留在当前页,
+        // 把 Workbench 收掉只会露出**上一个**浏览器 tab,比什么都不发生更突兀。
+        //
+        // 复位排在 await 之前:当前 tab 不导航 → `coach/nav` 不播、`applyTabs` 的 id/url 判据
+        // 也不成立,地址栏会留着刚才那串查询词而下面还是原来那一页(#3.2)。放在 await 之后
+        // 还多一个竞态:人可以在开 tab 的空档里重新输入,那一下会被抹掉。
+        this.restoreAddress?.();
+        await coach.openTab({ url, background: true });
+        return;
+      }
       await coach.backgroundWorkbenchTab();
       const active = (await coach.getTabs()).find((tab) => tab.active);
       if (active?.kind === 'browser') await coach.navigate({ url });

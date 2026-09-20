@@ -10,6 +10,7 @@ import { initUpdateHandler } from './update.handler';
 import './compaction.handler';
 import './workflow.handler';
 import './workflowLibrary.handler';
+import './institutionScope.handler';
 import './pluginTest.handler';
 import './todoWindow.handler';
 import './eyesOnAgentsWindow.handler';

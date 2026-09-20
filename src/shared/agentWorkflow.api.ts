@@ -1,8 +1,8 @@
 /** Shared workflow presentation contract. No Electron, Pi, or credentials cross this boundary. */
-export type WorkflowBuiltinName = 'mini-demo' | 'code-review' | 'refactor-scout' | 'diagnose' | 'perf-review' | 'research' | 'agent-task' | 'plan-workflow'
+export type WorkflowBuiltinName = 'agent-task' | 'plan-workflow' | 'code-review' | 'research' | 'adversarial-review'
 export type WorkflowEntry = { kind: 'builtin'; name: WorkflowBuiltinName } | { kind: 'file'; path: string } | { kind: 'library'; ref: string }
 export type WorkflowAgentStatus = 'queued' | 'running' | 'waiting' | 'approval' | 'retrying' | 'pausing' | 'paused' | 'stopping' | 'completed' | 'failed' | 'stopped'
-export type WorkflowRunStatus = 'running' | 'stopping' | 'completed' | 'failed' | 'stopped'
+export type WorkflowRunStatus = 'running' | 'paused' | 'stopping' | 'completed' | 'failed' | 'stopped'
 export interface WorkflowLogEntry { ts: number; text: string }
 export interface WorkflowAgentTask {
   id: string
@@ -19,6 +19,13 @@ export interface WorkflowAgentTask {
   logs: WorkflowLogEntry[]
   output?: string
   error?: string
+  /**
+   * The model this agent actually ran on (`provider/id`), when known.
+   *
+   * Arrives mid-run, not at start: a tier-routed agent defers the choice to the agent layer, so the
+   * value known when it launches is a guess that is wrong for every such agent until it resolves.
+   */
+  model?: string
 }
 export interface WorkflowRunSnapshot {
   id: string
@@ -65,12 +72,27 @@ export interface WorkflowWaitState {
 
 export interface WorkflowSnapshot { runs: WorkflowRunSnapshot[]; revision: number; activity?: WorkflowActivitySummary[]; waiting?: WorkflowWaitState[] }
 export interface WorkflowStartRequest { sessionId: string; entry: WorkflowEntry; input: string; cwd?: string; origin?: 'shortcut' }
-export interface WorkflowDescriptor { name: string; description: string; displayName?: string; scope?: 'shared' | 'institution'; institution_id?: number; ref?: string; entry?: WorkflowEntry }
+export interface WorkflowDescriptor {
+  name: string
+  description: string
+  displayName?: string
+  scope?: 'builtin' | 'local'
+  reference?: string
+  entry?: WorkflowEntry
+}
 export interface WorkflowApi {
   listRuns(params?: { sessionId?: string }): Promise<WorkflowSnapshot>
   listWorkflows(): Promise<WorkflowDescriptor[]>
   startWorkflow(params: WorkflowStartRequest): Promise<WorkflowRunSnapshot>
   retryWorkflow(params: { sessionId: string; runId: string }): Promise<WorkflowRunSnapshot>
+  /**
+   * Run-level pause / resume / stop.
+   *
+   * The per-Agent calls below have no counterpart in this engine — it schedules its own agents and
+   * exposes no per-agent channel — so this is what the task bar's controls act through. Pausing keeps
+   * the run's journal, so resuming continues from the unchanged prefix rather than re-running it.
+   */
+  controlWorkflow(params: { sessionId: string; runId: string; action: 'pause' | 'resume' | 'stop' }): Promise<{ ok: boolean; status: string }>
   pauseWorkflowAgent(params: { sessionId: string; runId: string; agentId: string }): Promise<{ ok: true }>
   resumeWorkflowAgent(params: { sessionId: string; runId: string; agentId: string }): Promise<{ ok: true }>
   steerWorkflowAgent(params: { sessionId: string; runId: string; agentId: string; message: string }): Promise<{ ok: true }>
@@ -90,8 +112,13 @@ export const isWorkflowAgentLive = (status: WorkflowAgentStatus): boolean =>
 /** A paused Agent stays live and stoppable, but does not occupy the active task bar. */
 export const isWorkflowAgentActive = (status: WorkflowAgentStatus): boolean => isWorkflowAgentLive(status) && status !== 'paused'
 
-/** A run is live while it can still produce work — including before its first Agent exists. */
-export const isWorkflowRunLive = (run: WorkflowRunSnapshot): boolean => run.status === 'running' || run.status === 'stopping'
+/**
+ * A run is live while it can still produce work — including before its first Agent exists, and
+ * while paused. A paused run has not finished: its journal is intact and `resume` continues it, so
+ * treating it as terminal would drop it out of the list the owner resumes from.
+ */
+export const isWorkflowRunLive = (run: WorkflowRunSnapshot): boolean =>
+  run.status === 'running' || run.status === 'paused' || run.status === 'stopping'
 
 /** Deterministic view of one chat's active Agents; main and renderer must agree on these counts. */
 export interface WorkflowActivityFacts {

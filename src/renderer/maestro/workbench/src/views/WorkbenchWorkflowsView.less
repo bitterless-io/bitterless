@@ -3,17 +3,34 @@
   display: flex; height: 100%; min-height: 0; overflow: hidden; color: var(--wf-text); background: var(--wf-panel); font-size: 12px;
   &__library { display: flex; flex-direction: column; flex: 0 0 254px; min-width: 0; min-height: 0; padding: 20px 14px 0; border-right: 1px solid var(--wf-border); gap: 14px; }
   &__heading { display: flex; align-items: center; justify-content: space-between; h2 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: -.3px; } }
-  &__institution { display: flex; flex-direction: column; gap: 7px; > span { color: var(--wf-muted); font-size: 11px; } }
-  &__scope { display: flex; padding: 3px; gap: 3px; background: var(--wf-canvas); border-radius: 7px; button { flex: 1; padding: 5px 3px; border: 0; border-radius: 5px; background: none; color: var(--wf-muted); font-size: 10px; cursor: pointer; } button.selected { color: var(--wf-blue); background: var(--wf-panel); box-shadow: 0 1px 3px rgb(20 37 71 / 6%); } }
+  &__heading-actions { display: flex; align-items: center; gap: 2px; }
+  // The root path is the affordance the empty state depends on: it has to read as "this is a folder
+  // you can open", so it is the whole line, not an icon beside it. Borderless, like every other
+  // control here — hierarchy comes from the background on hover.
+  &__root { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 8px; border: 0; border-radius: 7px; background: var(--wf-canvas); color: var(--wf-muted); font-size: 10px; text-align: left; cursor: pointer; > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; } }
+  &__root:hover { color: var(--wf-blue); }
   &__list { flex: 1; overflow: auto; min-height: 0; margin: 0 -7px; padding: 0 7px; }
+  // Path actions: copy + show in folder, on the root row, on every package row, and in the detail
+  // header. **Every one of them declares `border: 0` and its own background here** — not because a
+  // reset is missing, but because a bare <button> with no rule of its own gets Chromium's UA default,
+  // which is exactly a grey box with a 1px border. Inheriting "that component is borderless" from
+  // another surface is how that shipped once already.
+  &__path-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+  &__path-action { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--wf-muted); cursor: pointer; &:hover { background: var(--wf-canvas); color: var(--wf-text); } }
+  // The row holds the path and its actions; the path itself keeps all the remaining width.
+  &__root-row { display: flex; align-items: center; gap: 2px; > .workbench-workflows__root { min-width: 0; flex: 1; } }
+  // On a package row the actions float over the card's top-right, so they cost the title no width and
+  // stay out of the way until the pointer is on the row.
+  &__item-row { position: relative; &:hover .workbench-workflows__path-actions--row, &:focus-within .workbench-workflows__path-actions--row { opacity: 1; } }
+  &__path-actions--row { position: absolute; top: 7px; right: 7px; z-index: 1; opacity: 0; transition: opacity .12s ease; }
   &__item { display: flex; width: 100%; flex-direction: column; gap: 8px; margin-bottom: 7px; padding: 13px 12px; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 8px; color: var(--wf-text); cursor: pointer; }
   &__item:hover { background: var(--wf-canvas); }
   &__item--selected { background: var(--wf-blue-soft) !important; border-color: color-mix(in srgb, var(--wf-blue) 22%, transparent); }
-  &__item-title { display: flex; justify-content: space-between; align-items: baseline; gap: 9px; strong { font-size: 12px; line-height: 1.5; font-weight: 600; } small { color: var(--wf-muted); flex-shrink: 0; font-size: 10px; } }
+  &__item-title { display: flex; align-items: baseline; gap: 9px; strong { flex: 1; min-width: 0; font-size: 12px; line-height: 1.5; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } }
   &__item-description { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.6; color: var(--wf-muted); font-size: 11px; }
   &__item-status { display: flex; align-items: center; gap: 5px; font-size: 10px; color: #16807c; }
   &__item-status--error { color: #b27819; }
-  &__footer { display: flex; align-items: center; gap: 5px; padding: 12px 0; border-top: 1px solid var(--wf-border); color: var(--wf-muted); font-size: 10px; time { margin-left: auto; } }
+  &__empty-hint { font-size: 10px; max-width: 30ch; }
   &__detail { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
   &__detail-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 24px 26px 20px; > div { min-width: 0; } h2 { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: -.4px; overflow-wrap: anywhere; } p { max-width: 70ch; line-height: 1.65; margin: 12px 0 0; color: var(--wf-muted); } .arco-btn { flex-shrink: 0; margin-top: 4px; } }
   &__identity { display: flex; align-items: center; gap: 10px; }
@@ -34,12 +51,12 @@
   &__explanation { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--wf-border); font-size: 11px; }
   &__notice { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding: 12px; background: #fff7e5; color: #805b1b; font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; button { background: none; border: 0; color: inherit; cursor: pointer; text-decoration: underline; } }
   &__empty { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; padding: 40px 18px; color: var(--wf-muted); line-height: 1.7; }
-  &__welcome { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; padding: 32px; h2 { font-weight: 500; font-size: 19px; margin: 26px 0 12px; } p { max-width: 42ch; text-align: center; line-height: 1.75; color: var(--wf-muted); margin: 0; } }
+  &__welcome { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; padding: 32px; h2 { font-weight: 500; font-size: 19px; margin: 26px 0 12px; } p { max-width: 42ch; text-align: center; line-height: 1.75; color: var(--wf-muted); margin: 0; } .arco-btn { margin-top: 20px; } }
   &__welcome-flow { display: flex; align-items: center; color: #38858b; gap: 16px; span { width: 40px; height: 1px; background: var(--wf-border); } }
   button:focus-visible { outline: 2px solid var(--wf-blue); outline-offset: 2px; }
 }
 body[arco-theme='dark'] .workbench-workflows { --wf-canvas: #202734; --wf-blue: #819cfc; --wf-blue-soft: #293552; --wf-grid: #344153; --wf-connector: #6d819c; .workbench-workflows__notice { background: #3d3323; color: #efc884; } }
 @media (prefers-color-scheme: dark) { body:not([arco-theme='light']) .workbench-workflows { --wf-panel: #1d2531; --wf-canvas: #202734; --wf-text: #e1e7f1; --wf-muted: #a1adbf; --wf-border: #354053; --wf-blue: #819cfc; --wf-blue-soft: #293552; --wf-grid: #344153; --wf-connector: #6d819c; } }
-@media (max-width: 760px) { .workbench-workflows { flex-direction: column; &__library { flex: 0 0 185px; border-right: 0; border-bottom: 1px solid var(--wf-border); padding: 10px 14px; gap: 7px; display: grid; grid-template-columns: 1fr 1fr; } &__heading { h2 { font-size: 14px; } } &__institution { grid-row: 1; grid-column: 2; > .workbench-workflows__institution-label { display: none; } } &__list { grid-column: 1 / -1; display: flex; gap: 7px; } &__item { flex: 0 0 210px; padding: 8px 10px; margin: 0; gap: 4px; } &__item-description { -webkit-line-clamp: 1; } &__footer { display: none; } &__library > .arco-input-wrapper { grid-column: 1 / -1; } &__detail-header { padding: 15px 16px; h2 { font-size: 16px; } p { margin-top: 7px; } } &__subnav { padding: 0 16px; } &__step { padding: 12px 16px; min-height: 90px; } &__source { padding: 12px 16px; } .workflow-flow { min-height: 200px; } } }
+@media (max-width: 760px) { .workbench-workflows { flex-direction: column; &__library { flex: 0 0 185px; border-right: 0; border-bottom: 1px solid var(--wf-border); padding: 10px 14px; gap: 7px; display: grid; grid-template-columns: 1fr 1fr; } &__heading { h2 { font-size: 14px; } } &__root { grid-row: 1; grid-column: 2; } &__list { grid-column: 1 / -1; display: flex; gap: 7px; } &__item { flex: 0 0 210px; padding: 8px 10px; margin: 0; gap: 4px; } &__item-description { -webkit-line-clamp: 1; } &__library > .arco-input-wrapper { grid-column: 1 / -1; } &__detail-header { padding: 15px 16px; h2 { font-size: 16px; } p { margin-top: 7px; } } &__subnav { padding: 0 16px; } &__step { padding: 12px 16px; min-height: 90px; } &__source { padding: 12px 16px; } .workflow-flow { min-height: 200px; } } }
 @media (prefers-reduced-motion: reduce) { .workbench-workflows *, .workbench-workflows *::before, .workbench-workflows *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
-@media (max-width: 760px) { .workbench-workflows { &__library { flex-basis: 235px; grid-template-rows: 27px 28px 30px minmax(65px, 1fr); } &__scope { grid-column: 1; grid-row: 2; } &__library > .arco-btn { grid-column: 2; grid-row: 2; } &__library > .arco-input-wrapper { grid-row: 3; } &__list { grid-row: 4; } } }
+@media (max-width: 760px) { .workbench-workflows { &__library { flex-basis: 235px; grid-template-rows: 27px 30px minmax(65px, 1fr); } &__library > .arco-input-wrapper { grid-row: 2; grid-column: 1 / -1; } &__list { grid-row: 3; } } }

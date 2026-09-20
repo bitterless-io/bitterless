@@ -1,40 +1,77 @@
-export type WorkflowNodeKind = 'function' | 'agent' | 'parallel' | 'branch' | 'foreach' | 'loop' | 'workflow'
-export interface WorkflowGraphNode { id: string; label: string; kind: WorkflowNodeKind; description?: string }
-export interface WorkflowGraphEdge { from: string; to: string; label?: string }
-export interface WorkflowManifest {
-  format: 'kimchi-workflow-package'
-  version: 1
-  engine: 'kimchi-0.0.9'
-  entry: string
+/**
+ * What a workflow package declares about itself.
+ *
+ * These live in the script's own `export const meta`, read statically by
+ * `main/agent/workflowEngine/dynamic/dynamicLoader.ts`. There is no separate manifest file: the
+ * Kimchi packaging kept one beside the entry and the two drifted constantly — a hand-authored node
+ * graph that was never executed and produced no runtime symptom when it disagreed with the code.
+ * One file, one source, no drift to guard against.
+ */
+export interface DynamicPhase {
+  title: string
+  detail?: string
+}
+export interface DynamicWorkflowMeta {
   name: string
   description: string
-  graph: { nodes: WorkflowGraphNode[]; edges: WorkflowGraphEdge[] }
+  /** When this package is the right route. Optional — a package written without it still works. */
+  whenToUse: string
+  /** `false` keeps it out of the prompt catalog and `workflow_list`; it stays runnable when named. */
+  modelInvocation: boolean
+  phases: DynamicPhase[]
 }
-export interface CloudWorkflow {
-  id: number; institution_id: number; revision: number; name: string; description: string
-  file_name: string; size: number; hash: string; created_at: string; updated_at: string
-}
-export interface InstalledWorkflow { id: number; revision: number; hash: string; size: number; entry: string; directory: string; installedAt: string; manifest: WorkflowManifest }
-export interface WorkflowInstitution { id: number; name: string; role: string }
-export interface WorkflowLibraryItem extends CloudWorkflow { scope: 'shared' | 'institution'; ref: string; installedRevision?: number; syncError?: string }
-export interface WorkflowLibrarySnapshot {
-  context: string
-  status: 'ready' | 'unauthenticated' | 'no-institution' | 'error'
-  institutions: WorkflowInstitution[]
-  institutionId: number | null
-  items: WorkflowLibraryItem[]
-  lastChecked: string | null
+
+export interface WorkflowLibraryItem {
+  /** `local:<directory name>` — what `workflow_run` accepts and what the renderer selects by. */
+  ref: string
+  /** Directory name; the package's identity, and what the owner sees in Finder. */
+  dir: string
+  /** Absolute package directory. */
+  path: string
+  name: string
+  description: string
+  /** Package-relative entry script name, empty when the script could not be read. */
+  entry: string
+  /** Absolute entry path, empty when unavailable. */
+  entryPath: string
+  /** Entry size in bytes, 0 when unavailable. */
+  bytes: number
+  /** Package directory mtime, ISO. */
+  modifiedAt: string
+  /** Phase titles from the script's `meta.phases`, in order. Replaces the retired node graph. */
+  phases: string[]
+  /** When this package is the right route; empty when the script does not say. */
+  whenToUse: string
+  /** `false` keeps it out of the prompt catalog and `workflow_list`; it stays runnable by name. */
+  modelInvocation: boolean
   error: string | null
 }
-export interface WorkflowLibraryDetail { workflow: WorkflowLibraryItem; manifest: WorkflowManifest; entry: string; installedRevision: number }
+export interface WorkflowLibrarySnapshot {
+  /** Absolute workflows root for this environment — shown in the empty state, opened by `openRoot`. */
+  root: string
+  scannedAt: string
+  items: WorkflowLibraryItem[]
+  /** Packages beyond the scan cap. Reported rather than silently dropped. */
+  dropped: number
+  error: string | null
+}
+/** Fetched per selection, not carried in the snapshot: 200 scripts' metas would be. */
+export interface WorkflowLibraryDetail { item: WorkflowLibraryItem; meta: DynamicWorkflowMeta }
 export interface WorkflowSource { path: string; name: string; text: string; bytes: number; truncated: boolean }
 export const MAX_SOURCE_BYTES = 256 * 1024
+/** At most this many package directories are scanned; the remainder is reported as `dropped`. */
+export const MAX_WORKFLOW_PACKAGES = 200
 export type WorkflowLibraryReply<T> = { ok: true; value: T } | { ok: false; error: string }
 export interface WorkflowLibraryApi {
-  snapshot(params?: { institutionId?: number }): Promise<WorkflowLibraryReply<WorkflowLibrarySnapshot>>
-  preview(params: { id: number; context: string; scope?: 'shared' | 'institution' }): Promise<WorkflowLibraryReply<WorkflowLibraryDetail>>
+  snapshot(): Promise<WorkflowLibraryReply<WorkflowLibrarySnapshot>>
+  detail(params: { ref: string }): Promise<WorkflowLibraryReply<WorkflowLibraryDetail>>
   source(params: { ref: string }): Promise<WorkflowLibraryReply<WorkflowSource>>
-  importShared(): Promise<WorkflowLibraryReply<WorkflowLibraryDetail | null>>
+  /** Open the workflows root in the OS file manager. Returns the path that was opened. */
+  openRoot(): Promise<WorkflowLibraryReply<string>>
+  /** Reveal one package directory in the OS file manager. */
+  reveal(params: { ref: string }): Promise<WorkflowLibraryReply<string>>
+  /** Pick a ZIP and expand it into the workflows root. Null when the dialog was cancelled. */
+  importPackage(): Promise<WorkflowLibraryReply<WorkflowLibraryItem | null>>
 }
 export const WORKFLOW_LIBRARY_HANDLER = 'WorkflowLibraryHandler'
 export const WORKFLOW_LIBRARY_CHANGED = 'workflow-library/changed'

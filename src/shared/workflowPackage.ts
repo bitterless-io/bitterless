@@ -1,41 +1,45 @@
-import type { WorkflowManifest, WorkflowNodeKind } from './workflowLibrary.type'
+/**
+ * Limits every workflow package is held to, and the archive path guard.
+ *
+ * The Kimchi manifest parser that used to live here is gone with `workflow.json`: a package is now a
+ * script whose own `export const meta` is the single source, validated by
+ * `main/agent/workflowEngine/dynamic/dynamicLoader.ts`. What survives is what is still true of any
+ * package — its size bounds, and the fact that a ZIP someone sends you is untrusted input.
+ */
+export const WORKFLOW_LIMITS = { compressed: 20 * 1024 * 1024, expanded: 100 * 1024 * 1024, files: 500, script: 256 * 1024 } as const
 
-export const WORKFLOW_LIMITS = { compressed: 20 * 1024 * 1024, expanded: 100 * 1024 * 1024, files: 500, manifest: 256 * 1024, nodes: 200, edges: 500 } as const
-const kinds = new Set<WorkflowNodeKind>(['function', 'agent', 'parallel', 'branch', 'foreach', 'loop', 'workflow'])
-const object = (value: unknown): Record<string, unknown> => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Workflow manifest must contain objects.')
-  return value as Record<string, unknown>
-}
-const text = (value: unknown, field: string, max: number, empty = false): string => {
-  if (typeof value !== 'string' || value.length > max || (!empty && !value.trim())) throw new Error(`Invalid workflow ${field}.`)
-  return value
-}
+/**
+ * Reject an archive entry name that would escape its package, collide with a device name, or rely on
+ * a separator the extractor and the checker read differently. Applied to every entry of an imported
+ * ZIP before anything is written.
+ */
 export const safePackagePath = (value: string): string => {
   if (!value || value.length > 240 || /[\\\x00-\x1f:<>"|?*]/.test(value) || value.startsWith('/') || value.endsWith('/')) throw new Error('Unsafe workflow archive path.')
   const parts = value.split('/')
   if (parts.some(part => !part || part === '.' || part === '..' || /[. ]$/.test(part) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part))) throw new Error('Unsafe workflow archive path.')
   return value
 }
-export const parseWorkflowManifest = (value: unknown): WorkflowManifest => {
-  const data = object(value)
-  if (data.format !== 'kimchi-workflow-package' || data.version !== 1 || data.engine !== 'kimchi-0.0.9') throw new Error('Unsupported workflow package. Expected Kimchi 0.0.9 package version 1.')
-  const entry = safePackagePath(text(data.entry, 'entry', 240))
-  if (!/\.(ts|mts)$/.test(entry)) throw new Error('Workflow entry must be a .ts or .mts file.')
-  const graph = object(data.graph)
-  if (!Array.isArray(graph.nodes) || graph.nodes.length > WORKFLOW_LIMITS.nodes || !Array.isArray(graph.edges) || graph.edges.length > WORKFLOW_LIMITS.edges) throw new Error('Workflow graph exceeds 200 nodes or 500 edges, or is malformed.')
-  const ids = new Set<string>()
-  const nodes = graph.nodes.map(value => {
-    const node = object(value)
-    const id = text(node.id, 'node ID', 64)
-    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(id) || ids.has(id)) throw new Error('Workflow node IDs must be unique safe identifiers.')
-    ids.add(id)
-    if (!kinds.has(node.kind as WorkflowNodeKind)) throw new Error('Unsupported workflow node kind.')
-    return { id, label: text(node.label, 'node label', 160), kind: node.kind as WorkflowNodeKind, ...(node.description === undefined ? {} : { description: text(node.description, 'node description', 4000, true) }) }
-  })
-  const edges = graph.edges.map(value => {
-    const edge = object(value)
-    if (typeof edge.from !== 'string' || typeof edge.to !== 'string' || !ids.has(edge.from) || !ids.has(edge.to)) throw new Error('Workflow edges must reference existing nodes.')
-    return { from: edge.from, to: edge.to, ...(edge.label === undefined ? {} : { label: text(edge.label, 'edge label', 160, true) }) }
-  })
-  return { format: 'kimchi-workflow-package', version: 1, engine: 'kimchi-0.0.9', entry, name: text(data.name, 'name', 200), description: text(data.description, 'description', 8000, true), graph: { nodes, edges } }
-}
+
+/**
+ * The entry file names a workflow package may use, and the one predicate that decides whether a path
+ * is runnable.
+ *
+ * **Why this lives in `shared/`:** the scanner, the run gate in `hostIntegration`, and the renderer's
+ * `/workflow <path>` command each have to agree on it, and they sit in three different bundles. When
+ * they did not agree the failure was silent and total — the engine moved to `workflow.mjs`, the
+ * scanner followed, and the run gate kept demanding `.ts`. Every local package therefore LISTED
+ * correctly, showed its phases and its source, and then refused to start with "Workflow file must be
+ * an absolute .ts or .mts path." Nothing reported a mismatch, because from each side's own point of
+ * view it was behaving correctly.
+ *
+ * `workflow.mjs` first: it is what a package should ship. The rest are accepted because the engine
+ * runs plain JS and a package authored before the change should not stop working.
+ */
+export const WORKFLOW_ENTRY_NAMES = ['workflow.mjs', 'workflow.js', 'workflow.mts', 'workflow.ts'] as const
+
+/** Extensions derived from the names above, so the two can never disagree. */
+export const WORKFLOW_ENTRY_EXTENSIONS: readonly string[] = [...new Set(WORKFLOW_ENTRY_NAMES.map(name => name.slice(name.lastIndexOf('.'))))]
+
+/** True when this path names a file the engine can run. Case-insensitive; macOS and Windows are. */
+export const isWorkflowEntryPath = (value: string): boolean =>
+  WORKFLOW_ENTRY_EXTENSIONS.some(extension => value.toLowerCase().endsWith(extension))

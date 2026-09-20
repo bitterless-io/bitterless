@@ -27,7 +27,7 @@ const fixture = () => {
   let checks = 0
   const listeners = new Set()
   const assetScope = { get current() { return current }, revalidate: async () => { checks++; return current }, subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener) } }
-  const context = load('main/maestro/skills/skillScope.context.ts', { '@main/workflowLibrary/assetScope.service': { assetScope } })
+  const context = load('main/maestro/skills/skillScope.context.ts', { '@main/institution/assetScope.service': { assetScope } })
   const { ReplayEngine } = load('main/maestro/drive/replayEngine.ts', { './humanMouse': { HumanMouse: class {} } })
   class CommonService { setState(state) { this._state = { projectRootForSession: () => undefined, ...state } } }
   const { SkillService } = load('main/maestro/skills/skill.service.ts', {

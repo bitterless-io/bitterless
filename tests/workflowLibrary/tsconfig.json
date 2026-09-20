@@ -1,5 +1,5 @@
 {
   "extends": "../../tsconfig.node.json",
   "compilerOptions": { "composite": false, "strict": true, "noEmit": true, "noUnusedLocals": true, "noUnusedParameters": true },
-  "include": ["../../src/main/workflowLibrary/**/*.ts", "../../src/main/auth/customerSession.service.ts", "../../src/shared/workflowLibrary.type.ts", "../../src/shared/workflowPackage.ts"]
+  "include": ["../../src/env.d.ts", "../../src/main/workflowLibrary/**/*.ts", "../../src/main/auth/customerSession.service.ts", "../../src/main/institution/**/*.ts", "../../src/shared/institutionScope.type.ts", "../../src/shared/workflowLibrary.type.ts", "../../src/shared/workflowPackage.ts"]
 }

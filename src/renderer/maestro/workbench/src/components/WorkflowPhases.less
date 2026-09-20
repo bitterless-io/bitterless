@@ -1,0 +1,8 @@
+.workflow-phases {
+  display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: auto; padding: 18px 26px 22px; gap: 14px;
+  &__list { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+  &__item { display: flex; align-items: flex-start; gap: 12px; }
+  &__step { display: flex; align-items: center; justify-content: center; flex: 0 0 22px; width: 22px; height: 22px; border-radius: 50%; background: var(--wf-canvas); color: var(--wf-muted); font-size: 11px; font-weight: 600; }
+  &__body { min-width: 0; strong { font-size: 13px; font-weight: 600; } p { margin: 3px 0 0; color: var(--wf-muted); line-height: 1.6; font-size: 12px; } }
+  &__empty, &__note { margin: 0; color: var(--wf-muted); font-size: 11px; line-height: 1.6; }
+}

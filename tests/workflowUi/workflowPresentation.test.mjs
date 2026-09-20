@@ -82,3 +82,21 @@ test('Agents sort by what needs attention, and equal ranks keep snapshot order',
     'same-rank Agents keep the order main sent, so rows do not shuffle between broadcasts'
   )
 })
+
+test('a paused run is neither finished nor hidden — it is the one run the owner still has to act on', () => {
+  // Before run-level pause existed, `workflowRunCategory` had no branch for it, so a paused run fell
+  // through to `completed`. Everything downstream then treated it as done: the header offered Rerun
+  // instead of Resume, the group collapsed, and in the live bar it was filtered out entirely — while
+  // `workflowActivityFacts` still counted it, so the pill read "1 workflows · 0 agents" next to a
+  // list showing nothing running. A run the owner deliberately paused cannot be one they can no
+  // longer see or resume.
+  const paused = run('paused', 'paused', 4, ['completed', 'paused'])
+  assert.equal(workflowRunCategory(paused), 'paused')
+  const [group] = groupWorkflowRuns([paused])
+  assert.equal(group.category, 'paused')
+  assert.equal(group.ended, false, 'a paused run stays open, so its Resume control stays reachable')
+  // And it must not be mistaken for any terminal category.
+  for (const status of ['completed', 'failed', 'stopped']) {
+    assert.notEqual(workflowRunCategory(run('x', status, 5, ['completed'])), 'paused')
+  }
+})

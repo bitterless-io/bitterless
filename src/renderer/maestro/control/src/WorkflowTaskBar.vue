@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUpdate, onMounted, onUnmounted, onUpdated, ref, watch } from 'vue'
 import { IconAlertTriangle, IconCheck, IconChevronDown, IconClock, IconLoader2, IconPlayerPause, IconPlayerPlay, IconPlayerStop, IconRefresh, IconSquares, IconX } from '@tabler/icons-vue'
 import IconBtn from '@renderer/common/components/IconBtn/IconBtn.vue'
-import { isWorkflowAgentActive, isWorkflowAgentLive, type WorkflowAgentTask, type WorkflowRunSnapshot } from '@shared/agentWorkflow.api'
+import { isWorkflowAgentActive, type WorkflowAgentTask, type WorkflowRunSnapshot } from '@shared/agentWorkflow.api'
 import { workflowStore } from './store/workflow.store'
 import { workflowText } from './workflow.text'
 import { groupWorkflowRuns, newestWorkflowRuns, workflowActivityFacts, type WorkflowRunGroup } from './workflow.presentation'
@@ -33,9 +33,10 @@ const latestRun = computed(() => newestWorkflowRuns(runs.value)[0])
 const runOpen = ref(new Map<string, boolean>())
 const isRunOpen = (group: WorkflowRunGroup): boolean => runOpen.value.get(group.run.id) ?? !group.ended
 const toggleRun = (group: WorkflowRunGroup): void => { runOpen.value.set(group.run.id, !isRunOpen(group)) }
-const liveRuns = computed(() => runs.value.filter(run => run.status === 'running' || run.status === 'stopping'))
+// Paused counts as live: it can still be resumed or stopped, and dropping it here is what used to
+// hide Stop all and freeze the elapsed ticker the moment a run was paused.
+const liveRuns = computed(() => runs.value.filter(run => run.status === 'running' || run.status === 'paused' || run.status === 'stopping'))
 const cleanupFailed = computed(() => liveRuns.value.some(run => Boolean(run.error)))
-const canRetry = (task: WorkflowAgentTask): boolean => Boolean(actionError.value || runs.value.find(run => run.id === task.runId)?.error)
 const cancellable = computed(() => liveRuns.value.some(run => run.status === 'running') || cleanupFailed.value || Boolean(actionError.value))
 const busyAll = computed(() => pending.value.has(props.sessionId))
 // Same shared computation the status row uses, so the bar and that row can never disagree.
@@ -99,17 +100,14 @@ const toggle = async (): Promise<void> => {
   updateGeometry()
 }
 const close = (focus = false): void => { open.value = false; if (props.history) emit('close'); if (focus) trigger.value?.focus() }
-const stop = async (task?: WorkflowAgentTask): Promise<void> => {
+const stop = async (): Promise<void> => {
   const sessionId = props.sessionId
-  const key = task ? identity(task) : sessionId
-  if (pending.value.has(key)) return
-  pending.value.add(key)
+  if (pending.value.has(sessionId)) return
+  pending.value.add(sessionId)
   actionError.value = ''
-  try {
-    if (task) await workflowStore.stopAgent(sessionId, task.runId, task.id)
-    else await workflowStore.stopSession(sessionId)
-  } catch { if (props.sessionId === sessionId) actionError.value = text.value.stopError }
-  finally { pending.value.delete(key) }
+  try { await workflowStore.stopSession(sessionId) }
+  catch { if (props.sessionId === sessionId) actionError.value = text.value.stopError }
+  finally { pending.value.delete(sessionId) }
 }
 const retry = async (run: WorkflowRunSnapshot): Promise<void> => {
   const sessionId = props.sessionId
@@ -121,20 +119,29 @@ const retry = async (run: WorkflowRunSnapshot): Promise<void> => {
   catch (error) { if (props.sessionId === sessionId) actionError.value = error instanceof Error ? error.message : text.value.retryError }
   finally { pending.value.delete(key) }
 }
-const pauseOrResume = async (task: WorkflowAgentTask): Promise<void> => {
-  const key = identity(task)
+/**
+ * Pause or resume a whole RUN.
+ *
+ * It used to pause one Agent. This engine schedules its own agents and exposes no per-agent channel,
+ * so those buttons would have accepted the click and done nothing — worse than not being there,
+ * because the row would then sit at "Pausing" forever. Run-level is what the engine can actually
+ * honour, and it keeps the journal: resuming continues from the unchanged prefix.
+ */
+const pauseOrResume = async (group: WorkflowRunGroup): Promise<void> => {
+  const key = `run:${group.run.id}`
   if (pending.value.has(key)) return
   pending.value.add(key)
-  try {
-    if (task.status === 'paused' || task.status === 'pausing') await workflowStore.resumeAgent(props.sessionId, task.runId, task.id)
-    else await workflowStore.pauseAgent(props.sessionId, task.runId, task.id)
-  } catch (error) { actionError.value = error instanceof Error ? error.message : text.value.stopError }
+  actionError.value = ''
+  try { await workflowStore.controlWorkflow(props.sessionId, group.run.id, group.run.status === 'paused' ? 'resume' : 'pause') }
+  catch (error) { actionError.value = error instanceof Error ? error.message : text.value.stopError }
   finally { pending.value.delete(key) }
 }
 const pointer = (event: PointerEvent): void => { if (!props.history && open.value && event.target instanceof Node && !root.value?.contains(event.target)) close() }
 const keydown = (event: KeyboardEvent): void => { if (open.value && event.key === 'Escape') { event.preventDefault(); close(true) } }
 watch(() => props.sessionId, () => { close(); expanded.value = null; scrollTop = 0; actionError.value = '' })
-watch(() => active.value.length, count => { if (!count && !props.history) close() })
+// Closing on "no active Agents" alone would shut the popover the moment a run is paused, taking the
+// Resume button with it.
+watch(() => [active.value.length, liveRuns.value.length], ([agents, live]) => { if (!agents && !live && !props.history) close() })
 watch(() => latestRun.value?.id, () => {
   // A new run resets explicit collapse choices, so older runs fall back to "ended ⇒ collapsed".
   runOpen.value = new Map()
@@ -161,7 +168,7 @@ onUnmounted(() => { observer?.disconnect(); clearInterval(timer); document.remov
 </script>
 
 <template>
-  <div v-show="history || active.length > 0" ref="root" name="workflow-taskbar" class="workflow-taskbar" :class="{ 'workflow-taskbar--history': history }">
+  <div v-show="history || active.length > 0 || liveRuns.length > 0" ref="root" name="workflow-taskbar" class="workflow-taskbar" :class="{ 'workflow-taskbar--history': history }">
     <section v-if="open" class="workflow-taskbar__popover" name="workflow-taskbar__popover" :aria-label="text.current" :style="{ maxHeight: history ? '65vh' : `${maximumHeight}px` }">
       <header class="workflow-taskbar__header" name="workflow-taskbar__header">
         <strong>{{ text.current }}</strong>
@@ -181,6 +188,7 @@ onUnmounted(() => { observer?.disconnect(); clearInterval(timer); document.remov
               </span>
               <time>{{ groupElapsed(group) }}</time>
             </button>
+            <IconBtn v-if="!group.ended" class="workflow-taskbar__icon-button" :disabled="busyAll || pending.has(`run:${group.run.id}`)" :aria-label="`${group.run.status === 'paused' ? text.resume : text.pause}: ${group.run.name}`" :title="`${group.run.status === 'paused' ? text.resume : text.pause}: ${group.run.name}`" @click="pauseOrResume(group)"><component :is="group.run.status === 'paused' ? IconPlayerPlay : IconPlayerPause" :size="14" /></IconBtn>
             <IconBtn v-if="!group.ended" class="workflow-taskbar__icon-button" :disabled="busyAll || pending.has(`run:${group.run.id}`)" :aria-label="`${text.runStop}: ${group.run.name}`" :title="`${text.runStop}: ${group.run.name}`" @click="stopRun(group)"><IconPlayerStop :size="14" /></IconBtn>
             <IconBtn v-else-if="group.run.entry" class="workflow-taskbar__icon-button" :disabled="pending.has(`retry:${group.run.id}`)" :aria-label="`${text.rerun}: ${group.run.name}`" :title="`${text.rerun}: ${group.run.name}`" @click="retry(group.run)"><IconRefresh :size="14" /></IconBtn>
           </div>
@@ -195,15 +203,16 @@ onUnmounted(() => { observer?.disconnect(); clearInterval(timer); document.remov
                 </span>
               </button>
               <div class="workflow-taskbar__side">
-                <IconBtn v-if="isWorkflowAgentLive(task.status) && task.status !== 'stopping'" class="workflow-taskbar__icon-button" :disabled="pending.has(identity(task))" :aria-label="`${task.status === 'paused' || task.status === 'pausing' ? text.resume : text.pause}: ${task.label}`" :title="task.status === 'paused' || task.status === 'pausing' ? text.resume : text.pause" @click="pauseOrResume(task)"><component :is="task.status === 'paused' || task.status === 'pausing' ? IconPlayerPlay : IconPlayerPause" :size="14" /></IconBtn>
-                <IconBtn v-if="isWorkflowAgentLive(task.status)" class="workflow-taskbar__icon-button" :disabled="(task.status === 'stopping' && !canRetry(task)) || busyAll || pending.has(identity(task))" :aria-label="`${text.stop}: ${task.label}`" :title="`${text.stop}: ${task.label}`" @click="stop(task)"><IconPlayerStop :size="14" /></IconBtn>
+                <!-- Per-Agent Pause / Resume / Stop stood here. This engine runs its own scheduler and
+                     offers no per-agent channel, so those three buttons could only have accepted the
+                     click and done nothing. The run's own controls are in its header. -->
                 <time>{{ elapsed(task) }}</time>
               </div>
             </div>
             <div v-if="expanded === identity(task)" class="workflow-taskbar__detail" name="workflow-taskbar__detail">
               <p class="workflow-taskbar__phase">{{ task.runId.slice(0, 8) }} · {{ task.id }}</p>
               <p>{{ task.prompt }}</p>
-              <p v-if="task.phase" class="workflow-taskbar__phase">{{ task.phase }}</p>
+              <p v-if="task.phase || task.model" class="workflow-taskbar__phase">{{ [task.phase, task.model].filter(Boolean).join(' · ') }}</p>
               <strong v-if="task.logs.length">{{ text.logs }}</strong>
               <ol><li v-for="(log, logIndex) in task.logs" :key="`${log.ts}:${logIndex}`">{{ log.text }}</li></ol>
               <pre v-if="task.error" class="workflow-taskbar__error">{{ task.error }}</pre>

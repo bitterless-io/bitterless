@@ -202,7 +202,7 @@ test('committed responses/events apply once without rereads; old reads, failures
   let project = 'A', loads = 0;
   const Store = evaluate(classText(shell + 'onlyPreviewBookmarks.store.ts'), {
     unwrapOnlyPreviewResult: unwrap, describeOnlyPreviewError: e => e.message,
-    xpcRenderer: { subscribe: () => {} }, ONLY_PREVIEW_BOOKMARK_ADD_EVENT: 'add', ONLY_PREVIEW_BOOKMARKS_CHANGED_EVENT: 'change'
+    xpcRenderer: { subscribe: () => {} }, ONLY_PREVIEW_BOOKMARK_ADD_EVENT: 'add', ONLY_PREVIEW_BOOKMARKS_CHANGED_EVENT: 'change', ONLY_PREVIEW_PROJECT_DELETE_EVENT: 'delete'
   }).OnlyPreviewBookmarksStore;
   const snapshot = (revision, names, workspaceId = project) => ({ workspaceId, revision, entries: names.map(name => ({ name, relativePath: name, nodeKind: 'file' })) });
   const client = {
@@ -239,7 +239,7 @@ test('renderer ignores old Project responses/events and preserves full bookmark 
   let project = 'A', loads = 0, additions = 0;
   const Store = evaluate(classText(shell + 'onlyPreviewBookmarks.store.ts'), {
     unwrapOnlyPreviewResult: unwrap, describeOnlyPreviewError: (e) => e.message,
-    xpcRenderer: { subscribe: () => {} }, ONLY_PREVIEW_BOOKMARK_ADD_EVENT: 'add', ONLY_PREVIEW_BOOKMARKS_CHANGED_EVENT: 'change'
+    xpcRenderer: { subscribe: () => {} }, ONLY_PREVIEW_BOOKMARK_ADD_EVENT: 'add', ONLY_PREVIEW_BOOKMARKS_CHANGED_EVENT: 'change', ONLY_PREVIEW_PROJECT_DELETE_EVENT: 'delete'
   }).OnlyPreviewBookmarksStore;
   const store = new Store({
     getBookmarks: async ({ workspaceId }) => {
@@ -409,4 +409,47 @@ test('every OnlyPreview IconBtn is borderless in compiled CSS, not by inheritanc
     assert.match(body, /border:\s*(?:0|none)/, cls + ' 没有显式去掉边框 —— cowork 上它会是一个带框的 UA 默认按钮');
     assert.match(body, /background:\s*\S/, cls + ' 没有显式背景 —— cowork 上它会带 UA 默认灰底');
   }
+});
+
+/**
+ * 删掉的文件/目录,书签要跟着走(Ral 2026-09-20)。
+ *
+ * 三件事一起钉:目录要连子孙一起剪、兄弟前缀不能误伤、以及**代价不随删除规模放大** ——
+ * 删一整棵没被收藏的树时一次 IPC 都不发(复用删除那条已有的批量广播,不新增事件)。
+ */
+test('deleting paths prunes their bookmarks, keeps prefix siblings, and costs nothing when none match', async () => {
+  let project = 'A';
+  const removed = [];
+  const Store = evaluate(classText(shell + 'onlyPreviewBookmarks.store.ts'), {
+    unwrapOnlyPreviewResult: unwrap, describeOnlyPreviewError: e => e.message,
+    xpcRenderer: { subscribe: () => {} }, ONLY_PREVIEW_BOOKMARK_ADD_EVENT: 'add',
+    ONLY_PREVIEW_BOOKMARKS_CHANGED_EVENT: 'change', ONLY_PREVIEW_PROJECT_DELETE_EVENT: 'delete'
+  }).OnlyPreviewBookmarksStore;
+  const entries = ['docs/a.md', 'docs/deep/b.md', 'docs-archive/c.md', 'keep.md'];
+  const client = {
+    getBookmarks: async () => success({ workspaceId: project, revision: 1, entries: entries.map(name => ({ name, relativePath: name, nodeKind: 'file' })) }),
+    addBookmark: async () => success(null),
+    removeBookmark: async ({ relativePath }) => { removed.push(relativePath); return success(null); },
+    showBookmarkContextMenu: async () => success(null)
+  };
+  const store = new Store(client, { hostId: 'host', hostToken: 'token', workspaceId: () => project });
+  store.initialize();
+  await tick();
+  assert.equal(store.entries.length, 4, 'fixture bookmarks loaded');
+
+  // 没有任何书签命中 → 一次调用都不该发。
+  await store.pruneDeleted({ workspaceId: 'A', relativePaths: ['unrelated/tree', 'other.md'] });
+  assert.deepEqual(removed, [], '没命中就不该产生 IPC —— 代价与删除规模无关');
+
+  // 删目录:自身与子孙都剪,`docs-archive/**` 这种兄弟前缀不能被带走。
+  await store.pruneDeleted({ workspaceId: 'A', relativePaths: ['docs'] });
+  assert.deepEqual(removed.sort(), ['docs/a.md', 'docs/deep/b.md'].sort());
+  assert.ok(!removed.includes('docs-archive/c.md'), '兄弟前缀不是子孙');
+  assert.ok(!removed.includes('keep.md'));
+
+  // 换了 Project 之后迟到的那一条不该剪新工作区的书签(广播没有重放)。
+  removed.length = 0;
+  project = 'B';
+  await store.pruneDeleted({ workspaceId: 'A', relativePaths: ['keep.md'] });
+  assert.deepEqual(removed, [], '跨工作区的迟到事件必须被围栏挡住');
 });

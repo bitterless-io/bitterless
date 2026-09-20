@@ -35,6 +35,7 @@ function integration(tools = () => [], runtime, assertCanStartShortcut, library)
     dispose() { this.disposed = true }
   }
   const { WorkflowHostIntegration } = load('src/main/agent/workflowEngine/hostIntegration.ts', {
+    '../../../shared/workflowPackage': load('src/shared/workflowPackage.ts'),
     electron: { app: { getPath: () => '/test-user-data' } },
     './supervisor': { WorkflowSupervisor: Supervisor }, './activitySummary': activityModule, './workflowWait': waitModule, '../runtime/agentSessionContext': context,
     '../runtime/modelIoLog': { modelIoLog: { append() {} } },
@@ -74,7 +75,7 @@ test('rejects ambiguous entries, missing chat owner, unknown workflow, and unsaf
   await assert.rejects(host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'builtin', name: 'unknown' }, input: 'x' }), /Unknown/)
   await assert.rejects(host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'file', path: '../relative.ts' }, input: 'x' }), /absolute/)
   const catalog = await host.listWorkflows()
-  assert.equal(catalog.length, 8, 'update this count deliberately when the built-in catalog changes')
+  assert.equal(catalog.length, 5, 'update this count deliberately when the built-in catalog changes')
   assert.ok(catalog.some(workflow => workflow.name === 'plan-workflow'), 'the model cannot pick a workflow workflow_list never shows')
 })
 
@@ -177,7 +178,8 @@ function chatDao(options = {}) {
   let stops = 0
   const workflows = {
     stopSession: async () => { stops++; return options.stop ? options.stop() : { ok: true } },
-    listRuns: async () => 'snapshot' in options ? options.snapshot : { runs: [], revision: 1 }
+    listRuns: async () => 'snapshot' in options ? options.snapshot : { runs: [], revision: 1 },
+    deleteNativeSession: async () => ({ ok: true })
   }
   const db = {
     prepare: (sql) => ({ get: () => options.hasMessages, run: () => mutations.push(sql) }),
@@ -185,7 +187,8 @@ function chatDao(options = {}) {
   }
   const entries = load(bl ? 'src/preload/maestro/sqlite/maestroChat.dao.ts' : 'src/preload/sqlite/cowork_chat.dao.ts', {
     'electron-xpc/preload': { XpcPreloadHandler: class {}, createXpcPreloadEmitter: () => workflows },
-    './sqliteManager': { sqliteManager: { db } }
+    './sqliteManager': { sqliteManager: { db } },
+    '@shared/agentWorkflow.api': load('src/shared/agentWorkflow.api.ts')
   })
   return { dao: entries.maestroChatDao || entries.coworkChatDao, mutations, stops: () => stops }
 }
@@ -201,7 +204,9 @@ test('chat deletion waits for confirmed workflow cleanup before SQL, and refuses
   assert.equal(pending.mutations.length, 2)
   for (const options of [
     { stop: async () => null }, { snapshot: null },
-    { snapshot: { runs: [{ status: 'stopping' }], revision: 1 } }
+    { snapshot: { runs: [{ status: 'stopping' }], revision: 1 } },
+    // A paused run is unfinished work, not a finished one — deleting the chat would strand it.
+    { snapshot: { runs: [{ status: 'paused' }], revision: 1 } }
   ]) {
     const failed = chatDao(options)
     await assert.rejects(failed.dao.deleteSession({ id: 'chat-a' }), /chat was kept/)
@@ -215,16 +220,16 @@ test('chat deletion waits for confirmed workflow cleanup before SQL, and refuses
 test('stopping a chat fences startup while runtime configuration is still loading', async () => {
   let release
   const { host, supervisor } = integration(() => [], () => new Promise((resolve) => { release = resolve }))
-  const pending = host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'builtin', name: 'mini-demo' }, input: 'x' })
+  const pending = host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'builtin', name: 'agent-task' }, input: 'x' })
   const rejected = assert.rejects(pending, { name: 'AbortError' })
   const stopped = host.stopSession({ sessionId: 'chat-a' })
-  await assert.rejects(host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'builtin', name: 'mini-demo' }, input: 'x' }), /stopping/)
+  await assert.rejects(host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'builtin', name: 'agent-task' }, input: 'x' }), /stopping/)
   release({ cwd: '/test-project', providerId: 'chosen', modelId: 'model', thinkingLevel: 'low', authPath: '/test-auth', systemPrompt: '' })
   await rejected
   assert.deepEqual(await stopped, { ok: true })
   assert.equal(supervisor.request, undefined)
   await host.dispose()
-  await assert.rejects(host.startWorkflow({ sessionId: 'chat-b', entry: { kind: 'builtin', name: 'mini-demo' }, input: 'x' }), /stopping/)
+  await assert.rejects(host.startWorkflow({ sessionId: 'chat-b', entry: { kind: 'builtin', name: 'agent-task' }, input: 'x' }), /stopping/)
 })
 
 
@@ -235,7 +240,7 @@ test('shortcut startup uses host admission before and after runtime, with no ren
     receivedCwd = cwd
     return { cwd: '/host-selected-project', providerId: 'selected', modelId: 'selected-model' }
   }, (id, others) => checks.push({ id, others }))
-  await host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'builtin', name: 'mini-demo' }, input: 'task', origin: 'shortcut', cwd: '/renderer-override' })
+  await host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'builtin', name: 'agent-task' }, input: 'task', origin: 'shortcut', cwd: '/renderer-override' })
   assert.equal(checks.length, 2)
   assert.equal(receivedCwd, undefined)
   assert.equal(supervisor.request.cwd, '/host-selected-project')
@@ -245,7 +250,7 @@ test('shortcut startup uses host admission before and after runtime, with no ren
 test('same-chat workflows start concurrently without reserving ordinary chat turns', async () => {
   const releases = []
   const h = integration(undefined, () => new Promise(resolve => releases.push(() => resolve({ cwd: '/host-project', providerId: 'selected', modelId: 'selected-model' }))), () => {})
-  const request = { sessionId: 'chat-a', entry: { kind: 'builtin', name: 'mini-demo' }, input: 'task', origin: 'shortcut' }
+  const request = { sessionId: 'chat-a', entry: { kind: 'builtin', name: 'agent-task' }, input: 'task', origin: 'shortcut' }
   const first = h.host.startWorkflow(request)
   const second = h.host.startWorkflow(request)
   await tick()
@@ -271,7 +276,7 @@ test('manual retry deduplicates concurrent clicks and uses current host admissio
   }, id => checks.push(id))
   supervisor.retryRequest = async (sessionId, runId) => {
     lookups++; assert.equal(runId, 'failed-run')
-    return { sessionId, entry: { kind: 'builtin', name: 'mini-demo' }, input: 'original input', origin: 'shortcut' }
+    return { sessionId, entry: { kind: 'builtin', name: 'agent-task' }, input: 'original input', origin: 'shortcut' }
   }
   const start = supervisor.start.bind(supervisor)
   supervisor.start = (...args) => { starts++; return start(...args) }
@@ -300,29 +305,31 @@ test('stop during retry lookup fences launch and waits for the pending retry', a
   let stopped = false
   const stopping = host.stopSession({ sessionId: 'chat-a' }).then(() => { stopped = true })
   await tick(); assert.equal(stopped, false)
-  release({ sessionId: 'chat-a', entry: { kind: 'builtin', name: 'mini-demo' }, input: 'original', origin: 'shortcut' })
+  release({ sessionId: 'chat-a', entry: { kind: 'builtin', name: 'agent-task' }, input: 'original', origin: 'shortcut' })
   await rejected; await stopping
   assert.equal(supervisor.request, undefined)
 })
 
 test('structured task controls require exact chat-owned identifiers and additional tasks start independently', async () => {
   const { host, supervisor } = integration()
-  const row = { id: 'parent', sessionId: 'chat-a', name: 'mini-demo', status: 'running', input: 'original', agents: [{ id: '1', status: 'paused' }] }
+  const row = { id: 'parent', sessionId: 'chat-a', name: 'agent-task', status: 'running', input: 'original', agents: [{ id: '1', status: 'paused' }] }
   supervisor.list = (sessionId) => ({ runs: sessionId === 'chat-a' ? [row] : [], revision: 1 })
   const controls = []
   supervisor.pauseAgent = (...args) => controls.push(['pause', ...args])
   supervisor.resumeAgent = (...args) => controls.push(['resume', ...args])
   supervisor.steerAgent = (...args) => controls.push(['steer', ...args])
   const tool = name => host.chatTools('chat-a').find(tool => tool.name === name)
-  for (const name of ['workflow_pause', 'workflow_resume', 'workflow_stop_agent', 'workflow_steer']) {
-    await assert.rejects(tool(name).execute({runId:'parent', message:'change scope'}), /Exact/)
-    await assert.rejects(tool(name).execute({runId:'foreign', agentId:'1', message:'change scope'}), /does not belong/)
-  }
-  await tool('workflow_pause').execute({runId:'parent',agentId:'1'})
-  await tool('workflow_resume').execute({runId:'parent',agentId:'1'})
-  await tool('workflow_steer').execute({runId:'parent',agentId:'1',message:'read-only, concise'})
-  assert.deepEqual(controls.map(call => call[0]), ['pause','resume','steer'])
-  assert.ok(controls.every(call => call[1] === 'chat-a' && call[2] === 'parent' && call[3] === '1'))
+  // Per-AGENT pause/resume/stop/steer are gone: this engine's controls are run-level, and offering
+  // tools that cannot act would have the model report success it never achieved.
+  for (const name of ['workflow_pause', 'workflow_resume', 'workflow_stop_agent', 'workflow_steer']) assert.equal(tool(name), undefined)
+  supervisor.controlWorkflow = async params => { controls.push(['control', params.sessionId, params.runId, params.action]); return { ok: true, status: 'paused' } }
+  await assert.rejects(tool('workflow_control').execute({action:'pause',runId:''}), /exact runId/)
+  await assert.rejects(tool('workflow_control').execute({action:'pause',runId:'someone-elses'}), /No run/)
+  await assert.rejects(tool('workflow_control').execute({action:'sideways',runId:'parent'}), /pause, resume or stop/)
+  await tool('workflow_control').execute({action:'pause',runId:'parent'})
+  await tool('workflow_control').execute({action:'resume',runId:'parent'})
+  assert.deepEqual(controls.map(call => call[3]), ['pause','resume'])
+  assert.ok(controls.every(call => call[1] === 'chat-a' && call[2] === 'parent'))
   await assert.rejects(tool('workflow_add_task').execute({input:'research',parentRunId:'foreign'}), /does not belong/)
   const added = JSON.parse(await tool('workflow_add_task').execute({input:'research',parentRunId:'parent'}))
   assert.equal(added.background, true)
@@ -332,17 +339,17 @@ test('structured task controls require exact chat-owned identifiers and addition
   await assert.rejects(host.pauseWorkflowAgent({sessionId:'chat-b',runId:'parent',agentId:'1'}), /does not belong/)
 })
 
-test('library references resolve through live scope and managed file permission is rechecked after runtime preparation', async () => {
+test('local library references resolve and the folder path permission is rechecked after runtime preparation', async () => {
   const checks = []
-  const library = { list: async () => [{ name: 'institution:7:1', ref: 'institution:7:1', scope: 'institution', institution_id: 7, description: 'Fixture' }], resolve: async ref => { assert.equal(ref, 'institution:7:1'); return { kind: 'file', path: '/managed/7/workflow.ts' } }, assertPath: async path => { checks.push(path) } }
+  const library = { list: async () => [{ name: 'local:text-essentials', reference: 'local:text-essentials', scope: 'local', description: 'Fixture' }], resolve: async ref => { assert.equal(ref, 'local:text-essentials'); return { kind: 'file', path: '/workflows/text-essentials/workflow.ts' } }, assertPath: async path => { checks.push(path) } }
   const { host, supervisor } = integration(() => [], undefined, undefined, library)
-  assert((await host.listWorkflows()).some(row => row.scope === 'institution' && row.institution_id === 7))
-  assert((await host.listWorkflows()).some(row => row.scope === 'shared' && row.ref === 'shared:builtin:mini-demo'))
+  assert((await host.listWorkflows()).some(row => row.scope === 'local' && row.reference === 'local:text-essentials'))
+  assert((await host.listWorkflows()).some(row => row.scope === 'builtin' && row.reference === 'builtin:agent-task'))
   const tool = host.chatTools('chat-a').find(tool => tool.name === 'workflow_run')
-  await tool.execute({ name: 'institution:7:1', input: 'Fixture input' })
-  assert.equal(supervisor.request.entry.kind, 'file'); assert.deepEqual(checks, ['/managed/7/workflow.ts', '/managed/7/workflow.ts'])
+  await tool.execute({ name: 'local:text-essentials', input: 'Fixture input' })
+  assert.equal(supervisor.request.entry.kind, 'file'); assert.deepEqual(checks, ['/workflows/text-essentials/workflow.ts', '/workflows/text-essentials/workflow.ts'])
   const revoked = integration(() => [], async () => { throw Error('fixture context changed') }, undefined, library)
-  await assert.rejects(revoked.host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'library', ref: 'institution:7:1' }, input: 'Fixture' }), /context changed/)
+  await assert.rejects(revoked.host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'library', ref: 'local:text-essentials' }, input: 'Fixture' }), /context changed/)
 })
 
 test('stop during final managed-path authorization rejects startup before supervisor launch', async () => {
@@ -358,4 +365,28 @@ test('stop during final managed-path authorization rejects startup before superv
   await rejected
   await stopping
   assert.equal(supervisor.request, undefined)
+})
+
+test('a local package whose entry is workflow.mjs can actually be RUN, not only listed', async () => {
+  // The defect this pins (2026-09-20): the engine moved to `workflow.mjs`, the scanner followed, and
+  // the run gate in hostIntegration kept demanding `.ts|.mts` — Kimchi's Jiti extensions. So every
+  // local package listed correctly, rendered its phases and its source, and then refused to start
+  // with "Workflow file must be an absolute .ts or .mts path." Both sides believed they were right,
+  // nothing reported the mismatch, and the model reasonably concluded the package was not runnable
+  // and did the work by hand instead.
+  const { host, supervisor } = integration()
+  for (const name of ['workflow.mjs', 'workflow.js', 'workflow.mts', 'workflow.ts']) {
+    await host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'file', path: `/workflows/pkg/${name}` }, input: 'x' })
+    assert.equal(supervisor.request.entry.path, `/workflows/pkg/${name}`, `${name} must be runnable`)
+  }
+  await assert.rejects(host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'file', path: '/workflows/pkg/notes.md' }, input: 'x' }), /absolute path ending in/)
+  await assert.rejects(host.startWorkflow({ sessionId: 'chat-a', entry: { kind: 'file', path: 'relative/workflow.mjs' }, input: 'x' }), /absolute path ending in/)
+})
+
+test('the run gate and the scanner read ONE entry-name list, so they cannot drift apart again', () => {
+  const gate = fs.readFileSync(path.join(root, 'src/main/agent/workflowEngine/hostIntegration.ts'), 'utf8')
+  assert.match(gate, /isWorkflowEntryPath\(request\.entry\.path\)/, 'the gate must use the shared predicate')
+  assert.ok(!gate.includes('ts|mts'), 'no hand-written extension list may survive in the gate')
+  const loader = fs.readFileSync(path.join(root, 'src/main/agent/workflowEngine/dynamic/dynamicLoader.ts'), 'utf8')
+  assert.match(loader, /WORKFLOW_ENTRY_NAMES/, 'the scanner must read the same list')
 })

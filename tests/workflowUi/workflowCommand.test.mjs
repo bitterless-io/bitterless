@@ -41,6 +41,7 @@ function harness(overrides = {}) {
     ...overrides
   })
   const { executeWorkflowCommand: execute } = load(`${renderer}workflow.command.ts`, {
+    '@shared/workflowPackage': load('src/shared/workflowPackage.ts'),
     vue: { watch: (...args) => {
       const stop = watch(...args)
       subscriptions.active++

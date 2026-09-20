@@ -321,9 +321,33 @@ export class WorkflowSupervisor {
     return operation
   }
 
+  /**
+   * Run-level pause / resume / stop.
+   *
+   * The engine's controls are run-level; there is no per-agent equivalent, so this deliberately does
+   * not take an agentId. Sent into the worker that owns the run — the manager lives there (Ral
+   * 2026-09-20: main must not carry this work).
+   */
+  async controlWorkflow(params: { sessionId: string; runId: string; action: 'pause' | 'resume' | 'stop' }): Promise<{ ok: boolean; status: string }> {
+    const run = this.runs.find(item => item.id === params.runId && item.sessionId === params.sessionId)
+    if (!run) throw new Error('That workflow does not belong to this chat.')
+    const live = this.live.get(params.runId)
+    if (!live) throw new Error('That workflow is no longer running in this session.')
+    this.post(live.engine, { type: `workflow.${params.action}` } as WorkerCommand)
+    return { ok: true, status: run.status }
+  }
+
   private engineEvent(runId: string, event: WorkerEvent): void {
     const live = this.live.get(runId), run = this.runs.find(item => item.id === runId)
     if (!live || !run || terminalRun(run)) return
+    if (event.type === 'workflow.state') {
+      // Run-level state from the managed run. `paused` is not terminal: the journal is intact and a
+      // resume continues from the unchanged prefix, so the run stays in the live list.
+      if (event.state === 'paused' && run.status === 'running') { run.status = 'paused'; this.publish() }
+      else if (event.state === 'resumed' && run.status === 'paused') { run.status = 'running'; this.publish() }
+      return
+    }
+    if (event.type === 'workflow.control') return
     if (event.type === 'agent.update') {
       if (event.agent.runId !== run.id || event.agent.sessionId !== run.sessionId) return
       const existing = run.agents.find(agent => agent.id === event.agent.id)

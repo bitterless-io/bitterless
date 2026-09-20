@@ -1,6 +1,7 @@
 import { parseWorkflowCommand, type WorkflowBuiltinName, type WorkflowEntry } from '@shared/agentWorkflow.api'
 import { workflowStore } from './store/workflow.store'
 import { workflowText } from './workflow.text'
+import { isWorkflowEntryPath } from '@shared/workflowPackage'
 
 export interface WorkflowCommandContext {
   sessionId: string
@@ -22,10 +23,12 @@ export async function executeWorkflowCommand(text: string, context: WorkflowComm
   }
   context.assertCanStart()
   if (context.hasAttachments) throw new Error(copy.commandAttachments)
-  const builtin = catalog.find(item => item.name === command.target || item.ref === command.target)
+  const builtin = catalog.find(item => item.name === command.target || item.reference === command.target)
   let entry: WorkflowEntry
   if (builtin) entry = builtin.entry ?? { kind: 'builtin', name: builtin.name as WorkflowBuiltinName }
-  else if (command.target.startsWith('/') && /\.(?:ts|mts)$/.test(command.target)) entry = { kind: 'file', path: command.target }
+  // Same predicate the run gate uses; a second list here is how `.mjs` packages became
+  // unrunnable from the slash command while listing perfectly.
+  else if (command.target.startsWith('/') && isWorkflowEntryPath(command.target)) entry = { kind: 'file', path: command.target }
   else throw new Error(copy.commandUnknown.replace('{name}', command.target))
   const input = command.input || (builtin?.name === 'mini-demo' ? copy.demoInput : '')
   if (!input) throw new Error(copy.commandInput)

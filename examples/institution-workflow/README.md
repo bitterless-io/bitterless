@@ -1,33 +1,41 @@
-# Institution workflow demo
+# workflow-demo
 
-A small Kimchi 0.0.9 workflow for testing institution sharing, downloads and the Workflow view.
+The package a fresh install finds in its workflows folder, so the first look at the Workflows view
+is a working example rather than an empty pane next to a directory nobody has heard of.
 
-The three function steps prepare text, count whitespace-separated words, then return a deterministic summary. The workflow does not create agents, access files, spawn processes or make network requests. It contains no credentials or personal data.
+It exists to answer one question — **is the workflows folder wired up?** — and it has to be able to
+answer it while signed out, offline, and with no model configured. So it calls no agent: adding one
+would make the smoke test depend on the very things it is there to rule out. That makes it the
+exception. A real workflow orchestrates agents; this one measures a string.
 
-## Package files
+## Files
 
-- `workflow.json`: static display metadata and the three-node graph. Reading this file does not execute the workflow.
-- `workflow.ts`: executable entry, default-exporting a committed Kimchi definition.
-- `README.md`: this explanation.
+- `workflow.mjs` — the entry. Its `export const meta` is the **only** source of what the library
+  shows: name, description, `whenToUse`, phases. There is no manifest beside it to drift from it.
+- `README.md` — this file.
 
-The entry imports the public `@kimchi-dev/kimchi-workflows/flow` and `typebox` APIs. Both desktop loaders resolve these packages to their bundled dependencies. Do not install dependencies in this archive.
+## Running it
 
-## Example
-
-Input: `Shared institution workflows work.`
-
-Output:
-
-```json
-{"message":"Processed 4 words: Shared institution workflows work."}
-```
-
-Whitespace-only input is valid at the engine layer and returns `{"message":"Processed 0 words: "}`. The existing desktop chat launcher requires nonblank input, so use the normal example when launching through chat.
-
-After installing the package, explicitly run its installed absolute entry path using the desktop command:
+Pass the text as the input:
 
 ```text
-/workflow "/absolute/managed/path/workflow.ts" Shared institution workflows work.
+workflow workflow-demo   Shared institution workflows work.
 ```
 
-The existing desktop host still requires an active chat and configured runtime. Previewing or synchronizing this package never runs it. The graph is authored preview metadata; for this sample, validation separately checks it against the executable definition.
+```json
+{ "words": 4, "lines": 1, "characters": 33, "message": "Processed 4 words: Shared institution workflows work." }
+```
+
+Whitespace-only input is valid and returns `{"words":0,…,"message":"Processed 0 words: "}`.
+
+The same input gives the same result on every machine and every replay — which is what makes it
+usable as a smoke test rather than an illustration.
+
+## Editing it
+
+Open `workflow.mjs` and change it. The host re-reads the folder on every save: no rebuild, no
+re-import, no generator to run again. Deleting the package is a decision the app respects — it is
+seeded once, and a marker keeps the next launch from putting it back.
+
+It reads no files, spawns no processes, makes no network requests, and contains no credentials or
+personal data.

@@ -1,6 +1,6 @@
 # Workflows come from a local directory, not a remote library
 
-Date: 2026-09-20. Status: specified; implementation in progress. Owner request (Ral 2026-09-20):
+Date: 2026-09-20. Status: implemented in Bitterless, code-verified; owner verification pending. Cowork pending. Owner request (Ral 2026-09-20):
 「cowork bl 的 workflow 取消从远程拉取 workflow 改为读取 ~/.micromeet-cowork 或 ~/.bitterless /workflows 的资源」,
 then 「开始调整 bl workbench 的 workflows 实现，要能预览 workflow 列表, detail graph 和 source」,
 「workbench workflow 需要有入口可以打开当前环境 bl cowork 的 workflow 目录」,
@@ -45,9 +45,14 @@ follows in its own repo.
 - **Run gate:** `realpath` inside the root may only be executed when it is the entry of a currently
   scanned, valid package. Paths outside the root keep today's rule (explicit user-supplied path).
   A script sitting in a package's `reference/` does not become runnable by being inside the root.
-- **Workbench exposes list · flow graph · details · source, plus Open workflows folder.** The empty
-  state shows the absolute root path and the same open action. Borderless icon buttons; no new
-  outlined controls.
+- **Workbench exposes list · phases · details · source, plus Open workflows folder.** (Flow graph →
+  phases and the JSON tab's removal are the `@quintinshaw/pi-dynamic-workflows` engine migration,
+  2026-09-20 — the script's own `meta` is the manifest, so the source tab already shows what the JSON
+  pane once did.) The empty state shows the absolute root path and the same open action. Borderless
+  icon buttons; no new outlined controls.
+- **Copy path + Show in folder** on the root row, every list row, and the detail header (2026-09-20,
+  Ral: 补充需求). Copy is a renderer-only clipboard write; reveal reuses the existing per-package
+  reveal call — no new main-process surface for either.
 - **Limits** reuse `WORKFLOW_LIMITS` (manifest 256 KiB, 500 files, 100 MiB expanded, 200 nodes,
   500 edges) and add a 200-package scan cap whose overflow is reported, not silently dropped.
 
@@ -65,9 +70,21 @@ package" still has an entry point now that the remote path is gone.
 Existing installed copies under `<userData>/cowork/institution-workflows/` are left in place,
 unread. Deleting user data is not part of this change.
 
+## Institution scope (why it is still here)
+
+The removed sync was also what resolved `/auth/me` + `/institution/mine` and set `assetScope`, which
+institution **skills** are the only other reader of — and the institution picker existed only in the
+Workflows view. Deleting the sync literally would have left skills permanently "no institution
+selected", with no error anywhere. The resolution therefore moved to
+`src/main/institution/institutionScope.service.ts` (same requests, same namespace derivation, same
+generation semantics) and the picker moved to the Skills view. The workflow library makes no network
+call at all.
+
 ## Verification
 
-Scoped Node tests for the root expression per profile, the scanner (valid, malformed manifest,
-missing entry, bad directory name, overflow), the run gate (root-relative, symlink escape,
-non-entry file inside the root), and the store's tab/selection behaviour; `yarn typecheck`,
-`yarn typecheck:web`, i18n check, `yarn build`. No Electron E2E — see the workspace rule.
+Run results for the delivered change are in
+[task 188](../plan/tasks/local-workflow-directory-188.md#verification): scoped Node tests for the
+scanner (valid, malformed manifest, missing entry, bad directory name, overflow cap), the run gate
+(declared entry, non-entry inside the root, symlink resolution), ZIP import, and the store's
+selection/tab behaviour; plus `yarn typecheck:workflow-library` and `yarn build`. No Electron E2E —
+see the workspace rule.

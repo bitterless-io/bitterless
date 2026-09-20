@@ -208,6 +208,23 @@ export const localNow = (): string => {
   return `${moment().format('YYYY-MM-DD HH:mm:ss Z')} (${zone})`
 }
 
+/**
+ * 没有指定位置时,新资源该落在工作区的哪里(Ral 2026-09-20)。
+ *
+ * 规则**只在上下文没点名位置时生效** —— 用户或前文给了路径就按那个走,这段是兜底,不是改写他的选择。
+ *
+ * 为什么要「先列树再归位」:不看现有目录就分类,分出来的是模型自带的那套分类法,不是这个工作区的。
+ * 按 DDD 的领域分类去找位置 —— 先看业务领域,再看它在领域内的角色(entity/service/repository/api/
+ * docs/tests),而不是按文件类型堆一起,更不是一律丢根目录。
+ *
+ * **两个分支都要挂** —— 共享默认工作区也是工作区,「没选工作区」不等于「可以随便扔」。
+ * bitterless 与 micromeet-cowork 逐字相同。
+ */
+const NEW_FILE_PLACEMENT = [
+  'Where a new file goes: when the request does not name a location, do NOT default to the workspace root and do NOT invent a scratch folder. List the tree first (list_workspace_files / search_files), then put the resource where this workspace already keeps that KIND of thing.',
+  'Classify it the way a domain-driven layout does — by the business domain it belongs to, and by the role it plays inside that domain (entity/model, service, repository, api, docs, tests) — never by file type alone. Mirror the existing folder names and language conventions rather than introducing your own. If nothing in the tree fits, create the smallest new folder named for the business concept, and say in one line where you put it and why.'
+].join('\n')
+
 export const buildAgentTurnPrompt = (params: {
   message: string
   context?: AgentConversationContext
@@ -238,6 +255,12 @@ export const buildAgentTurnPrompt = (params: {
   userChainPath?: string
   currentUrl: string
   catalog?: string
+  /**
+   * The installed workflow packages, resident rather than behind `workflow_list`
+   * (docs/features/workflow-catalog-in-prompt.md ①). Without it the model only learns a workflow
+   * exists if it guesses to call the tool — so it does the work itself and never routes.
+   */
+  workflows?: string
   skillAuthoring?: { globalRoot: string; bunPath: string }
   /**
    * The directory actually in use when no workspace is selected (Ral 2026-09-18:
@@ -278,11 +301,13 @@ export const buildAgentTurnPrompt = (params: {
     ? [
         'Use workspace tools for project files: workspace_context, list_workspace_files, search_files, read_file, write_file, create_artifact, open_workspace_folder, list_archive, extract_archive, create_archive.',
         'You may create/update files and generated artifacts inside this workspace. Do not delete, rename, move, or target the workspace directory itself.',
+        NEW_FILE_PLACEMENT,
         'Folders are listed/searched before individual files are read. Archives are listed or extracted into a new or empty folder rather than passed to read_file; extraction refuses links/special entries and password-protected archive creation is refused.',
         'If a workspace tool reports workspace-not-found / workspace-not-directory, the app clears the stale reference; ask the user to choose the new location.'
       ].join('\n')
     : [
         'No workspace selected: every workspace tool works in the ONE shared default workspace instead — write_file and create_artifact included.',
+        NEW_FILE_PLACEMENT,
         'Never ask the user to select a workspace for a file operation; every write reports its absolute destination, which is how they find it.'
       ].join('\n')
   const memoryBlock = params.includeConversationMemory
@@ -375,6 +400,7 @@ export const buildAgentTurnPrompt = (params: {
     ...memoryBlock,
     '',
     params.catalog || '',
+    params.workflows || '',
     // 用户那句话是这条消息的**最后 0.02%** —— 2026-09-18 在 cowork 同一条路径上实测 74,547 字符里
     // 的 2 个字符,`User message:` 落在第 74,531 位。没有围栏时模型分不出「参考资料」和「这一轮要我
     // 做的事」,一句 hi 就能让它把指令墙当成任务(issues/turn-prompt-buries-the-user-message.md)。
