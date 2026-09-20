@@ -1111,6 +1111,12 @@ earlier review rounds were remediated; Ral's runtime/visual verification remains
 
 ## Issues
 
+- [历史记录后台开 tab:对抗性复核被限流打断,8 条候选未定案](issues/history-row-background-tab-review-incomplete.md) —
+  open (2026-09-20)。给 [history-row-opens-background-tab.md](features/history-row-opens-background-tab.md) 起的
+  对抗性 review 被 rate limit 打断:5 个 finder 只有 3 个跑完,16 个 verifier 全部没跑完,workflow 把「拿不到
+  结果」和「查过不是问题」混成同一个空数组,于是显示 `refuted: []` —— 实际是没查。8 条候选(含一条主进程
+  background 分支可能被 `enforceWarmCap` 在诞生瞬间冷却导致静默不加载)原文未定案。Paired with micromeet-cowork。
+
 - [聊天工具条的 `…` 飘到中间,Session tabs 先隐藏](issues/chat-toolbar-overflow-drifts-to-the-middle.md) — fixed;
   owner verification pending。工具条是 `space-between`,它自己的注释早就写明**只能有两个孩子**,
   却长到了四个 —— 中间两个被均分推到三等分处。所以这不是间距问题,调 `gap` 永远修不好它。
