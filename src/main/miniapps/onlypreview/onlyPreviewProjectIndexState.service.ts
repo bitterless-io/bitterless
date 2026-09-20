@@ -92,6 +92,22 @@ export class OnlyPreviewProjectIndexStateService {
     this.publish({ ...current, state, browseState });
   }
 
+  /**
+   * 运行时没了 —— 替它落一个终止态。
+   *
+   * 这个服务只在**收到事件**时改状态,而进度/快照事件是隐藏的 file-search renderer 发的。
+   * 2026-09-20 那次它被内存压力打死(`freeMem=241MB(1%)`)之后,事件源直接消失,于是索引进度条
+   * 永远停在原地 —— 不是"还在跑",是"再也不会有人来说它结束了"。重建失败之后由 helper 调这里。
+   *
+   * 不收 `workspaceId`:当前绑定的那一个就是唯一会受影响的,而调用方(窗口 helper)手上只有
+   * `hostId`;让它去猜工作区只会引入一个可能对不上的参数。
+   */
+  markRuntimeGone(hostId: string): void {
+    const current = this.current;
+    if (current?.hostId !== hostId) return;
+    this.markFailed(hostId, current.workspaceId);
+  }
+
   getBrowseState(workspaceId: string | null): OnlyPreviewProjectBrowseState | null {
     if (!workspaceId || this.current?.workspaceId !== workspaceId) return null;
     return this.current.browseState;

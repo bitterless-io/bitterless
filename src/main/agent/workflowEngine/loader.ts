@@ -40,7 +40,10 @@ export async function loadWorkflow(request: WorkflowStartRequest): Promise<Loade
   if (request.entry.kind !== 'file' || !isAbsolute(request.entry.path) || !/\.(?:ts|mts)$/.test(request.entry.path)) throw new Error('Workflow path must be an absolute .ts or .mts file')
   const require = createRequire(import.meta.url)
   const alias: Record<string, string> = {}
-  for (const name of ['typebox', 'typebox/value', 'typebox/compile', '@kimchi-dev/kimchi-workflows', '@kimchi-dev/kimchi-workflows/flow', '@kimchi-dev/kimchi-workflows/engine']) alias[name] = require.resolve(name)
+  // A package installs nothing, so it can only import what the host already bundles. `exceljs` is
+  // here because the real customer packages are workbooks: without it every spreadsheet workflow
+  // would have to vendor its own parser. It is in bundledRuntimeDependencies, so it survives packaging.
+  for (const name of ['typebox', 'typebox/value', 'typebox/compile', 'exceljs', 'yaml', '@kimchi-dev/kimchi-workflows', '@kimchi-dev/kimchi-workflows/flow', '@kimchi-dev/kimchi-workflows/engine']) alias[name] = require.resolve(name)
   const bundledAuthor = new URL('./workflow-author.mjs', import.meta.url)
   alias['@bitterless/workflow'] = fileURLToPath(existsSync(bundledAuthor) ? bundledAuthor : new URL('./author.ts', import.meta.url))
   const jiti = createJiti(import.meta.url, { alias, moduleCache: false, fsCache: false })

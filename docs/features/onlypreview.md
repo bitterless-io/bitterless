@@ -441,7 +441,7 @@ or selected-Preview refresh. Disk footprint is not RAM and is never summed into 
 | Directory-name tier                   | rooted file + directory metadata; Global Search Files matches eligible names without opening bodies                                                      |
 | Search SQLite encryption              | none; persistent Contents index is completely unencrypted, disposable, and rebuilt from workspace files                                                  |
 | Global Search hidden policy           | every result below any dot-prefixed directory is physically absent; root dotfiles remain eligible unless separately excluded                             |
-| Global Search fixed exclusions        | `.git`, `node_modules`, `dist`, `build`, `out`, `output`, `.next`, `coverage`, `.cache`, `.turbo` at any depth; immutable against `!`                    |
+| Global Search fixed exclusions        | `.git`, `node_modules`, `dist`, `build`, `out`, `output`, `target`, `.next`, `coverage`, `.cache`, `.turbo` at any depth; immutable against `!`          |
 | Python/Go index exclusions            | `__pycache__`, `__pypackages__`, `venv`, `site-packages`, `htmlcov`, `vendor`, `go-build`; directory suffixes `.egg-info` / `.dist-info`; consecutive directory components `pkg/mod` / `pkg/sumdb`; inherited and immutable against `!` |
 | Workspace config                      | flat version-1 ordered `exclude` globs in `.bitterless/preview-config.yml`                                                                               |
 | Symlink policy                        | leaf only, never recurse or index target content                                                                                                         |
@@ -457,6 +457,29 @@ index once through the existing atomic candidate path; subsequent opens reuse th
 paths remain browseable/previewable with inherited exclusion markers. Ordinary `pkg`, `src`, `bin`,
 `env`, `mod`, `sumdb` directories and same-named regular files are not globally excluded.
 See [Python/Go exclusions 147](../plan/tasks/onlypreview-python-go-index-exclusions-147.md).
+
+**`target` — Rust/Cargo and Maven build output (Ral 2026-09-18:「bl cowork 都要默认不去索引 rust
+工程产物的目录」).** In a Rust repository `target/` is normally the largest tree in the workspace
+(debug + release + build-script output + incremental-compilation cache), and it was fully indexed
+before this default. Both apps get it from the same `CORE_EXCLUDED_DIRECTORY_NAMES` in
+`search/core/constants.mjs`, which `micromeet-cowork` vendors byte-identically.
+
+*Existing installations get it without a migration, and without a schema bump.* The sorted name set
+is embedded in `SEARCH_ENGINE_IDENTITY` (`sqlite-index.mjs`), hashed into `identity.engineHash`
+(`search-engine.mjs`), and `canReconcile()` requires the stored `engineHash` to match. Adding a name
+therefore invalidates every persisted index, so the next open rebuilds from scratch under the new
+policy and the old `target/` rows disappear with the old database. `SEARCH_SCHEMA_VERSION` stays at
+8 — the test named *"engine identity deterministically includes the hard policy without a schema
+bump"* pins exactly that discipline. The cost is one forced full rebuild per workspace per user,
+which is repaid by a much smaller index.
+
+*The tradeoff, stated once.* `target` is matched as a bare directory component, so a genuine source
+directory named `target` is skipped silently — the same risk already accepted for `build`, `out`,
+`output` and `vendor`. A file named `target`, and paths that merely contain the substring (e.g.
+`src/target_helpers.rs`), stay eligible. The precise alternative — exclude `target` only when a
+sibling `Cargo.toml`/`pom.xml` exists — was rejected: it costs a `stat` per candidate directory and
+stops the hard policy from being a flat name set, which is what the engine identity, the traversal
+policy and the reconcile predicate are all built on.
 
 Traversal starts in the dedicated hidden `fileSearch` preload on first open and advances in bounded elapsed-time
 slices, yielding between batches. It emits metadata into the directory-name tier independently of

@@ -22,7 +22,14 @@ export interface WorkflowActivityTarget {
   thinkingLevel: 'off' | 'low'
   authPath: string
   modelsPath?: string
-  agentDir?: string
+  /**
+   * Required: it is also this tool-free worker's cwd.
+   *
+   * The runtime refuses to fall back to `process.cwd()` — that made the shipped value depend on how
+   * the app was launched (see agent-cwd-follows-workspace.md) — so an optional agent dir here would
+   * just move the same hole one layer up.
+   */
+  agentDir: string
 }
 
 export interface WorkflowActivityDeps {

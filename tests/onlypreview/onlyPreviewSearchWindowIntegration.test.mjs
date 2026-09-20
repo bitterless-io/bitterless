@@ -219,7 +219,15 @@ test('official graph owns search in top-level hidden preload over capability-bou
   const searchEngine = source('src/preload/onlypreview/search/core/search-engine.mjs');
   const watchReconciler = source('src/preload/onlypreview/search/core/watch-reconciler.mjs');
 
-  assert.match(windowHelper, /await fileSearchWindowService\.start\(\{/);
+  // 这一条钉的是「隐藏搜索运行时由这条 seam 拥有并启动」,不是那一行的字面写法。2026-09-20 起
+  // `start({…})` 被提成 `startSearchRuntime(bootstrapToken)`,因为运行时死掉之后要能**重建**
+  // —— 原来只有这一个调用点,于是它一死就是永久的(preview 变砖的根因)。
+  assert.match(windowHelper, /const startSearchRuntime = \(bootstrapToken: string\): Promise<void> =>\s*\n?\s*fileSearchWindowService\.start\(\{/);
+  assert.match(windowHelper, /await startSearchRuntime\(searchBootstrap\.searchToken\)/);
+  // 重建路径必须存在,而且必须是**有界**的(只试一次),否则资源压力下会自激。
+  assert.match(windowHelper, /const recoverSearchRuntime = async \(reason: string\)/);
+  assert.match(windowHelper, /if \(recovering \|\| recovered \|\| shuttingDown\) return;/);
+  assert.match(windowHelper, /onlyPreviewProjectIndexStateService\.markRuntimeGone\(host\.hostId\)/);
   assert.match(windowHelper, /fileSearchWindowService\.stop\(\)/);
   assert.doesNotMatch(windowHelper, /utilityProcess|readdir|readFile|node:sqlite/);
 

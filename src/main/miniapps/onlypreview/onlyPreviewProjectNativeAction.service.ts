@@ -1,4 +1,6 @@
 import { dialog, Menu, shell, type BaseWindow, type MenuItemConstructorOptions } from 'electron';
+import { lstat, realpath } from 'node:fs/promises';
+import { basename, isAbsolute, relative, resolve as resolvePath } from 'node:path';
 import { OnlyPreviewContractError } from '@shared/onlypreview/onlyPreview.contract';
 import type {
   OnlyPreviewFileRef,
@@ -299,14 +301,10 @@ export class OnlyPreviewProjectNativeActionService {
         request.hostToken,
         request
       );
-      const item = await fileSearchWindowService.authorizeProjectItem({
-        workspaceId: authority.workspaceId,
-        workspaceGeneration: authority.workspaceGeneration,
-        relativePath: authority.relativePath
-      });
+      const item = await this.authorizeOrResolveCopyItem(authority);
       this.requireCurrentItem(authority);
       const items = [
-        { realPath: item.canonicalPath, relativePath: item.relativePath, name: item.name }
+        { realPath: item.realPath, relativePath: item.relativePath, name: item.name }
       ];
       // Every other entry in the selection is authorized the same way before it reaches the
       // clipboard; the clicked row is already resolved above.
@@ -330,6 +328,69 @@ export class OnlyPreviewProjectNativeActionService {
     }
   }
 
+  /**
+   * 复制这种**纯路径操作**不该依赖索引运行时(Ral 2026-09-20:「存在就能复制」)。
+   *
+   * 原来每一次复制都先打 `fileSearchWindowService.authorizeProjectItem()` —— 那是一条进隐藏
+   * file-search renderer 的 RPC。2026-09-20 那个 renderer 被内存压力打死之后,连"复制绝对路径"
+   * 都跟着报 `The Project authority runtime is unavailable.`,而它要的东西 Main 自己完全算得出来。
+   *
+   * **绕开 authority 不等于绕开边界。** authority 给的是 canonical path ＋ 工作区包含性,这两件
+   * 事这里都自己重做一遍:先按 `rootRealPath` 解析,查一次包含性,再 `realpath()` 解析符号链接
+   * 之后**再查一次**(这一步才挡得住链接逃逸),最后 `lstat` 确认它真的存在。
+   * 判据与 `onlyPreviewWorkspace.registry.ts:200-201` 同形。
+   */
+  private async resolveProjectItemPath(authority: {
+    workspace: { rootRealPath: string };
+    relativePath: string;
+  }): Promise<{ realPath: string; relativePath: string; name: string }> {
+    const root = authority.workspace.rootRealPath;
+    const inside = (candidate: string): boolean => {
+      const offset = relative(root, candidate);
+      return offset !== '' && !offset.startsWith('..') && !isAbsolute(offset);
+    };
+    const absolute = resolvePath(root, authority.relativePath);
+    if (!inside(absolute)) {
+      throw new OnlyPreviewContractError(
+        'PATH_OUTSIDE_WORKSPACE',
+        'OnlyPreview cannot copy a path outside the Project.'
+      );
+    }
+    const real = await realpath(absolute);
+    if (!inside(real)) {
+      throw new OnlyPreviewContractError(
+        'PATH_OUTSIDE_WORKSPACE',
+        'OnlyPreview cannot copy a path that resolves outside the Project.'
+      );
+    }
+    await lstat(real);
+    return { realPath: real, relativePath: authority.relativePath, name: basename(real) };
+  }
+
+  /** authority 能答就用它;答不了(典型:运行时死了)就退到 Main 自己解析。 */
+  private async authorizeOrResolveCopyItem(authority: {
+    workspace: { rootRealPath: string };
+    workspaceId: string;
+    workspaceGeneration: number;
+    relativePath: string;
+  }): Promise<{ realPath: string; relativePath: string; name: string }> {
+    try {
+      const item = await fileSearchWindowService.authorizeProjectItem({
+        workspaceId: authority.workspaceId,
+        workspaceGeneration: authority.workspaceGeneration,
+        relativePath: authority.relativePath
+      });
+      return { realPath: item.canonicalPath, relativePath: item.relativePath, name: item.name };
+    } catch (error) {
+      console.info(
+        `[onlypreview] event=copy-authority-fallback reason=${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      return await this.resolveProjectItemPath(authority);
+    }
+  }
+
   private async authorizeCopyItem(
     hostToken: string,
     workspaceId: string,
@@ -339,13 +400,9 @@ export class OnlyPreviewProjectNativeActionService {
       workspaceId,
       relativePath: entry.relativePath
     });
-    const item = await fileSearchWindowService.authorizeProjectItem({
-      workspaceId: authority.workspaceId,
-      workspaceGeneration: authority.workspaceGeneration,
-      relativePath: authority.relativePath
-    });
+    const item = await this.authorizeOrResolveCopyItem(authority);
     this.requireCurrentItem(authority);
-    return { realPath: item.canonicalPath, relativePath: item.relativePath, name: item.name };
+    return item;
   }
 
   async copyProjectRootFromUi(

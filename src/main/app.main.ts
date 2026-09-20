@@ -1,6 +1,7 @@
 import { runtimeProfile } from '@main/environment/runtimeProfile.bootstrap';
 import { assertAuthE2EProfile, isAllowedAuthE2ERequest } from '@shared/auth/authE2E.contract';
 import { ensureDefaultWorkspace } from '@maestro-main/files/defaultWorkspace';
+import { ensureWorkflowsRoot } from '@main/workflowLibrary/workflowsRoot';
 import { app, net, session } from 'electron';
 import { appendFileSync, mkdirSync } from 'fs';
 import { join } from 'path';

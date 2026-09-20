@@ -80,7 +80,8 @@ const MIN_HEIGHT = 600;
  *
  * `app.quit()` 会对**每一个**窗口发 `'close'`,所以「关掉独立窗口 → 内容回到 tab」那个钩子在退出
  * 时会被当成一次用户关窗触发,于是退出流程里凭空冒出一次建 composite 的动作。模块级的一位,
- * 由 `app.once('before-quit')` 置位(文件末尾),因为它是**进程**的状态,不是某个 helper 实例的。
+ * 由 `setOnlyPreviewShuttingDown()` 驱动(文件末尾),与 app 自己那面「真的要退了」的旗同真同假 ——
+ * 挂 `before-quit` 会变成永久闩锁,因为第一发 before-quit 必然被 preventDefault 且退出可被取消。
  */
 let shuttingDown = false;
 
@@ -1156,13 +1157,21 @@ export class OnlyPreviewWindowHelper {
     }
     const searchBootstrap = onlyPreviewSearchBootstrapRegistry.issue(host.hostToken);
     this.searchBootstrapToken = searchBootstrap.searchToken;
-    // Adopt the live runtime when a transition preserved it — its index build keeps going.
-    const rebound =
-      this.preserveSearchRuntime &&
-      fileSearchWindowService.rebindHost({ host, bootstrapToken: searchBootstrap.searchToken });
-    if (!rebound) await fileSearchWindowService.start({
+    /**
+     * 运行时死掉之后要能**自己起回来** —— 这是 2026-09-20 那次「preview 变砖」的修法。
+     *
+     * 当时:内存被打光(`freeMem=241MB(1%)`)→ 隐藏的 file-search renderer 挂掉 →
+     * `onFailure` 停掉运行时 → **没有任何重启入口**(`start()` 全仓只有下面这一个调用点),于是
+     * 凡是走运行时的都永久失效:`selectStandaloneFile`、`browseDirectory`(双击目录看不到内容)、
+     * 复制绝对路径,以及卡死不动的索引进度条 —— 全是同一件事的不同表面。
+     *
+     * 重启要**重新 issue** bootstrap,不能复用旧 token:`issue()` 内部先 `revokeHost()`
+     * (registry `:44`),所以重发是幂等的,也不会撞 `MAX_LIVE_SEARCH_BOOTSTRAPS`。
+     */
+    const startSearchRuntime = (bootstrapToken: string): Promise<void> =>
+      fileSearchWindowService.start({
       host,
-      bootstrapToken: searchBootstrap.searchToken,
+      bootstrapToken,
       broadcast: (eventName, params) => {
         // The relay already validated the listing and fenced its workspace/generation. Root
         // availability is independent of index completion; an empty successful listing counts.
@@ -1196,9 +1205,9 @@ export class OnlyPreviewWindowHelper {
         xpcMain.broadcast(eventName, params);
       },
       onUnexpectedExit: (reason) => {
-        if (this.baseWindow !== window || this.standaloneHost?.hostToken !== host.hostToken) return;
-        console.warn(`[OnlyPreview] ${reason} Closing the standalone window.`);
-        this.destroyStandalone();
+        // 承载本身已经不是当前这个了 —— 这一发与谁都无关,静默丢弃(旧行为)。
+        if (this.standaloneHost?.hostToken !== host.hostToken) return;
+        void recoverSearchRuntime(reason);
       },
       onOpenStage: (phase) => openTrace.mark({
         phase,
@@ -1209,6 +1218,45 @@ export class OnlyPreviewWindowHelper {
         backgroundThrottling: false
       })
     });
+
+    /**
+     * 有界重建一次。失败就**明确记下来**,而不是留一个静默的砖。
+     *
+     * 只试一次:运行时挂掉最常见的原因是资源压力(那次是内存 1%),无限重试只会把机器压得更死;
+     * 而一次重建足以把"渲染进程偶发崩溃"这类瞬时故障接住。重建不成时把失败落进
+     * `onlyPreviewProjectIndexStateService`,让 UI 能说出「搜索子系统已停用」——
+     * 进度条卡死就是因为运行时消失后再没有任何终止态送出来。
+     */
+    let recovering = false;
+    let recovered = false;
+    const recoverSearchRuntime = async (reason: string): Promise<void> => {
+      if (recovering || recovered || shuttingDown) return;
+      if (this.standaloneHost?.hostToken !== host.hostToken) return;
+      recovering = true;
+      console.warn(`[OnlyPreview] ${reason} Rebuilding the file-search runtime.`);
+      try {
+        const retryBootstrap = onlyPreviewSearchBootstrapRegistry.issue(host.hostToken);
+        this.searchBootstrapToken = retryBootstrap.searchToken;
+        await startSearchRuntime(retryBootstrap.searchToken);
+        recovered = true;
+        console.info('[onlypreview-search] event=runtime-recovered outcome=success');
+      } catch (error) {
+        console.error(
+          '[onlypreview-search] event=runtime-recovered outcome=failure' +
+            ` cause=${error instanceof Error ? error.name : 'unknown'}`
+        );
+        // 终止态:否则进度条会永远停在原地,因为事件源已经没了。
+        onlyPreviewProjectIndexStateService.markRuntimeGone(host.hostId);
+      } finally {
+        recovering = false;
+      }
+    };
+
+    // Adopt the live runtime when a transition preserved it — its index build keeps going.
+    const rebound =
+      this.preserveSearchRuntime &&
+      fileSearchWindowService.rebindHost({ host, bootstrapToken: searchBootstrap.searchToken });
+    if (!rebound) await startSearchRuntime(searchBootstrap.searchToken);
     openTrace.mark({ phase: 'runtime' });
     this.diagnostics.emit('visible-window', {
       tag: diagnostic.tag,
