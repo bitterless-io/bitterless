@@ -94,7 +94,15 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true))
       <h1 name="maestro__tabCloseConfirmTitle" class="maestro-tab-alias__title">
         {{ closeMany ? closeText.titleMany : closeText.title }}
       </h1>
-      <ul name="maestro__tabCloseConfirmTerminals" class="maestro-tab-alias__terminals">
+      <!-- Only when there is more than one: with a single tab this list just repeats the name of
+           the tab whose close button was pressed, and the message below already says what ends
+           (Ral 2026-09-20:「zellij 标题多余了,直接展示提示文字」). With several it is the only
+           thing that says WHICH terminals go. -->
+      <ul
+        v-if="closeMany"
+        name="maestro__tabCloseConfirmTerminals"
+        class="maestro-tab-alias__terminals"
+      >
         <li
           v-for="(label, index) in closeDialog.terminalLabels"
           :key="`${index}-${label}`"

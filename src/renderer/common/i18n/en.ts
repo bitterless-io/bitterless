@@ -453,8 +453,8 @@ export const en = {
   maestroTabClose: {
     title: 'Close this terminal tab?',
     titleMany: 'Close these terminal tabs?',
-    message: 'The Zellij session running in it ends with the tab.',
-    messageMany: 'The Zellij sessions running in them end with the tabs.',
+    message: 'Its Zellij session ends with it, along with whatever is running in its panes.',
+    messageMany: 'Their Zellij sessions end with them, along with whatever is running in their panes.',
     confirm: 'Close',
     cancel: 'Cancel'
   },

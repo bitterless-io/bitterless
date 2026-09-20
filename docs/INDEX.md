@@ -170,6 +170,11 @@
 - [关闭 Zellij tab 需要确认](features/maestro-zellij-close-confirm.md) — implemented; owner testing pending;
   关闭**范围**里有 Zellij 就先弹一次覆盖层确认(`×` / 右键 Close / Close others / Close right / `Cmd+W`),
   范围里 N 个也只问一次;程序发起的关闭不问;覆盖层起不来时放行而不是把 tab 锁死。
+  **2026-09-20**:只关一个时不再列出标签页名字(那一行只是把你刚点的那个 tab 的名字重复一遍,
+  读起来像个多余的标题);关多个时保留,因为那是唯一说明「要关哪几个」的东西。正文改写成自带主语
+  并点明代价:「pane 里正在跑的东西也会停」—— 原生关闭走 `KillSession`,活体测试断言 server 与
+  shell 进程都死亡、cache 目录删除(等价 `delete-session`),所以**关 tab 确实结束会话且不可
+  resurrect**。守卫 `tests/zellij/zellijTabCloseConfirm.test.mjs` 真渲染模板来判定。
 
 - [双击 Zellij tab 就地改名](features/zellij-tab-inline-rename.md) — implemented; owner testing pending;
   chip 里就地编辑,宽度跟着字走、20 字截断,回车/失焦保存、Escape 放弃,清空即退回 `Zellij`;

@@ -445,8 +445,8 @@ export const zh: typeof en = {
   maestroTabClose: {
     title: '关闭这个终端标签页?',
     titleMany: '关闭这些终端标签页?',
-    message: '里面正在运行的 Zellij 会话会随标签页一起结束。',
-    messageMany: '里面正在运行的 Zellij 会话会随标签页一起结束。',
+    message: '它的 Zellij 会话会随标签页一起结束,pane 里正在跑的东西也会停。',
+    messageMany: '它们的 Zellij 会话会随标签页一起结束,pane 里正在跑的东西也会停。',
     confirm: '关闭',
     cancel: '取消'
   },
