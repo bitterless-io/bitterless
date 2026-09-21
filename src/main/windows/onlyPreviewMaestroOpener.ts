@@ -66,7 +66,7 @@ export const registerOnlyPreviewMaestroOpener = (): void => {
       ).workspace.rootRealPath;
     },
     openInTab: openOnlyPreviewOsTarget,
-    createFileTabSpec: (absolutePath) => {
+    createFileTabSpec: (absolutePath, options) => {
       let surface: OnlyPreviewFileTabSurface | null = null;
       return {
         id: 'file',
@@ -80,6 +80,7 @@ export const registerOnlyPreviewMaestroOpener = (): void => {
           surface = new OnlyPreviewFileTabSurface({
             window,
             path: absolutePath,
+            line: options?.line,
             isOpen: () => host.isOpen(),
             bounds: () => {
               const bounds = host.contentRect();
@@ -95,7 +96,7 @@ export const registerOnlyPreviewMaestroOpener = (): void => {
         refresh: () => surface?.refresh()
       };
     },
-    open: async (absolutePath: string) => {
+    open: async (absolutePath: string, options?: { line?: number }) => {
       // **承载已经存在、只是它现在是一个窗口时,不要再建 tab。**
       //
       // OnlyPreview 被顶栏那个按钮切成独立窗口之后,那个 composite tab 就没了 —— 于是
@@ -122,11 +123,11 @@ export const registerOnlyPreviewMaestroOpener = (): void => {
         // 换成显式的:tab 就让**知道 tab id 的那一侧**去激活。少四层委派,也不再有能被 `?.` 吞掉的
         // 无操作。窗口那一支保持原样 —— 它本来就是对的。
         if (isMountedOnCoworkTab(mountedHost.hostToken)) {
-          const result = await maestroWindowHelper.openWorkspaceInPreview({ path: absolutePath });
+          const result = await maestroWindowHelper.openWorkspaceInPreview({ path: absolutePath, line: options?.line });
           if (!result.ok) throw new Error(result.error || 'OnlyPreview could not open that path.');
           return;
         }
-        await openRegisteredOnlyPreviewExplicitTarget(absolutePath);
+        await openRegisteredOnlyPreviewExplicitTarget(absolutePath, { line: options?.line });
         return;
       }
       // 没有承载 → **按上次那一种开**(Ral 2026-09-09:「上次 tab 下次也 tab,上次窗口下次也窗口」)。
@@ -139,12 +140,12 @@ export const registerOnlyPreviewMaestroOpener = (): void => {
       // `'onlypreview'` 键恢复上次的尺寸/位置/所在屏幕 —— 也就是他要的「复用上次的位置」。
       const mount = peekOnlyPreviewHostMount() ?? (await readOnlyPreviewHostMount());
       if (mount === 'window') {
-        await openRegisteredOnlyPreviewExplicitTarget(absolutePath);
+        await openRegisteredOnlyPreviewExplicitTarget(absolutePath, { line: options?.line });
         return;
       }
       // tab 那一支:开 tab 再交目标。**那个顺序是承重的**,理由写在
       // `maestroBrowserView.openCompositeTabTarget` 上,所以这里调它而不是自己拼一遍。
-      const result = await maestroWindowHelper.openWorkspaceInPreview({ path: absolutePath });
+      const result = await maestroWindowHelper.openWorkspaceInPreview({ path: absolutePath, line: options?.line });
       if (!result.ok) throw new Error(result.error || 'OnlyPreview could not open that path.');
     },
     /**
@@ -174,10 +175,11 @@ export const registerOnlyPreviewMaestroOpener = (): void => {
 /** OS regular files always receive a fresh tab; directories retain the existing Project route. */
 export const openOnlyPreviewOsTarget = async (
   absolutePath: string,
-  options: { tabId?: string } = {}
+  options: { tabId?: string; line?: number } = {}
 ): Promise<void> => {
   const inspected = await fileSearchWindowService.inspectTarget(absolutePath);
   if (!inspected.selectedRelativePath) {
+    // 目录没有「行」—— 传下去也会被忽略,但不传更诚实。
     await openRegisteredOnlyPreviewExplicitTarget(absolutePath);
     return;
   }

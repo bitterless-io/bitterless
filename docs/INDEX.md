@@ -1120,10 +1120,13 @@ earlier review rounds were remediated; Ral's runtime/visual verification remains
 ## Issues
 
 - [历史记录后台开 tab:对抗性复核被限流打断,8 条候选未定案](issues/history-row-background-tab-review-incomplete.md) —
-  open (2026-09-20)。给 [history-row-opens-background-tab.md](features/history-row-opens-background-tab.md) 起的
-  对抗性 review 被 rate limit 打断:5 个 finder 只有 3 个跑完,16 个 verifier 全部没跑完,workflow 把「拿不到
-  结果」和「查过不是问题」混成同一个空数组,于是显示 `refuted: []` —— 实际是没查。8 条候选(含一条主进程
-  background 分支可能被 `enforceWarmCap` 在诞生瞬间冷却导致静默不加载)原文未定案。Paired with micromeet-cowork。
+  **resolved 2026-09-21**(原报 2026-09-20)。给
+  [history-row-opens-background-tab.md](features/history-row-opens-background-tab.md) 起的对抗性 review 被
+  rate limit 打断:5 个 finder 只有 3 个跑完,16 个 verifier 全部没跑完,workflow 把「拿不到结果」和「查过
+  不是问题」混成同一个空数组,于是显示 `refuted: []` —— 实际是没查。**8 条候选后来逐条定案,无一被推翻,
+  已全部修掉**:BL 侧补了守卫 `check:history-background-tab`(并钉住 `enforceWarmCap([tab.id])` 这条「BL
+  为什么不需要 cowork 那句 ensureWarm」的前提)与一条走真实 `menuBarStore` 接线的复位单测;cowork 侧修了
+  「诞生即冷却则永不加载」和「复位取错字符串」两个实缺陷。Paired with micromeet-cowork。
 
 - [聊天工具条的 `…` 飘到中间,Session tabs 先隐藏](issues/chat-toolbar-overflow-drifts-to-the-middle.md) — fixed;
   owner verification pending。工具条是 `space-between`,它自己的注释早就写明**只能有两个孩子**,

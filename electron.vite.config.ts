@@ -425,6 +425,16 @@ const workflowWorkerPlugin = {
       format: 'esm',
       target: 'node24',
       packages: 'external',
+      // `packages: 'external'` leaves EVERY bare specifier alone — including our own `@shared` /
+      // `@main` aliases, which are not packages at all. Without these the worker ships an
+      // `import … from '@shared/…'` that Node cannot resolve, so the utilityProcess dies on load and
+      // every run reports "Workflow process exited unexpectedly" with nothing else to go on.
+      // (Ral 2026-09-21; the trigger was the workflow entry-name contract moving into shared.)
+      alias: {
+        '@shared': resolve('src/shared'),
+        '@main': resolve('src/main'),
+        '@renderer': resolve('src/renderer')
+      },
       external: ['electron'],
       sourcemap: false
     })

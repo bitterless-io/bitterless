@@ -167,7 +167,10 @@ const status = computed<StatusView | null>(() => {
  */
 const activityFacts = computed(() => workflowActivityFacts(workflowStore.runs, props.session.id))
 const pendingWait = computed(() => workflowStore.waitFor(props.session.id))
-const backgroundAgents = computed<{ tone: 'wait' | 'run'; text: string; meta: string } | null>(() => {
+// `meta` 已随 `response-status__agents__meta` 一起去掉(Ral 2026-09-21:「去掉,多余了」)。
+// 模板不再渲染它,类型里也不该再留 —— 之前只删了一支的返回值,类型和另一支没跟上,
+// 结果是第二个 return 少一个必填字段的 `TS2769`。
+const backgroundAgents = computed<{ tone: 'wait' | 'run'; text: string } | null>(() => {
   const facts = activityFacts.value
   const wait = pendingWait.value
   // The chat having declared a wait is the more specific fact, and it is the host's own registry
@@ -175,11 +178,7 @@ const backgroundAgents = computed<{ tone: 'wait' | 'run'; text: string; meta: st
   if (wait) {
     return {
       tone: 'wait',
-      text: i18nHelper.workflow.activityWaiting.replace('{count}', String(wait.runIds.length)),
-      meta: [
-        facts.agents ? i18nHelper.workflow.activityWorking.replace('{count}', String(facts.agents)) : '',
-        facts.startedAt ? elapsed(facts.startedAt) : ''
-      ].filter(Boolean).join(' · ')
+      text: i18nHelper.workflow.activityWaiting.replace('{count}', String(wait.runIds.length))
     }
   }
   if (!facts.agents) return null
@@ -190,8 +189,7 @@ const backgroundAgents = computed<{ tone: 'wait' | 'run'; text: string; meta: st
   const sentence = workflowStore.activityFor(props.session.id)?.text?.trim() || ''
   return {
     tone: facts.awaitingUser ? 'wait' : 'run',
-    text: sentence || counts,
-    meta: [sentence ? counts : '', facts.startedAt ? elapsed(facts.startedAt) : ''].filter(Boolean).join(' · ')
+    text: sentence || counts
   }
 })
 
@@ -307,7 +305,6 @@ onUnmounted(() => {
     >
       <IconSquares :size="13" stroke="1.9" />
       <span class="response-status__agents-text" :title="backgroundAgents.text">{{ backgroundAgents.text }}</span>
-      <span v-if="backgroundAgents.meta" class="response-status__agents-meta">{{ backgroundAgents.meta }}</span>
     </div>
 
     <div v-if="steeringLabel" class="response-status__steering">

@@ -2,7 +2,7 @@ import { googleSearchUrl } from '@maestro-shared/browserAddress.service';
 import { browserHistoryError, browserHistoryLog } from '@maestro-shared/browserHistoryDiagnostics.service';
 import { reactive } from 'vue';
 import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer';
-import { BROWSER_HISTORY_STATE_EVENT, type BrowserHistoryPopupApi, type BrowserHistoryPopupSnapshot } from '@maestro-shared/browserHistoryPopup.api';
+import { BROWSER_HISTORY_STATE_EVENT, type BrowserHistoryPopupAction, type BrowserHistoryPopupApi, type BrowserHistoryPopupSnapshot } from '@maestro-shared/browserHistoryPopup.api';
 
 const popup = createXpcRendererEmitter<BrowserHistoryPopupApi>('BrowserHistoryPopupHandler');
 const emptySnapshot = (): BrowserHistoryPopupSnapshot => ({ session: 0, revision: 0, tabId: '', anchor: { x: 0, y: 0, width: 0, height: 0 }, query: '', entries: [], selectedIndex: -1, loading: false, error: false });
@@ -43,9 +43,13 @@ class HistoryState {
     catch { return url.replace(/^https?:\/\//i, ''); }
   }
 
-  async action(action: Parameters<BrowserHistoryPopupApi['action']>[0]['action'], url?: string): Promise<void> {
+  async action(
+    action: Parameters<BrowserHistoryPopupApi['action']>[0]['action'],
+    url?: string,
+    row?: BrowserHistoryPopupAction['row'],
+  ): Promise<void> {
     const { session, revision } = this.snapshot;
-    if (session) await popup.action({ session, revision, action, url });
+    if (session) await popup.action({ session, revision, action, url, ...(row ? { row } : {}) });
   }
 
   keydown(event: KeyboardEvent): void {

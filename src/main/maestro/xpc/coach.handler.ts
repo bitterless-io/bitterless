@@ -467,7 +467,7 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
    * otherwise creates a standalone WINDOW — hand it the target first and the button spawns a window
    * instead of filling the tab.
    */
-  async openWorkspaceInPreview(params: { path: string }): Promise<{ ok: boolean; error?: string }> {
+  async openWorkspaceInPreview(params: { path: string; line?: number }): Promise<{ ok: boolean; error?: string }> {
     // 走**宿主注册的那个 preview 槽**,而不是直接开某个 composite tab。
     //
     // 「开哪一种承载」是宿主才知道的事:OnlyPreview 可能已经被切成一个独立窗口,那时正确动作是
@@ -482,7 +482,7 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
     const target = String(params?.path || '').trim()
     if (!target) return { ok: false, error: 'A path is required.' }
     try {
-      await opener.open(target)
+      await opener.open(target, { line: params?.line })
       return { ok: true }
     } catch (error) {
       return { ok: false, error: (error as Error).message }

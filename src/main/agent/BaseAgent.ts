@@ -1,7 +1,7 @@
 import type { CompactionStatus } from '@shared/piCompaction.types'
 import { BackgroundContextInbox } from './steering/backgroundContextInbox'
 import { homedir } from 'os'
-import { join } from 'path'
+import { join, resolve } from 'path'
 import { A7_DISCIPLINE, BASE_SYSTEM_PROMPT } from './prompt/sysPrompt'
 import { readProjectInstructions } from './prompt/projectInstructions'
 import { TurnSteeringInbox } from './steering/turnSteeringInbox'
@@ -262,12 +262,48 @@ export class BaseAgent {
     return this.projectRoot ?? this.opts.cwd
   }
 
+  /** 归一化后的 cwd,只用于「变没变」的比较 —— 传给运行时的仍是 `resolveCwd()` 的原值。 */
+  private cwdKey(): string {
+    return resolve(this.resolveCwd())
+  }
+
   /** Read the current project's A6 between turns without replacing conversation or compaction state. */
   async setProjectRoot(projectRoot?: string): Promise<void> {
     if (this.busy) return
     // Recorded before the unchanged-instructions early return below: two projects can share identical
     // (or absent) AGENTS.md while still being different working directories.
+    const previousCwd = this.cwdKey()
     this.projectRoot = projectRoot
+    /**
+     * **cwd 跟随工作区**(Ral 2026-09-21 在 PQ-CWD 上拍板 A;
+     * docs/issues/agent-cwd-frozen-when-workspace-switches.md)。
+     *
+     * cwd 在建会话那一刻就被 pi 冻死 —— `core/agent-session.js:145` 的 `this._cwd = config.cwd`
+     * 赋一次、无 setter,而且 `:2191` 把它烤进了内置工具的定义。`setSystemPrompt` 换得了系统文本,
+     * 换不动它。所以换根之后**必须换会话**,否则内置工具(read/grep/bash…)留在旧根,
+     * 而 D2 与宿主工具已经指向新根 —— 同一个相对路径落在两个目录。
+     *
+     * **历史不会因此丢失**:`reset()` 只丢 `sessionPromise`,下一轮重建时仍带着同一个
+     * `opts.sessionFile`,pi 的 `SessionManager.open()` 从那份 jsonl 接着读。
+     * 这条路线换 provider 时(`setTarget()` → `reset()`)天天在走。
+     *
+     * **只在 cwd 真的变了时才丢。** 每一轮 `handleAgentTurn` 都会用同一个值调一次本方法;
+     * 不比较就等于每轮都把会话推倒重来。比较用 `resolve()` 归一化,`/a` 与 `/a/` 不算变化。
+     */
+    if (this.cwdKey() !== previousCwd) {
+      const work = this.sessionWork
+      this.reset()
+      /**
+       * **等 abort 落定再往下走。** `reset()` 触发的 `abortManagedSession` 是「同步置位、异步清除」
+       * (`abortPending = true` 在赋值那一行,清零在 `.then` 里),而 `prompt()` 开头那道闸会因为
+       * `abortPending` 直接拒掉这一轮。`handleAgentTurn` 正是 `await setProjectRoot()` 之后紧接着
+       * 发消息 —— 不等的话,用户换完工作区的**那一条**消息会回
+       * 「agent is already handling a message」。
+       *
+       * 这里是唯一能等的地方:`setProjectRoot` 本来就是 async,而 `reset()` 在热路径上被同步调用。
+       */
+      await work?.aborting?.catch(() => undefined)
+    }
     const instructions = await readProjectInstructions(projectRoot)
     if (this.busy || instructions === this.projectInstructions) return
     const live = this.sessionPromise

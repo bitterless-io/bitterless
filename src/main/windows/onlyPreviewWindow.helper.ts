@@ -999,8 +999,12 @@ export class OnlyPreviewWindowHelper {
 
   destroySettings(): void {
     const window = this.settingsWindow;
+    // `flushAndDispose()` 原来漏了 —— 只把字段置空,于是 settings 窗口的尺寸/位置**从不落盘**,
+    // `WindowStateController` 也不释放。同族的 `destroyAgentSkillGuide()` 一直是对的,照它写。
+    const windowState = this.settingsWindowState;
     this.settingsWindow = null;
     this.settingsWindowState = null;
+    windowState?.flushAndDispose();
     if (window && !window.isDestroyed()) window.destroy();
     if (this.settingsHost) onlyPreviewHostRegistry.revoke(this.settingsHost.hostToken);
     this.settingsHost = null;

@@ -291,6 +291,15 @@ export const HOST_TOOL_CATALOG: HostToolCatalogEntry[] = [
     safety: 'Writes under the selected workspace when present, otherwise under app userData artifacts; cannot escape the output root.'
   },
   {
+    name: 'preview_file',
+    scopes: ['cowork'],
+    category: 'file',
+    risk: 'read',
+    summary: 'Show a file or folder to the user in OnlyPreview, optionally scrolled to a line.',
+    useWhen: 'Whenever the user should look at something themselves rather than be told about it.',
+    safety: 'Only opens a view; reads no content back and changes no files.'
+  },
+  {
     name: 'open_workspace_folder',
     scopes: ['cowork'],
     category: 'file',

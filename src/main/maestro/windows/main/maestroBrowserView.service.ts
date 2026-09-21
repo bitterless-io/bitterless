@@ -848,6 +848,8 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
   async openCompositeTabTarget(params: {
     id: string
     path: string
+    /** 尽力而为的落点行;渲染不了行的预览器忽略它。 */
+    line?: number
   }): Promise<{ ok: boolean; error?: string }> {
     const target = String(params?.path || '').trim()
     if (!target) return { ok: false, error: 'A path is required.' }
@@ -858,7 +860,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       if (!spec?.openTarget) {
         return { ok: false, error: `'${params.id}' cannot open a path.` }
       }
-      await spec.openTarget(target)
+      await spec.openTarget(target, { line: params.line })
       return { ok: true }
     } catch (error) {
       return { ok: false, error: (error as Error).message }
@@ -2195,11 +2197,11 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     if (this.activeTabId) await this.closeTabByUser({ id: this.activeTabId })
   }
 
-  async openFilePreviewTab(params: { path: string; tabId?: string }): Promise<void> {
+  async openFilePreviewTab(params: { path: string; tabId?: string; line?: number }): Promise<void> {
     const opener = getMaestroPreviewOpener()
     if (!opener?.createFileTabSpec) throw new Error('File preview tabs are unavailable.')
     await this._state.backgroundWorkbenchTab()
-    const spec = opener.createFileTabSpec(params.path)
+    const spec = opener.createFileTabSpec(params.path, { line: params.line })
     if (params.tabId) {
       const tab = this.tabs.find((candidate) => candidate.id === params.tabId)
       if (!tab || tab.pinned || tab.kind !== 'browser') {

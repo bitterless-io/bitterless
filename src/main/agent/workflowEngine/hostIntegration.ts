@@ -11,6 +11,16 @@ import { WorkflowSupervisor } from './supervisor'
 import type { WorkflowRuntimeConfig, WorkflowHostToolRequest } from './protocol'
 import { WORKFLOW_ENTRY_EXTENSIONS, isWorkflowEntryPath } from '../../../shared/workflowPackage'
 
+/**
+ * Bound a single field before it enters the main chat's context.
+ *
+ * A progress reply is read by the model that is already holding the conversation, so every character
+ * costs the session. 2 000 is a few paragraphs — enough to see what an Agent found, far from enough
+ * to displace the work.
+ */
+const limit = (value: string | undefined, max = 2_000): string =>
+  !value ? '' : value.length <= max ? value : `${value.slice(0, max)}\n… (${value.length - max} more characters; open the task bar for the full text)`
+
 export const WORKFLOW_DESCRIPTORS: WorkflowDescriptor[] = [
   { name: 'agent-task', description: 'One independent Agent task, run in the background and reported back into this chat.' },
   { name: 'plan-workflow', description: 'Turn a goal into a reviewable workflow plan. Produces a proposal only; it creates and runs nothing.' },
@@ -60,8 +70,15 @@ export class WorkflowHostIntegration implements WorkflowApi {
       agentWorkerPath: join(__dirname, 'workflow-agent.worker.mjs'),
       storageDir: join(app.getPath('userData'), 'workflow-runs'),
       broadcast: snapshot => {
-        options.broadcast(this.withActivity(snapshot))
+        // **先结算,再广播。** 反过来就是 Ral 2026-09-21 报的那个 bug:workflow 已经结束,
+        // 状态条还挂着「Waiting for 1 workflows to finish」。
+        //
+        // 原因是这两行的顺序:`withActivity(snapshot)` 把**当前**的等待登记一起发出去,而清除等待
+        // 发生在它之后。于是「run 变成终态」的那一次广播,带的仍然是那条已经满足的等待 ——
+        // 而 run 已经终态了,**不会再有下一次广播**,renderer 手里那份 `waiting` 就永远停在那儿。
+        // 顺序换过来,快照天然带的就是清算后的结果。
         this.deliverSettled(snapshot.runs)
+        options.broadcast(this.withActivity(snapshot))
       },
       recordIo: (sessionId, line) => {
         // Resource ownership uses workflow:<run>:<agent>; diagnostics belong to the chat.
@@ -326,8 +343,56 @@ export class WorkflowHostIntegration implements WorkflowApi {
         }
       },
       {
-        name: 'workflow_tasks', description: 'List every Agent task in this chat, including exact runId and agentId, current work and status. Use these identifiers before controlling an Agent; never guess IDs.', params: [],
-        execute: async () => JSON.stringify((await this.listRuns({ sessionId })).runs.map(run => ({ runId: run.id, name: run.name, status: run.status, agents: run.agents })))
+        name: 'workflow_tasks',
+        description: 'Progress of every Agent task in this chat: exact runId and agentId, phase, status and what each is doing right now. Use these identifiers before controlling an Agent; never guess IDs. Returns a SUMMARY — pass agentId to read one Agent\'s work log and result.',
+        params: [{ name: 'agentId', description: 'Optional. Exact agentId from a previous call; returns that one Agent\'s work log and result instead of the summary.' }],
+        /**
+         * A summary, not the whole state.
+         *
+         * This used to return `agents: run.agents` — every row with its full `logs`, `prompt` and
+         * `output`. Measured on one real code review (2026-09-21): **361 KB in a single call**, of
+         * which 217 KB was work logs and 76 KB was the Agents' own prompts, which this session had
+         * just written itself. Asking "how is it going?" twice took the main prompt from 98 KB to
+         * 830 KB and triggered a compaction — the progress query destroyed the context it was
+         * reporting into.
+         *
+         * What a progress question actually needs is what the task bar shows: who, which phase, what
+         * state, what they are doing now. The work log is a drill-down, so it is one: pass an
+         * `agentId` and get that Agent alone, bounded.
+         */
+        execute: async (args) => {
+          const runs = (await this.listRuns({ sessionId })).runs
+          const wanted = String(args.agentId ?? '').trim()
+          if (wanted) {
+            const found = runs.flatMap(run => run.agents.filter(agent => agent.id === wanted).map(agent => ({ run, agent })))[0]
+            if (!found) throw new Error(`No Agent ${wanted} in this chat. Call workflow_tasks without arguments for the current list.`)
+            const { agent } = found
+            return JSON.stringify({
+              runId: found.run.id, agentId: agent.id, label: agent.label, phase: agent.phase, status: agent.status,
+              model: agent.model, prompt: limit(agent.prompt),
+              // The newest entries: an Agent's last few steps are what say whether it is progressing.
+              // 400, not the 2 000 a result gets: a log line says what a step WAS, and twelve of them
+              // at full length is a drill-down that costs more than the answer it gives.
+              log: (agent.logs ?? []).slice(-12).map(entry => limit(entry.text, 400)),
+              result: agent.output ? limit(agent.output) : undefined,
+              error: agent.error
+            })
+          }
+          return JSON.stringify(runs.map(run => ({
+            runId: run.id, name: run.name, status: run.status,
+            // **进度不带结果。** 结果由完成投递送进上下文(Pi 的 `deliverText` 那套:事实行 + 有界
+            // 正文 + 全量结果的磁盘路径),那才是它该在的地方。这里曾经加过 `result`,是在错的
+            // 位置补 B2 —— 两处都给,等于每问一次进度就把结论再灌一遍。
+            ...(run.status === 'running' || run.status === 'stopping' ? {} : { error: run.error }),
+            agents: run.agents.map(agent => ({
+              agentId: agent.id, label: agent.label, phase: agent.phase, status: agent.status,
+              // One line, not the log. Enough to see movement; short enough to ask repeatedly.
+              doing: (agent.currentAction || '').slice(0, 160),
+              model: agent.model,
+              ms: agent.endedAt && agent.startedAt ? agent.endedAt - agent.startedAt : undefined
+            }))
+          })))
+        }
       },
       // `workflow_steer` stood here: it re-instructed ONE running Agent mid-turn. The engine has no
       // per-agent channel to deliver that on, so it would have accepted the message and dropped it.

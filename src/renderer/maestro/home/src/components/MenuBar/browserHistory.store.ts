@@ -87,6 +87,16 @@ class BrowserHistoryState {
     this.restoreAddress = restore;
   }
 
+  /**
+   * 第 `index` 行是哪一类。`candidateUrls` = `[googleUrl?, ...entries]`,所以有查询词时第 0 项
+   * 是 Google 行、其余是历史记录行;没有查询词(recents)时全是历史记录行。
+   * `index < 0`(没有选中项,或这次是鼠标点击带着自己的 `row`)返回 undefined。
+   */
+  private rowKindAt(index: number): BrowserHistoryPopupAction['row'] | undefined {
+    if (index < 0) return undefined;
+    return googleSearchUrl(this.query) ? (index === 0 ? 'google' : 'history') : 'history';
+  }
+
   focus(): void {
     browserHistoryLog('address.focus', { suppressed: this.focusSuppressed, hasInput: Boolean(this.input), disabled: Boolean(this.input?.disabled), open: this.open });
     if (this.focusSuppressed || !this.input || this.input.disabled || this.open || !this.input.value.trim()) return;
@@ -192,9 +202,17 @@ class BrowserHistoryState {
       // 判据与下面 `remove` 用的是同一条:`candidateUrls` 是 `[googleUrl?, ...entries]`,
       // 只有落在 `entries` 里的才是存下来的历史记录,Google 候选行刻意留在老分支上。
       //
-      // **必须在 `hide()` 之前取。** `hide()` 会把 `entries` 清空,之后再问"这个 url 是不是
-      // 一条历史记录"永远是 false —— 分支会静默地一次都不走,而所有既有断言照旧全绿。
-      const isHistoryRow = this.entries.some((entry) => entry.url === url);
+      // **判据是"点的是哪一行",不是 URL 文本。** 两类行的 URL 会重合:搜过一次 `cats`,
+      // 结果页就被记进 browser_history;下次再输 `cats`,`candidateUrls` 的第 0 项(Google)
+      // 与某条 entry 是**同一个字符串**,按 URL 分流会把 Google 行误判成历史记录行 ——
+      // 当前 tab 不导航、Workbench 不收、地址栏被复位,#3.3 当场作废。
+      // 所以鼠标点行由弹窗带 `row` 过来;键盘回车没有它,按 `selectedIndex` 推
+      // (有查询词时第 0 项就是 Google 行)。两者都拿不到时才退回 URL 归属。
+      //
+      // **必须在 `hide()` 之前取。** `hide()` 会把 `entries` / `selectedIndex` 清空,之后再问
+      // "这个 url 是不是一条历史记录"永远是 false —— 分支会静默地一次都不走,而所有既有断言照旧全绿。
+      const isHistoryRow = (action.row ?? this.rowKindAt(action.url ? -1 : this.selectedIndex)
+        ?? (this.entries.some((entry) => entry.url === url) ? 'history' : 'google')) === 'history';
       this.hide('accept');
       if (isHistoryRow) {
         // **不调 `backgroundWorkbenchTab()`。** 那是"切过去"的前置动作;这里人要留在当前页,

@@ -1,6 +1,7 @@
 import { xpcMain } from 'electron-xpc/main';
 import { resolve } from 'node:path';
 import { OnlyPreviewContractError } from '@shared/onlypreview/onlyPreview.contract';
+import { normalizeOnlyPreviewLine } from '@shared/onlypreview/onlyPreviewLine.shared';
 import {
   ONLY_PREVIEW_SELECTION_CHANGED_EVENT,
   ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT
@@ -32,7 +33,8 @@ export const presentOnlyPreviewExplicitFile = async (
   inspected: OnlyPreviewValidatedTarget,
   trace?: OnlyPreviewOpenTrace,
   fragment?: string,
-  preserveTreeSelection = false
+  preserveTreeSelection = false,
+  line?: number
 ): Promise<boolean> => {
   if (!inspected.selectedRelativePath) {
     throw new OnlyPreviewContractError(
@@ -83,7 +85,8 @@ export const presentOnlyPreviewExplicitFile = async (
 
   // 预览区按 host 解析(不再是进程级单例)。OnlyPreview 自己的 host 在 `start()` 时已登记,
   // 所以这里拿到的就是原来那一份 —— 行为不变,只是不再假设"全进程只有一个预览区"。
-  await resolveOnlyPreviewPreviewRegion(host.hostToken).present(host.hostToken, fileRef, trace?.tag, fragment);
+  await resolveOnlyPreviewPreviewRegion(host.hostToken)
+    .present(host.hostToken, fileRef, trace?.tag, { fragment, line });
   trace?.mark({ phase: 'presentation-issued' });
   if (!isCurrent()) {
     trace?.end({ outcome: 'superseded' });
@@ -107,9 +110,9 @@ export const presentOnlyPreviewExplicitFile = async (
 
 const performOpenOnlyPreviewAbsoluteTarget = async (
   target: string,
-  context: { trace: OnlyPreviewOpenTrace; preserveTreeSelection: boolean }
+  context: { trace: OnlyPreviewOpenTrace; preserveTreeSelection: boolean; line?: number }
 ): Promise<void> => {
-  const { trace, preserveTreeSelection } = context;
+  const { trace, preserveTreeSelection, line } = context;
   const recentGeneration = onlyPreviewRecentDirectoryService.beginExplicitTarget();
   try {
     trace.mark({ phase: 'fifo' });
@@ -182,7 +185,7 @@ const performOpenOnlyPreviewAbsoluteTarget = async (
     // 详见 `docs/issues/onlypreview-external-file-open-drops-the-project.md`。
     onlyPreviewRecentDirectoryService.releaseProjectRestoreClaim(recentGeneration);
     const accepted = await presentOnlyPreviewExplicitFile(
-      host, inspected, trace, undefined, preserveTreeSelection
+      host, inspected, trace, undefined, preserveTreeSelection, line
     );
     // The file is already visible. Resolve the initial Project scope before recording history so
     // a cold open cannot land in the unbound bucket just before Shell restores the Project.
@@ -214,12 +217,15 @@ const serializedOpenOnlyPreviewAbsoluteTarget = serializeOnlyPreviewOpenTarget(
 
 export const openOnlyPreviewAbsoluteTarget = (
   target: string,
-  options: { preserveTreeSelection?: boolean } = {}
+  options: { preserveTreeSelection?: boolean; line?: number } = {}
 ): Promise<void> => {
   const trace = onlyPreviewOpenDiagnostics.trace('target', { kind: 'unknown' }, 't');
   return serializedOpenOnlyPreviewAbsoluteTarget(target, {
     trace,
-    preserveTreeSelection: options.preserveTreeSelection === true
+    preserveTreeSelection: options.preserveTreeSelection === true,
+    // 规范化只在这个入口做一次:往下每一层拿到的要么是一个正整数,要么什么都没有。
+    // 0 / 负数 / NaN / 小数一律当作没给 —— 行号不合法不该让文件打不开。
+    line: normalizeOnlyPreviewLine(options.line)
   });
 };
 

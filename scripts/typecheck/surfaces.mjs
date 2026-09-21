@@ -54,6 +54,18 @@ const WEB_BASE = './tsconfig.web.json';
 // that supplies the runner types, not permanent silence. Printed on every run so it stays visible.
 const TEST_SOURCE_GLOBS = ['**/*.test.ts', '**/*.test.mts', '**/tests/**/*'];
 
+// `src/shared/<x>/main` 与 `src/shared/<x>/preload` 是**进程专属**子树(pathHelper / packageHelper,
+// maestro 侧同名两份)。它们住在 shared 下只是因为和各自的 renderer 版并排好找,内容是 Electron 主进程
+// 代码:import `electron` 的 `app`、读 `import.meta.env`、import `@main/…`。
+//
+// 而每个 web surface 的 include 都带 `src/shared` 通配,于是这些文件被编进**每一个 renderer surface**,
+// 在那里必然报错 —— `tsconfig.web.json` 刻意不给 `@main/*` 映射(「renderer 不该能解析 main,
+// 这条边界是刻意的」),所以 `homeData.ts` 那句 `@main/environment/runtimeProfile.runtime` 永远解析不了。
+// 15 个 renderer surface 各报 3 条,45 条诊断,而 renderer 根本不 import 这些文件(已核实)。
+//
+// 排除它们不会漏检:main / preload 那几个 surface 仍然完整编译它们。
+const PROCESS_SPECIFIC_SHARED_GLOBS = ['src/shared/**/main/**/*', 'src/shared/**/preload/**/*'];
+
 const dirsIn = (relative) =>
   readdirSync(join(ROOT, relative), { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
@@ -108,7 +120,10 @@ const runSurface = (surface) => {
       {
         extends: surface.kind === 'node' ? NODE_BASE : WEB_BASE,
         include: surface.include,
-        exclude: TEST_SOURCE_GLOBS,
+        exclude:
+          surface.kind === 'web'
+            ? [...TEST_SOURCE_GLOBS, ...PROCESS_SPECIFIC_SHARED_GLOBS]
+            : TEST_SOURCE_GLOBS,
         compilerOptions: { composite: false, noEmit: true }
       },
       null,

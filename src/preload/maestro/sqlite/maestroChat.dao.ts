@@ -8,6 +8,7 @@ import type {
   MaestroChatDetail,
   MaestroChatMessage,
   MaestroChatSession,
+  MaestroChatSessionMeta,
   MaestroChatSessionSummary
 } from '@maestro-shared/maestroChat.api'
 import { sqliteManager } from './sqliteManager'

@@ -207,3 +207,32 @@ Ral：「系统提示词在 workspace 的部分要增加内容，在上下文中
 
 成本 +718 字符（workspace 块 762 → 1,481）。该块目前没有任何守卫或测试断言其内容 —— 已知缺口，
 不是本次引入的。
+
+## 2026-09-20：A7 新增「陈述先落 markdown，再让用户预览」
+
+Ral：「A7 部分需要补充：默认当给用户陈述、总结或汇报的时候，需要将文字写入到 workspace 下合适的
+目录中的 markdown 文件中；并调用 preview 技能让用户去预览」，并指定用 `caveman` 技能改写后再入提示词。
+
+A7 正文（两仓逐字相同，已按字节比对；A7 共 809 字符，本条 272）：
+
+```
+- Statement, summary or report goes to a file first. Write it as markdown under the workspace,
+  place it by the same domain rule as any other new file, then open it for the user with the
+  preview tool. Chat reply keeps two or three lines plus the link — not the whole text.
+```
+
+- **放 A7 不放 workspace 块**：它约束「怎么答」，与 `Report honestly`、`Link every file you produce`
+  同类。`NEW_FILE_PLACEMENT` 答「放哪」，这条答「要不要产出」。
+- **A7 里不写工具名**：两端预览工具不同（cowork `preview_file`，bl `open_workspace_folder`）。写死
+  任一个，另一端的 A7 就指向不存在的工具 —— `agent-capability-must-not-depend-on-provider` 记过那类故障。
+  名字交给各自的 workspace 块。
+- **bl 侧补了 SHOW 行**：此前 `open_workspace_folder` 只出现在工具枚举里，没有一句说它是用来给人看的。
+  核对过能力而非名字：`workspaceFile.service.ts:747` 对文件和目录一视同仁地走 `preview.open(target)`，
+  只有没注册预览应用时才退回文件管理器。
+- **未选工作区分支**：补上「Its path is the Active workspace line above」，路径仍只在 D2 出现一次。
+
+理由与两端对照见 `overmind:areas/agent-runtime/chat/prompt-structure.html#report-to-file`。
+
+default workspace 的路径统一由 pathHelper 给出（`defaultWorkspaceRoot()` → `appDataDir('workspace')`
+→ `homeDataIn()` → `homeDataRoot()`），本轮只核对未改动。**当前选中的 workspace 不进 pathHelper** ——
+它是会话状态、可在回合中途被 `workspace_context {choose}` 改掉，不是可推导的路径。

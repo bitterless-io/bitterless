@@ -158,7 +158,15 @@ export class OnlyPreviewPreviewRegionService {
     this.viewService.updateBounds(bounds);
   }
 
-  async present(hostToken: string, value: unknown, parentOpenTag?: string, fragment?: string): Promise<void> {
+  // `where` = 「文件里的哪个位置」。`fragment` 和 `line` 是同一个概念的两种写法(锚点 / 行号),
+  // 所以合成一个对象而不是再加一个位置参数 —— 四个可选位置参数之后,调用方就得写
+  // `present(token, ref, undefined, undefined, line)` 这种数空位的代码。
+  async present(
+    hostToken: string,
+    value: unknown,
+    parentOpenTag?: string,
+    where?: { fragment?: string; line?: number }
+  ): Promise<void> {
     const runtime = requireOnlyPreviewPreviewRuntime(hostToken, this.runtime);
     const fileRef = parseOnlyPreviewFileRef(value);
     const revision = this.beginTransition(fileRef, parentOpenTag);
@@ -240,7 +248,10 @@ export class OnlyPreviewPreviewRegionService {
         selectionRevision: revision,
         surface: adapter.surface,
         adapterId: adapter.adapterId,
-        ...(fragment ? { fragment } : {}),
+        ...(where?.fragment ? { fragment: where.fragment } : {}),
+        // 行号只是**带上**,能不能用由渲染侧按预览器类型决定 —— 图片/PDF 那些没有行的适配器
+        // 收到就丢掉。Ral 2026-09-21:「如果有的文件无法进行导航…直接忽略即可,不能报错阻塞。」
+        ...(where?.line ? { line: where.line } : {}),
         status: 'loading',
         fileRef,
         descriptor,

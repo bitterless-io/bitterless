@@ -209,6 +209,78 @@ test('MenuBar metadata snapshots preserve typed query and revision; URL/tab navi
   assert.equal(f.store.open, false);
 });
 
+test('a Google row whose URL is byte-identical to a stored entry still takes the old branch', async () => {
+  // Search `cats` once and the results page lands in browser_history, so on the next `cats` the
+  // Google row and a history row carry the SAME string. Routing by URL text misroutes the Google
+  // row into the background-tab path and silently breaks contract #3.3 — route by row identity.
+  const f = fixture();
+  f.input.value = 'cats'; f.store.focus(); await settle();
+  const google = f.store.candidateUrls[0];
+  f.history.search = async () => [{ url: google, title: 'cats - Google Search', favicon: '', visitCount: 1, lastVisitedAt: 1 }];
+  f.store.hide(); f.input.value = 'cats'; f.store.focus(); await settle();
+  // Cross-realm array — compare contents, not the array's prototype identity.
+  assert.equal(f.store.candidateUrls.length, 2);
+  assert.equal(f.store.candidateUrls[0], google);
+  assert.equal(f.store.candidateUrls[1], google);
+
+  const clicked = async (row) => {
+    const { session, revision } = f.current();
+    await f.store.action({ session, revision, action: 'accept', url: google, row });
+    await settle();
+  };
+  await clicked('google');
+  assert.equal(f.calls.some(([name]) => name === 'background'), true);
+  assert.equal(f.calls.filter(([name]) => name === 'navigate').at(-1)[1].url, google);
+  assert.equal(f.calls.some(([name]) => name === 'openTab'), false);
+
+  // The identical URL, clicked on the history row, still goes to a background tab.
+  f.store.hide(); f.input.value = 'cats'; f.store.focus(); await settle();
+  await clicked('history');
+  const opened = f.calls.filter(([name]) => name === 'openTab').at(-1)[1];
+  assert.equal(opened.url, google); assert.equal(opened.background, true);
+});
+
+test('keyboard acceptance derives the row from the selection when the popup sends no row', async () => {
+  const f = fixture();
+  f.input.value = 'cats'; f.store.focus(); await settle();
+  f.store.keydown(key('ArrowDown')); // index 0 — the Google row
+  f.store.keydown(key('Enter')); await settle();
+  assert.equal(f.calls.some(([name]) => name === 'navigate'), true);
+  assert.equal(f.calls.some(([name]) => name === 'openTab'), false);
+
+  const g = fixture();
+  g.input.value = 'cats'; g.store.focus(); await settle();
+  g.store.keydown(key('ArrowDown')); g.store.keydown(key('ArrowDown')); // index 1 — first history row
+  g.store.keydown(key('Enter')); await settle();
+  assert.equal(g.calls.filter(([name]) => name === 'openTab').at(-1)[1].background, true);
+  assert.equal(g.calls.some(([name]) => name === 'navigate'), false);
+});
+
+test('the real menuBarStore wiring puts the address bar back after a background history open', async () => {
+  // Not a test-installed callback: this drives the production registration in
+  // `menuBar.store.ts` bindAddressInput → browserHistoryStore.setAddressRestorer, so deleting
+  // that line fails here. docs/features/history-row-opens-background-tab.md #3.2.
+  const f = fixture();
+  const active = { id: 'tab-1', active: true, kind: 'browser', url: 'https://current.invalid/here', title: 'Current' };
+  f.coach.getTabs = async () => [active];
+  const module = { exports: {} };
+  runInNewContext(menuCode, { module, exports: module.exports, coach: f.coach, subscriptions: f.subscriptions, homeStore: f.store, navigator: { userAgent: 'Mac' } });
+  const menu = module.exports.menuBarStore;
+  await menu.init();
+  menu.bindAddressInput(f.input);
+  menu.applyTabs([active]);
+  assert.equal(menu.url, 'current.invalid/here');
+
+  menu.url = 'exam'; f.input.value = 'exam'; f.store.focus(); await settle();
+  await f.action('accept', entry().url);
+  const opened = f.calls.filter(([name]) => name === 'openTab').at(-1)[1];
+  assert.equal(opened.url, entry().url); assert.equal(opened.background, true);
+  assert.equal(f.calls.some(([name]) => name === 'background'), false);
+  // The current tab never navigated, so nothing broadcast coach/nav — only the restorer can
+  // have put this back.
+  assert.equal(menu.url, 'current.invalid/here');
+});
+
 test('plain text submission encodes Google while explicit URLs and paths retain their route', () => {
   const module = { exports: {} }; runInNewContext(addressCode, { module, exports: module.exports });
   const { addressSubmissionTarget } = module.exports;

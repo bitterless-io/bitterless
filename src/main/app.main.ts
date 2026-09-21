@@ -725,10 +725,83 @@ const quitAfterCleanup = async (): Promise<void> => {
 };
 
 let quitAttempt: Promise<void> | null = null;
+
+/**
+ * How long a quit may sit in cleanup before the process leaves anyway.
+ *
+ * `quitAttempt` is cleared in `.finally`, so a cleanup that REJECTS stays retryable. One that never
+ * settles does not: the flag stays set and `if (quitAttempt) return` turns every later quit into a
+ * no-op — menu, Cmd-Q, tray, and a second Ctrl-C alike — leaving a process that can only be killed
+ * from outside. See micromeet-cowork docs/issues/ctrl-c-leaves-electron-running-and-teardown-xpc-noise.md,
+ * where the same shape was traced to an unbounded `net.Server#close`.
+ */
+const QUIT_CLEANUP_TIMEOUT_MS = 8_000;
+
+/** Leave now, without another lifecycle pass — `app.quit()` would re-enter the handler we are escaping. */
+const forceExit = (reason: string): void => {
+  console.warn(`[app] forcing exit: ${reason}`);
+  isQuitting = true;
+  setOnlyPreviewShuttingDown(true);
+  app.exit(0);
+};
+
+/**
+ * Terminal signals get a defined path instead of Electron's default.
+ *
+ * `Ctrl-C` on `yarn dev` signals the whole foreground process group. With no handler it reached
+ * Electron's default, which calls `app.quit()` — and if cleanup was wedged, a second `Ctrl-C` could
+ * not mean anything different. Now the first asks for a clean quit and the second leaves at once.
+ */
+let signalled = false;
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(signal, () => {
+    if (signalled) { forceExit(`${signal} received twice`); return; }
+    signalled = true;
+    console.info(`[app] ${signal} — quitting; press again to exit immediately.`);
+    app.quit();
+  });
+}
+
+/**
+ * Dev watchdog: leave when the process that started us does.
+ *
+ * The signal handlers above are not enough, and the reason is visible in the symptom Ral reported
+ * (2026-09-21): after `Ctrl-C` the shell prompt comes straight back, the renderer keeps logging
+ * `[vite] server connection lost. Polling for restart…`, and **no** `[app] SIGINT` line is
+ * ever printed. The handler is in the bundle; it simply never ran. `Ctrl-C` killed electron-vite,
+ * and this process was re-parented instead of being signalled — the `task_policy_set … invalid
+ * argument` pair Chromium logs at that moment is that re-parenting.
+ *
+ * So do not rely on the signal arriving. `electron-vite` starts us with `spawn(electronPath, …,
+ * { stdio: 'inherit' })` and no `detached`, which makes electron-vite our parent. When it dies we
+ * are re-parented to launchd/init and `process.ppid` changes — that is an observable fact needing no
+ * cooperation from anyone.
+ *
+ * **Dev only.** A packaged app is launched by the OS and must never exit because its parent did.
+ */
+if (!app.isPackaged && !isE2E) {
+  const startedUnder = process.ppid
+  const watchdog = setInterval(() => {
+    // `1` covers the macOS/Linux re-parent; the inequality covers anything else taking over.
+    if (process.ppid === startedUnder && process.ppid !== 1) return
+    clearInterval(watchdog)
+    console.info(`[app] dev parent ${startedUnder} is gone (now ${process.ppid}) — quitting.`)
+    // Ask nicely first so a chat mid-write still lands, then leave regardless. The dev server is
+    // already gone at this point, so there is nothing to stay alive for.
+    app.quit()
+    const grace = setTimeout(() => forceExit('the dev parent is gone and the clean quit did not finish'), 2_000)
+    grace.unref?.()
+  }, 1_000)
+  // Never hold the event loop open on its own account.
+  watchdog.unref?.()
+}
+
 app.on('before-quit', (event) => {
   if (isQuitting) return;
   event.preventDefault();
-  if (quitAttempt) return;
+  // A second attempt while one is pending means the owner has asked twice. Before this, that was
+  // simply ignored.
+  if (quitAttempt) { forceExit('a second quit arrived while cleanup was still pending'); return; }
   quitAttempt = (async () => {
     if (isHelperMode) {
       isQuitting = true;
@@ -744,7 +817,11 @@ app.on('before-quit', (event) => {
         return;
       }
     }
-    await quitAfterCleanup();
+    // Bounded: a cleanup that will not finish must not be able to keep the app alive.
+    let settled = false;
+    const timer = setTimeout(() => { if (!settled) forceExit(`cleanup did not finish within ${QUIT_CLEANUP_TIMEOUT_MS}ms`); }, QUIT_CLEANUP_TIMEOUT_MS);
+    timer.unref?.();
+    try { await quitAfterCleanup(); } finally { settled = true; clearTimeout(timer); }
   })().catch((error) => {
     hasShownQuitDialog = false;
     console.error('[app] Quit request failed', error);

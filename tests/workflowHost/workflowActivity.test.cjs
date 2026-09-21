@@ -322,3 +322,45 @@ test('both apps ship the same summary service and contract', () => {
     assert.equal(fs.readFileSync(path.join(root, relative), 'utf8'), fs.readFileSync(path.join(other, relative), 'utf8'), relative + ' drifted between apps')
   }
 })
+
+test('workflow 结束后,等待指示不许留在状态条上', async () => {
+  // Ral 2026-09-21:workflow 已经跑完,`responseStatus__agents` 还显示
+  // 「Waiting for 1 workflows to finish」。
+  //
+  // 根因是广播与结算的**顺序**:`withActivity(snapshot)` 把当前的等待登记一起发出去,而清除等待
+  // 发生在它之后。于是「run 变成终态」的那一次广播带的仍然是那条已满足的等待 —— 而 run 已经终态,
+  // **不会再有下一次广播**,renderer 手里那份 `waiting` 就永远停在那儿。
+  let deps
+  const live = { id: 'r1', sessionId: 'chat-a', name: 'quick-scan', status: 'running', input: 'x', createdAt: 1, agents: [] }
+  class Supervisor {
+    constructor(d) { deps = d }
+    // `workflow_wait` 会核对这条 run 属于本 chat,所以 list 必须真的给出来。
+    async list() { return { runs: [live], revision: 1 } }
+    async start() { return live }
+    async dispose() {}
+  }
+  const { WorkflowHostIntegration } = load('src/main/agent/workflowEngine/hostIntegration.ts', {
+    electron: { app: { getPath: () => '/test-user-data' } },
+    './supervisor': { WorkflowSupervisor: Supervisor },
+    './activitySummary': activityModule, './workflowWait': waitModule,
+    '../runtime/agentSessionContext': context,
+    '../runtime/modelIoLog': { modelIoLog: { append() {} } },
+    '../../../shared/workflowPackage': load('src/shared/workflowPackage.ts')
+  })
+  const broadcasts = []
+  const host = new WorkflowHostIntegration({
+    broadcast: (snapshot) => broadcasts.push(snapshot),
+    tools: () => [],
+    runtime: async () => ({ cwd: '/p', providerId: 'p', modelId: 'm', thinkingLevel: 'low', authPath: '/a', systemPrompt: '' })
+  })
+  const run = live
+
+  const tool = host.chatTools('chat-a').find((item) => item.name === 'workflow_wait')
+  await tool.execute({ runIds: 'r1' })
+  deps.broadcast({ runs: [run], revision: 2 })
+  assert.equal(broadcasts.at(-1).waiting?.length, 1, '还在跑时应当显示等待')
+
+  // run 落终态 —— 这一次广播就必须已经不带等待了,因为之后不会再有广播来纠正它。
+  deps.broadcast({ runs: [{ ...run, status: 'completed', endedAt: 5 }], revision: 3 })
+  assert.deepEqual(broadcasts.at(-1).waiting ?? [], [], '终态那次广播必须已经清算完')
+})

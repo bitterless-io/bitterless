@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { terminateOwnedProcesses } from './processTree'
-import { isWorkflowAgentLive, type WorkflowLogEntry, type WorkflowRunSnapshot, type WorkflowSnapshot, type WorkflowStartRequest } from '../../../shared/agentWorkflow.api'
+import { isWorkflowAgentLive, type WorkflowAgentTask, type WorkflowLogEntry, type WorkflowRunSnapshot, type WorkflowSnapshot, type WorkflowStartRequest } from '../../../shared/agentWorkflow.api'
 import { wireError, workflowEngineRuntime, type AgentAttemptRequest, type WorkerCommand, type WorkerEvent, type WorkflowHostToolRequest, type WorkflowRuntimeConfig, type WorkflowIoLine, type WireError } from './protocol'
 
 export interface WorkflowChild {
@@ -42,6 +42,8 @@ interface LiveRun {
   attempts: Map<string, Attempt>
   stoppedAgents: Set<string>
   pausedAgents: Set<string>
+  /** `<agentId>:start` / `<agentId>:end` already written to the transcript — snapshots repeat. */
+  loggedAgents: Set<string>
   steering: Map<string, string[]>
   closing: boolean
   stopRequested: boolean
@@ -93,6 +95,24 @@ function mergeLogs(existing: readonly WorkflowLogEntry[], incoming: readonly Wor
   }).sort((left, right) => left.ts - right.ts).slice(-40).map(entry => ({ ts: entry.ts, text: limit(entry.text) }))
 }
 
+/**
+ * What this run is called in the task bar and in chat.
+ *
+ * A file entry used to fall back to its BASENAME, and every package's entry file is called
+ * `workflow.mjs` — so a code review showed up as "Workflow workflow.mjs failed", which names nothing
+ * and is identical for every package the owner has. The package DIRECTORY is the name a person would
+ * use, so prefer it; a library reference keeps its own ref, which is already meaningful.
+ */
+const runName = (request: WorkflowStartRequest): string => {
+  const entry = request.entry
+  if (entry.kind === 'builtin') return entry.name
+  if (entry.kind !== 'file') return entry.ref
+  const parts = entry.path.split('/').filter(Boolean)
+  // `<…>/workflows/<package>/workflow.mjs` → `<package>`. Falls back to the file when there is no
+  // directory to name it after.
+  return (parts.length > 1 ? parts[parts.length - 2] : parts[parts.length - 1]) || 'workflow'
+}
+
 export class WorkflowSupervisor {
   private runs: WorkflowRunSnapshot[] = []
   private revision = 0
@@ -132,12 +152,20 @@ export class WorkflowSupervisor {
     }
   }
 
-  /** Worker messages have no authority to select the diagnostic chat/run/Agent owner. */
-  private recordIo(run: WorkflowRunSnapshot, line: WorkflowIoLine, attempt?: AgentAttemptRequest, turnId?: string): void {
+  /**
+   * Worker messages have no authority to select the diagnostic chat/run/Agent owner.
+   *
+   * `identity` exists because `sessionReviewReader` groups a run's Agents by the **top-level**
+   * `detail.agentId` and returns early when it is absent — anything nested under `data` is invisible
+   * to it. The old per-agent process model supplied that from an `AgentAttemptRequest`; this engine
+   * has no attempts, so a snapshot-driven caller passes the identity directly.
+   */
+  private recordIo(run: WorkflowRunSnapshot, line: WorkflowIoLine, attempt?: AgentAttemptRequest, turnId?: string, identity?: { agentId: string; label?: string; phase?: string; modelId?: string }): void {
     try {
       this.deps.recordIo?.(run.sessionId, { ...line, detail: {
         source: 'workflow', sessionId: run.sessionId, runId: run.id, workflow: run.name,
         ...(attempt ? { agentId: String(attempt.rowId), attemptId: attempt.id, turnId, label: attempt.opts.label, phase: attempt.opts.phase, providerId: attempt.providerId, modelId: attempt.modelId } : {}),
+        ...(identity ?? {}),
         ...(line.detail === undefined ? {} : { data: line.detail })
       } })
     } catch { /* Diagnostics must not change workflow execution or cleanup. */ }
@@ -204,7 +232,7 @@ export class WorkflowSupervisor {
     if (this.disposed) throw new Error('Workflow supervisor is closed')
     if (!request.sessionId.trim()) throw new Error('Workflow requires a chat session')
     if (request.entry.kind === 'library') throw new Error('Workflow library references must be authorized and resolved before execution')
-    const run: WorkflowRunSnapshot = { id: randomUUID(), sessionId: request.sessionId, name: request.entry.kind === 'builtin' ? request.entry.name : request.entry.path.split('/').pop() ?? 'workflow', entry: structuredClone(request.entry), input: request.input, status: 'running', createdAt: Date.now(), agents: [] }
+    const run: WorkflowRunSnapshot = { id: randomUUID(), sessionId: request.sessionId, name: runName(request), entry: structuredClone(request.entry), input: request.input, status: 'running', createdAt: Date.now(), agents: [] }
     this.recordIo(run, { kind: 'note', name: 'workflow-start', turn: 0, subject: run.name, text: request.input, detail: { entry: request.entry, cwd: request.cwd } })
     this.runs.push(run); this.publish(); await this.flush()
     if (terminalRun(run) || this.disposed) return structuredClone(run)
@@ -213,7 +241,7 @@ export class WorkflowSupervisor {
         const live = this.live.get(run.id)
         if (live && !live.finishing) this.observe(this.finishRun(run.id, undefined, { name: 'WorkerExitError', message: 'Workflow process exited unexpectedly' }), run.id)
       })
-      this.live.set(run.id, { request, runtime, engine, attempts: new Map(), stoppedAgents: new Set(), pausedAgents: new Set(), steering: new Map(), closing: false, stopRequested: false })
+      this.live.set(run.id, { request, runtime, engine, attempts: new Map(), stoppedAgents: new Set(), pausedAgents: new Set(), loggedAgents: new Set(), steering: new Map(), closing: false, stopRequested: false })
     } catch (error) {
       run.status = 'failed'; run.error = wireError(error).message; run.endedAt = Date.now()
       this.recordIo(run, { kind: 'note', name: 'workflow-end', turn: 0, subject: run.name, text: run.error, detail: { status: run.status } })
@@ -322,6 +350,34 @@ export class WorkflowSupervisor {
   }
 
   /**
+   * Write each Agent's dispatch and outcome into the session transcript.
+   *
+   * **The engine change silently took this away.** Every `agent-dispatched` / `agent-end` line is
+   * written from `startAttempt`, which belonged to the retired per-agent process model — this engine
+   * never emits `attempt.start`, so nothing called them. The task bar kept working (it reads the
+   * live snapshot), which is exactly why the loss went unnoticed: on screen the Agents are all
+   * there, and in `agent-io` the run has zero Agent records. Ral 2026-09-21 asked whether the
+   * subagents were running properly and the transcript could not answer — 12 records, none of them
+   * an Agent.
+   *
+   * Driven off the snapshot rather than a dedicated event, because the snapshot is what this engine
+   * gives us. Each row is written at most twice — once when it starts, once when it settles — and
+   * `loggedAgents` is what keeps a per-second snapshot from writing the same line sixty times.
+   */
+  private recordAgentIo(run: WorkflowRunSnapshot, live: LiveRun, existing: WorkflowAgentTask | undefined, row: WorkflowAgentTask): void {
+    const started = `${row.id}:start`
+    if (!existing && !live.loggedAgents.has(started)) {
+      live.loggedAgents.add(started)
+      this.recordIo(run, { kind: 'note', name: 'agent-dispatched', turn: 0, subject: row.label || 'agent', text: row.prompt }, undefined, undefined, { agentId: row.id, label: row.label, phase: row.phase, modelId: row.model })
+    }
+    if (isWorkflowAgentLive(row.status)) return
+    const ended = `${row.id}:end`
+    if (live.loggedAgents.has(ended)) return
+    live.loggedAgents.add(ended)
+    this.recordIo(run, { kind: 'note', name: 'agent-end', turn: 0, subject: row.label || 'agent', text: row.error || row.output || '', detail: { status: row.status, ms: row.endedAt && row.startedAt ? row.endedAt - row.startedAt : undefined } }, undefined, undefined, { agentId: row.id, label: row.label, phase: row.phase, modelId: row.model })
+  }
+
+  /**
    * Run-level pause / resume / stop.
    *
    * The engine's controls are run-level; there is no per-agent equivalent, so this deliberately does
@@ -360,6 +416,7 @@ export class WorkflowSupervisor {
       const paused = live.pausedAgents.has(event.agent.id) && existing && (existing.status === 'pausing' || existing.status === 'paused')
       const row = { ...event.agent, ...(paused ? { status: existing.status, currentAction: existing.currentAction } : {}), prompt: limit(event.agent.prompt), output: event.agent.output ? limit(event.agent.output) : undefined, logs }
       if (existing) Object.assign(existing, row); else run.agents.push(row)
+      this.recordAgentIo(run, live, existing, row)
       this.publish()
     } else if (event.type === 'attempt.start') {
       if (live.closing || live.stoppedAgents.has(String(event.attempt.rowId))) {
@@ -462,6 +519,27 @@ export class WorkflowSupervisor {
     return operation
   }
 
+  /**
+   * 把**完整**结果写成一份独立文件,返回它的绝对路径。
+   *
+   * 为什么不复用 `runs.json`:那是所有 run 合在一起的一份快照,而且里面的 `result` 已经被
+   * `limit` 砍到 64 KB。模型要读结果时,给它一个「你自己去几 MB 的 JSON 里找 runId」不算给。
+   *
+   * 失败只警告不抛:**投递结果比留档更重要**,而这一步失败时上面那条有界摘要仍然照常送达。
+   */
+  private async writeResultFile(runId: string, result: string): Promise<string | undefined> {
+    try {
+      const dir = join(this.deps.storageDir, 'results')
+      await mkdir(dir, { recursive: true })
+      const file = join(dir, `${runId}.txt`)
+      await writeFile(file, result, { mode: 0o600 })
+      return file
+    } catch (failure) {
+      console.warn('[workflow] full result not persisted', runId, wireError(failure).message)
+      return undefined
+    }
+  }
+
   private finishRun(runId: string, result?: string, error?: WireError): Promise<void> {
     const live = this.live.get(runId), run = this.runs.find(item => item.id === runId)
     if (!live || !run) return Promise.resolve()
@@ -477,6 +555,8 @@ export class WorkflowSupervisor {
       if (failures.length) throw new AggregateError(failures, failures.map(failure => wireError(failure).message).join('; '))
       const stopped = live.stopRequested || error?.name === 'WorkflowCancelledError'
       run.status = stopped ? 'stopped' : error ? 'failed' : 'completed'
+      // 先落全量,再截断进快照 —— 顺序反了就永远拿不回尾巴(`limit` 砍到 64 KB)。
+      run.resultPath = result === undefined ? undefined : await this.writeResultFile(runId, result)
       run.result = result === undefined ? undefined : limit(result); run.error = error?.message; run.endedAt = Date.now()
       for (const agent of run.agents) if (isWorkflowAgentLive(agent.status)) { agent.status = stopped ? 'stopped' : 'failed'; agent.currentAction = stopped ? '已停止' : '工作流已结束'; agent.endedAt = Date.now() }
       this.recordIo(run, { kind: 'note', name: 'workflow-end', turn: 0, subject: run.name, text: result ?? error?.message ?? '', detail: { status: run.status, error } })

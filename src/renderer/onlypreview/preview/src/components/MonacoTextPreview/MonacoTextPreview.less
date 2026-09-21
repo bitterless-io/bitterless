@@ -18,3 +18,9 @@
 .onlypreview-monaco .monaco-editor .margin {
   background: #fff;
 }
+
+// 双击聊天里的 `文件:行号` 打开时,落点行的短暂高亮(约 1.6s 后撤掉)。
+// 只用底色,不描边 —— 描边会把它读成「这一行有错」,而它只是「你要找的是这里」。
+.onlypreview-monaco__target-line {
+  background: oklch(0.93 0.045 258);
+}

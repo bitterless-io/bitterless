@@ -42,6 +42,20 @@ const ORPHAN_MIN_AGE_MS = 60 * 60 * 1000;
 // How long a forensic copy stays worth its gigabytes while the index it came from is still there.
 const RETAINED_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
+/**
+ * 每个库最多留**一份**取证副本,新的挤掉旧的。
+ *
+ * 只按年龄收是不够的 —— 那条策略默认"产生得慢"。实测 2026-09-21 的参考机:
+ * `Bitterless_PREVIEW` 的索引目录 24 GB,其中 **6 份 quarantine 共 18.7 GB**,而真正在用的索引
+ * 只有 2.6 GB;光当天就堆了 5 份。7 天窗口配上"一天 5 份 × 2.6 GB"的产生率,上限是 80 GB 以上,
+ * 而且堆在同一块卷上 —— 这正是上一轮注释记着的那个形态(「一个 5.6 GB 索引堆出约 10 GB 隔离副本,
+ * 就堆在那块因为满了才导致损坏的卷上」),只是换了个数量级。
+ *
+ * 留最新的那一份:它们是同一条库血缘的连续副本,第二份几乎不增加可诊断的信息,却各要几个 GB。
+ * 数量闸在年龄闸**之前**生效,所以被挤掉的那些不必等 7 天。
+ */
+const RETAINED_MAX_PER_OWNER = 1;
+
 const artifactOwner = (name) => ARTIFACT_NAME.exec(name)?.[1];
 
 const retainedOwner = (name) => {
@@ -86,6 +100,43 @@ export const reclaimInterruptedSqliteArtifacts = async (databasePath) => {
     entries.push({ name: entry.name, isDirectory: entry.isDirectory() });
   }
   const now = Date.now();
+  // 先把取证副本按 owner 分组、按 mtime 新→旧排好,算出"被新副本挤掉"的那一批。数量闸必须在
+  // 年龄闸之前定:被挤掉的不该再等 RETAINED_MAX_AGE_MS。
+  // **按副本分组,不是按文件。** 一份取证副本是 db ＋ `-wal`/`-shm`/`-journal` 这一组文件(或者
+  // 一个 quarantine 目录),按文件名分组会把同一份副本的 sidecar 当成更旧的副本删掉,只留一个
+  // 没有 sidecar 的残骸 —— 那比不收还糟。副本键 = 去掉尾部 sidecar 后缀之后的名字。
+  const copies = new Map();
+  for (const { name } of entries) {
+    if (artifactOwner(name)) continue;
+    const owner = retainedOwner(name);
+    if (!owner) continue;
+    const key = name.replace(/-(?:wal|shm|journal)$/iu, '');
+    let mtimeMs = 0;
+    try {
+      mtimeMs = (await stat(resolve(directoryPath, name))).mtimeMs;
+    } catch {
+      continue;
+    }
+    const copy = copies.get(key) ?? { owner, names: [], mtimeMs: 0 };
+    copy.names.push(name);
+    // 一组里取最新的那个时间代表这份副本 —— sidecar 各自的时间可能相差几秒。
+    copy.mtimeMs = Math.max(copy.mtimeMs, mtimeMs);
+    copies.set(key, copy);
+  }
+  const byOwner = new Map();
+  for (const copy of copies.values()) {
+    const group = byOwner.get(copy.owner) ?? [];
+    group.push(copy);
+    byOwner.set(copy.owner, group);
+  }
+  const superseded = new Set();
+  for (const group of byOwner.values()) {
+    group.sort((left, right) => right.mtimeMs - left.mtimeMs);
+    for (const copy of group.slice(RETAINED_MAX_PER_OWNER)) {
+      for (const name of copy.names) superseded.add(name);
+    }
+  }
+
   for (const { name, isDirectory } of entries) {
     const path = resolve(directoryPath, name);
     const owner = artifactOwner(name);
@@ -101,8 +152,11 @@ export const reclaimInterruptedSqliteArtifacts = async (databasePath) => {
     }
     const retained = retainedOwner(name);
     if (!retained) continue;
-    const minimumAgeMs = present.has(retained) ? RETAINED_MAX_AGE_MS : ORPHAN_MIN_AGE_MS;
-    if (!(await olderThan(path, minimumAgeMs, now))) continue;
+    // 被更新的副本挤掉的,直接收走 —— 不必等年龄。
+    if (!superseded.has(name)) {
+      const minimumAgeMs = present.has(retained) ? RETAINED_MAX_AGE_MS : ORPHAN_MIN_AGE_MS;
+      if (!(await olderThan(path, minimumAgeMs, now))) continue;
+    }
     await rm(path, { recursive: true, force: true });
   }
 };

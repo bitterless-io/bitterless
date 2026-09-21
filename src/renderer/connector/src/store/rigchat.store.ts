@@ -64,4 +64,8 @@ window.addEventListener(RIGCHAT_EVENT.ERROR, ((e: CustomEvent<RigchatErrorDetail
   rigchatStore.error = e.detail.message
 }) as EventListener)
 
-window.rigchatApi?.init()
+// **没有任何 preload 提供 `rigchatApi`**(全仓搜不到 `exposeInMainWorld('rigchatApi', …)`),
+// 所以这行运行时一直是空操作 —— `?.` 本来就承认了这一点。按它的实情标注类型,而不是给 `Window`
+// 加一个假的全局声明:那等于在类型里断言一个不存在的东西存在。
+// 真接上以后,把这个内联类型换成 preload 导出的契约。
+;(window as typeof window & { rigchatApi?: { init(): void } }).rigchatApi?.init()

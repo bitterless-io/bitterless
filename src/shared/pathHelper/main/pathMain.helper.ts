@@ -1,10 +1,14 @@
 import { app, shell } from 'electron';
 import { XpcMainHandler } from 'electron-xpc/main';
-import type { PathName } from '../shared/pathHelper.type';
+import type { PathMainHelperContract, PathName } from '../shared/pathHelper.type';
+import { homeDataRoot } from './homeData';
+
+/** Re-exported so the path helper stays the one place to look for a path. */
+export { homeDataRoot, homeDataIn } from './homeData';
 import * as path from 'path';
 import * as fse from 'fs-extra';
 
-export class PathMainHelper extends XpcMainHandler {
+export class PathMainHelper extends XpcMainHandler implements PathMainHelperContract {
   init(): void {
     // XpcMainHandler auto-registers methods on instantiation
     // This init() is kept for compatibility with existing code
@@ -25,13 +29,23 @@ export class PathMainHelper extends XpcMainHandler {
     return app.getPath('userData');
   }
 
+  /**
+   * Get the home-level data root (`~/.bitterless…`) — the owner-facing one, not `userData`.
+   * Main-side callers want the synchronous `homeDataRoot()` from `./homeData` instead.
+   */
+  async getHomeDataPath(): Promise<string> {
+    return homeDataRoot();
+  }
+
   /** Open a path in the default file manager */
   async openPath(params: { path: string }): Promise<string> {
     return shell.openPath(params.path);
   }
 
   /** Get the Chromium executable path based on platform */
-  async getChromiumPath(): Promise<string> {
+  // `| null`:下面有两条 `return null`(平台不支持、文件不存在)。maestro 侧那份同名方法本来就是
+  // 这个签名,root 这份漏了 —— 不是行为变化,是把签名对齐到它一直以来的实际返回值。
+  async getChromiumPath(): Promise<string | null> {
     const userDataPath = app.getPath('userData');
     const platform = process.platform;
     const arch = process.arch;

@@ -27,6 +27,7 @@ import type {
   OnlyPreviewSettings
 } from './onlyPreview.types';
 import { validateOnlyPreviewEntryName } from './onlyPreviewEntryName.shared';
+import type { OnlyPreviewEntryNameResult } from './onlyPreviewEntryName.shared';
 
 export const cloneOnlyPreviewDescriptor = (
   descriptor: OnlyPreviewDescriptor,
@@ -177,10 +178,14 @@ export const normalizeOnlyPreviewRelativePath = (
 // hidden preload checks a third time immediately before the syscall.
 export const requireOnlyPreviewEntryName = (value: unknown): string => {
   const result = validateOnlyPreviewEntryName(value);
-  if (!result.ok) {
-    throw new OnlyPreviewContractError('NAME_INVALID', `The name is not usable: ${result.reason}.`);
-  }
-  return result.name;
+  if (result.ok) return result.name;
+  // **这个 `as` 是配置的产物,不是类型没写对。** `tsconfig.node.json` 里 `strict: false` 连带关掉了
+  // `strictNullChecks`,而**布尔判别式的联合收窄需要它** —— 没有它,`if (!result.ok)` 之后 TS 仍把
+  // `result` 当整个联合,读 `reason` 就是 `TS2339`。`OnlyPreviewEntryNameResult` 本身是标准的判别联合,
+  // 开了 `strictNullChecks` 这里可以直接删掉 `as` 恢复原样。
+  // 这一条会在**每一个**包含 `src/shared` 的 surface 上各报一次(约 20 个),所以值得单独处理。
+  const rejected = result as Extract<OnlyPreviewEntryNameResult, { ok: false }>;
+  throw new OnlyPreviewContractError('NAME_INVALID', `The name is not usable: ${rejected.reason}.`);
 };
 
 export const parseOnlyPreviewFileRef = (value: unknown): OnlyPreviewFileRef => {

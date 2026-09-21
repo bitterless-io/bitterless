@@ -24,7 +24,7 @@ Status: **designed + implemented 2026-09-20;code-verified, human testing pending
 
 ### #2.1 一个 `accept`,两类行共用
 
-[`browserHistory.store.ts:176`](../src/renderer/maestro/home/src/components/MenuBar/browserHistory.store.ts):
+[`browserHistory.store.ts:176`](../../src/renderer/maestro/home/src/components/MenuBar/browserHistory.store.ts):
 
 ```ts
 if (action.action === 'accept') {
@@ -44,7 +44,7 @@ if (action.action === 'accept') {
 
 ### #2.2 `openTab` 是**前台**开
 
-[`maestroBrowserView.service.ts:2215`](../src/main/maestro/windows/main/maestroBrowserView.service.ts):
+[`maestroBrowserView.service.ts:2215`](../../src/main/maestro/windows/main/maestroBrowserView.service.ts):
 `claimSpareTab()` → `activateTab({ deferNavigation: true })` → `startTabNavigation()`。
 `activateTab` 把新 tab 设为 active 并显示出来 —— 这正是 #1 第二条要改掉的那一半。
 
@@ -81,8 +81,27 @@ if (action.action === 'accept') {
 
 | 行为 | 保留原因 |
 |---|---|
-| Google 候选行 | Ral 明确划在范围外。`accept` 里按 `entries.some(...)` 分流,它继续走 `backgroundWorkbenchTab` + `navigate`/`openTab` 的老分支 |
+| Google 候选行 | Ral 明确划在范围外,继续走 `backgroundWorkbenchTab` + `navigate`/`openTab` 的老分支。**分流按行身份,不按 URL 文本** —— 见 #3.5 |
 | 地址栏直接回车 | 同上;`navigate()` 还是 schemeless 补全、内部地址、跨 profile 的唯一收口 |
+
+### #3.5 两类行按**身份**分流,不按 URL 文本
+
+`accept` 是 Google 候选行与历史记录行的共用出口,而**两者的 URL 会重合**:搜过一次 `cats`,
+结果页 `https://www.google.com/search?q=cats` 就被 `browserHistoryRecorder` 原样记进
+`browser_history`(`normalizeBrowserHistoryUrl` 保留 query string,没有任何一层过滤 Google 搜索)。
+下次再输 `cats`,`candidateUrls` = `[googleUrl, ...entries]` 里两项是**同一个字符串**。
+
+所以判据不能是 `entries.some((entry) => entry.url === url)` —— 那会把 Google 行误判成历史记录行,
+当前 tab 不导航、Workbench 不收、地址栏被复位,#3.3 当场作废,而两类行各自的单测照旧全绿。
+
+落点:`BrowserHistoryPopupAction` 增加 `row?: 'google' | 'history'`,弹窗的两个 accept 按钮各自填
+(它知道自己渲染的是哪一行);键盘回车没有这个字段,由 home 侧的 `rowKindAt(selectedIndex)` 推
+(有查询词时第 0 项就是 Google 行);两者都拿不到时才退回 URL 归属。
+
+> Cowork 侧天然没有这个问题:它的弹窗动作本身就是 `type: 'choose' | 'search'`
+> ([`historySuggestions.api.ts`](../../apps/cowork/src/shared/historySuggestions.api.ts) 里的
+> `HistorySuggestionsAction`),行身份一直跟着动作走。这次是把 BL 对齐到同一个语义,
+> 不是给 BL 发明一套新机制。
 
 ### #3.4 代价(已知、接受)
 
@@ -93,12 +112,13 @@ if (action.action === 'accept') {
 
 | # | 文件 | 改动 |
 |---|---|---|
-| 1 | [`shared/maestro/coach.api.ts:188`](../src/shared/maestro/coach.api.ts) | `openTab(params: { url: string; background?: boolean })` |
-| 2 | [`main/maestro/xpc/coach.handler.ts:117`](../src/main/maestro/xpc/coach.handler.ts) | 透传 |
-| 3 | [`main/maestro/windows/main/maestroWindow.controller.ts:1939`](../src/main/maestro/windows/main/maestroWindow.controller.ts) | 透传 |
-| 4 | [`main/maestro/windows/main/maestroBrowserView.service.ts:2215`](../src/main/maestro/windows/main/maestroBrowserView.service.ts) | `background` 分支:`claimSpareTab` → `applyBounds` → `broadcastTabs` → `startTabNavigation`,**跳过 `activateTab`** |
-| 5 | [`renderer/maestro/home/src/components/MenuBar/browserHistory.store.ts:189`](../src/renderer/maestro/home/src/components/MenuBar/browserHistory.store.ts) | `accept` 按 `entries.some(...)` 分流出历史记录行的后台路径 + 调复位回调。**判据取在 `hide()` 之前** —— `hide()` 会清空 `entries`,放在它之后这条分支永远不成立,而所有既有断言照旧全绿(实际踩到过) |
-| 6 | [`renderer/maestro/home/src/components/MenuBar/menuBar.store.ts:76`](../src/renderer/maestro/home/src/components/MenuBar/menuBar.store.ts) | `bindAddressInput` 里注册地址栏复位回调(`setAddressRestorer`) |
+| 1 | [`shared/maestro/coach.api.ts:188`](../../src/shared/maestro/coach.api.ts) | `openTab(params: { url: string; background?: boolean })` |
+| 2 | [`main/maestro/xpc/coach.handler.ts:117`](../../src/main/maestro/xpc/coach.handler.ts) | 透传 |
+| 3 | [`main/maestro/windows/main/maestroWindow.controller.ts:1939`](../../src/main/maestro/windows/main/maestroWindow.controller.ts) | 透传 |
+| 4 | [`main/maestro/windows/main/maestroBrowserView.service.ts:2215`](../../src/main/maestro/windows/main/maestroBrowserView.service.ts) | `background` 分支:`claimSpareTab` → `applyBounds` → `broadcastTabs` → `startTabNavigation`,**跳过 `activateTab`**。不需要 Cowork 那句 `ensureWarm` —— 本仓 `claimSpareTab` 已经 `enforceWarmCap([tab.id])`,新 tab 不在驱逐名单里 |
+| 7 | [`scripts/maestro/check-history-background-tab.mjs`](../../scripts/maestro/check-history-background-tab.mjs) | 新守卫(`yarn check:history-background-tab`),与 Cowork 侧同构 |
+| 5 | [`renderer/maestro/home/src/components/MenuBar/browserHistory.store.ts:189`](../../src/renderer/maestro/home/src/components/MenuBar/browserHistory.store.ts) | `accept` 按 `entries.some(...)` 分流出历史记录行的后台路径 + 调复位回调。**判据取在 `hide()` 之前** —— `hide()` 会清空 `entries`,放在它之后这条分支永远不成立,而所有既有断言照旧全绿(实际踩到过) |
+| 6 | [`renderer/maestro/home/src/components/MenuBar/menuBar.store.ts:76`](../../src/renderer/maestro/home/src/components/MenuBar/menuBar.store.ts) | `bindAddressInput` 里注册地址栏复位回调(`setAddressRestorer`) |
 
 `background` 只作用于"带 URL 出生的普通网页 tab"。空 URL(委派 `newTab()`)与
 `bitterless://workbench`(单例前台化)两条分支照旧前台。历史记录只存 http(s),走不到它们。
@@ -113,6 +133,7 @@ node --test tests/maestro/maestroBrowserHistoryInput.test.mjs \
              tests/maestro/maestroBrowserHistoryTabs.test.mjs \
              tests/maestro/maestroBrowserHistoryClick.test.mjs \
              tests/maestro/maestroBrowserHistory.test.mjs
+yarn check:history-background-tab
 yarn typecheck:node && yarn typecheck:web
 ```
 
@@ -124,6 +145,16 @@ yarn typecheck:node && yarn typecheck:web
    (改写 `:143` 那条 "locked addresses" 用例 —— 证明 `kind` 分支真的没了)。
 3. 键盘选中历史记录行后 `Enter` 与鼠标点击走同一条路。
 4. Google 候选行仍走旧分支(`browser` tab → `navigate`,并且仍先 `backgroundWorkbenchTab`)。
-5. 接受历史记录行之后,`menuBarStore.url` 复位成当前 active tab 的地址。
+5. 接受历史记录行之后,`menuBarStore.url` 复位成当前 active tab 的地址 —— 这条用**真的**
+   `menuBarStore`(`menuCode` + `bindAddressInput`)跑,不是断言测试自己装的回调计数器:
+   删掉生产代码里那行 `setAddressRestorer(...)` 注册必须变红。
+6. 主进程那半由守卫 `check:history-background-tab` 钉住(分支存在、排在 `activateTab` 之前
+   return、含 `applyBounds`/`broadcastTabs`/`startTabNavigation`、分支内不出现 `activateTab`),
+   并额外钉住 `claimSpareTab` 的 `enforceWarmCap([tab.id])` **以及 `enforceWarmCap` 自己把
+   `extraProtectedIds` 并进 `protectedIds`** —— 那是"新 tab 不会出生即被冷掉"的唯一前提,
+   只钉调用点文本的话,参数在被调方被改名/丢弃时保护会静默消失。
+7. Google 候选行的 URL 与某条历史记录**逐字节相同**时(搜过同一个词两次),点 Google 行仍走老
+   分支、点历史记录行仍开后台 tab;键盘选中第 0 项回车判为 Google 行。守卫第⑨条另钉住
+   `row` 字段、弹窗两个按钮各自填它、以及 home 侧先认 `action.row` 再退回 `rowKindAt`。
 
 **不跑 Electron / E2E / 打包冒烟。**

@@ -1,4 +1,5 @@
 import type { AgentToolSpec } from '@main/agent/runtime/agentRuntime.types'
+import { normalizeOnlyPreviewLine } from '@shared/onlypreview/onlyPreviewLine.shared'
 
 export interface FileToolHost {
   toolReadFile(
@@ -21,6 +22,7 @@ export interface FileToolHost {
   toolCreateArtifact(sessionKey: string, artifactJson: string): Promise<string>
   toolWorkspaceContext(sessionKey: string, actionArg: string): Promise<string>
   toolOpenWorkspaceFolder(sessionKey: string, pathArg?: string): Promise<string>
+  toolPreviewFile(sessionKey: string, pathArg?: string, line?: number): Promise<string>
 }
 
 export const buildFileTools = (host: FileToolHost, sessionKey: string): AgentToolSpec[] => [
@@ -139,6 +141,43 @@ export const buildFileTools = (host: FileToolHost, sessionKey: string): AgentToo
     ],
     execute: async (args) =>
       host.toolCreateArtifact(sessionKey, String(args.artifact_json ?? ''))
+  },
+  {
+    name: 'preview_file',
+    description:
+      'Show a file or folder to the user IN THE APP, in OnlyPreview, so they can read it next to this conversation. ' +
+      'This is the DEFAULT way to put material in front of the user: call it whenever you judge that they should look at ' +
+      'something themselves — a file you just wrote, something you unpacked, a document you are citing instead of quoting ' +
+      'in full, a result you want them to confirm. You do not need to be asked. ' +
+      'Accepts an attached "@/absolute/path", any absolute path, a "~" path, or a workspace-relative path — the same paths ' +
+      'read_file takes, and unlike open_workspace_folder it reaches OUTSIDE the workspace too. ' +
+      'A workspace file opens inside the Project tree; a file outside the workspace opens in its own preview tab. ' +
+      'A FOLDER is fine: it opens as a browsable tree. ' +
+      'When you are pointing at a specific place in a text or source file, pass "line" so it opens scrolled to that line. ' +
+      'This only opens a view: it reads nothing back to you and changes nothing. It is NOT a way to read a file or to check ' +
+      'whether a path exists — use read_file or list_workspace_files for that.',
+    params: [
+      {
+        name: 'path',
+        required: true,
+        description: 'Attached @/abs/path, any absolute path, a ~ path, or a path relative to the workspace. A folder is allowed.'
+      },
+      {
+        name: 'line',
+        required: false,
+        // 说清楚它是「建议」而不是「承诺」,模型才不会在没滚动时以为自己失败了、然后重试或道歉。
+        description:
+          '1-based line to scroll to, for text and source files. Best effort: file types without lines ' +
+          '(images, PDF, media), folders, and out-of-range numbers simply open without scrolling — never an error.'
+      }
+    ],
+    execute: async (args) =>
+      host.toolPreviewFile(
+        sessionKey,
+        args.path ? String(args.path) : '',
+        // 规范化留给下游那一处入口(`openOnlyPreviewAbsoluteTarget`),这里只把模型给的原值传过去。
+        normalizeOnlyPreviewLine(args.line)
+      )
   },
   {
     name: 'open_workspace_folder',

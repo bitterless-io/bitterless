@@ -71,6 +71,10 @@ export interface WorkflowCompletionStrings {
   finishedPartialTitle: string
   finishedStoppedTitle: string
   finishedNoResult: string
+  /** 事实行,带 `{agents}` / `{duration}` 两个占位符。 */
+  finishedFacts: string
+  /** 全量结果文件路径的前缀 —— 正文有界,这一行保证细节没丢。 */
+  finishedFullResult: string
   finishedAgents: string
   states: Record<WorkflowAgentTask['status'], string>
 }
@@ -81,6 +85,18 @@ export interface WorkflowCompletionStrings {
  * Main keeps its own English context string for the model; this one exists because the user has
  * to notice the outcome in the conversation itself, not only in the task history.
  */
+/**
+ * 一次 workflow 结束后送进对话的那段话。
+ *
+ * **它现在会进模型上下文**(不再是 `promptExcluded` 的展示卡片)。形状照 Pi 的 `deliverText`:
+ * 先一行事实,再有界正文,最后永远附全量结果的磁盘路径。
+ *
+ * 那一行路径是整个设计的承重点 —— 包的注释原话:「so the tail is never lost, even when the
+ * summary above is a complete verdict」。**有界不等于有损**:上下文拿到的是摘要,要细节就 `read`
+ * 那个文件。少了它,截断就是真丢了。
+ */
+export const COMPLETION_RESULT_CHARS = 4_000
+
 export function workflowCompletionChatText(run: WorkflowRunSnapshot, text: WorkflowCompletionStrings): string {
   const failed = run.agents.filter(agent => agent.status === 'failed').length
   const template = run.status === 'failed'
@@ -90,10 +106,23 @@ export function workflowCompletionChatText(run: WorkflowRunSnapshot, text: Workf
       : failed
         ? text.finishedPartialTitle.replace('{count}', String(failed))
         : text.finishedTitle
+  // 事实行:多少个 Agent、跑了多久。判断「跑得对不对」最先要看的就是这两个,而且极便宜。
+  const seconds = run.endedAt && run.createdAt ? Math.max(0, Math.round((run.endedAt - run.createdAt) / 1000)) : 0
+  const facts = text.finishedFacts
+    .replace('{agents}', String(run.agents.length))
+    .replace('{duration}', seconds >= 60 ? `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, '0')}s` : `${seconds}s`)
+  const body = run.result?.trim() || run.error?.trim() || text.finishedNoResult
+  const bounded = body.length > COMPLETION_RESULT_CHARS
+    ? `${body.slice(0, COMPLETION_RESULT_CHARS)}\n…(${body.length - COMPLETION_RESULT_CHARS} more characters)`
+    : body
   const roster = run.agents.map(agent => `- ${agent.label}: ${text.states[agent.status] ?? agent.status}`).join('\n')
   return [
     `**${template.replace('{name}', run.name)}**`,
-    run.result?.trim() || run.error?.trim() || text.finishedNoResult,
+    facts,
+    bounded,
+    // 永远给,哪怕正文没被截断 —— 见上面那段注释。
+    run.resultPath ? `${text.finishedFullResult} ${run.resultPath}` : '',
     roster ? `${text.finishedAgents}\n${roster}` : ''
   ].filter(Boolean).join('\n\n')
 }
+

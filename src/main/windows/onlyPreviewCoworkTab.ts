@@ -249,8 +249,8 @@ export const registerOnlyPreviewCoworkTab = (): void => {
     //
     // 占位状态下照走同一条:那时活着的承载是那个独立窗口,`ensureStandalone()` 会解析到它 ——
     // 目标在它该在的地方打开,而不是被塞进一张纸里。
-    openTarget: async (absolutePath) => {
-      await openOnlyPreviewAbsoluteTarget(absolutePath);
+    openTarget: async (absolutePath, options) => {
+      await openOnlyPreviewAbsoluteTarget(absolutePath, { line: options?.line });
     }
   });
 };

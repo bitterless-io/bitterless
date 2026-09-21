@@ -1,39 +1,30 @@
 import { app } from 'electron';
 import { existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { getRuntimeProfile } from '@main/environment/runtimeProfile.runtime';
+import { homeDataIn, homeDataRoot } from '@shared/pathHelper/main/homeData';
 
 /**
- * The one home-level data root, and every directory under it.
+ * Every owner-facing directory under the home data root, and the boot-time ensure.
  *
  * Ral 2026-09-20:「~ 下的 data 目录应该通过 pathhelper 通用的方式获取……例如现在我在 workflows 目录下
  * 看不到 skills 目录,首先这些目录都需要 ensure 的」, and on which shape wins:「cowork 的环境目录设计
  * 对的,以此为准」— one directory per product per environment, every piece of owner-facing app data a
  * named subdirectory of it.
  *
- * Before this, the default workspace and the workflow library each computed the same root
- * expression separately, and global skills lived somewhere else entirely (`<userData>/cowork/skills`),
- * so opening the root told you nothing about where the rest of the app's data was.
+ * Before this, the default workspace and the workflow library each computed the same root expression
+ * separately, and global skills lived somewhere else entirely (`<userData>/cowork/skills`), so
+ * opening the root told you nothing about where the rest of the app's data was.
  *
- * **Why the root is still derived from `appName` rather than written out** like cowork's: the
- * profile's `appName` IS the `userData` directory name, and lowercasing it already yields exactly the
- * product-base-plus-environment-suffix shape the standard asks for. Deriving it means a sixth
- * edition gets its directory for free and the two lists cannot disagree; hand-writing five names
- * would add a table that can drift from `userData` without anything noticing.
- *
- * | profile id | userData (`appName`) | data root |
- * | --- | --- | --- |
- * | `production` | `Bitterless` | `~/.bitterless` |
- * | `production-preview` | `Bitterless_PREVIEW` | `~/.bitterless_preview` |
- * | `production-debug` | `Bitterless_DEBUG_PROD` | `~/.bitterless_debug_prod` |
- * | `test-debug` | `Bitterless_DEBUG_DEV` | `~/.bitterless_debug_dev` |
- * | `test-release` | `Bitterless_DEV` | `~/.bitterless_dev` |
- *
- * `app.getPath('home')`, not `os.homedir()`: E2E redirects the home path, and a test run must not
- * write into a real `~/.bitterless…` directory.
+ * **Where the root is** now lives in `@shared/pathHelper/main/homeData` — including the profile
+ * table and the reasoning for deriving it from `appName`. This module is the other half: WHICH
+ * directories exist under it, and creating them at boot.
  */
-export const appDataRoot = (): string =>
-  join(app.getPath('home'), `.${getRuntimeProfile().appName.toLowerCase()}`);
+/**
+ * Where the root IS lives in the path helper (Ral 2026-09-20:「~ 下的 data 目录应该通过 pathhelper
+ * 通用的方式获取」). This module owns what is UNDER it — the directory list and the boot-time ensure.
+ * Re-exported rather than re-derived so existing callers keep working and the two cannot disagree.
+ */
+export const appDataRoot = (): string => homeDataRoot();
 
 /**
  * Every owner-facing directory under the root, in one list.
@@ -51,7 +42,7 @@ export const APP_DATA_DIRS = {
 } as const;
 export type AppDataDir = keyof typeof APP_DATA_DIRS;
 
-export const appDataDir = (name: AppDataDir): string => join(appDataRoot(), APP_DATA_DIRS[name]);
+export const appDataDir = (name: AppDataDir): string => homeDataIn(APP_DATA_DIRS[name]);
 
 /**
  * `mkdir -p` the root and every directory in `APP_DATA_DIRS`, then move anything still sitting in a

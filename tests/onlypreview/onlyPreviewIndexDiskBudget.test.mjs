@@ -171,11 +171,14 @@ test('reclaim ages out quarantine directories and recovery copies, and keeps the
     mkdirSync(freshQuarantine);
     writeFileSync(freshRecovery, 'corrupt');
     for (const path of [staleQuarantine, staleRecovery, staleRecoveryQuarantine]) age(path, 8 * DAY_MS);
+    // 两份都还在保留窗口内,但同一个库只留最新的一份(RETAINED_MAX_PER_OWNER)。把较旧的那份
+    // 明确推老一分钟,否则两者 mtime 相同、谁胜出不确定 —— 这条用例不该靠运气。
+    age(freshQuarantine, 60_000);
     await reclaimInterruptedSqliteArtifacts(databasePath);
     assert.deepEqual(
       readdirSync(root).sort(),
-      ['index.sqlite', 'index.sqlite.quarantine-Zz0Yy1', `index.sqlite.recovery-${UUID_B}`].sort(),
-      'aged forensic residue is reclaimed; residue younger than the window is kept'
+      ['index.sqlite', `index.sqlite.recovery-${UUID_B}`].sort(),
+      '超期的取证残留被回收;窗口内的也只留最新一份,旧的那份被挤掉'
     );
   });
 });

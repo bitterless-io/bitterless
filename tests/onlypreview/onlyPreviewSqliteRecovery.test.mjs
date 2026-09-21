@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict';
-import { lstat, mkdtemp, readFile, readdir, rename, rmdir, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, readdir, rename, rmdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { test } from 'node:test';
@@ -311,4 +311,38 @@ test('initialization/recovery diagnostics emit only phase and bounded numeric co
     '[onlypreview-search] event=initialize-failure tag=i1 phase=tree-restore sqliteCode=11',
     '[onlypreview-search] event=sqlite-recovery tag=i1 sqliteCode=26'
   ]);
+});
+
+/**
+ * 取证副本按**数量**封顶,不只按年龄 —— 年龄闸默认"产生得慢",而实测不是。
+ *
+ * 参考机 2026-09-21:索引目录 24 GB,其中 6 份 quarantine 共 18.7 GB,在用的索引只有 2.6 GB,
+ * 光当天就堆了 5 份。这个用例复刻那个形态:同一个库、多份副本、全部都还很新(年龄闸一份都收不走),
+ * 断言只留最新的一份。
+ */
+test('only the newest forensic copy of a live database is retained, regardless of age', async (t) => {
+  const { directory, databasePath } = await fixture(t, true);
+  const made = [];
+  for (const index of [0, 1, 2, 3, 4, 5]) {
+    const uuid = `1111111${index}-2222-4333-8444-55555555555${index}`;
+    const path = `${databasePath}.recovery-${uuid}.quarantine-aBcDe${index}`;
+    await mkdir(path, { recursive: true });
+    await writeFile(join(path, 'index.sqlite'), `forensic-${index}`);
+    // 全部都在保留窗口之内:年龄闸一份都不该收走,收走它们的必须是数量闸。
+    const when = new Date(Date.now() - index * 60_000);
+    await utimes(path, when, when);
+    made.push({ path, index });
+  }
+
+  await reclaimInterruptedSqliteArtifacts(databasePath);
+
+  const left = (await readdir(directory)).filter((name) => name.includes('.quarantine-'));
+  assert.equal(left.length, 1, '同一个库只留一份');
+  assert.ok(left[0].endsWith('aBcDe0'), '留下的是最新的那一份');
+  assert.equal(
+    await readFile(join(directory, left[0], 'index.sqlite'), 'utf8'),
+    'forensic-0'
+  );
+  // 在用的索引本体一个字节都不能碰。
+  assert.equal(await readFile(databasePath, 'utf8'), 'original');
 });

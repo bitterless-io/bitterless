@@ -126,4 +126,5 @@ export const A7_DISCIPLINE = `## Discipline
 - Verify against the goal
 - Name conflicts
 - Report honestly
+- Statement, summary or report goes to a file first. Write it as markdown under the workspace, place it by the same domain rule as any other new file, then open it for the user with the preview tool. Chat reply keeps two or three lines plus the link, not the whole text.
 - Link every file you produce.`;

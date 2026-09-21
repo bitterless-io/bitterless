@@ -59,20 +59,6 @@ const stopRun = async (group: WorkflowRunGroup): Promise<void> => {
   catch (error) { actionError.value = error instanceof Error ? error.message : text.value.stopError }
   finally { pending.value.delete(key) }
 }
-const summary = computed(() => {
-  if (cleanupFailed.value) return text.value.stopError
-  if (active.value.length && active.value.every(task => task.status === 'stopping')) return text.value.stoppingAll
-  const confirmations = active.value.filter(task => task.status === 'approval').length
-  if (confirmations) return text.value.waiting.replace('{count}', String(confirmations))
-  if (liveRuns.value.some(run => run.status === 'running')) return text.value.working
-  const latest = latestRun.value
-  if (!latest) return ''
-  const failures = latest.agents.filter(task => task.status === 'failed').length
-  if (failures) return text.value.failures.replace('{count}', String(failures))
-  if (latest.status === 'failed') return latest.error || text.value.failures.replace('{count}', '1')
-  if (latest.status === 'stopped') return text.value.states.stopped
-  return liveRuns.value.length ? text.value.working : text.value.complete
-})
 const identity = (task: WorkflowAgentTask) => `${task.runId}:${task.id}`
 const duration = (milliseconds: number): string => {
   const seconds = Math.max(0, Math.floor(milliseconds / 1000))
@@ -227,7 +213,6 @@ onUnmounted(() => { observer?.disconnect(); clearInterval(timer); document.remov
     </section>
     <div v-if="!history" class="workflow-taskbar__bar" name="workflow-taskbar__bar">
       <button ref="trigger" type="button" class="workflow-taskbar__trigger" :aria-expanded="open" :aria-label="open ? text.collapse : text.expand" @click="toggle"><IconSquares :size="13" /><span>{{ workflowStore.loading && workflowStore.revision < 0 ? text.loading : count }}</span><IconChevronDown :size="12" :class="{ 'workflow-taskbar__chevron--open': open }" /></button>
-      <span class="workflow-taskbar__summary" :title="summary">{{ summary }}</span>
       <time v-if="runElapsed" class="workflow-taskbar__elapsed">{{ runElapsed }}</time>
     </div>
     <div v-if="workflowStore.loadFailed || actionError || cleanupFailed" class="workflow-taskbar__notice" role="alert"><span>{{ actionError || (cleanupFailed ? text.stopError : text.loadError) }}</span><button v-if="workflowStore.loadFailed" type="button" @click="workflowStore.refresh()">{{ text.retry }}</button></div>

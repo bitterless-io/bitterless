@@ -60,12 +60,13 @@ const hostAgent = (AgentClass = BaseAgent) => {
   return { agent, calls, hold: promise => { pending = promise; } };
 };
 
-test('chat removes the browser role and sends the exact ten shared A7 rules once, retaining model identity', async t => {
+test('chat removes the browser role and sends the exact eleven shared A7 rules once, retaining model identity', async t => {
   const { a, b } = await fixture(t);
   const expected = [
     'Treat interruptions as updates to the active task. Complete earlier unfinished requests alongside new requests when they do not conflict. Follow the latest instruction for conflicting parts; drop earlier work only when explicitly cancelled or replaced. Update the plan with update_plan when available.',
     'Instructions vs data', 'Think before acting', 'Be decisive otherwise', 'Minimum & surgical',
     'Endpoints are grounded, not guessed', 'Verify against the goal', 'Name conflicts', 'Report honestly',
+    'Statement, summary or report goes to a file first. Write it as markdown under the workspace, place it by the same domain rule as any other new file, then open it for the user with the preview tool. Chat reply keeps two or three lines plus the link, not the whole text.',
     'Link every file you produce.'
   ];
   assert.equal(A7_DISCIPLINE, '## Discipline\n' + expected.map(line => '- ' + line).join('\n'));
@@ -79,12 +80,14 @@ test('chat removes the browser role and sends the exact ten shared A7 rules once
   assert.ok(text.indexOf('规则 A') < text.indexOf(A7_DISCIPLINE));
   assert.ok(text.indexOf(A7_DISCIPLINE) < text.indexOf('## Which model you are'));
   assert.match(text, /provider id/);
+  // **换根 = 换会话**(PQ-CWD 拍板 A):不再往一个马上要丢掉的会话里推系统提示词,
+  // 所以这里验的是**下一个会话**带的那份,而不是 `calls.updates`。
   await h.agent.setProjectRoot(b);
-  const updated = h.calls.updates.at(-1);
+  await h.agent.oneShot('generate');
+  const updated = h.calls.starts.at(-1).systemPrompt;
   assert.equal(updated.split(A7_DISCIPLINE).length - 1, 1);
   assert.doesNotMatch(updated, /规则 A/);
-  await h.agent.oneShot('generate');
-  assert.equal(h.calls.starts.at(-1).systemPrompt, updated);
+  assert.equal(updated, h.agent.composedSystemPrompt());
   class SpecializedAgent extends BaseAgent { systemPrompt() { return 'SPECIALIZED ROLE'; } }
   const specialized = hostAgent(SpecializedAgent).agent.composedSystemPrompt();
   assert.ok(specialized.indexOf(A7_DISCIPLINE) < specialized.indexOf('SPECIALIZED ROLE'));
@@ -124,15 +127,27 @@ test('project changes refresh the same runtime, inspection keeps applied bytes, 
   assert.doesNotMatch(first.agent.composedSystemPrompt(), /EDITED A|规则 A/);
   assert.match(first.agent.composedSystemPrompt(), /RULE B/);
   assert.match(second.agent.composedSystemPrompt(), /RULE B/);
+  // 运行时拒绝更新时,检视面要停在**最后一次成功应用**的快照上。
+  // 触发点必须是「同一个根、文件变了」—— 换根已经不走 setSystemPrompt 了(拍板 A:换根重建会话),
+  // 用换根去触发的话根本没有 update 可拒,这条就成了永远通过的空测试。
+  // 换根把会话丢了,得先跑一轮把新会话建起来 —— 没有 live session 就没有 update 可拒。
+  await first.agent.prompt('after switch');
+  await fs.writeFile(join(b, 'AGENTS.md'), 'RULE B EDITED');
   first.calls.rejectUpdate = true;
-  await assert.rejects(first.agent.setProjectRoot(a), /update rejected/);
+  await assert.rejects(first.agent.setProjectRoot(b), /update rejected/);
   assert.match(first.agent.composedSystemPrompt(), /RULE B/);
+  assert.doesNotMatch(first.agent.composedSystemPrompt(), /RULE B EDITED/);
   first.calls.rejectUpdate = false;
   await first.agent.setProjectRoot();
   assert.doesNotMatch(first.agent.composedSystemPrompt(), /Project instructions|RULE B/);
   await first.agent.prompt('continue');
-  assert.equal(first.calls.starts.length, 1);
-  assert.equal(first.calls.aborts, 0);
+  // **每个根一个会话**(PQ-CWD 拍板 A)。这条用例依次经过 a → b → 清空,所以是三个:
+  // 原来的 `starts.length === 1` 断的是「换根复用同一个运行时」,那正是被本次改动推翻的前提。
+  // 仍然守住的是:根**没变**时不重建(上面 `setProjectRoot(a)` 重设同一个根、改文件都没有新建会话),
+  // 以及每个会话都带着自己的 cwd。
+  assert.deepEqual(first.calls.starts.map(o => o.cwd), [a, b, '/fixture/skills']);
+  // 换根走的是 reset() → abort 上一个会话,所以 abort 不再是 0;它等于换根的次数。
+  assert.equal(first.calls.aborts, 2);
 });
 
 test('a running turn freezes its project snapshot and keeps it through steering', async t => {

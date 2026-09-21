@@ -49,6 +49,26 @@ const savedWorkflowLoader = (entryPath?: string) => (name: string): string | und
  * is no per-agent kill. `abort` stops the whole run. Stopping one agent while its siblings continue
  * is not expressible in this engine's API — the chat tool for it has nothing to call.
  */
+
+/**
+ * 把引擎的错误翻成 owner 能照着做的下一句。
+ *
+ * worktree 隔离是包内实现的,失败时抛得很准确 —— `worktree isolation failed for "X": not a git
+ * repository`。准确,但对**用 workflow 的人**没用:他没写那个包,不知道「隔离」是什么,
+ * 也不知道下一步该干嘛。实测默认工作区(`~/.micromeet-cowork…` 下的 `default_workspace`)就不是 git 仓库,
+ * 所以任何声明了 `isolation: 'worktree'` 的包在那里必然撞上这一句。
+ *
+ * 只补一句下一步,不改原文 —— 原文是给写包的人和排查用的,别丢。
+ */
+const explain = (message: string): string => {
+  if (/worktree isolation failed/.test(message)) {
+    return message + '\n\n这个 workflow 要求每个 Agent 在独立的 git worktree 里跑。' +
+      '把工作区切到一个 git 仓库,或改用不要求隔离的 workflow。' +
+      '(默认工作区不是 git 仓库,所以在那里一定会撞上这条。)'
+  }
+  return message
+}
+
 trackOwnedProcesses()
 const controller = new AbortController()
 let started = false
@@ -142,7 +162,10 @@ onCommand(message => {
   }
   else if (message.type === 'engine.start' && !started) {
     started = true
-    void run(message).catch(error => send({ type: 'engine.done', error: wireError(error) }))
+    void run(message).catch(error => {
+      const wire = wireError(error)
+      send({ type: 'engine.done', error: { ...wire, message: explain(wire.message) } })
+    })
   }
   // Per-AGENT control (stop / pause / steer one agent while its siblings continue) still has no
   // counterpart: the engine's controls are run-level. Anything unhandled here is deliberately a

@@ -299,14 +299,20 @@ export const buildAgentTurnPrompt = (params: {
   // 只留**指导**;路径那条事实归 D2(见下面的动态前缀),否则同一个路径在提示词里出现两次。
   const workspaceContext = workspace?.path
     ? [
-        'Use workspace tools for project files: workspace_context, list_workspace_files, search_files, read_file, write_file, create_artifact, open_workspace_folder, list_archive, extract_archive, create_archive.',
+        'Use workspace tools for project files: workspace_context, list_workspace_files, search_files, read_file, write_file, create_artifact, preview_file, open_workspace_folder, list_archive, extract_archive, create_archive.',
+        // A7 说「open it for the user with the preview tool」,这里就是那个工具的名字。
+        // 2026-09-21 起 bl 也有 `preview_file`(Ral 指定要补),它比 `open_workspace_folder` 多两件事:
+        // 够得到工作区**外**的路径,以及能带行号。所以 A7 那条纪律现在指向它。
+        // `open_workspace_folder` 保留原样 —— 它仍是「把工作区本身摆出来」的那个动作。
+        'To SHOW the user a file or folder, call preview_file on its path — it opens in OnlyPreview, the local preview app, and takes an optional 1-based line. Do not read a file and retell it when they asked to look at it.',
         'You may create/update files and generated artifacts inside this workspace. Do not delete, rename, move, or target the workspace directory itself.',
         NEW_FILE_PLACEMENT,
         'Folders are listed/searched before individual files are read. Archives are listed or extracted into a new or empty folder rather than passed to read_file; extraction refuses links/special entries and password-protected archive creation is refused.',
         'If a workspace tool reports workspace-not-found / workspace-not-directory, the app clears the stale reference; ask the user to choose the new location.'
       ].join('\n')
     : [
-        'No workspace selected: every workspace tool works in the ONE shared default workspace instead — write_file and create_artifact included.',
+        'No workspace selected: every workspace tool works in the ONE shared default workspace instead — write_file and create_artifact included. Its path is the Active workspace line above.',
+        'To SHOW the user a file or folder, call preview_file on its path — it opens in OnlyPreview, the local preview app, and takes an optional 1-based line.',
         NEW_FILE_PLACEMENT,
         'Never ask the user to select a workspace for a file operation; every write reports its absolute destination, which is how they find it.'
       ].join('\n')
@@ -340,7 +346,7 @@ export const buildAgentTurnPrompt = (params: {
     `- Message sent at: ${params.nowLocal}`,
     workspace?.path
       ? `- Active workspace: ${workspace.path}`
-      : `- Active workspace: none selected — the shared default workspace is in use${params.defaultWorkspacePath ? `: ${params.defaultWorkspacePath}` : ''}`,
+      : `- Active workspace: none selected — the ONE shared default workspace is in use${params.defaultWorkspacePath ? `: ${params.defaultWorkspacePath}` : ''}`,
     describeActiveTabLine(params.activeTab),
     'Open tabs when this message was sent:',
     JSON.stringify(params.openTabs ?? []),
@@ -348,6 +354,21 @@ export const buildAgentTurnPrompt = (params: {
     ...(params.userChainPath ? [renderChainPathLine(params.userChainPath)] : [])
   ].join('\n')
   return [
+    // 开头先说一遍这一轮要做什么。
+    //
+    // 底部那道围栏是**结构**判据,它没解决**位置**问题:指令仍然在 76,030 字符里的最后 144 字符,
+    // 占 0.189%。实测(2026-09-21)模型两次栽在这上面 —— 一次直接回「only page context and no
+    // instruction」(指令就在末尾),一次从上面的参考材料里抓了个绝对路径当成任务目标。
+    //
+    // 复述而不是重排:重排 76KB 会动到每一个已经调好的块(skills / tabs / workflows),回归面太大;
+    // 复述是纯增量,最坏多花一行。**必须说明哪一份是权威**,否则模型可能把它当成两件事。
+    ...(params.message.trim()
+      ? [
+          `This turn's request, verbatim: ${clipText(params.message.trim(), 600)}`,
+          'That is a preview so it is not buried at the end; the authoritative copy is inside <user_message> below. Same request, not two.',
+          ''
+        ]
+      : []),
     dynamicPrefix,
     '',
     `Complete Skills inventory (current execution domain: ${domain}). Recorded Skills remain listed across domains but execute only on their original site:`,

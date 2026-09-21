@@ -1942,7 +1942,7 @@ class MaestroWindowController
     await this.browserView.openTab(params)
   }
 
-  async openFilePreviewTab(params: { path: string; tabId?: string }): Promise<void> {
+  async openFilePreviewTab(params: { path: string; tabId?: string; line?: number }): Promise<void> {
     if (!this.browserWindow || this.browserWindow.isDestroyed()) this.create()
     await this.rendererReady
     this.show()
@@ -1954,10 +1954,11 @@ class MaestroWindowController
   }
 
   /** 工作区芯片:开 OnlyPreview 的 tab 并把这个目录设为项目根(mini-016 / Ral 2026-09-07)。 */
-  async openWorkspaceInPreview(params: { path: string }): Promise<{ ok: boolean; error?: string }> {
+  async openWorkspaceInPreview(params: { path: string; line?: number }): Promise<{ ok: boolean; error?: string }> {
     return await this.browserView.openCompositeTabTarget({
       id: MAESTRO_ONLY_PREVIEW_TAB_ID,
-      path: params?.path || ''
+      path: params?.path || '',
+      line: params?.line
     })
   }
 

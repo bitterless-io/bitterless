@@ -6,6 +6,10 @@ import { createXpcRendererEmitter } from 'electron-xpc/renderer'
 import { IconActivity, IconDotsVertical, IconExternalLink, IconFolderOpen, IconSparkles } from '@tabler/icons-vue'
 import { messageStore } from './store/message.store'
 import type { AgentActivityStep, CoachXpcContract, FileStatusResult } from '@maestro-shared/coach.api'
+import {
+  linkifyOnlyPreviewReferences,
+  parseOnlyPreviewReferenceHref
+} from '@maestro-shared/fileReference.service'
 import type { ChatFile, ChatMessage } from './store/message.type'
 import AttachmentCard from './AttachmentCard.vue'
 import ChatConfirm from './task/ChatConfirm.vue'
@@ -16,6 +20,9 @@ import './MessageItem.less'
 
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
 const props = defineProps<{ message: ChatMessage }>()
+// 正文里的 `绝对路径[:行号]` 在这里被改写成引用链接(双击预览)。只关心**显示**,所以放在渲染前
+// 的最后一步;代码块、行内代码、已有链接由 `linkifyOnlyPreviewReferences` 自己避开。
+const displayContent = computed(() => linkifyOnlyPreviewReferences(props.message.content || ''))
 const messageRoot = ref<HTMLElement | null>(null)
 const fileStatuses = ref<Record<string, FileStatusResult>>({})
 
@@ -148,11 +155,37 @@ const onMarkdownClick = (event: MouseEvent): void => {
   const anchor = (event.target as HTMLElement | null)?.closest?.('a')
   if (!anchor) return
   const href = anchor.getAttribute('href') || ''
+  // `file:line` 引用是**双击**打开的(下面 `onMarkdownDoubleClick`)。单击在这里被吃掉而不是放行:
+  // 否则渲染库会把这个未知 scheme 当普通链接去导航,聊天窗口直接白掉。
+  if (parseOnlyPreviewReferenceHref(href)) {
+    event.preventDefault()
+    event.stopPropagation()
+    return
+  }
   const path = localPathFromHref(href)
   if (!path) return
   event.preventDefault()
   event.stopPropagation()
   void showFileInFolder(path)
+}
+
+/**
+ * 正文里 `路径:行号` 的**双击**打开(Ral 2026-09-21)。
+ *
+ * 为什么不是单击:这些路径出现在正文中间,人经常要**选中它复制**。单击打开会把复制这件事抢走;
+ * 双击在这里把「双击选词」的语义换成「打开」,是冲突最小的那个选择。
+ *
+ * 注意它和上面那条产出物链接的差别:那条**单击**是「在 Finder 里定位」,这条是「在预览里看内容」。
+ * 两个动作不同,所以两个手势 —— 不是同一件事的两种触发方式。
+ */
+const onMarkdownDoubleClick = (event: MouseEvent): void => {
+  const anchor = (event.target as HTMLElement | null)?.closest?.('a')
+  if (!anchor) return
+  const reference = parseOnlyPreviewReferenceHref(anchor.getAttribute('href') || '')
+  if (!reference) return
+  event.preventDefault()
+  event.stopPropagation()
+  void coach.openWorkspaceInPreview({ path: reference.path, line: reference.line }).catch(() => undefined)
 }
 
 const showFileInFolder = async (path?: string): Promise<void> => {
@@ -227,9 +260,10 @@ watch(artifactPathKey, () => void refreshFileStatuses(), { immediate: true })
             v-if="props.message.content"
             class="message-item__markdown"
             @click="onMarkdownClick"
+            @dblclick="onMarkdownDoubleClick"
           >
             <MarkdownRender
-              :content="props.message.content"
+              :content="displayContent"
               :is-dark="false"
               :max-live-nodes="props.message.streaming ? 0 : undefined"
               :code-block-props="{ lightTheme: 'github-light' }"

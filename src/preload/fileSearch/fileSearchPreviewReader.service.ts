@@ -111,7 +111,9 @@ const secureOpenFlags = (): number => {
       'Secure Preview file reads are unavailable.'
     );
   }
-  return constants.O_RDONLY | constants.O_NOFOLLOW | (constants.O_CLOEXEC ?? 0);
+  // `O_CLOEXEC` 是 POSIX 常量,**`@types/node` 不声明它**(平台相关),但 Linux/macOS 运行时确实有。
+  // 代码本来就写了 `?? 0` 承认它可能缺席,这个 `as` 只是让类型也承认同一件事 —— 不是放宽检查。
+  return constants.O_RDONLY | constants.O_NOFOLLOW | ((constants as { O_CLOEXEC?: number }).O_CLOEXEC ?? 0);
 };
 
 const toSafeReadError = (error: unknown, fallback: string): never => {

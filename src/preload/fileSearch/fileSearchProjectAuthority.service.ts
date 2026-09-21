@@ -25,6 +25,7 @@ import {
   OnlyPreviewContractError
 } from '@shared/onlypreview/onlyPreview.contract';
 import { validateOnlyPreviewEntryName } from '@shared/onlypreview/onlyPreviewEntryName.shared';
+import type { OnlyPreviewEntryNameResult } from '@shared/onlypreview/onlyPreviewEntryName.shared';
 import { pasteOnlyPreviewProjectFiles } from './fileSearchProjectPaste.service';
 import type {
   OnlyPreviewFileAuthorityDeleteGrant,
@@ -171,10 +172,11 @@ const toSafeProjectError = (error: unknown, action: ProjectAuthorityAction): nev
 // renderer could have skipped.
 const requireValidEntryName = (name: unknown): string => {
   const result = validateOnlyPreviewEntryName(name);
-  if (!result.ok) {
-    throw new OnlyPreviewContractError('NAME_INVALID', `The name is not usable: ${result.reason}.`);
-  }
-  return result.name;
+  if (result.ok) return result.name;
+  // 同 `onlyPreview.contract.ts` 里的那处:`strict: false` 关掉了 `strictNullChecks`,
+  // 而布尔判别式的联合收窄需要它 —— 所以显式取那一支。开了 `strictNullChecks` 可以删掉这个 `as`。
+  const rejected = result as Extract<OnlyPreviewEntryNameResult, { ok: false }>;
+  throw new OnlyPreviewContractError('NAME_INVALID', `The name is not usable: ${rejected.reason}.`);
 };
 
 const joinRelativePath = (parentRelativePath: string, name: string): string =>

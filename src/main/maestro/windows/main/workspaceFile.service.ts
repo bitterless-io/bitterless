@@ -780,6 +780,71 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
     }
   }
 
+  /**
+   * 在应用内把一个文件/目录摆到人面前。
+   *
+   * **两条路线,按「在不在工作区里」分流**(Ral 2026-09-21:「preview file 即预览 workspace 内的
+   * 文件就在 onlypreview 中预览,如果不是就是 standalone tab 下进行预览」):
+   *
+   * - **工作区内** → `opener.open()`,也就是那个绑着 Project 的 OnlyPreview。文件落在项目树里,
+   *   有上下文、有历史,人能顺着看旁边的文件。
+   * - **工作区外** → `opener.openInTab()`,一个独立的文件 tab(`createFileTabSpec` 的注释:
+   *   「independent preview authority and no OnlyPreview history」)。外部文件不该污染项目树,
+   *   也不该把 Project 根挪走。
+   *
+   * 这正是端口早就分好的两个动作,所以这里只是**选路**,没有新机制。
+   *
+   * 和 `open_workspace_folder` 的区别:那个只认工作区内的路径(`resolveWorkspacePath` 对区外直接
+   * 返回 `outside-workspace`),而这个用 `resolveReadPath` —— 和 `read_file` 同一套,够得到 `~`
+   * 和任意绝对路径。会话里出现的 `file:line` 多数就在工作区外。
+   */
+  async toolPreviewFile(sessionKey: string, pathArg?: string, line?: number): Promise<string> {
+    const trimmed = String(pathArg || '').trim().replace(/^@/, '')
+    if (!trimmed) {
+      return 'ERROR: preview_file needs a "path" (an attached @/abs/path, an absolute path, a ~ path, or a workspace-relative path).'
+    }
+    const resolved = this.resolveReadPath(sessionKey, trimmed)
+    const target = resolved.path
+    let isDirectory = false
+    try {
+      isDirectory = statSync(target).isDirectory()
+    } catch (err) {
+      if (isPermissionError(err)) return `ERROR: no permission to read "${target}".${FOLDER_AUTH_HINT}`
+      return `ERROR: "${trimmed}" does not exist (resolved to ${target}).`
+    }
+    const preview = getMaestroPreviewOpener()
+    if (!preview) {
+      // 没有注册预览应用的构建 —— 退回文件管理器,和 `open_workspace_folder` 同一个退路。
+      if (isDirectory) {
+        const error = await shell.openPath(target)
+        if (error) return `ERROR: could not open "${target}": ${error}`
+        return `Opened ${mdDirLink(target)} in the file manager.`
+      }
+      shell.showItemInFolder(target)
+      return `Revealed ${mdDirLink(target)} in the file manager.`
+    }
+    try {
+      // 目录永远走 Project 路线:一个目录就是一棵树,独立文件 tab 装不下它。
+      if (isDirectory || resolved.insideWorkspace) {
+        await preview.open(target, { line: isDirectory ? undefined : line })
+      } else if (preview.openInTab) {
+        await preview.openInTab(target, { line })
+      } else {
+        // 这个构建没有独立文件 tab —— 与其报错,不如退回 Project 路线把文件打开。
+        await preview.open(target, { line })
+      }
+    } catch (err) {
+      if (isPermissionError(err)) return `ERROR: no permission to open "${target}".${FOLDER_AUTH_HINT}`
+      return `ERROR: could not preview "${target}": ${err instanceof Error ? err.message : String(err)}`
+    }
+    const where = isDirectory || resolved.insideWorkspace ? preview.displayName : `a ${preview.displayName} tab`
+    if (isDirectory) return `Opened ${mdDirLink(target)} in ${where} — the user can browse it in the app.`
+    // 如实说「请求跳到第 N 行」而非「已跳到」:能不能跳取决于文件类型和实际行数,这里拿不到结果。
+    return line
+      ? `Opened ${mdDirLink(target)} in ${where} at line ${line} — the user can see it in the app.`
+      : `Opened ${mdDirLink(target)} in ${where} — the user can see it in the app.`
+  }
+
   async toolWorkspaceContext(sessionKey: string, actionArg: string): Promise<string> {
     const action = String(actionArg || 'status').trim().toLowerCase()
     if (action === 'clear' || action === 'remove' || action === 'unset') {

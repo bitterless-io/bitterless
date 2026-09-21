@@ -30,6 +30,28 @@ phase('Work')
 return await agent(String(args ?? '').trim() || 'No task was given. Say so rather than inventing one.', { label: 'Task' })
 `
 
+
+/**
+ * Make a generated builtin accept this host's input shape.
+ *
+ * The package's generators assume Pi's convention, where a workflow tool call carries an OBJECT of
+ * named args — `generateCodeReviewWorkflow()` opens with `const rawDiff = (args && args.diff) || ''`.
+ * This host's `workflow_run` passes the owner's sentence as `args`, a plain STRING, so `args.diff` is
+ * always `undefined`. The run does not fail: the seven finders review an empty `<diff>` block and
+ * report nothing, which reads exactly like clean code. Ral hit this on 2026-09-21.
+ *
+ * Rewriting the one line the generator emits, rather than forking the script: the rest of it is the
+ * package's to maintain, and a fork would stop tracking their changes. If the line ever moves, the
+ * assertion below fails loudly instead of silently shipping the broken contract again.
+ */
+const acceptStringArgs = (script: string, field: string): string => {
+  const original = `const raw${field[0].toUpperCase()}${field.slice(1)} = (args && args.${field}) || ''`
+  if (!script.includes(original)) {
+    throw new Error(`The generator no longer opens with \`${original}\` — re-check how it reads args before shipping it.`)
+  }
+  return script.replace(original, `const raw${field[0].toUpperCase()}${field.slice(1)} = (typeof args === 'string' ? args : (args && args.${field})) || ''`)
+}
+
 /**
  * Only the generators that read their inputs from `args`.
  *
@@ -45,7 +67,7 @@ const builtins: Record<string, () => string> = {
   // Its old wrapper was one structured-output agent plus a formatting step — one `agent({ schema })`
   // call and a `return` here. See `dynamic/planScript.ts`.
   'plan-workflow': planWorkflowScript,
-  'code-review': generateCodeReviewWorkflow,
+  'code-review': () => acceptStringArgs(generateCodeReviewWorkflow(), 'diff'),
   research: generateDeepResearchWorkflow,
   'adversarial-review': generateAdversarialReviewWorkflow
 }

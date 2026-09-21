@@ -34,6 +34,10 @@ import type {
 import { onlyPreviewI18n } from '../../../../common/onlyPreviewI18n';
 import { countOnlyPreviewSelectionTexts } from '../../onlyPreviewCharacterCount.service';
 import { onlyPreviewPreviewStore } from '../../onlyPreviewPreview.store';
+import {
+  lineWithinDocument,
+  normalizeOnlyPreviewLine
+} from '@shared/onlypreview/onlyPreviewLine.shared';
 import { onlyPreviewFindAdapterBridge } from '../../onlyPreviewFindAdapter.service';
 import { createOnlyPreviewMonacoFindAdapter } from '../../onlyPreviewMonacoFind.service';
 import { resolveOnlyPreviewMonacoFolding } from '../../onlyPreviewMonacoFolding.service';
@@ -58,7 +62,50 @@ let unregisterFindAdapter: (() => void) | null = null;
 // —— 表现成「打开 B 文件却显示 A 的内容」。这不是理论风险:切一次文件就是连续两次触发。
 let createGeneration = 0;
 
+// 落点高亮是**短暂**的,所以有一个定时器;定时器必须跟编辑器同生共死,否则切文件后它还会回来
+// 摸一个已经 dispose 的 editor。清理只写在 `disposeEditor` 一处,不散到 watch 里。
+let highlightTimer: ReturnType<typeof setTimeout> | null = null;
+let highlightDecorations: monaco.editor.IEditorDecorationsCollection | null = null;
+
+const clearLineHighlight = (): void => {
+  if (highlightTimer !== null) {
+    clearTimeout(highlightTimer);
+    highlightTimer = null;
+  }
+  highlightDecorations?.clear();
+  highlightDecorations = null;
+};
+
+/**
+ * 滚到目标行。**任何一步不成立就安静地什么都不做。**
+ *
+ * Ral 2026-09-21:「如果有的文件无法进行导航,在指定了行号的情况下,直接忽略即可,不能报错阻塞。」
+ * 这里的「不成立」包括:没给行号、行号超出这个文件的实际行数。后者特意**不钳到最后一行** ——
+ * 跳到末行会让人以为那就是目标,而真相是「这个行号在这个文件里不存在」;不跳反而诚实。
+ */
+const revealTargetLine = (): void => {
+  const target = editor;
+  const document = model;
+  if (!target || !document) return;
+  const line = lineWithinDocument(
+    normalizeOnlyPreviewLine(onlyPreviewPreviewStore.targetLine),
+    document.getLineCount()
+  );
+  if (line === undefined) return;
+  target.revealLineInCenter(line);
+  target.setPosition({ lineNumber: line, column: 1 });
+  // 高亮整行,让落点看得见;1.6s 后撤掉 —— 持久装饰会被误读成「这一行有问题」。
+  highlightDecorations = target.createDecorationsCollection([
+    {
+      range: new monaco.Range(line, 1, line, 1),
+      options: { isWholeLine: true, className: 'onlypreview-monaco__target-line' }
+    }
+  ]);
+  highlightTimer = setTimeout(clearLineHighlight, 1_600);
+};
+
 const disposeEditor = (): void => {
+  clearLineHighlight();
   selectionDisposable?.dispose();
   selectionDisposable = null;
   unregisterFindAdapter?.();
@@ -171,6 +218,9 @@ const createEditor = async (): Promise<void> => {
     emit('ready');
   }
   onlyPreviewPreviewStore.armCharacterCountReporting(props.reportingRevision);
+  // 放在最后:折叠(`collapseDeepLevels`)会改变可视行的位置,先滚后折就白滚了。它不 await,
+  // 但滚动本身是即时的,而折叠只在少数语言上开,两者撞车时以用户能看见目标行为准。
+  revealTargetLine();
 };
 
 watch(

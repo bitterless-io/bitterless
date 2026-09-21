@@ -38,7 +38,18 @@ export interface WorkflowRunSnapshot {
   createdAt: number
   endedAt?: number
   agents: WorkflowAgentTask[]
+  /**
+   * 结果正文。**可能被截断**(64 KB)—— 全量看 `resultPath`。
+   */
   result?: string
+  /**
+   * 落终态时写下的**完整**结果文件(绝对路径),没有结果时不存在。
+   *
+   * 有界摘要进上下文、全量留在盘上,是 Pi 的做法(`deliverText` 永远附一行
+   * `↳ Full result: <path>`),它的注释写着「so the tail is never lost — even when the summary
+   * above is a complete verdict」。**有界不等于有损**:模型要细节就 `read` 这个文件。
+   */
+  resultPath?: string
   error?: string
 }
 /**

@@ -59,6 +59,25 @@ try {
   assert.equal(await page.locator('[name="workflow-phases"] li').count(), 40)
   await noOverflow()
   await page.screenshot({ path: resolve(output,'many-phases.png') })
+  // Path actions (Ral 2026-09-20): copy path + show in folder, on the root AND on every package.
+  // Asserted through COMPUTED style, not by reading the .less — a bare <button> that the surface's
+  // stylesheet never reaches renders with Chromium's UA default, which is exactly a grey box with a
+  // 1px border. That has shipped here before, and only the compiled page can disprove it.
+  for (const name of ['workbench-workflows__root-copy', 'workbench-workflows__root-reveal', 'workbench-workflows__detail-copy', 'workbench-workflows__detail-reveal']) {
+    const button = page.locator(`[name="${name}"]`)
+    assert.equal(await button.count(), 1, `${name} must exist`)
+    assert.equal(await button.evaluate(node => getComputedStyle(node).borderTopWidth), '0px', `${name} must be borderless`)
+  }
+  for (const dir of ['text-essentials', 'research-review', 'release-checklist', 'broken-package']) {
+    assert.equal(await page.locator(`[name="workbench-workflows__item-copy-${dir}"]`).count(), 1, `${dir} needs its own copy button`)
+    assert.equal(await page.locator(`[name="workbench-workflows__item-reveal-${dir}"]`).count(), 1, `${dir} needs its own reveal button`)
+  }
+  // Copying a row's path must NOT change the selection — reaching a folder is not a navigation.
+  const pressedBefore = await page.locator('[aria-pressed="true"]').first().getAttribute('name')
+  await page.locator('[name="workbench-workflows__item-copy-release-checklist"]').click()
+  assert.equal(await page.locator('[aria-pressed="true"]').first().getAttribute('name'), pressedBefore, 'a row action must not select that row')
+  await noOverflow()
+  await page.screenshot({ path: resolve(output,'path-actions.png') })
   assert.deepEqual(errors, [])
-  console.log('Visual behavior passed: phases in order, phases note, engine badge, tabs, broken package reason, 40-phase fit; desktop/narrow light/dark screenshots:', output)
+  console.log('Visual behavior passed: phases in order, phases note, engine badge, tabs, broken package reason, 40-phase fit, borderless path actions on root/rows/detail, row action keeps selection; desktop/narrow light/dark screenshots:', output)
 } finally { await browser.close(); await server.close() }

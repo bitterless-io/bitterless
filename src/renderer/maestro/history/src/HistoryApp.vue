@@ -7,7 +7,7 @@
       </div>
       <div name="browser-history__candidates" role="listbox" :aria-label="i18nHelper.browserHistory.title">
       <div v-if="historyStore.googleUrl" name="browser-history__google" class="browser-history__row" :class="{ 'browser-history__row--selected': historyStore.snapshot.selectedIndex === 0 }" role="option" :aria-selected="historyStore.snapshot.selectedIndex === 0">
-        <button name="browser-history__google-search" class="browser-history__visit" type="button" @click="historyStore.action('accept', historyStore.googleUrl)"><IconSearch class="browser-history__favicon" :size="17" /><span class="browser-history__search-title">{{ i18nHelper.browserHistory.searchGoogle.replace('{query}', historyStore.snapshot.query) }}</span></button>
+        <button name="browser-history__google-search" class="browser-history__visit" type="button" @click="historyStore.action('accept', historyStore.googleUrl, 'google')"><IconSearch class="browser-history__favicon" :size="17" /><span class="browser-history__search-title">{{ i18nHelper.browserHistory.searchGoogle.replace('{query}', historyStore.snapshot.query) }}</span></button>
       </div>
       <div v-if="historyStore.snapshot.loading" class="browser-history__message" role="status">{{ i18nHelper.browserHistory.loading }}</div>
       <div v-else-if="historyStore.snapshot.error" class="browser-history__message" role="alert">
@@ -17,7 +17,7 @@
       <div v-else-if="!historyStore.snapshot.entries.length" class="browser-history__message" role="status">{{ historyStore.snapshot.query ? i18nHelper.browserHistory.noMatches : i18nHelper.browserHistory.empty }}</div>
       <div v-else name="browser-history__list" class="browser-history__list">
         <div v-for="(entry, index) in historyStore.snapshot.entries" :key="entry.url" name="browser-history__row" class="browser-history__row" :class="{ 'browser-history__row--selected': historyStore.historySelected(index) }" role="option" :aria-selected="historyStore.historySelected(index)">
-          <button name="browser-history__visit" class="browser-history__visit" type="button" :title="entry.title + ' — ' + entry.url" @click="historyStore.action('accept', entry.url)">
+          <button name="browser-history__visit" class="browser-history__visit" type="button" :title="entry.title + ' — ' + entry.url" @click="historyStore.action('accept', entry.url, 'history')">
             <img v-if="entry.favicon && !historyStore.failedIcons.has(entry.favicon)" class="browser-history__favicon" :src="entry.favicon" alt="" referrerpolicy="no-referrer" @error="historyStore.iconFailed(entry.favicon)" />
             <IconHistory v-else class="browser-history__favicon" :size="17" />
             <span class="browser-history__title">{{ entry.title || historyStore.displayUrl(entry.url) }}</span>

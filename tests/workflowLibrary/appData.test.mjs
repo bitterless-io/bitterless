@@ -13,6 +13,21 @@ const require = createRequire(import.meta.url)
  * `appData.ts` reaches Electron for the home path and the runtime profile, so it is loaded against
  * stubs rather than through jiti — the point of the test is the directory contract, not Electron.
  */
+const loadHelper = (home, userData, appName) => {
+  const file = fileURLToPath(new URL('../../src/shared/pathHelper/main/homeData.ts', import.meta.url))
+  const code = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText
+  const module = { exports: {} }
+  new Function('require', 'module', 'exports', code)(name => {
+    if (name === 'electron') return { app: { getPath: key => (key === 'home' ? home : userData), getAppPath: () => userData }, shell: {} }
+    if (name === '@main/environment/runtimeProfile.runtime') return { getRuntimeProfile: () => ({ appName }) }
+    if (name === 'electron-xpc/main') return { XpcMainHandler: class {} }
+    if (name === 'fs-extra') return {}
+    if (name === 'path' || name.startsWith('node:')) return require(name === 'path' ? 'node:path' : name)
+    throw Error('Unexpected helper dependency: ' + name)
+  }, module, module.exports)
+  return module.exports
+}
+
 const load = (home, userData, appName = 'Bitterless_PREVIEW') => {
   const file = fileURLToPath(new URL('../../src/main/paths/appData.ts', import.meta.url))
   const code = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText
@@ -20,6 +35,10 @@ const load = (home, userData, appName = 'Bitterless_PREVIEW') => {
   new Function('require', 'module', 'exports', code)(name => {
     if (name === 'electron') return { app: { getPath: key => (key === 'home' ? home : userData) } }
     if (name === '@main/environment/runtimeProfile.runtime') return { getRuntimeProfile: () => ({ appName }) }
+    // The home root now comes from the path helper (Ral 2026-09-20: 「~ 下的 data 目录应该通过
+    // pathhelper 通用的方式获取」), loaded here against the same stubs — the contract under test is
+    // still "which directories, where", not Electron.
+    if (name === '@shared/pathHelper/main/homeData') return loadHelper(home, userData, appName)
     if (name.startsWith('node:')) return require(name)
     throw Error('Unexpected fixture dependency: ' + name)
   }, module, module.exports)
@@ -75,4 +94,19 @@ test('a failed adoption leaves the data in place instead of crashing the boot', 
   writeFileSync(join(userData, 'cowork', 'skills'), 'not a directory')
   assert.doesNotThrow(() => ensureAppData())
   assert.equal(readFileSync(join(userData, 'cowork', 'skills'), 'utf8'), 'not a directory')
+})
+
+test('home 根目录的推导只有一份 —— 在 pathHelper 里,不在 appData 里', () => {
+  // Ral 2026-09-20:「~ 下的 data 目录应该通过 pathhelper 通用的方式获取」。
+  // 缺口是:`userData` 走 pathHelper,而 `~/.bitterless…` 由 appData.ts 自己算 ——
+  // 于是「这个 app 把用户数据放哪」取决于你问哪个模块。两份推导迟早会分叉。
+  const helper = readFileSync(fileURLToPath(new URL('../../src/shared/pathHelper/main/homeData.ts', import.meta.url)), 'utf8')
+  const appData = readFileSync(fileURLToPath(new URL('../../src/main/paths/appData.ts', import.meta.url)), 'utf8')
+
+  assert.match(helper, /export const homeDataRoot/, '根目录由 pathHelper 给出')
+  assert.match(helper, /getRuntimeProfile\(\)\.appName\.toLowerCase\(\)/, '推导本体在 pathHelper 里')
+
+  // appData 只管「底下有哪些目录」和 boot 时 ensure,不再自己拼根目录。
+  assert.match(appData, /homeDataRoot\(\)/, 'appData 必须向 pathHelper 要根目录')
+  assert.doesNotMatch(appData, /app\.getPath\('home'\)/, 'appData 里不许再有第二份推导')
 })

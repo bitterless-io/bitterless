@@ -390,3 +390,56 @@ test('the run gate and the scanner read ONE entry-name list, so they cannot drif
   const loader = fs.readFileSync(path.join(root, 'src/main/agent/workflowEngine/dynamic/dynamicLoader.ts'), 'utf8')
   assert.match(loader, /WORKFLOW_ENTRY_NAMES/, 'the scanner must read the same list')
 })
+
+test('workflow_tasks 是进度摘要,不是把整个 workflow 状态灌回主会话', async () => {
+  // 实测 2026-09-21,一次真实 code review:单次调用 **361 KB**,其中 217 KB 是各 Agent 的完整工作
+  // 日志,76 KB 是这些 Agent 自己的提示词(主会话刚写出去的,又原样读回来)。问两次「进行得怎么样」
+  // 就把主 prompt 从 98 KB 推到 830 KB,直接触发 compact —— 进度查询把它要汇报的那个上下文毁了。
+  const { host, supervisor } = integration()
+  const bulky = (id) => ({
+    id: String(id), runId: 'r1', sessionId: 'chat-a', label: `finder-${id}`, phase: 'Find',
+    prompt: 'P'.repeat(9_000), status: 'running', currentAction: 'C'.repeat(600),
+    queuedAt: 1, startedAt: 2, model: 'p/m',
+    logs: Array.from({ length: 40 }, (_, i) => ({ ts: i, text: 'L'.repeat(2_500) })),
+    output: 'O'.repeat(9_000)
+  })
+  const run = { id: 'r1', sessionId: 'chat-a', name: 'code-review', status: 'running', input: 'x', agents: Array.from({ length: 8 }, (_, i) => bulky(i + 1)) }
+  supervisor.list = (sessionId) => ({ runs: sessionId === 'chat-a' ? [run] : [], revision: 1 })
+  const tool = (name) => host.chatTools('chat-a').find(item => item.name === name)
+
+  const summary = await tool('workflow_tasks').execute({})
+  // 同样这 8 个 agent,旧实现是 700 KB 量级。摘要必须小到可以反复问。
+  assert.ok(summary.length < 4_000, `摘要不能超过 4KB,实际 ${summary.length}`)
+  assert.doesNotMatch(summary, /LLLL/, '工作日志不许进主会话')
+  assert.doesNotMatch(summary, /PPPP/, 'Agent 的提示词不许回灌 —— 那是主会话自己刚写的')
+  assert.doesNotMatch(summary, /OOOO/, '完整结果不许进摘要')
+  const parsed = JSON.parse(summary)
+  assert.equal(parsed[0].agents.length, 8, '八个 Agent 一个都不能少 —— 省的是每个的体积,不是数量')
+  assert.deepEqual(Object.keys(parsed[0].agents[0]).sort(), ['agentId', 'doing', 'label', 'model', 'phase', 'status'], '在跑的 Agent 还没有用时')
+  assert.equal(parsed[0].agents[0].doing.length, 160, '当前动作截断到一行')
+
+  // 跑着的时候不带 result —— 还没有结果可给。
+  assert.equal(JSON.parse(summary)[0].result, undefined)
+
+  // 结束的 Agent 要带用时 —— 那是判断「真跑了还是秒退」最直接的依据。
+  run.agents[0] = { ...run.agents[0], status: 'completed', endedAt: 4_002 }
+  const withMs = JSON.parse(await tool('workflow_tasks').execute({}))
+  assert.equal(withMs[0].agents[0].ms, 4_000)
+
+  // 结果**不**从进度走 —— 它由完成投递送进上下文(A3,按 Pi 对齐)。两处都给等于每问一次进度
+  // 就把结论再灌一遍,那正是 830KB 的来源。
+  run.status = 'completed'
+  run.result = 'R'.repeat(9_000)
+  const done = JSON.parse(await tool('workflow_tasks').execute({}))
+  assert.equal(done[0].result, undefined, '进度不带结果')
+  assert.doesNotMatch(await tool('workflow_tasks').execute({}), /RRRR/, '结论一个字都不该出现在进度里')
+
+  // 下钻:要看某一个 Agent 的日志,得明确点名,而且仍然有界。
+  const detail = await tool('workflow_tasks').execute({ agentId: '3' })
+  assert.ok(detail.length < 10_000, `单个 Agent 的详情也要有界,实际 ${detail.length}`)
+  const one = JSON.parse(detail)
+  assert.equal(one.agentId, '3')
+  assert.equal(one.log.length, 12, '只取最新 12 条 —— 判断它有没有在推进靠的是最近几步')
+  assert.match(one.log[0], /more characters/, '单条日志也要截断')
+  await assert.rejects(tool('workflow_tasks').execute({ agentId: 'nope' }), /No Agent nope/)
+})

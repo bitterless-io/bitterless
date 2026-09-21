@@ -73,6 +73,7 @@
     "test:maestro-crms-residue": "node --test scripts/maestro/crmsResidueCleanup.test.ts",
     "check:chat-composer": "node scripts/maestro/check-chat-composer.mjs",
     "check:new-tab-focus": "node scripts/maestro/check-new-tab-focus.mjs",
+    "check:history-background-tab": "node scripts/maestro/check-history-background-tab.mjs",
     "check:tab-alias": "node scripts/maestro/check-tab-alias.mjs",
     "check:zellij-tab-chrome": "node scripts/maestro/check-zellij-tab-chrome.mjs",
     "mcp:todo:smoke": "node scripts/mcp/todo-smoke.mjs",
@@ -329,5 +330,5 @@
   ],
   "name": "Bitterless_DEBUG_DEV",
   "version": "0.0.124",
-  "version_code": "260920193424"
+  "version_code": "260921165423"
 }

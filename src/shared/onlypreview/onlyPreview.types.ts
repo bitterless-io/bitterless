@@ -481,6 +481,12 @@ export interface OnlyPreviewPreviewPresentation extends OnlyPreviewHostEvent {
   /** Display-only absolute identity for Shell; never accepted as file authority. */
   fileDisplayPath?: string;
   fragment?: string;
+  /**
+   * 1-based 行号,**建议而非承诺**。只有基于 Monaco 的文本/代码预览会用它;图片、PDF、docx、
+   * 媒体这些没有「行」的适配器收到后安静丢掉 —— 不报错、不记日志,因为那是正常情况。
+   * 超出文件实际行数时同样当没给(见 `onlyPreviewLine.shared.ts` 的 `lineWithinDocument`)。
+   */
+  line?: number;
   workspaceId: string | null;
   selectionRevision: number;
   surface: OnlyPreviewPreviewSurface;

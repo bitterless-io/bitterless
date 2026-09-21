@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createJiti } from 'jiti'
+import { readFileSync } from 'node:fs'
 import { parseWorkflowScript } from '@quintinshaw/pi-dynamic-workflows'
 import { fileURLToPath } from 'node:url'
 
@@ -191,4 +192,28 @@ test('a string result is shown as-is rather than JSON-quoted', () => {
   const r = rows(s)
   r.ended({ id: 'run-1:0', label: 'A', result: 'plain text' })
   assert.equal(r.all()[0].output, 'plain text')
+})
+
+test('生成的 builtin 必须吃得下字符串入参 —— 否则 7 个 finder 在审一段空 diff', () => {
+  // Ral 2026-09-21:「code review 下:<路径>」没能触发 workflow。原因之一是就算触发了也白跑 ——
+  // 包的生成器按 Pi 的对象入参写:`const rawDiff = (args && args.diff) || ''`,
+  // 而本宿主的 `workflow_run` 把 owner 那句话当**字符串**传,`args.diff` 恒为 undefined。
+  // 它不报错,只是什么都找不到 —— 和「代码很干净」长得一模一样。
+  const script = builtinWorkflow('code-review')
+  assert.match(script, /typeof args === 'string' \? args :/, '字符串入参必须被接住')
+  assert.doesNotMatch(script, /const rawDiff = \(args && args\.diff\) \|\| ''/, '原样的对象入参行不能留下')
+  // 同时保证这是改写而不是硬编码:生成器换了写法要当场炸,而不是继续发一个坏契约。
+  assert.throws(() => builtinWorkflow('code-review-nonexistent'), /Unknown workflow/)
+})
+
+test('worktree 隔离失败时,错误里要有 owner 能照着做的下一步', () => {
+  // 包抛得很准:`worktree isolation failed for "X": not a git repository`。准确,但对**用** workflow
+  // 的人没用 —— 他没写那个包,不知道「隔离」是什么。实测默认工作区不是 git 仓库,所以任何声明了
+  // isolation 的包在那里必然撞上这句(F3)。
+  const worker = readFileSync(new URL('../../src/main/agent/workflowEngine/engine.worker.ts', import.meta.url), 'utf8')
+  assert.match(worker, /worktree isolation failed/, '要认出这条错误')
+  assert.match(worker, /把工作区切到一个 git 仓库/, '要给出下一步')
+  assert.match(worker, /message: explain\(wire\.message\)/, '翻译要真的接在错误投递上')
+  // 原文不能丢 —— 那是给写包的人排查用的。
+  assert.match(worker, /return message \+ /, '补一句,不是替换')
 })

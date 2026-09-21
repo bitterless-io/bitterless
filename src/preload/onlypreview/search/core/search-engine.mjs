@@ -636,8 +636,49 @@ export class OnlyPreviewSearchEngine {
         : undefined
     });
     let lastReportedCompleted = 0;
+    /**
+     * 建库过程中的**分阶段内存采样**。
+     *
+     * 为什么需要:2026-09-20 那次 8 分钟的全量重建(`elapsedMs=480771`,40,679 个文件)期间系统可用
+     * 内存掉到 1%(`freeMem=241MB`),隐藏 renderer 被打死、运行时再没起来。但那 8 分钟里**没有任何
+     * 内存记录** —— `measureOnlyPreviewSearchMemory` 只在特定时点被调用,所以"内存花在哪一段"至今
+     * 是空白,而不知道这一点就只能靠猜去拧参数(FTS 行数?事务大小?树元数据?)。
+     *
+     * **按时间节流,不按批次**:批次数随工作区大小线性增长,按批采样会让大仓刷屏;按 5 秒一次,
+     * 无论 4 万还是 40 万文件,一次重建的采样量都是个位数到几十条。
+     *
+     * **单独的事件,不往 `emitBuildProgress` 里加字段** —— 那个载荷要过 relay 的精确键校验
+     * (`_isBuildProgress`),多一个键就是又一次 `INDEX_PROTOCOL_ERROR`(2026-09-17 的教训)。
+     * 这里走 `diagnostics.emit`,那是纯日志通道,不上线。
+     *
+     * 只读 `process.memoryUsage()`:微秒级,且不像 `measureOnlyPreviewSearchMemory` 那样要去问
+     * `index.diskBytes()`(那是一次 I/O,放在建库热路径上会自己变成开销)。
+     */
+    const MEMORY_SAMPLE_INTERVAL_MS = 5_000;
+    let lastMemorySampleAt = 0;
+    const sampleMemory = (completed, force = false) => {
+      const now = this.diagnostics.now();
+      if (!force && now - lastMemorySampleAt < MEMORY_SAMPLE_INTERVAL_MS) return;
+      lastMemorySampleAt = now;
+      const usage = process.memoryUsage();
+      const mb = (bytes) => Math.round(bytes / (1024 * 1024));
+      this.diagnostics.emit('build-memory', {
+        tag: diagnostic?.tag,
+        mode: reconcileExisting ? 'reconcile' : 'rebuild',
+        completed,
+        total,
+        rssMiB: mb(usage.rss),
+        heapUsedMiB: mb(usage.heapUsed),
+        externalMiB: mb(usage.external),
+        arrayBuffersMiB: mb(usage.arrayBuffers),
+        treeEntries: candidateTreeEntries.length,
+        elapsedMs: this.diagnostics.elapsed(traversalStartedAt)
+      });
+    };
+    sampleMemory(0, true);
     const onBatch = ({ fileCount }) => {
       const completed = Math.min(total, fileCount);
+      sampleMemory(completed);
       if (completed < total && completed - lastReportedCompleted < 256) return;
       lastReportedCompleted = completed;
       this.emitBuildProgress({
@@ -651,6 +692,8 @@ export class OnlyPreviewSearchEngine {
       ? await targetIndex.reconcile(traversal.entries, this.identity, { onBatch })
       : await targetIndex.rebuild(traversal.entries, this.identity, { onBatch });
     const completed = Math.min(total, outcome.fileCount);
+    // 收尾强制采一次:峰值经常落在最后一批写入与索引收尾之间,按 5 秒节流可能正好错过。
+    sampleMemory(completed, true);
     if (completed !== lastReportedCompleted) {
       this.emitBuildProgress({
         buildRevision,

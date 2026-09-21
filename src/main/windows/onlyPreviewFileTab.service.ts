@@ -21,6 +21,8 @@ import {
 export interface OnlyPreviewFileTabHost {
   window: BaseWindow;
   path: string;
+  /** 打开时要滚到的行。尽力而为:渲染不了行的预览器忽略它,不是错误。 */
+  line?: number;
   isOpen(): boolean;
   bounds(): Rectangle;
   attach(container: View): void;
@@ -120,7 +122,7 @@ export class OnlyPreviewFileTabSurface {
       this.refresh();
       await this.toolbar.webContents.loadURL(toolbarUrl);
       if (!this.isLive()) throw new Error('File preview tab closed during startup.');
-      await this.region.present(this.host.hostToken, fileRef);
+      await this.region.present(this.host.hostToken, fileRef, undefined, { line: this.owner.line });
     } catch (error) {
       this.dispose();
       throw error;

@@ -208,7 +208,7 @@ export interface CoachXpcContract {
    *
    * 与「切换工作区」是两件事:那个开选择器,这个显示你已经在的那个目录。
    */
-  openWorkspaceInPreview(params: { path: string }): Promise<{ ok: boolean; error?: string }>
+  openWorkspaceInPreview(params: { path: string; line?: number }): Promise<{ ok: boolean; error?: string }>
   /** 这个会话不再用这个工作区了 —— 预览应用开着的正是它时把它一起收掉(Ral 2026-09-10)。 */
   closeWorkspacePreview(params: { path: string }): Promise<{ ok: boolean; error?: string }>
   activateTab(params: { id: string }): Promise<void>

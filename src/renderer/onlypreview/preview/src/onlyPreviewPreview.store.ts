@@ -92,6 +92,14 @@ class OnlyPreviewPreviewStore {
 
   get markdownFragment(): string | undefined { return this.presentation?.fragment; }
 
+  /**
+   * 打开时要滚到的行,**只有代码预览会读它**。
+   *
+   * 其他适配器(图片 / PDF / docx / 媒体)根本不查这个 getter —— 这就是「忽略」的实现方式:
+   * 不是在某处判断后跳过,而是没有行的地方压根不关心它。所以不存在报错的路径。
+   */
+  get targetLine(): number | undefined { return this.presentation?.line; }
+
   get previewMetadata(): OnlyPreviewMetadataViewModel | null {
     return buildOnlyPreviewMetadataViewModel({
       descriptor: this.descriptor,

@@ -84,7 +84,7 @@ function fixture(context, snapshot = {}) {
 test('one history-row click accepts its exact URL without an earlier focus action', async context => {
   const f = fixture(context);
   await f.clickOnce(f.find('browser-history__visit').querySelector('.browser-history__title'));
-  assert.deepEqual(f.calls, [{ session: 1, revision: 1, action: 'accept', url: entry.url }]);
+  assert.deepEqual(f.calls, [{ session: 1, revision: 1, action: 'accept', url: entry.url, row: 'history' }]);
 });
 
 test('one Google-row click accepts the correctly encoded original query', async context => {
@@ -92,6 +92,10 @@ test('one Google-row click accepts the correctly encoded original query', async 
   const f = fixture(context, { query });
   await f.clickOnce(f.find('browser-history__google-search').querySelector('svg'));
   assert.equal(f.calls[0].action, 'accept');
+  // Row identity travels with the action: the Google URL can be byte-identical to a stored
+  // history entry (search `cats` once and the results page is recorded), so the home store
+  // cannot tell the two rows apart from the URL alone.
+  assert.equal(f.calls[0].row, 'google');
   assert.equal(new URL(f.calls[0].url).searchParams.get('q'), query);
 });
 
@@ -133,7 +137,7 @@ test('Enter and Space on a button keep native activation and do not also accept 
     // jsdom does not synthesize keyboard activation clicks; provide the native-button click here.
     button.click();
     await nextTick();
-    assert.deepEqual(f.calls, [{ session: 1, revision: 1, action: 'accept', url: entry.url }]);
+    assert.deepEqual(f.calls, [{ session: 1, revision: 1, action: 'accept', url: entry.url, row: 'history' }]);
   }
 });
 

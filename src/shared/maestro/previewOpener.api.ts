@@ -31,11 +31,16 @@ export interface MaestroPreviewOpener {
   /** Settled Project root only; an external single-file preview does not supply a workspace. */
   currentProjectDirectory?(): string | undefined
   /** A per-file tab with independent preview authority and no OnlyPreview history. */
-  createFileTabSpec?(absolutePath: string): MaestroCompositeTabSpec
+  createFileTabSpec?(absolutePath: string, options?: { line?: number }): MaestroCompositeTabSpec
   /** Address-bar targets use file tabs; directories keep the Project route. */
-  openInTab?(absolutePath: string, options?: { tabId?: string }): Promise<void>
-  /** Open one absolute path — a directory or a file — in the host's preview application. */
-  open(absolutePath: string): Promise<void>
+  openInTab?(absolutePath: string, options?: { tabId?: string; line?: number }): Promise<void>
+  /**
+   * Open one absolute path — a directory or a file — in the host's preview application.
+   *
+   * `line` 是**尽力而为的建议**:只有能按行渲染的预览器会用它,其余(图片 / PDF / 媒体 / 目录)
+   * 照常打开、不滚动。行号不合法或超出文件行数同样只是忽略 —— 它永远不是打不开的理由。
+   */
+  open(absolutePath: string, options?: { line?: number }): Promise<void>
   /**
    * 这个会话不再用这个工作区了 —— 解除预览中匹配的 Project 绑定,保留 tab/窗口供再次选择。
    *

@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-declare const __BITTERLESS_VERSION_CODE__: string;
+// `__BITTERLESS_VERSION_CODE__` 移到 `src/shared/env.d.ts` —— 那里每个 typecheck surface 都看得到。
 
 interface ImportMetaEnv {
   readonly VITE_ENV: 'dev' | 'prod';
