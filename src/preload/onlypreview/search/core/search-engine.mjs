@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, realpath, rename, rm } from 'node:fs/promises';
+import { mkdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { backup } from 'node:sqlite';
 
@@ -106,6 +106,48 @@ const closeIndex = (index, onFailure) => {
     // unlinks the file, and a handle that stayed open holds a multi-GB index's blocks for the life
     // of the process, which looks exactly like a leak with no explanation anywhere.
     onFailure?.(error);
+  }
+};
+
+/**
+ * 同一个库,同一时刻只允许一个构建 —— 按**路径**设闸,不是按引擎实例。
+ *
+ * 引擎实例是会叠起来的。`fileSearchRuntime._shutdownActive()` 先把 `active` 置空,再去
+ * `await` 旧 coordinator 的 `shutdown()`;而那个 `shutdown()` 排在正在跑的构建后面,构建又卡在
+ * 不可取消的 `backup()` 里(实测 80–120 秒)。这段窗口里进来的 `initialize` 读到 `active === null`,
+ * 什么都不等就在同一个库上再起一个引擎。2026-09-21 参考机上同时活着三个 —— 一个 runtime 发出的
+ * `sqlite-open` 次数(3)正好等于并发构建峰值(3),四个 runtime 各自成立。
+ *
+ * 而 `operationTail` / `buildEpoch` / `promotionPromise` 全是实例字段,跨实例一个都不起作用。
+ * 三个并发构建同时干三件坏事:各拷一份 2.6 GB 候选(两小时 +14 GB);`backup()` 的源被另一个
+ * 构建的 promote 改名抽走,拷出撕裂的候选,而损坏被记在活库头上隔离掉(实测四份隔离副本里有两份
+ * `quick_check` 与 FTS5 双双通过,纯属冤枉);promote 之后旧库的 `-wal` 被留给新库回放,真损坏。
+ *
+ * 按路径设闸,以后任何一条新增的"第二个引擎"路径都自动被覆盖,不必在每个调用方各补一道闸——
+ * 这个不变量属于库,不属于调用方。
+ *
+ * 注意它**不能**单独解决 stale-WAL:另一个引擎的 `this.index` 仍然握着同一个库的连接,所以本引擎
+ * 关掉自己的句柄并不足以让 SQLite 删掉 `<db>-wal`。promote 因此必须连 sidecar 一起搬,见下面
+ * `renameSqliteIndexArtifacts` 的无条件使用。
+ */
+const buildLocks = new Map();
+
+const withBuildLock = async (databasePath, operation) => {
+  const previous = buildLocks.get(databasePath) ?? Promise.resolve();
+  let release = () => undefined;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  // 队尾永远不会 reject:`held` 只由 `finally` 里的 `release()` 兑现,构建自身抛错不影响它。
+  const tail = previous.then(() => held);
+  buildLocks.set(databasePath, tail);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    // 只有队尾还是自己时才清理,否则会把后来者排好的队一起丢掉。
+    if (buildLocks.get(databasePath) === tail) buildLocks.delete(databasePath);
   }
 };
 
@@ -486,7 +528,13 @@ export class OnlyPreviewSearchEngine {
     }
   }
 
-  async buildAndPromoteCandidate({
+  async buildAndPromoteCandidate(params) {
+    return await withBuildLock(this.databasePath, () =>
+      this.buildAndPromoteCandidateExclusive(params)
+    );
+  }
+
+  async buildAndPromoteCandidateExclusive({
     seedIndex,
     reconcileExisting,
     buildRevision,
@@ -778,13 +826,23 @@ export class OnlyPreviewSearchEngine {
       }
       this.index = undefined;
       try {
-        if (corruptionCode) await renameSqliteIndexArtifacts(this.databasePath, previousPath);
-        else await rename(this.databasePath, previousPath);
+        // **无条件连 sidecar 一起搬,不只在判定损坏时。**
+        //
+        // 裸 `rename` 只搬主库,把 `<db>-wal` / `<db>-shm` 留在原地。这本来是安全的 —— 上面刚关掉
+        // 最后一个连接,SQLite 会顺手把 WAL 删掉。但"最后一个"这个前提不成立:同一个库上可能还有
+        // 另一个引擎的 `this.index` 开着(见 `withBuildLock` 的注释),它让 WAL 活了下来。于是
+        // 候选被改名过来之后,旁边躺着的是**上一个**数据库的 WAL。
+        //
+        // WAL 里没有任何指回所属数据库的信息 —— 只有 salt 和校验链 —— 而这两个文件页大小和 schema
+        // 都一样,于是旧库的帧会干干净净地回放到新库上。2026-09-21 的取证副本就是这个形态:
+        // 一段连续页被引用两次(`2nd reference to page 663714…`)、同树 rowid 乱序、FTS5 malformed。
+        await renameSqliteIndexArtifacts(this.databasePath, previousPath);
         movedPrevious = true;
       } catch (error) {
         if (error?.code !== 'ENOENT') throw error;
       }
-      await rename(candidatePath, this.databasePath);
+      // 候选那边同理:它的 `-wal` 若因关闭失败而留存,不跟着搬就等于把已提交的帧丢在原地。
+      await renameSqliteIndexArtifacts(candidatePath, this.databasePath);
       installedCandidate = true;
       promotedIndex = new OnlyPreviewSqliteIndex(this.databasePath);
       const promotedTree = promotedIndex.readTreeSnapshot({ searchPolicy: this.searchPolicy });
@@ -823,8 +881,8 @@ export class OnlyPreviewSearchEngine {
       let restoredPrevious = false;
       if (movedPrevious) {
         try {
-          if (corruptionCode) await renameSqliteIndexArtifacts(previousPath, this.databasePath);
-          else await rename(previousPath, this.databasePath);
+          // 回滚走和提升同一条路:主库和 sidecar 必须整组回去,否则恢复出来的库配的是别人的 WAL。
+          await renameSqliteIndexArtifacts(previousPath, this.databasePath);
           restoredPrevious = true;
         } catch {
           restoredPrevious = false;
