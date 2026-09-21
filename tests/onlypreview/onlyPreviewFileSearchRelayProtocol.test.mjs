@@ -573,3 +573,174 @@ test('invalid browse and cancel terminal responses use the dedicated protocol co
     harness.relay.detach();
   }
 });
+
+/**
+ * The owner hit `INDEX_PROTOCOL_ERROR` twice (2026-09-17 disk-driven, 2026-09-21 batch-driven) and
+ * the second was undiagnosable: a dozen rules all reported the same sentence, the rejection latches
+ * the runtime until restart, and the log named neither the rule nor the row. These guards exist so
+ * the third occurrence answers "which rule" from the log alone.
+ */
+const captureLatchNotices = (run) => {
+  const notices = [];
+  const original = console.info;
+  console.info = (...args) => notices.push(args.join(' '));
+  try {
+    run();
+  } finally {
+    console.info = original;
+  }
+  return notices.filter((line) => line.includes('event=protocol-latched'));
+};
+
+const latchReasonFor = async (overrides) => {
+  const harness = createHarness();
+  await initialize(harness);
+  const requestId = 'rejection-reason-search';
+  const searching = harness.relay.call('host-token', 'search', searchRequest(requestId), 5_000);
+  const notices = captureLatchNotices(() => {
+    assert.throws(
+      () => publishBatch(harness.relay, searchBatch(requestId, overrides)),
+      isIndexProtocolError
+    );
+  });
+  await assert.rejects(searching, isIndexProtocolError);
+  harness.relay.detach();
+  assert.equal(notices.length, 1, `expected one latch notice, got ${JSON.stringify(notices)}`);
+  return notices[0].slice(notices[0].indexOf('reason=') + 'reason='.length);
+};
+
+test('a latched batch names the rule and the row that rejected it', async () => {
+  const second = { ...fileResult, resultToken: 'second', relativePath: 'docs/a.md', name: 'a.md' };
+  const third = { ...fileResult, resultToken: 'third', relativePath: 'docs/b.md', name: 'b.md' };
+  const cases = [
+    [
+      { files: [], contents: [{ ...contentResult, relativePath: '/private/readme.md' }] },
+      'contents[0] relativePath-shape'
+    ],
+    [
+      { files: [{ ...fileResult, parentRelativePath: 'elsewhere' }], contents: [] },
+      'files[0] parent-mismatch parentLen=9 expectedLen=4'
+    ],
+    [
+      { files: [{ ...fileResult, unexpected: true }], contents: [] },
+      'files[0] exact-keys missing=[] extra=[unexpected]'
+    ],
+    [{ files: [{ ...fileResult, nodeKind: 'symlink' }], contents: [] }, 'files[0] nodeKind=symlink'],
+    [
+      { files: [fileResult, { ...fileResult, resultToken: 'second' }], contents: [] },
+      'files[1] duplicate-relativePath'
+    ],
+    // searchRequest asks for 2; the per-batch bound is the smaller of that and the wire's own cap.
+    [{ files: [fileResult, second, third], contents: [] }, 'files over-cap count=3 maximum=2'],
+    [
+      {
+        files: [],
+        contents: [
+          { ...contentResult, contentMatch: { snippetText: 'A👨‍👩‍👧‍👦B', highlightStart: 2, highlightLength: 5 } }
+        ]
+      },
+      // Graphemes, not code units: the family emoji is one.
+      'contents[0] highlight-overruns start=2 length=5 graphemes=3'
+    ],
+    // No pending search owns this id, so the batch never reaches a per-result rule. Worth pinning:
+    // it is the reason a batch that merely arrived late reports, and it is not a validation failure.
+    [{ requestId: 'someone-elses-search' }, 'no-matching-pending-search']
+  ];
+  for (const [overrides, expected] of cases) {
+    assert.equal(await latchReasonFor(overrides), expected);
+  }
+});
+
+/**
+ * Every field the reason echoes is chosen by the producer, and the rule failed because that field
+ * holds something unexpected — so "unexpected" can be a path. The failure wire drops any message
+ * carrying a path separator, which would silently take the whole diagnostic with it.
+ */
+test('a reason never carries a path, a name, or snippet text, even when the bad value is one', async () => {
+  const leaks = [
+    [{ files: [{ ...fileResult, previewHint: 'docs/secret.md' }], contents: [] }, 'files[0] previewHint=<string:14>'],
+    [{ files: [{ ...fileResult, nodeKind: { path: '/private/x' } }], contents: [] }, 'files[0] nodeKind=<object>'],
+    [
+      { files: [], contents: [{ ...contentResult, mediaType: '/Users/ral/Documents' }] },
+      'contents[0] mediaType=<string:20>'
+    ],
+    [
+      { files: [{ ...fileResult, 'docs/sneaky.md': true }], contents: [] },
+      'files[0] exact-keys missing=[] extra=[<string:14>]'
+    ]
+  ];
+  for (const [overrides, expected] of leaks) {
+    const reason = await latchReasonFor(overrides);
+    assert.equal(reason, expected);
+    assert.doesNotMatch(reason, /[\\/]/, 'a path separator here means the log line is dropped whole');
+  }
+});
+
+test('a non-batch rejection says so rather than naming a stale batch rule', async () => {
+  const harness = createHarness();
+  await initialize(harness);
+  const notices = captureLatchNotices(() => {
+    assert.throws(
+      () =>
+        harness.relay.publish({
+          capability,
+          eventName: 'onlypreview/browse-listing',
+          value: { listing: { ...browseListing, entries: [{ ...browseEntry, searchExcluded: 'false' }] } }
+        }),
+      isIndexProtocolError
+    );
+  });
+  assert.deepEqual(notices.map((line) => line.slice(line.indexOf('reason='))), [
+    'reason=non-batch-event'
+  ]);
+  harness.relay.detach();
+});
+
+test('only the first rejection is reported; the latch makes every later one an echo', async () => {
+  const harness = createHarness();
+  await initialize(harness);
+  const requestId = 'echo-search';
+  const searching = harness.relay.call('host-token', 'search', searchRequest(requestId), 5_000);
+  const notices = captureLatchNotices(() => {
+    for (const relativePath of ['/private/one.md', '/private/two.md']) {
+      assert.throws(
+        () =>
+          publishBatch(
+            harness.relay,
+            searchBatch(requestId, { files: [], contents: [{ ...contentResult, relativePath }] })
+          ),
+        isIndexProtocolError
+      );
+    }
+  });
+  assert.equal(notices.length, 1, 'the second publish rethrows the latched error and logs nothing');
+  await assert.rejects(searching, isIndexProtocolError);
+  harness.relay.detach();
+});
+
+/**
+ * `_expectationOf` records `maxResults: null` for any request whose value is absent or out of range.
+ * The cap was then `Math.min(50, maxResults ?? 0)` — zero — so the first non-empty batch of such a
+ * search latched the whole runtime, permanently, for every other search too. An unknown per-search
+ * cap is not evidence that zero results are allowed; the wire's own per-batch cap is the bound.
+ */
+test('a search that never recorded a result cap streams instead of latching the runtime', async () => {
+  const harness = createHarness();
+  await initialize(harness);
+  const requestId = 'uncapped-search';
+  const { maxResults: _ignored, ...uncapped } = searchRequest(requestId);
+  const searching = harness.relay.call('host-token', 'search', uncapped, 5_000);
+  const notices = captureLatchNotices(() => {
+    assert.deepEqual(publishBatch(harness.relay, searchBatch(requestId)), { ok: true });
+  });
+  assert.deepEqual(notices, []);
+  assert.deepEqual(
+    harness.broadcasts.map(({ eventName }) => eventName),
+    ['onlypreview/search-batch']
+  );
+  // The terminal response still refuses an uncapped search — that contract is unchanged. What the
+  // fix removes is a malformed request taking the runtime down before anyone sees a result.
+  harness.client.respond('search', searchResponse(requestId));
+  await assert.rejects(searching, isIndexProtocolError);
+  harness.relay.detach();
+});

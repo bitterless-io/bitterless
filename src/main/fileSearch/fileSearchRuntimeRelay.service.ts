@@ -29,6 +29,7 @@ import {
   type OnlyPreviewSearchBuildProgress
 } from '@shared/onlypreview/onlyPreviewSearch.type';
 import {
+  describeOnlyPreviewGlobalSearchBatchRejection,
   isOnlyPreviewGlobalSearchBatch,
   isOnlyPreviewGlobalSearchOfficeReadChunkResult,
   isOnlyPreviewGlobalSearchOfficeReadOpenResult,
@@ -104,6 +105,10 @@ const searchSnippetSegmenter = new Intl.Segmenter('und', { granularity: 'graphem
 
 export class FileSearchRuntimeRelayService {
   private active: ActiveRuntime | null = null;
+  // Set by the batch path just before it rejects, read once by the latch. A field rather than a
+  // return value because `_handleEvent` funnels a dozen unrelated rejections into one throw, and
+  // threading a reason through all of them would touch every branch to serve one.
+  private lastBatchRejection: string | null = null;
   private readonly diagnostics: OnlyPreviewSearchDiagnostics;
 
   constructor(diagnostics = createOnlyPreviewSearchDiagnostics()) {
@@ -503,13 +508,17 @@ export class FileSearchRuntimeRelayService {
       value.requestId
     );
     if (retiredSearch) {
-      return isOnlyPreviewGlobalSearchBatch(
+      const retiredCap = Math.min(
+        ONLY_PREVIEW_SEARCH_MAX_BATCH_RESULTS,
+        retiredSearch.maxResults
+      );
+      if (isOnlyPreviewGlobalSearchBatch(value, retiredSearch, retiredCap)) return 'ignore';
+      this.lastBatchRejection = describeOnlyPreviewGlobalSearchBatchRejection(
         value,
         retiredSearch,
-        Math.min(ONLY_PREVIEW_SEARCH_MAX_BATCH_RESULTS, retiredSearch.maxResults)
-      )
-        ? 'ignore'
-        : 'invalid';
+        retiredCap
+      );
+      return 'invalid';
     }
     const matchingSearch = active.retiredSearchRequests.findPending(
       active.pending,
@@ -517,18 +526,37 @@ export class FileSearchRuntimeRelayService {
       value.generation as number,
       value.requestId
     );
-    if (!matchingSearch) return 'invalid';
-    return isOnlyPreviewGlobalSearchBatch(
+    if (!matchingSearch) {
+      this.lastBatchRejection = 'no-matching-pending-search';
+      return 'invalid';
+    }
+    // `?? 0` here used to mean "a search that never recorded its cap rejects every non-empty batch
+    // and latches the runtime" — a missing number silently became the strictest possible bound. The
+    // retired branch above never had it. Fall back to the wire's own cap instead: an unknown
+    // per-search cap is not evidence that zero results are allowed.
+    const cap = Math.min(
+      ONLY_PREVIEW_SEARCH_MAX_BATCH_RESULTS,
+      matchingSearch.maxResults ?? ONLY_PREVIEW_SEARCH_MAX_BATCH_RESULTS
+    );
+    if (isOnlyPreviewGlobalSearchBatch(value, matchingSearch, cap)) return 'broadcast';
+    this.lastBatchRejection = describeOnlyPreviewGlobalSearchBatchRejection(
       value,
       matchingSearch,
-      Math.min(ONLY_PREVIEW_SEARCH_MAX_BATCH_RESULTS, matchingSearch.maxResults ?? 0)
-    )
-      ? 'broadcast'
-      : 'invalid';
+      cap
+    );
+    return 'invalid';
   }
 
   private _latchProtocolFailure(active: ActiveRuntime): OnlyPreviewContractError {
     if (active.protocolFailure) return active.protocolFailure;
+    // The one line that makes this diagnosable. Everything after the first rejection is an echo of
+    // it — `publish` rethrows the latched error — so the reason is only worth recording here, once.
+    // Rule names, indexes and lengths only: no path, no name, no snippet text, so it is safe to log
+    // and cannot carry a path separator into the failure wire.
+    console.info(
+      `[onlypreview-search] event=protocol-latched reason=${this.lastBatchRejection ?? 'non-batch-event'}`
+    );
+    this.lastBatchRejection = null;
     const error = indexProtocolError();
     active.protocolFailure = error;
     active.resolveProtocolFailure(error);

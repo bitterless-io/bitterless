@@ -225,6 +225,14 @@
   The paired defect and its fix are in
   [micromeet-cowork](../../micromeet-cowork/docs/issues/no-authorized-institution-blocks-chat-and-skills.md).
 
+- [`INDEX_PROTOCOL_ERROR` names no rule](issues/onlypreview-index-protocol-error-names-no-rule.md) — implemented;
+  code verified, owner testing pending. One rejected result batch latches search for the whole
+  runtime until restart, and ~15 validator rules all reported the same sentence, so the second
+  occurrence (2026-09-21, not the disk one) was undiagnosable by design. The latch now logs the rule
+  and row that rejected it, with producer-chosen values sanitised so a planted path cannot drop the
+  line at the failure wire; `maxResults ?? 0` no longer turns an unknown cap into a cap of zero.
+  Paired fix in [micromeet-cowork](../../micromeet-cowork/apps/cowork/docs/issues/onlypreview-index-protocol-error-names-no-rule.md).
+
 - [OnlyPreview background index corruption](issues/onlypreview-corrupt-project-index.md) — recovery extended; code verified, owner testing pending;
   SQLite corruption first reached during warm reconciliation gets one clean rebuild with the suspect database preserved.
 

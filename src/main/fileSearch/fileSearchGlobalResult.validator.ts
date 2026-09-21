@@ -373,3 +373,127 @@ export const isOnlyPreviewGlobalSearchOfficeReadChunkResult = (
   value.bytes.byteLength <= ONLY_PREVIEW_OFFICE_READ_CHUNK_BYTES &&
   typeof value.eof === 'boolean' &&
   (value.eof || value.bytes.byteLength > 0);
+
+/**
+ * Echo a value that failed a rule, without echoing whatever the producer put in it.
+ *
+ * Which wrong value arrived is most of the diagnostic, but every field reported here is chosen by
+ * the producer, and the rule failed precisely because it holds something unexpected. A result that
+ * misfiles a path into `previewHint` would otherwise write that path into `onlypreview.log` — and
+ * the failure wire rejects any message carrying a path separator, so the line would be dropped
+ * whole. Echo a string only when it already looks like the short token the rule expected; report
+ * anything else by type and length, which is enough to recognise "a path landed here".
+ */
+const echoValue = (value: unknown): string => {
+  if (typeof value === 'string') {
+    return /^[A-Za-z][A-Za-z0-9_-]{0,31}$/u.test(value) ? value : `<string:${value.length}>`;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean' || value === null) return String(value);
+  return `<${typeof value}>`;
+};
+
+/**
+ * Why a search batch was rejected — the rule name, not a boolean.
+ *
+ * `isOnlyPreviewGlobalSearchBatch` answers yes/no over a dozen rules and the relay turns any `no`
+ * into one sentence: "the Project search index returned an invalid response". That sentence names
+ * neither the rule nor the row, and the rejection **latches** the runtime, so the search is dead
+ * until restart with no way to find out what did it. That happened to the owner twice (2026-09-17
+ * disk-driven, 2026-09-21 batch-driven) and the second one was undiagnosable from the log by design.
+ *
+ * This runs ONLY after a rejection, so the accepting path pays nothing. It deliberately re-walks the
+ * same rules in the same order rather than instrumenting them: a predicate that reports its own
+ * failure has to thread a channel through every `&&`, and the first edit that forgets to would
+ * silently go back to a bare `false`.
+ *
+ * **Emits rule names, indexes, kinds and lengths — never a path, a name or snippet text.** This
+ * string reaches `onlypreview.log`, and the search wire's failure validator rejects any message
+ * containing a path separator. Keeping it free of content is what lets it be logged at all.
+ */
+const describeResultRejection = (
+  value: unknown,
+  section: 'files' | 'contents'
+): string | undefined => {
+  if (!isRecord(value)) return 'not-a-record';
+  const expected =
+    section === 'files'
+      ? ['mediaType', 'name', 'nodeKind', 'parentRelativePath', 'previewHint', 'relativePath', 'resultToken', 'section']
+      : ['contentMatch', 'fileName', 'mediaType', 'parentRelativePath', 'relativePath', 'resultToken', 'section'];
+  if (!exactKeys(value, expected)) {
+    const actual = Reflect.ownKeys(value).filter((key) => typeof key === 'string') as string[];
+    const missing = expected.filter((key) => !actual.includes(key));
+    const extra = actual.filter((key) => !expected.includes(key));
+    return `exact-keys missing=[${missing.map(echoValue).join(',')}] extra=[${extra.map(echoValue).join(',')}]`;
+  }
+  if (value.section !== section) return `section=${echoValue(value.section)}`;
+  if (!boundedToken(value.resultToken)) return 'resultToken';
+  if (!relativePath(value.relativePath)) return 'relativePath-shape';
+  if (!relativePath(value.parentRelativePath, true)) return 'parentRelativePath-shape';
+  if (value.parentRelativePath !== parentOf(value.relativePath as string)) {
+    // The producer computes the parent itself; a disagreement here is the two sides slicing the same
+    // path differently, which is why the lengths are the useful part and the paths are not.
+    return `parent-mismatch parentLen=${String(value.parentRelativePath).length} expectedLen=${parentOf(value.relativePath as string).length}`;
+  }
+  const nameKey = section === 'files' ? 'name' : 'fileName';
+  if (!boundedString(value[nameKey], 4_096)) return `${nameKey}-bounds`;
+  if (value[nameKey] !== basenameOf(value.relativePath as string)) {
+    return `${nameKey}-mismatch len=${String(value[nameKey]).length} expectedLen=${basenameOf(value.relativePath as string).length}`;
+  }
+  if (section === 'files') {
+    if (value.nodeKind !== 'file' && value.nodeKind !== 'directory') return `nodeKind=${echoValue(value.nodeKind)}`;
+    if (!PREVIEW_HINTS.has(String(value.previewHint))) return `previewHint=${echoValue(value.previewHint)}`;
+    if (!MEDIA_TYPES.has(String(value.mediaType))) return `mediaType=${echoValue(value.mediaType)}`;
+    if (value.nodeKind === 'directory' && (value.previewHint !== 'unsupported' || value.mediaType !== 'unknown')) {
+      return `directory-hint previewHint=${echoValue(value.previewHint)} mediaType=${echoValue(value.mediaType)}`;
+    }
+    return undefined;
+  }
+  if (value.mediaType !== 'text') return `mediaType=${echoValue(value.mediaType)}`;
+  const match = value.contentMatch;
+  if (!isRecord(match)) return 'contentMatch-not-a-record';
+  if (!exactKeys(match, ['highlightLength', 'highlightStart', 'snippetText'])) return 'contentMatch-exact-keys';
+  if (!boundedString(match.snippetText, 65_536)) {
+    return `snippet-bounds len=${typeof match.snippetText === 'string' ? match.snippetText.length : -1}`;
+  }
+  if (!Number.isSafeInteger(match.highlightStart) || (match.highlightStart as number) < 0) {
+    return `highlightStart=${echoValue(match.highlightStart)}`;
+  }
+  if (!Number.isSafeInteger(match.highlightLength) || (match.highlightLength as number) < 1) {
+    return `highlightLength=${echoValue(match.highlightLength)}`;
+  }
+  const graphemes = [...segmenter.segment(match.snippetText as string)].length;
+  if ((match.highlightStart as number) + (match.highlightLength as number) > graphemes) {
+    return `highlight-overruns start=${echoValue(match.highlightStart)} length=${echoValue(match.highlightLength)} graphemes=${graphemes}`;
+  }
+  return undefined;
+};
+
+export const describeOnlyPreviewGlobalSearchBatchRejection = (
+  value: unknown,
+  expectation: SearchExpectation,
+  maximum: number
+): string => {
+  if (!isRecord(value)) return 'batch not-a-record';
+  if (!exactKeys(value, ['contents', 'files', 'generation', 'requestId', 'workspaceId'])) {
+    return 'batch exact-keys';
+  }
+  if (!commonEnvelope(value, expectation)) return 'batch envelope workspace-generation-or-requestId';
+  for (const section of ['files', 'contents'] as const) {
+    const results = value[section];
+    if (!Array.isArray(results)) return `${section} not-an-array`;
+    if (results.length > maximum) return `${section} over-cap count=${results.length} maximum=${maximum}`;
+    const seen = new Set<string>();
+    for (const [index, result] of results.entries()) {
+      const reason = describeResultRejection(result, section);
+      if (reason) return `${section}[${index}] ${reason}`;
+      const path = (result as { relativePath: string }).relativePath;
+      if (seen.has(path)) return `${section}[${index}] duplicate-relativePath`;
+      seen.add(path);
+    }
+  }
+  const total = (value.files as unknown[]).length + (value.contents as unknown[]).length;
+  if (total > maximum) return `batch over-cap total=${total} maximum=${maximum}`;
+  // The rules above accepted everything. If the caller still rejected, the two walks disagree, which
+  // is itself the bug worth reporting.
+  return `batch rejected-but-no-rule-failed total=${total} maximum=${maximum}`;
+};
