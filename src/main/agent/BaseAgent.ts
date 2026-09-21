@@ -291,18 +291,20 @@ export class BaseAgent {
      * 不比较就等于每轮都把会话推倒重来。比较用 `resolve()` 归一化,`/a` 与 `/a/` 不算变化。
      */
     if (this.cwdKey() !== previousCwd) {
-      const work = this.sessionWork
-      this.reset()
       /**
-       * **等 abort 落定再往下走。** `reset()` 触发的 `abortManagedSession` 是「同步置位、异步清除」
-       * (`abortPending = true` 在赋值那一行,清零在 `.then` 里),而 `prompt()` 开头那道闸会因为
-       * `abortPending` 直接拒掉这一轮。`handleAgentTurn` 正是 `await setProjectRoot()` 之后紧接着
-       * 发消息 —— 不等的话,用户换完工作区的**那一条**消息会回
-       * 「agent is already handling a message」。
+       * **这里不需要等 abort 落定 —— bl 侧没有那套机制。**
        *
-       * 这里是唯一能等的地方:`setProjectRoot` 本来就是 async,而 `reset()` 在热路径上被同步调用。
+       * 原来这里有 `const work = this.sessionWork` 加 `await work?.aborting?.catch(…)`,连同一段
+       * 讲 `abortPending` 会拒掉换根后第一条消息的注释。那段是从 cowork 侧连注释一起搬过来的,
+       * 但**底层实现没跟过来**:bl 的 `BaseAgent` 没有 `ManagedSessionWork`、没有
+       * `abortManagedSession`、也没有 `abortPending`,`prompt()` 开头那道闸只看 `this.busy`。
+       * `sessionWork` 这个字段在本类里根本不存在,所以 `work` 恒为 `undefined`,那个 await 从来
+       * 就是空操作 —— 类型检查干净之后它才现形(`TS2339`)。
+       *
+       * 删掉的是**一段假装在等待的代码**,不是删掉一道保护:它描述的那个失败模式在 bl 不成立。
+       * 真要把 cowork 的会话所有权/abort 机制搬过来,那是另一件事。
        */
-      await work?.aborting?.catch(() => undefined)
+      this.reset()
     }
     const instructions = await readProjectInstructions(projectRoot)
     if (this.busy || instructions === this.projectInstructions) return

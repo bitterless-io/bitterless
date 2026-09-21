@@ -383,7 +383,14 @@ export class OnlyPreviewShellStore {
           this.pendingCharacterCount = characterCount;
         }
       },
-      characterCountReady: (revision) => this.characterCountGate.acceptReady(revision),
+      characterCountReady: (revision) => {
+        this.characterCountGate.acceptReady(revision);
+        // **缓冲值在这里回灌。** 计数早于 gate 就绪到达时被存进 `pendingCharacterCount`
+        // (`canBufferCount` 要求 `suspended`),而在此之前**没有任何地方读它** —— 也就是说
+        // 「选中文字 → 计数来得太早 → 永远不显示,除非重新选一次」。
+        // 判据直接用 gate 自己的:`canAcceptCount` 要求 not-suspended 且 ready,正是此刻。
+        this.flushPendingCharacterCount();
+      },
       // electron-xpc keeps one callback per event; fan out here without another subscription.
       previewPresentation: () => {
         void this.syncPreviewPresentation();
@@ -419,6 +426,15 @@ export class OnlyPreviewShellStore {
       presentation.adapterId === 'markdown-dom'
     );
   }
+  /** 把早到而被缓冲的字符数补显出来;此刻不满足接收条件就原样留着。 */
+  private flushPendingCharacterCount(): void {
+    if (!this.pendingCharacterCount) return;
+    if (!this.characterCountGate.canAcceptCount(this.pendingCharacterCount)) return;
+    if (!this.selectedTextAvailable || !this.previewFileRef) return;
+    this.selectedCharacterCount = this.pendingCharacterCount;
+    this.pendingCharacterCount = 0;
+  }
+
   private clearNativeFindSelectionCount(): void {
     if (!this.nativeFindSuppressesCharacterCount()) return;
     this.selectedCharacterCount = 0;

@@ -118,19 +118,27 @@ promotion-to-next-plan gaps of 5–8 s.
 
 Ordered by what stops the damage soonest. The first one alone stops corruption and the disk burn.
 
-1. **Per-`databasePath` build mutex** around `buildAndPromoteCandidate`
+1. **DONE (2026-09-21, both repos).** **Per-`databasePath` build mutex** around `buildAndPromoteCandidate`
    (`search-engine.mjs:489`). Module-level, keyed by path, so it holds across engine instances.
    Chosen over repairing `_shutdownActive` alone because the invariant — one build per database —
    belongs to the resource, not to one caller: any future second engine inherits it for free.
    Repairing `_shutdownActive` alone is also actively unsafe, because awaiting a shutdown that can
    never drain would make `initialize` block forever.
-2. **Sidecar-atomic promotion** — use `renameSqliteIndexArtifacts` unconditionally at `:781-782`
+2. **DONE (2026-09-21, both repos).** **Sidecar-atomic promotion** — use `renameSqliteIndexArtifacts` unconditionally at `:781-782`
    and at the rollback twin `:826-827`, not only when `corruptionCode` is set. Defense in depth:
    a promoted inode must never land on a path whose `-wal`/`-shm` it did not bring.
-3. **Charge escalated rebuilds to the cooldown** — carry an `escalatedToFull` flag out of
-   `watch-reconciler.apply()` and record the cooldown on `full || escalatedToFull`
-   (`watch-controller.mjs:238-241`). This is what bounds engine lifetime, because it lets the
-   operation queue drain so `shutdown()` can finally run.
+3. **NOT DONE — needs a design decision, do not patch mechanically.** **Charge escalated rebuilds
+   to the cooldown.** Recording an `escalatedToFull` flag at `watch-controller.mjs:238-241` is the
+   easy half and is *not sufficient*: the runaway is made of batches the controller dispatched as
+   `{full:false}`, so recording the cooldown never gates them — the next escalated batch bypasses
+   it exactly as before. Gating them properly means the reconciler must stop escalating inline and
+   instead *request* a full reconcile from the controller (`fullReconcile = true` + `schedule()`),
+   letting it pass through the existing gate at `:199`. That defers tree freshness across the
+   cooldown, which is the intended trade but is a real behaviour change at five call sites
+   (`watch-reconciler.mjs:189, 193-197, 206-215, 307-309, 422-425`) — a careless version leaves
+   the tree stale after a `mkdir`/`rmdir`, which is a worse, user-visible regression than the
+   churn it fixes. This is what bounds engine lifetime: it lets the operation queue drain so
+   `shutdown()` can finally run.
 4. **Close the `_shutdownActive` window** (`fileSearchRuntime.ts:470-477`) — only meaningful once
    (3) makes shutdown able to complete.
 5. **Quarantine the failing artifact, not the live database** — when `corruptionCode` came from a
