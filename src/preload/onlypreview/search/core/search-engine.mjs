@@ -1,8 +1,16 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, realpath, rm } from 'node:fs/promises';
+import { lstat, mkdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { backup } from 'node:sqlite';
 
+import { BACKGROUND_BUILD_TRANSACTION_FILES } from './constants.mjs';
+import { submitIndexTask } from './index-queue.mjs';
+import {
+  advanceDeleteTaskToIndex,
+  beginDeleteTask,
+  clearDeleteTask,
+  readDeleteJournal
+} from './delete-journal.mjs';
 import { SEARCH_ENGINE_IDENTITY, OnlyPreviewSqliteIndex } from './sqlite-index.mjs';
 import { measureOnlyPreviewSearchMemory } from './search-memory.mjs';
 export { assessOnlyPreviewSearchMemory } from './search-memory.mjs';
@@ -41,10 +49,23 @@ import { createWorkspaceWatchController } from './watch-controller.mjs';
 import { createWorkspaceConfigReconciler } from './config-reconciler.mjs';
 import {
   createOnlyPreviewSearchWatchReconciler,
+  pathHasAncestorIn,
   sortOnlyPreviewTreeEntries
 } from './watch-reconciler.mjs';
 
 const engineHash = createHash('sha256').update(SEARCH_ENGINE_IDENTITY).digest('hex');
+
+// `lstat` 而不是 `stat`:一条指向已删目标的符号链接本身还在,不该被当成"已经删掉"。
+const pathExists = async (absolutePath) => {
+  try {
+    await lstat(absolutePath);
+    return true;
+  } catch (error) {
+    if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') return false;
+    // 权限之类的错误说明它可能还在 —— 宁可不清索引,也不要凭一次读失败就抹掉用户的内容。
+    return true;
+  }
+};
 
 const prospectiveRealPath = async (candidatePath) => {
   const missingSegments = [];
@@ -68,6 +89,13 @@ const prospectiveRealPath = async (candidatePath) => {
 const removeSqliteArtifacts = async (databasePath) => {
   await Promise.all(
     ['', '-wal', '-shm', '-journal'].map((suffix) => rm(`${databasePath}${suffix}`, { force: true }))
+  );
+};
+
+// 同样那组后缀,但**不含主库** —— 用于提升前清掉活库路径上不属于新库的 WAL 残留。
+const removeSqliteSidecars = async (databasePath) => {
+  await Promise.all(
+    ['-wal', '-shm', '-journal'].map((suffix) => rm(`${databasePath}${suffix}`, { force: true }))
   );
 };
 
@@ -106,48 +134,6 @@ const closeIndex = (index, onFailure) => {
     // unlinks the file, and a handle that stayed open holds a multi-GB index's blocks for the life
     // of the process, which looks exactly like a leak with no explanation anywhere.
     onFailure?.(error);
-  }
-};
-
-/**
- * 同一个库,同一时刻只允许一个构建 —— 按**路径**设闸,不是按引擎实例。
- *
- * 引擎实例是会叠起来的。`fileSearchRuntime._shutdownActive()` 先把 `active` 置空,再去
- * `await` 旧 coordinator 的 `shutdown()`;而那个 `shutdown()` 排在正在跑的构建后面,构建又卡在
- * 不可取消的 `backup()` 里(实测 80–120 秒)。这段窗口里进来的 `initialize` 读到 `active === null`,
- * 什么都不等就在同一个库上再起一个引擎。2026-09-21 参考机上同时活着三个 —— 一个 runtime 发出的
- * `sqlite-open` 次数(3)正好等于并发构建峰值(3),四个 runtime 各自成立。
- *
- * 而 `operationTail` / `buildEpoch` / `promotionPromise` 全是实例字段,跨实例一个都不起作用。
- * 三个并发构建同时干三件坏事:各拷一份 2.6 GB 候选(两小时 +14 GB);`backup()` 的源被另一个
- * 构建的 promote 改名抽走,拷出撕裂的候选,而损坏被记在活库头上隔离掉(实测四份隔离副本里有两份
- * `quick_check` 与 FTS5 双双通过,纯属冤枉);promote 之后旧库的 `-wal` 被留给新库回放,真损坏。
- *
- * 按路径设闸,以后任何一条新增的"第二个引擎"路径都自动被覆盖,不必在每个调用方各补一道闸——
- * 这个不变量属于库,不属于调用方。
- *
- * 注意它**不能**单独解决 stale-WAL:另一个引擎的 `this.index` 仍然握着同一个库的连接,所以本引擎
- * 关掉自己的句柄并不足以让 SQLite 删掉 `<db>-wal`。promote 因此必须连 sidecar 一起搬,见下面
- * `renameSqliteIndexArtifacts` 的无条件使用。
- */
-const buildLocks = new Map();
-
-const withBuildLock = async (databasePath, operation) => {
-  const previous = buildLocks.get(databasePath) ?? Promise.resolve();
-  let release = () => undefined;
-  const held = new Promise((resolve) => {
-    release = resolve;
-  });
-  // 队尾永远不会 reject:`held` 只由 `finally` 里的 `release()` 兑现,构建自身抛错不影响它。
-  const tail = previous.then(() => held);
-  buildLocks.set(databasePath, tail);
-  await previous;
-  try {
-    return await operation();
-  } finally {
-    release();
-    // 只有队尾还是自己时才清理,否则会把后来者排好的队一起丢掉。
-    if (buildLocks.get(databasePath) === tail) buildLocks.delete(databasePath);
   }
 };
 
@@ -213,6 +199,8 @@ export class OnlyPreviewSearchEngine {
     this.buildEpoch = 0;
     this.activeQueryCount = 0;
     this.resolveReaderDrain = undefined;
+    // >0 表示本引擎已经在索引任务队列里跑着,嵌套的索引变更直接执行,不再提交(见 runIndexTask)。
+    this.indexTaskDepth = 0;
   }
 
   releaseSearchSnapshotReader() {
@@ -361,6 +349,15 @@ export class OnlyPreviewSearchEngine {
     }
   }
 
+  /**
+   * 初始化整段作为**一个**索引任务跑(index-solution.html #1 的 S1 → S8)。
+   *
+   * 路径解析提到这一层,是为了在提交任务之前就拿到队列键 —— 键必须和后续构建、删除清理用的
+   * `this.databasePath` 完全一致,否则它们会排进两条不同的队,互斥就是假的。
+   *
+   * 分成两次提交同样不行:两次之间另一个引擎可以完成一次提升,把库文件改名换走,本引擎手里
+   * 就只剩一个指向旧 inode 的句柄,后面的清理全部写进一个已经没人读的文件。
+   */
   async initializeInternal({ workspaceId, generation, rootPath, databasePath, diagnostic }) {
     diagnostic.phase = 'shutdown';
     await this.shutdownInternal();
@@ -373,6 +370,21 @@ export class OnlyPreviewSearchEngine {
     if (pathIsWithin(rootRealPath, databaseRealPath)) {
       throw new TypeError('Search database must stay outside the workspace');
     }
+    return await this.runIndexTask(
+      'initialize',
+      () =>
+        this.initializeIndexed({
+          workspaceId,
+          generation,
+          rootRealPath,
+          databaseRealPath,
+          diagnostic
+        }),
+      databaseRealPath
+    );
+  }
+
+  async initializeIndexed({ workspaceId, generation, rootRealPath, databaseRealPath, diagnostic }) {
     await mkdir(dirname(databaseRealPath), { recursive: true });
     await reclaimInterruptedSqliteArtifacts(databaseRealPath);
     this.workspaceId = workspaceId;
@@ -451,6 +463,10 @@ export class OnlyPreviewSearchEngine {
     this.treeEntries = sortOnlyPreviewTreeEntries(seedTree.entries);
     this.maxDepthReached = seedTree.maxDepthReached;
     this.treeMetadataReady = seedTree.treeMetadataReady;
+    // 补上一次没做完的删除 —— **必须在种子树落到 `this.treeEntries` 之后**,否则上面这三行会把
+    // 刚清掉的条目按旧快照原样写回来。设计见 index-solution.html #1 的 S4–S6。
+    diagnostic.phase = 'delete-journal';
+    await this.recoverPendingDeletes(diagnostic);
     const initialTreeEntries = hasActiveIndex ? undefined : [];
     let resolveInitialTree;
     if (initialTreeEntries) {
@@ -528,10 +544,26 @@ export class OnlyPreviewSearchEngine {
     }
   }
 
+  /**
+   * 把一个索引变更排进该库的任务队列(`index-queue.mjs`,并发度 1)。
+   *
+   * **不嵌套提交。** 初始化整段本身就是一个队列任务,它内部的重建和删除恢复如果再各自提交,
+   * 就会等一条永远不会前进的队 —— 死锁。`indexTaskDepth` 标记"本引擎已经在任务里",嵌套调用
+   * 直接执行任务体。这个标记按实例记是安全的:同一实例的索引操作本来就被 `operationTail`
+   * 串成一条,不会有第二条流同时进来;而**另一个**实例的标记是各自的,它照样得去真队列里排。
+   */
+  async runIndexTask(name, operation, key = this.databasePath) {
+    if (this.indexTaskDepth > 0) return await operation();
+    this.indexTaskDepth += 1;
+    try {
+      return await submitIndexTask(key, name, operation);
+    } finally {
+      this.indexTaskDepth -= 1;
+    }
+  }
+
   async buildAndPromoteCandidate(params) {
-    return await withBuildLock(this.databasePath, () =>
-      this.buildAndPromoteCandidateExclusive(params)
-    );
+    return await this.runIndexTask('build', () => this.buildAndPromoteCandidateExclusive(params));
   }
 
   async buildAndPromoteCandidateExclusive({
@@ -830,8 +862,8 @@ export class OnlyPreviewSearchEngine {
         //
         // 裸 `rename` 只搬主库,把 `<db>-wal` / `<db>-shm` 留在原地。这本来是安全的 —— 上面刚关掉
         // 最后一个连接,SQLite 会顺手把 WAL 删掉。但"最后一个"这个前提不成立:同一个库上可能还有
-        // 另一个引擎的 `this.index` 开着(见 `withBuildLock` 的注释),它让 WAL 活了下来。于是
-        // 候选被改名过来之后,旁边躺着的是**上一个**数据库的 WAL。
+        // 另一个引擎的 `this.index` 开着(队列只挡新构建入队,挡不住已经在跑的旧引擎),它让 WAL 活
+        // 了下来。于是候选被改名过来之后,旁边躺着的是**上一个**数据库的 WAL。
         //
         // WAL 里没有任何指回所属数据库的信息 —— 只有 salt 和校验链 —— 而这两个文件页大小和 schema
         // 都一样,于是旧库的帧会干干净净地回放到新库上。2026-09-21 的取证副本就是这个形态:
@@ -841,6 +873,22 @@ export class OnlyPreviewSearchEngine {
       } catch (error) {
         if (error?.code !== 'ENOENT') throw error;
       }
+      // 把候选搬过来之前,先清掉活库路径上残留的 sidecar。
+      //
+      // 这是在**强制不变量**,不是在修一个已复现的缺陷 —— 说清楚以免后人误读。不变量是:活库路径
+      // 旁边永远不能躺着不属于当前主库的 WAL,因为它会在下次打开时被回放到另一个镜像上,正是
+      // 2026-09-21 那两份真损坏的库(`2nd reference to page …`)的成因。
+      //
+      // 顺带消掉一个由本次改动引入的脆弱点:裸 `rename` 静默覆盖已存在的目标,而换用的
+      // `renameSqliteIndexArtifacts` 走 `moveSqliteArtifacts`,目标已存在会抛 `EEXIST`,提升随之
+      // 整个失败。常规路径碰不到(候选干净关闭后没有 sidecar,所以它们不会成为改名目标 —— 试过
+      // 构造孤儿 sidecar 复现,修复前后都通过,说明那条路走不通),但只要候选因为关闭失败而留下
+      // 一个 `-wal`,目标就会被占。清一次的代价是三次 `rm`,不值得为省它保留这个脆弱点。
+      //
+      // **只清 sidecar,不碰主库。** 走到这里 `<db>` 必然已经不在了 —— 要么刚被搬走,要么本来就
+      // 不存在(失败路径会在上面就抛出)。但那是三层推理换来的"必然",而赌错的代价是删掉用户的
+      // 活索引。只清 sidecar 就不需要这个赌注:少一个前提,少一类事故。
+      await removeSqliteSidecars(this.databasePath);
       // 候选那边同理:它的 `-wal` 若因关闭失败而留存,不跟着搬就等于把已提交的帧丢在原地。
       await renameSqliteIndexArtifacts(candidatePath, this.databasePath);
       installedCandidate = true;
@@ -1028,6 +1076,143 @@ export class OnlyPreviewSearchEngine {
 
   revokeSearch(requestId) {
     this.globalSearchSession.revoke(requestId);
+  }
+
+  /**
+   * 开一条删除任务。**必须先于第一个 unlink** —— 崩在这之前什么都没发生,崩在这之后有账可查。
+   *
+   * 日志写失败就抛,由调用方中止删除:没有账本的删除正是这次要消灭的状态,不能带病往下走。
+   */
+  async beginDeleteTask({ workspaceId, generation, relativePaths }) {
+    this.requireWorkspace(workspaceId, generation);
+    if (!this.databasePath) throw new TypeError('Search index is not initialized');
+    const task = await beginDeleteTask(this.databasePath, {
+      workspaceId,
+      rootPath: this.rootPath,
+      relativePaths
+    });
+    return { taskId: task.taskId };
+  }
+
+  /**
+   * 文件删完之后收尾:换挡到 `'index'` → 清索引 → 消任务。
+   *
+   * 这三步的顺序就是崩溃恢复的全部依据,见 index-solution.html #4。`removedPaths` 只含**真正
+   * 删掉的**那些 —— 部分失败时剩下的文件还在盘上,清了它们的索引会让还存在的内容搜不到。
+   */
+  async finishDeleteTask({ workspaceId, generation, taskId, removedPaths }) {
+    this.requireWorkspace(workspaceId, generation);
+    if (!this.databasePath) throw new TypeError('Search index is not initialized');
+    await advanceDeleteTaskToIndex(this.databasePath, { taskId, removedPaths });
+    const outcome = await this.forgetPaths({ workspaceId, generation, relativePaths: removedPaths });
+    await clearDeleteTask(this.databasePath, taskId);
+    return outcome;
+  }
+
+  /**
+   * 启动时把上一次没做完的删除补完(index-solution.html #1 的 S4–S6)。
+   *
+   * **只补清索引,不替用户补删文件。** 任务里仍然存在的路径说明上次那一条没删成;删除是破坏性
+   * 动作,重启之后无人确认就自己执行是不能接受的 —— 那些路径原样留下,照常被索引。
+   *
+   * 顺序固定为"先清索引、再消任务":反过来的话,在两步之间崩溃就会永久丢掉这条欠账。重复执行
+   * 是安全的,删一行不存在的索引行是幂等的。
+   *
+   * 整段**不抛**:一条读不懂的日志、一次清理失败,都不该挡住应用启动 —— 那比丢掉这次恢复更糟,
+   * 而丢掉恢复的后果会被下一次全量 reconcile 补上。
+   */
+  async recoverPendingDeletes(diagnostic) {
+    if (!this.databasePath) return;
+    let tasks;
+    try {
+      tasks = await readDeleteJournal(this.databasePath);
+    } catch {
+      return;
+    }
+    if (!tasks.length) return;
+    for (const task of tasks) {
+      try {
+        const settled = [];
+        for (const relativePath of task.relativePaths) {
+          // 还在盘上 = 上次没删成,跳过它。
+          if (await pathExists(resolve(this.rootPath, relativePath))) continue;
+          settled.push(relativePath);
+        }
+        if (settled.length) {
+          const outcome = await this.forgetPaths({
+            workspaceId: this.workspaceId,
+            generation: this.generation,
+            relativePaths: settled
+          });
+          this.diagnostics.emit('delete-journal-recovered', {
+            tag: diagnostic?.tag,
+            paths: settled.length,
+            removedFileCount: outcome.removedFileCount
+          });
+        }
+        await clearDeleteTask(this.databasePath, task.taskId);
+      } catch {
+        // 这一条补不上就留着,下次启动再试。
+      }
+    }
+  }
+
+  /**
+   * 删除落地之后,立刻把这些路径(及其子孙)从活索引里抹掉。
+   *
+   * 在此之前删除**完全不通知索引**:`commitDelete` 删完文件就返回,索引只能等 watcher 触发一次
+   * reconcile,而一次 reconcile 要 80–120 秒 —— 这段时间里删掉的内容照样被搜得到。
+   *
+   * **必须连子孙一起删。** watcher 那条路径对删目录只产生一条 `remove`,树靠
+   * `pathHasAncestorIn` 把子孙摘掉了,但 `files` 表里子孙的行没人删 —— 结果是目录从浏览里消失、
+   * 内容却仍然可搜的半删状态。这里按 `filenameTier` 里已索引的全部路径逐条判归属,所以目录和
+   * 文件走同一条逻辑。
+   *
+   * 走 `acquireSearchSnapshotWriter`,和 reconciler 的增量提交用同一道读写闸,读者被排空之后才动
+   * 库;失败时让调用方看见,因为"文件删了、索引没删"正是这次要消灭的状态,不能静默吞掉。
+   */
+  async forgetPaths(params) {
+    return await this.runIndexTask('forget-paths', () => this.forgetPathsIndexed(params));
+  }
+
+  async forgetPathsIndexed({ workspaceId, generation, relativePaths }) {
+    this.requireWorkspace(workspaceId, generation);
+    const roots = new Set(
+      (Array.isArray(relativePaths) ? relativePaths : [])
+        .filter((value) => typeof value === 'string' && value.length > 0)
+    );
+    if (roots.size === 0 || !this.index) return { removedFileCount: 0 };
+    const owned = (relativePath) => roots.has(relativePath) || pathHasAncestorIn(relativePath, roots);
+    const writer = await this.acquireSearchSnapshotWriter();
+    try {
+      const targets = [];
+      for (const relativePath of this.index.filenameTier.records.keys()) {
+        if (owned(relativePath)) targets.push(relativePath);
+      }
+      this.index.invalidateTreeSnapshot();
+      const deletedIndexedPaths = [];
+      for (let offset = 0; offset < targets.length; offset += BACKGROUND_BUILD_TRANSACTION_FILES) {
+        const batch = targets.slice(offset, offset + BACKGROUND_BUILD_TRANSACTION_FILES);
+        this.index.runMutation(() => {
+          for (const relativePath of batch) {
+            if (this.index.delete(relativePath, { syncFilenameTier: false, withinTransaction: true })) {
+              deletedIndexedPaths.push(relativePath);
+            }
+          }
+        });
+      }
+      this.index.applyFilenameTierMutations({ upsertPaths: [], deletePaths: deletedIndexedPaths });
+      this.treeEntries = this.treeEntries.filter(({ relativePath }) => !owned(relativePath));
+      const committedTree = this.index.applyTreeSnapshotMutations({
+        upserts: [],
+        removedPaths: roots,
+        maxDepthReached: this.maxDepthReached
+      });
+      this.treeMetadataReady = committedTree.treeMetadataReady;
+      return { removedFileCount: deletedIndexedPaths.length };
+    } finally {
+      writer.release();
+    }
   }
 
   async preview({ workspaceId, generation, requestId, resultToken, isCancelled }) {

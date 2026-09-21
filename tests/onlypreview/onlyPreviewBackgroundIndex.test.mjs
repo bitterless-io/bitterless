@@ -68,6 +68,10 @@ const fixture = () => {
       initialize() { const call = deferred(); this.initializes.push(call); return call.promise; },
       refresh() { const call = deferred(); this.refreshes.push(call); return call.promise; },
       hasActiveSearchIndex: () => false,
+      beginDeleteTaskCalls: [],
+      async beginDeleteTask(value) { this.beginDeleteTaskCalls.push(value); return { taskId: 'task-000000000000001' }; },
+      finishDeleteTaskCalls: [],
+      async finishDeleteTask(value) { this.finishDeleteTaskCalls.push(value); return { removedFileCount: value.removedPaths.length }; },
       async shutdown() { this.stopped += 1; }
     };
     coordinators.push(coordinator);
@@ -496,4 +500,61 @@ test('late same-build progress after ready cannot renew a search deadline', asyn
   publishProgress(relay, indexing(20));
   t.mock.timers.tick(1001);
   await rejected;
+});
+
+// `beginDeleteTask` / `finishDeleteTask`(index-solution.html #4)—— `fileSearch.preload.ts` 的
+// `commitDelete` 直接调用它们(不经 XPC),这里钉的是 `FileSearchRuntime` 这一层的合同:
+// 用自己的 `active.workspaceId`/`active.generation` 去喂 coordinator,调用方不需要、也不能
+// 传入这两个字段(传了也会被忽略——它们不是这两个方法的参数)。
+test('beginDeleteTask feeds the coordinator the runtime\'s own workspace/generation, not a caller-supplied one', async (t) => {
+  const f = fixture();
+  t.after(() => f.runtime.dispose());
+  const { coordinator: c } = await start(f, 7);
+  const result = await f.runtime.beginDeleteTask(['docs/readme.md', 'docs/old']);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.value, { taskId: 'task-000000000000001' });
+  assert.deepEqual(c.beginDeleteTaskCalls, [
+    { workspaceId: request.workspaceId, generation: 7, relativePaths: ['docs/readme.md', 'docs/old'] }
+  ]);
+});
+
+test('finishDeleteTask feeds the coordinator the runtime\'s own workspace/generation', async (t) => {
+  const f = fixture();
+  t.after(() => f.runtime.dispose());
+  const { coordinator: c } = await start(f, 7);
+  const result = await f.runtime.finishDeleteTask('task-000000000000001', ['docs/readme.md']);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.value, { removedFileCount: 1 });
+  assert.deepEqual(c.finishDeleteTaskCalls, [
+    {
+      workspaceId: request.workspaceId,
+      generation: 7,
+      taskId: 'task-000000000000001',
+      removedPaths: ['docs/readme.md']
+    }
+  ]);
+});
+
+// 空数组是合法的"取消"用法(`commitDelete` 失败时用它把已开的任务干净销账);它必须原样
+// 传到 coordinator,不能被这一层悄悄拦成空操作。
+test('finishDeleteTask with an empty removedPaths still reaches the coordinator, as a clean cancel', async (t) => {
+  const f = fixture();
+  t.after(() => f.runtime.dispose());
+  const { coordinator: c } = await start(f);
+  const result = await f.runtime.finishDeleteTask('task-000000000000001', []);
+  assert.equal(result.ok, true);
+  assert.deepEqual(c.finishDeleteTaskCalls, [
+    { workspaceId: request.workspaceId, generation: 1, taskId: 'task-000000000000001', removedPaths: [] }
+  ]);
+});
+
+// 没有活跃索引(从未 initialize,或已 dispose)时,两个方法都答 `ok:true, value:null` ——
+// 调用方(`commitDelete`)据此跳过整套 begin/finish,而不是把"没有索引"当成错误处理。
+test('beginDeleteTask and finishDeleteTask answer null without an active index, not an error', async (t) => {
+  const f = fixture();
+  t.after(() => f.runtime.dispose());
+  const begin = await f.runtime.beginDeleteTask(['docs/readme.md']);
+  assert.deepEqual(begin, { ok: true, value: null });
+  const finish = await f.runtime.finishDeleteTask('task-000000000000001', ['docs/readme.md']);
+  assert.deepEqual(finish, { ok: true, value: null });
 });

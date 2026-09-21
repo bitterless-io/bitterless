@@ -57,6 +57,27 @@ const requireProjectEntryName = (value: unknown): string => {
 
 const PROJECT_AUTHORITY_TIMEOUT_MS = 10_000;
 /**
+ * `commitProjectDelete` 专用的更宽上限 —— 不能用 `PROJECT_AUTHORITY_TIMEOUT_MS`。
+ *
+ * `callProjectAuthority` 超时不只是让这一次调用失败:它会 `this.stop()` 整个隐藏 runtime
+ * (`:836-840`)。这条路径正是本轮(2026-09-21)从头到尾在修的那个故障形态 ——
+ * 一次偶发超时演变成整个 preview 挂掉。删除本身通常在 `PROJECT_AUTHORITY_TIMEOUT_MS` 的
+ * 10s 内轻松完成,但 `commitDelete`(preload 侧)现在会在文件删除之后
+ * `await runtime.finishDeleteTask(...)`(`index-solution.html` #4,让 alert
+ * 进度条等到索引真的清完才收起,而不是文件一删就收),而 `finishDeleteTask` 内部的
+ * `forgetPaths` 走的是与全量 reconcile/rebuild **同一条按库序列化的队列**
+ * (`index-queue.mjs`,Ral 2026-09-21:「索引变更的操作也都要被 semaphore 限制为串行的」)——
+ * 一次删除撞上一轮正在跑的全量重建,合法地要等到重建结束才能轮到。今天验证过重建常见
+ * 80–120s,病态情形下(内存压力)见过 ~480s。用同一个 10s 判死刑,会把「文件删成功、只是
+ * 索引清理还在排队」误报成「Project authority 超时」,进而拆掉整条搜索 runtime ——
+ * 用户明明删除成功了,却看到整个 preview 崩掉。
+ *
+ * 2.5 分钟覆盖今天观测到的正常情形并留有余量,但仍然是个上限,不是无限等待:真正卡死的
+ * runtime 应当和其他操作一样最终被判失败并回收,只是不能用一个为「毫秒级 RPC」量身定的
+ * 常数去判一个「可能排在一次索引重建后面」的操作。
+ */
+const PROJECT_DELETE_TIMEOUT_MS = 150_000;
+/**
  * 载入隐藏 file-search renderer 的上限。
  *
  * 为什么需要它:这一步原先是整条启动链上**唯一没有上限**的 await —— 它后面每一步都有
@@ -616,7 +637,7 @@ export class FileSearchWindowService {
   }): Promise<OnlyPreviewFileAuthorityDeleteResult> {
     const value = await this.callProjectAuthority(
       (client, identity) => client.commitDelete({ ...identity, ...params }),
-      PROJECT_AUTHORITY_TIMEOUT_MS
+      PROJECT_DELETE_TIMEOUT_MS
     );
     if (
       !isRecord(value) ||

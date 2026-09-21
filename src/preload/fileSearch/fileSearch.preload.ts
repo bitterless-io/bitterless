@@ -575,15 +575,42 @@ export class OnlyPreviewFileAuthorityRuntime
       }
       requireProjectAuthorityIdentity(params.capability, params.runtimeInstanceId);
       const workspace = requireProjectWorkspaceRef(params);
-      return onlyPreviewSuccess(
-        await projectAuthority.commitDelete(
+      /**
+       * 索引清理任务跟着这次删除走一整套(index-solution.html #4):先开任务 → 真正删文件 →
+       * 删成功就清索引 + 销账,删失败就直接销账(没有欠账)。
+       *
+       * **不能把这两个 workspaceGeneration 混用。** `workspace.workspaceGeneration` 是上面
+       * `requireProjectWorkspaceRef` 解出来的 **Project authority** 代次
+       * (`onlyPreviewWorkspace.registry.ts` 的 `requireProjectAuthorityGeneration`);而搜索
+       * 引擎自己另有一套代次,由 `runtime.initialize()` 各自维护。`runtime.beginDeleteTask` /
+       * `finishDeleteTask` 因此故意不接收 workspaceId/generation 参数,自己从
+       * `this.active` 取 —— 调用方在这里也就不需要知道搜索引擎当前是第几代。
+       *
+       * `beginTask` 为 `null` 有两种情况,处理方式相同:索引从未初始化,或者返回结果里
+       * `ok:false`(比如日志写失败)。两种都不该挡住删除本身继续 —— 没有索引就没有"索引还欠着"
+       * 这回事,而一次日志写失败没必要连累一次用户主动发起的删除;它的唯一代价是索引侧的清理
+       * 退化回旧路径(等下一次 watcher reconcile),不是数据丢失。
+       */
+      const beginTask = await runtime.beginDeleteTask([params.relativePath]);
+      const taskId = beginTask.ok && beginTask.value ? beginTask.value.taskId : null;
+      let result: Awaited<ReturnType<typeof projectAuthority.commitDelete>>;
+      try {
+        result = await projectAuthority.commitDelete(
           runtimeInstanceId,
           workspace.workspaceId,
           workspace.workspaceGeneration,
           params.grantId,
           params.relativePath
-        )
-      );
+        );
+      } catch (error) {
+        // 什么都没删掉 —— 干净销账,不留一条永远等不到 `pathExists()` 变否的欠账。
+        if (taskId) await runtime.finishDeleteTask(taskId, []);
+        throw error;
+      }
+      // 只有走到这里才是「真的删掉了」,索引清理和 alert 收起都以这次调用为准
+      // (`onlyPreviewProjectNativeAction.service.ts` 的进度状态机接在这次 XPC 往返上)。
+      if (taskId) await runtime.finishDeleteTask(taskId, [params.relativePath]);
+      return onlyPreviewSuccess(result);
     } catch (error) {
       return onlyPreviewFailure(error);
     }

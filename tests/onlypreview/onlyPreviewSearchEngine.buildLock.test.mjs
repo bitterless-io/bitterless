@@ -16,6 +16,10 @@ import {
   OnlyPreviewSearchEngine,
   createOnlyPreviewSearchEngine
 } from '../../src/preload/onlypreview/search/core/search-engine.mjs';
+import {
+  indexQueueState,
+  submitIndexTask
+} from '../../src/preload/onlypreview/search/core/index-queue.mjs';
 
 const withTempDirectory = async (callback) => {
   const path = await mkdtemp(join(tmpdir(), 'onlypreview-build-lock-'));
@@ -34,65 +38,49 @@ const deferred = () => {
   return { promise, resolve };
 };
 
-// 原型层面调用:锁挂在 `buildAndPromoteCandidate` 这一层,真正的构建体是
-// `buildAndPromoteCandidateExclusive`。用替身当 `this`,就能只测串行语义,不必真的建一次索引。
-const runBuild = (host, params = {}) =>
-  OnlyPreviewSearchEngine.prototype.buildAndPromoteCandidate.call(host, params);
-
 const tracker = () => {
   const state = { live: 0, peak: 0, order: [] };
-  const make = (name, gate) => ({
-    databasePath: undefined,
-    async buildAndPromoteCandidateExclusive() {
-      state.live += 1;
-      state.peak = Math.max(state.peak, state.live);
-      state.order.push(name);
-      await gate.promise;
-      state.live -= 1;
-      return name;
-    }
-  });
-  return { state, make };
+  const task = (name, gate) => async () => {
+    state.live += 1;
+    state.peak = Math.max(state.peak, state.live);
+    state.order.push(name);
+    await gate.promise;
+    state.live -= 1;
+    return name;
+  };
+  return { state, task };
 };
 
-test('two engines sharing one database path never build at the same time', async () => {
-  const { state, make } = tracker();
+test('index tasks on one database path never overlap', async () => {
+  const { state, task } = tracker();
   const first = deferred();
   const second = deferred();
   const path = '/tmp/does-not-need-to-exist/index.sqlite';
 
-  const engineA = make('a', first);
-  const engineB = make('b', second);
-  engineA.databasePath = path;
-  engineB.databasePath = path;
+  const runA = submitIndexTask(path, 'build', task('a', first));
+  const runB = submitIndexTask(path, 'forget-paths', task('b', second));
 
-  const runA = runBuild(engineA);
-  const runB = runBuild(engineB);
-
-  // 让两边都有机会进入各自的构建体;有锁时 B 进不去。
+  // 给两边都排一次机会;串行时 B 进不去。
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(state.peak, 1, 'a second build entered while the first still held the database');
-  assert.deepEqual(state.order, ['a'], 'the second build must not start before the first releases');
+  assert.equal(state.peak, 1, 'a second index task entered while the first still held the database');
+  assert.deepEqual(state.order, ['a'], 'the second task must not start before the first finishes');
+  assert.equal(indexQueueState(path).running, 'build');
 
   first.resolve();
   second.resolve();
   assert.deepEqual(await Promise.all([runA, runB]), ['a', 'b']);
   assert.equal(state.peak, 1);
-  assert.deepEqual(state.order, ['a', 'b'], 'the lock must be FIFO');
+  assert.deepEqual(state.order, ['a', 'b'], 'the queue must be FIFO');
+  assert.deepEqual(indexQueueState(path), { depth: 0, running: '' }, 'the queue must be reclaimed');
 });
 
-test('engines on different database paths still build concurrently', async () => {
-  // 闸是按库设的,不是全局串行。两个工作区各建各的索引不该互相排队。
-  const { state, make } = tracker();
+test('index tasks on different database paths still run concurrently', async () => {
+  // 队列按库分,不是全局串行。两个工作区各建各的索引不该互相排队。
+  const { state, task } = tracker();
   const gate = deferred();
 
-  const engineA = make('a', gate);
-  const engineB = make('b', gate);
-  engineA.databasePath = '/tmp/workspace-a/index.sqlite';
-  engineB.databasePath = '/tmp/workspace-b/index.sqlite';
-
-  const runA = runBuild(engineA);
-  const runB = runBuild(engineB);
+  const runA = submitIndexTask('/tmp/workspace-a/index.sqlite', 'build', task('a', gate));
+  const runB = submitIndexTask('/tmp/workspace-b/index.sqlite', 'build', task('b', gate));
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(state.peak, 2, 'different databases must not serialize against each other');
 
@@ -100,30 +88,46 @@ test('engines on different database paths still build concurrently', async () =>
   await Promise.all([runA, runB]);
 });
 
-test('a failed build releases the database for the next one', async () => {
-  const { state, make } = tracker();
+test('a failed index task releases the queue for the next one', async () => {
+  // 一次失败的重建不能让后面所有任务连锁失败 —— 那会让偶发错误变成索引永久不再更新。
+  const { state, task } = tracker();
   const gate = deferred();
   const path = '/tmp/failing/index.sqlite';
 
-  const failing = {
-    databasePath: path,
-    async buildAndPromoteCandidateExclusive() {
-      state.live += 1;
-      state.peak = Math.max(state.peak, state.live);
-      state.live -= 1;
-      throw new Error('build failed');
-    }
-  };
-  const next = make('next', gate);
-  next.databasePath = path;
-
-  const runFailing = runBuild(failing);
-  const runNext = runBuild(next);
+  const runFailing = submitIndexTask(path, 'build', async () => {
+    state.live += 1;
+    state.peak = Math.max(state.peak, state.live);
+    state.live -= 1;
+    throw new Error('build failed');
+  });
+  const runNext = submitIndexTask(path, 'forget-paths', task('next', gate));
   await assert.rejects(runFailing, /build failed/u);
 
   gate.resolve();
   assert.equal(await runNext, 'next');
   assert.equal(state.peak, 1);
+});
+
+test('a nested index mutation does not re-enter the queue and deadlock', async () => {
+  // 初始化整段是一个队列任务,它内部还会做重建和删除清理。若那些再各自提交,就会等一条
+  // 永远不前进的队。`runIndexTask` 用 `indexTaskDepth` 判定"已在任务里",嵌套直接执行。
+  const engine = Object.create(OnlyPreviewSearchEngine.prototype);
+  engine.databasePath = '/tmp/nested/index.sqlite';
+  engine.indexTaskDepth = 0;
+
+  const seen = [];
+  const outcome = await engine.runIndexTask('initialize', async () => {
+    seen.push('outer');
+    // 嵌套一层:真去排队的话这里永远不会返回。
+    await engine.runIndexTask('forget-paths', async () => {
+      seen.push('inner');
+    });
+    return 'done';
+  });
+
+  assert.equal(outcome, 'done');
+  assert.deepEqual(seen, ['outer', 'inner']);
+  assert.equal(engine.indexTaskDepth, 0, 'the depth counter must unwind');
 });
 
 test('promotion moves the live database together with its -wal and -shm', async () => {

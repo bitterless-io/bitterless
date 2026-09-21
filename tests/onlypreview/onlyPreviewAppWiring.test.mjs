@@ -812,6 +812,89 @@ test('OnlyPreview folder-first chrome, current-file locator, and native file men
   }
 });
 
+// index-solution.html #4:删除要连着清索引一起走完,顺序本身就是崩溃恢复的全部依据 ——
+// 先开任务、真正删文件、再按结果收尾。这里钉的是 `fileSearch.preload.ts` 这一层的调用顺序,
+// 行为层面的验证(begin/finish 喂给 coordinator 的是搜索引擎自己的 workspaceId/generation,
+// 不是 Project authority 的)在 `onlyPreviewBackgroundIndex.test.mjs` 里。
+test('commitDelete opens an index delete task before unlinking and closes it by outcome', () => {
+  const preload = source('src/preload/fileSearch/fileSearch.preload.ts');
+  const commitDeleteBody = preload.slice(
+    preload.indexOf('async commitDelete('),
+    preload.indexOf('async cancelDelete(')
+  );
+  const beginCall = commitDeleteBody.indexOf('runtime.beginDeleteTask([params.relativePath])');
+  const projectCommitCall = commitDeleteBody.indexOf('await projectAuthority.commitDelete(');
+  const catchBlock = commitDeleteBody.indexOf('} catch (error) {');
+  const successFinish = commitDeleteBody.indexOf(
+    'await runtime.finishDeleteTask(taskId, [params.relativePath]);'
+  );
+  assert.ok(beginCall >= 0, 'commitDelete must open a delete task');
+  assert.ok(
+    beginCall < projectCommitCall,
+    'the task must open before the file is actually unlinked — crashing before this point means nothing happened'
+  );
+  assert.ok(
+    projectCommitCall < catchBlock,
+    'the real delete must run inside the try that can still cancel the task on failure'
+  );
+  const failureBody = commitDeleteBody.slice(catchBlock, commitDeleteBody.indexOf('throw error;'));
+  assert.match(
+    failureBody,
+    /if \(taskId\) await runtime\.finishDeleteTask\(taskId, \[\]\);/,
+    'a failed delete must close the task with an empty removedPaths — nothing was actually removed'
+  );
+  assert.ok(
+    successFinish > catchBlock,
+    'the success finish must run after the try/catch, only once the delete is confirmed to have happened'
+  );
+  assert.ok(
+    successFinish < commitDeleteBody.indexOf('return onlyPreviewSuccess(result);'),
+    'the index must be cleaned up before commitDelete reports success back to Main'
+  );
+  // `beginTask`/`taskId` come from `runtime`, never from `workspace.workspaceGeneration` — that field
+  // is the Project authority's own counter (`onlyPreviewWorkspace.registry.ts`'s
+  // `requireProjectAuthorityGeneration`), a different space from the search engine's generation.
+  assert.doesNotMatch(
+    commitDeleteBody,
+    /runtime\.(?:begin|finish)DeleteTask\([\s\S]{0,80}workspace\.workspaceGeneration/,
+    'begin/finishDeleteTask must not be fed the Project authority generation'
+  );
+});
+
+// A timeout on `callProjectAuthority` does not just fail one call — it tears down the whole
+// hidden runtime (`this.stop()` + `reportFatal?.()`, `fileSearchWindow.service.ts`). Once
+// `commitDelete` started awaiting index cleanup (see the test above), a delete can legitimately
+// take as long as a queued full reconcile — sharing `PROJECT_AUTHORITY_TIMEOUT_MS` (10s, sized
+// for a millisecond-scale RPC) would turn "file deleted, index cleanup still queued" into a
+// false "Project authority timed out" that kills the whole search runtime out from under a
+// successful delete. `commitProjectDelete` must use its own, more generous bound.
+test('commitProjectDelete does not share the millisecond-scale Project authority timeout', () => {
+  const windowService = source('src/main/fileSearch/fileSearchWindow.service.ts');
+  assert.match(windowService, /const PROJECT_AUTHORITY_TIMEOUT_MS = 10_000;/);
+  const dedicatedTimeoutMatch = windowService.match(
+    /const PROJECT_DELETE_TIMEOUT_MS = ([\d_]+);/
+  );
+  assert.ok(dedicatedTimeoutMatch, 'commitProjectDelete needs its own timeout constant');
+  const dedicatedTimeoutMs = Number(dedicatedTimeoutMatch[1].replaceAll('_', ''));
+  assert.ok(
+    dedicatedTimeoutMs > 10 * 10_000,
+    'the dedicated timeout must be meaningfully larger than a plain RPC bound, not a rounding difference'
+  );
+  const commitBody = windowService.slice(
+    windowService.indexOf('async commitProjectDelete('),
+    windowService.indexOf('async cancelProjectDelete(')
+  );
+  assert.match(
+    commitBody,
+    /callProjectAuthority\(\s*\(client, identity\) => client\.commitDelete\(\{ \.\.\.identity, \.\.\.params \}\),\s*PROJECT_DELETE_TIMEOUT_MS/
+  );
+  assert.doesNotMatch(
+    commitBody,
+    /PROJECT_AUTHORITY_TIMEOUT_MS/,
+    'commitProjectDelete must not fall back to the tight authority timeout'
+  );
+});
+
 test('OnlyPreview Settings restores size but derives parented work-area bounds on every open', () => {
   const windowHelper = source('src/main/windows/onlyPreviewWindow.helper.ts');
   const boundsService = source('src/main/miniapps/onlypreview/onlyPreviewWindowBounds.service.ts');

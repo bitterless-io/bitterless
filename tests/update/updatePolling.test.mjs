@@ -713,6 +713,26 @@ test('Main update integration keeps both version gates, download-only state, and
   assert.match(maestroApi, /getReadyUpdate\(\): Promise<UpdateInfo \| null>/);
 });
 
+test('dev (unpackaged) never fetches the update manifest', () => {
+  // 2026-09-21 实机:未打包的 `yarn dev` 每 60s 打一次生产/预览渠道的
+  // `version_info.json`,稳定拿到 404(`[UpdateService] Failed to fetch manifest: 404`)——
+  // `startPolling()` 里原有的 dev 跳过是被注释掉的 `viteMode !== 'release'`。改成
+  // `app.isPackaged`,而且必须挡在 `fetchManifest()` 之前:manual 路径
+  // (`manualCheck` → `updatePollingService.checkForUpdates()`)和 polling
+  // 路径共用同一个 `checkAndDownloadUpdate()`,单点判断才能保证两条路都不发请求。
+  const service = read('src/main/updateHelper/update.service.ts');
+  const guard = service.indexOf('if (!app.isPackaged) {');
+  const fetchCall = service.indexOf('const manifest = await this.fetchManifest();');
+  assert.ok(guard >= 0, 'Missing the app.isPackaged dev gate');
+  assert.ok(guard < fetchCall, 'The dev gate must run before the manifest fetch');
+  assert.match(
+    service,
+    /if \(!app\.isPackaged\) \{\s*return \{ status: 'disabled', currentVersionCode: this\.currentVersionCode \};\s*\}/
+  );
+  // 死代码不留:旧闸子被注释掉之后,不该再有第二份同语义的注释残留在 startPolling 里。
+  assert.doesNotMatch(service, /viteMode !== 'release'/);
+});
+
 test('Home subscribes before mount, then requests race-safe ready replay', () => {
   const main = read('src/renderer/home/src/main.ts');
   const subscriber = read('src/renderer/home/src/xpc/update.subscriber.ts');

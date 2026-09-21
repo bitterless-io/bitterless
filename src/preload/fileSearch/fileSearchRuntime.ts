@@ -322,6 +322,57 @@ export class FileSearchRuntime implements OnlyPreviewSearchRuntimeApi {
     await this.dispose();
   }
 
+  /**
+   * 供 `fileSearch.preload.ts` 的 `commitDelete` 直接调用的进程内方法 —— **不经过 XPC**,
+   * 两者本来就在同一个隐藏 renderer 进程里,`runtime` 是同一个模块作用域里的实例。
+   *
+   * 不从调用方接收 `workspaceId`/`generation`:那两个字段如果由 `commitDelete` 传入,传的会是
+   * **Project authority** 自己的代次(`onlyPreviewWorkspace.registry.ts` 的
+   * `requireProjectAuthorityGeneration`),和这里 `this.active` 记的搜索引擎代次是两个独立计数
+   * 空间,传错会让 `engine.requireWorkspace()` 每次都拒绝。所以两个字段一律从 `this.active`
+   * 自己取 —— 调用方只需要知道"删了哪些路径",不需要关心搜索引擎当前是第几代。
+   *
+   * `this.active` 为空(索引从未初始化,或已被关停)不是错误 —— 没有索引就没有"索引还欠着"这回事,
+   * 返回 `null`,调用方据此跳过整套 begin/finish 流程,直接删文件。
+   */
+  async beginDeleteTask(
+    relativePaths: string[]
+  ): Promise<OnlyPreviewResult<{ taskId: string } | null>> {
+    return await runOperation(async () => {
+      const active = this.active;
+      if (!active) return null;
+      return await active.coordinator.beginDeleteTask({
+        workspaceId: active.workspaceId,
+        generation: active.generation,
+        relativePaths
+      });
+    });
+  }
+
+  /**
+   * `taskId` 必须来自同一次 `beginDeleteTask`。`removedPaths` 只放**真正删掉的**那些 ——
+   * 部分失败(比如目录里有一个文件删不掉)时,还在盘上的那些不该被当成欠账去清索引。
+   *
+   * `removedPaths` 传空数组是合法的"取消"用法:`delete-journal.mjs` 的
+   * `advanceDeleteTaskToIndex` 对空表直接销账、不动索引 —— `commitDelete` 失败时用这个把
+   * 已经开的任务干净地收掉,而不是让它一直留在日志里等下次启动才被动清理。
+   */
+  async finishDeleteTask(
+    taskId: string,
+    removedPaths: string[]
+  ): Promise<OnlyPreviewResult<{ removedFileCount: number } | null>> {
+    return await runOperation(async () => {
+      const active = this.active;
+      if (!active) return null;
+      return await active.coordinator.finishDeleteTask({
+        workspaceId: active.workspaceId,
+        generation: active.generation,
+        taskId,
+        removedPaths
+      });
+    });
+  }
+
   private async _initializeCoordinator(active: ActiveRuntime): Promise<OnlyPreviewSearchSnapshot> {
     const snapshot = await active.coordinator.initialize({
       workspaceId: active.workspaceId,

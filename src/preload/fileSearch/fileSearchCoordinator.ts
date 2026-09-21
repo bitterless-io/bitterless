@@ -75,6 +75,17 @@ export interface OnlyPreviewSearchCoordinator {
   cancelOfficeRead(params: OnlyPreviewGlobalSearchOfficeReadRequest): Promise<void>;
   cancel(params: { requestId: string }): Promise<void>;
   hasActiveSearchIndex(params: { workspaceId: string; generation: number }): boolean;
+  beginDeleteTask(params: {
+    workspaceId: string;
+    generation: number;
+    relativePaths: string[];
+  }): Promise<{ taskId: string }>;
+  finishDeleteTask(params: {
+    workspaceId: string;
+    generation: number;
+    taskId: string;
+    removedPaths: string[];
+  }): Promise<{ removedFileCount: number }>;
   shutdown(): Promise<void>;
 }
 
@@ -428,6 +439,8 @@ export const createFileSearchCoordinator = (
       if (officeGrant?.requestId === value.requestId) await revokeOfficeGrant();
     },
     hasActiveSearchIndex: (value) => engine.hasActiveSearchIndex(value),
+    beginDeleteTask: async (value) => await engine.beginDeleteTask(value),
+    finishDeleteTask: async (value) => await engine.finishDeleteTask(value),
     shutdown: async () => {
       if (shuttingDown) return;
       shuttingDown = true;

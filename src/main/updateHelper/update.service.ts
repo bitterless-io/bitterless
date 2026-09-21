@@ -170,6 +170,17 @@ class UpdateService {
     if (this.disabledForE2E) {
       return { status: 'disabled', currentVersionCode: this.currentVersionCode };
     }
+    // 本地 dev(`yarn dev`,未打包)没有真实发布产物可对齐,manifest 也不保证对当前
+    // versionCode 有对应发布 —— 对着生产/预览渠道的 `version_info.json` 打，只会稳定拿到
+    // 404(2026-09-21 实机:`[UpdateService] Failed to fetch manifest: 404`，每 60s 一条)。
+    // 这条闸此前是被注释掉的 viteMode 判断；改成 `app.isPackaged`，和
+    // micromeet-cowork 的 `UpdateService.checkAndDownload()` 用同一个信号、同一个
+    // `status: 'disabled'` 词汇。两者在这个仓库里等价（见 `runtimeProfile.service.ts`
+    // 的「unpackaged ⟹ debug / packaged ⟹ release」不变量），选 `app.isPackaged`
+    // 是因为它是 Electron 自己的运行时事实，不依赖编译期常量对齐。
+    if (!app.isPackaged) {
+      return { status: 'disabled', currentVersionCode: this.currentVersionCode };
+    }
 
     const manifest = await this.fetchManifest();
     if (!manifest) {
@@ -254,11 +265,8 @@ class UpdateService {
       console.log('[UpdateService] Disabled for isolated E2E');
       return;
     }
-    // if (this.viteMode !== 'release') {
-    //   console.log('[UpdateService] Not in release mode, skipping auto-update polling');
-    //   return;
-    // }
-
+    // dev(未打包)不再单独在这里拦：闸已经收进 `checkAndDownloadUpdate()`，每次 tick
+    // 都会立即返回 `disabled`，不发任何请求 —— 单点判断，polling/manual 两条路都不漏。
     if (!this.updatePollingService.startPolling()) return;
 
     console.log('[UpdateService] Starting update polling (every 60 seconds)...');

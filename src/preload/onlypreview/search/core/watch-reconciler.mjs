@@ -36,7 +36,9 @@ const normalizedWatchRelativePath = (value) => {
   return normalized;
 };
 
-const pathHasAncestorIn = (relativePath, ancestors) => {
+// 导出给 `search-engine.mjs` 的 `forgetPaths` 用:删一个目录时,"哪些行属于它的子孙"这件事
+// 两处必须用同一个判断,分叉了就会出现树里没了、`files` 表里还在的半删状态。
+export const pathHasAncestorIn = (relativePath, ancestors) => {
   let candidate = relativePath;
   while (candidate) {
     if (ancestors.has(candidate)) return true;
