@@ -17,6 +17,7 @@ import { normalizeUrl } from '@maestro-main/settings/coachSettings.service'
 import { getMaestroPreviewOpener } from './previewOpener.registry'
 import { focusAddressBarForBlankTab } from './newTabFocus'
 import { MAESTRO_PARTITION } from '@maestro-main/data/maestroDataRoot'
+import { openAnchoredDevTools } from '@maestro-main/windows/devtoolsAnchor.service'
 import { moduleLog } from '@main/logging/moduleLog'
 import type {
   AgentActivityStep,
@@ -662,9 +663,9 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     if (!shouldOpenOperationDevTools()) return
     if (this.getActiveTab()?.kind !== 'browser') return
     const wc = this._state.operationView?.webContents
-    if (!wc || wc.isDestroyed() || wc.isDevToolsOpened()) return
+    if (!wc || wc.isDestroyed()) return
     try {
-      wc.openDevTools({ mode: 'detach', activate: false })
+      openAnchoredDevTools(wc, { title: 'Maestro operation' })
     } catch (err) {
       this._state.emitTrace({ kind: 'error', msg: 'operation devtools: ' + (err as Error).message, ts: Date.now() })
     }
@@ -1146,9 +1147,8 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     if (!shouldOpenPinnedHomeDevTools()) return
     if (!tab || !view || !this.isPinnedHomeTab(tab) || !this.isLiveTabView(tab, view)) return
     const wc = view.webContents
-    if (wc.isDevToolsOpened()) return
     try {
-      wc.openDevTools({ mode: 'detach', activate: false })
+      openAnchoredDevTools(wc, { title: 'Maestro home' })
     } catch (err) {
       this._state.emitTrace({ kind: 'error', msg: 'Home devtools: ' + (err as Error).message, ts: Date.now() })
     }

@@ -191,6 +191,7 @@
     "test:skill-script": "node --test tests/maestro/skillScriptInterpreter.test.mjs",
     "test:tool-approval": "node --test tests/maestro/toolApprovalHasAButton.test.mjs",
     "test:default-workspace": "node --test tests/maestro/defaultWorkspace.test.mjs",
+    "test:devtools-placement": "node --test tests/maestro/devtoolsPlacement.test.mjs",
     "typecheck:skill-scopes": "tsc --noEmit -p tests/skillScopes/tsconfig.node.json && vue-tsc --noEmit -p tests/skillScopes/tsconfig.web.json"
   },
   "dependencies": {

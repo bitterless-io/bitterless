@@ -199,6 +199,8 @@ class MaestroWindowController
   protected showOnReady = false
   // The main app window — base WindowHelper remembers its size/position/display.
   protected windowStateKey = 'maestro' as const
+  // ...and it is the window every DevTools window follows onto its display/Space.
+  protected isDevToolsAnchor = true
 
   constructor(
     @inject(Symbol.for(MaestroLlmService.name))

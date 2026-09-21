@@ -9,6 +9,7 @@ import type { ViewRect, WorkbenchTabState } from '@maestro-shared/coach.api'
 import type { TraceEvent } from '@maestro-shared/trace.types'
 import { MAESTRO_PARTITION } from '@maestro-main/data/maestroDataRoot'
 import { createBoundsApplier } from './viewBounds'
+import { openAnchoredDevTools } from '@maestro-main/windows/devtoolsAnchor.service'
 
 export const shouldOpenWorkbenchDevTools = (): boolean => {
   if (import.meta.env.VITE_MODE !== 'debug') return false
@@ -54,9 +55,8 @@ export class MaestroWorkbenchViewService extends CommonService<MaestroWorkbenchV
 
     if (shouldOpenWorkbenchDevTools()) {
       view.webContents.once('did-finish-load', () => {
-        if (view.webContents.isDestroyed() || view.webContents.isDevToolsOpened()) return
         try {
-          view.webContents.openDevTools({ mode: 'detach', activate: false })
+          openAnchoredDevTools(view.webContents, { title: 'Maestro workbench' })
         } catch (err) {
           this._state.emitTrace({ kind: 'error', msg: 'workbench devtools: ' + (err as Error).message, ts: Date.now() })
         }

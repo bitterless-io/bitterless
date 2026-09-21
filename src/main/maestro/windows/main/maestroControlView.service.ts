@@ -11,6 +11,7 @@ import type { TraceEvent } from '@maestro-shared/trace.types'
 import { MAESTRO_PARTITION } from '@maestro-main/data/maestroDataRoot'
 import { createBoundsApplier } from './viewBounds'
 import { installControlLinkPolicy } from './maestroControlLinkPolicy'
+import { openAnchoredDevTools } from '@maestro-main/windows/devtoolsAnchor.service'
 
 export const shouldOpenControlDevTools = (): boolean => {
   if (import.meta.env.VITE_MODE !== 'debug') return false
@@ -85,9 +86,7 @@ export class MaestroControlViewService extends CommonService<MaestroControlViewS
 
     if (shouldOpenControlDevTools()) {
       view.webContents.once('did-finish-load', () => {
-        if (!view.webContents.isDestroyed() && !view.webContents.isDevToolsOpened()) {
-          view.webContents.openDevTools({ mode: 'detach', activate: false })
-        }
+        openAnchoredDevTools(view.webContents, { title: 'Maestro control' })
       })
     }
 
