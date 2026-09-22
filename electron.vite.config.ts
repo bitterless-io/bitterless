@@ -547,6 +547,27 @@ export default defineConfig({
   },
   renderer: {
     define: { ...generateEnvDefines() },
+    /**
+     * **Dev server 绑定到 `127.0.0.1`,不用默认的 `localhost`。** Cowork 侧同构,两份一起改。
+     *
+     * Vite 的默认 `host` 是 `localhost`,而 Node 17+ 的 DNS 顺序是 `verbatim` —— 开发机
+     * `/etc/hosts` 同时有 `127.0.0.1 localhost` 与 `::1 localhost`,于是
+     * `server.listen('localhost')` 只绑上**解析出来的第一个地址**。2026-09-22 在 Cowork 上实测:
+     * `lsof -iTCP:5173` 只有 `TCP [::1]:5173 (LISTEN)`,`curl http://127.0.0.1:5173/…` 连不上。
+     *
+     * 而 `ELECTRON_RENDERER_URL` 是 `http://localhost:5173`(electron-vite 的 `resolveHostname`
+     * 把 undefined 映射成字面量 `localhost`),renderer 里每条相对 import 都解析到这个**双栈名字**;
+     * Chromium 会在两个地址族之间选/赛,于是同页面一部分请求走 `::1` 成功、一部分走 `127.0.0.1`
+     * 被拒。症状是偶发的 `TypeError: Failed to fetch dynamically imported module`,而文档本身 200、
+     * 模块图完好、服务器日志干净 —— 一个不指向任何真实代码问题的错误。
+     * 排查记录:`micromeet-cowork:docs/issues/control-app-async-chunk-fetch-failure.md`。
+     *
+     * 绑死一个地址族就没有可选的余地。选 IPv4 而不是 `::1`:`host: true` / `0.0.0.0` 会把 dev
+     * server 暴露到局域网,而 `[::1]` 形式的 origin 在别处更容易踩坑。
+     */
+    server: {
+      host: '127.0.0.1'
+    },
     build: {
       rollupOptions: {
         input: {

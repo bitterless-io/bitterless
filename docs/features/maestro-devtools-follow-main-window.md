@@ -1,6 +1,6 @@
 # DevTools 跟着主窗走
 
-Status: implemented — owner testing pending(2026-09-21,Ral:「agent browser 增加功能,启动后需要将在
+Status: **implemented — G3(同一个 Space)已于 2026-09-22 放弃,其余保留;默认开启,见 #7**。(原需求 2026-09-21,Ral:「agent browser 增加功能,启动后需要将在
 主窗口创建前后展示的 devtool 都和主窗口在一个屏幕下。mac 下可能有多显示器、多桌面,要确保 devtools
 都和主窗口一个桌面」)。
 
@@ -14,7 +14,7 @@ Status: implemented — owner testing pending(2026-09-21,Ral:「agent browser �
 |----|------|------|
 | G1 | 主窗**之后**开的 DevTools 落在主窗那块屏 | control / workbench / 操作区 / 固定 Home 四处的 DevTools 都在主窗所在 display 的 workArea 里 |
 | G2 | 主窗**之前**开的 DevTools 也落在主窗那块屏 | 隐藏的 sqlite 宿主窗(比主窗先建)的 DevTools 不再落到别的显示器 |
-| G3 | macOS 多桌面下与主窗同一个 Space | 主窗在哪个桌面,DevTools 就在哪个桌面;主窗换桌面/进全屏,DevTools 跟着 |
+| ~~G3~~ | ~~macOS 多桌面下与主窗同一个 Space~~ | **2026-09-22 放弃**(#7):唯一实现 `setParentWindow` 会让 DevTools 随主窗移动、压在主窗上面、且自己不能被拖走 |
 | G4 | 多扇 DevTools 不完全重叠 | 每多一扇按固定步长错开,且始终落在 workArea 内 |
 | G5 | 不抢焦点 | 开 DevTools 不把键盘从主窗/终端上夺走 |
 | G6 | 关掉 DevTools 窗 = 关掉 DevTools | 目标 `WebContents` 不受影响,之后还能再开 |
@@ -74,9 +74,13 @@ macOS 没有"把窗口移到某个 Space"的 API。能用的只有两条:
 取父子窗(G3)。实测 `setParentWindow` 可在 host 建好**之后**调用,所以"主窗还没有"那批也能后补
 (见 #3)。
 
-代价说清楚:**子窗永远盖在父窗上面**。调试时这通常正是想要的(一边操作主窗一边看 console),但主窗
-最大化时 DevTools 会压住右侧内容。不想要就 `COACH_DEVTOOLS_ANCHOR=0`,整个特性退回 Electron 内置行为
-(连带退回原来的乱跑)。
+代价说清楚,而且**当初没写全** —— 这正是 2026-09-22 把 G3 整条放弃的原因(见 #7):子窗不只是
+**永远盖在父窗上面**,它还**随父窗一起移动**、并且**自己不能被拖走**。调试时第一条通常还能接受
+(一边操作主窗一边看 console),后两条不行 —— DevTools 成了焊在主窗上、位置不可调的挡板。
+
+**所以下面那张表的结论已经反转:`setParentWindow` 不再被采用。** 现在只按
+`screen.getDisplayMatching(主窗 bounds)` 落位,拿到 G1/G2,放弃 G3。整条路仍然**默认开启**
+(`COACH_DEVTOOLS_ANCHOR=0` 退回 Electron 内置行为)。
 
 非 macOS 上父子窗没有 Space 这层含义,只剩"跟着父窗显示/隐藏",无害,所以不按平台分叉。
 
@@ -128,3 +132,49 @@ Maestro 的启动顺序是:**隐藏的 sqlite 宿主窗 → 主窗**(`maestroWin
 - **人工**:debug 模式下双屏 + 多桌面启动 Maestro,看 sqlite 宿主窗与四个 view 的 DevTools 是否都在主窗
   那块屏、那个桌面;把主窗拖到另一个桌面,看 DevTools 是否跟着。这一条 agent 侧没跑 —— 按仓规
   Electron 端到端不自行启动。
+
+## #7 G3 撤回、其余保留(Ral 2026-09-22,两次往返)
+
+**第一次**(撤回整条路):
+
+> devtool 看起来是独立窗口,但是拖动主窗口时会和主窗口一起被拖动,devtool 窗口覆盖到主窗口上了,
+> devtool 自己不能被拖动,我想了下,干脆先取消我提的 devtool 和主窗口得在一个屏幕的需求
+
+这不是实现跑偏,是 **#2 那条已知代价在真机上的完整形状**。文档当时只写了「子窗永远盖在父窗上面」,
+漏了更要命的另外两条:macOS 的子窗**随父窗一起移动**,而且**自己不能被拖走**。三条加起来,
+DevTools 成了焊在主窗上、位置不可调的挡板 —— 对调试是净负担。
+
+**第二次**(选了折中):
+
+> 可以做: 如果你还是想要「和主窗同一块显示器」,有个没试过的中间方案:不 parent,只按
+> `screen.getDisplayMatching`
+
+于是定案:**G1 / G2 / G4 保留,G3 放弃。**
+
+| 目标 | 现在 | 说明 |
+|---|---|---|
+| G1 主窗之后开的 DevTools 落在主窗那块屏 | ✅ | `placeHost` 按 `screen.getDisplayMatching(主窗 bounds).workArea` 落位 |
+| G2 主窗之前开的也落在主窗那块屏 | ✅ | 先用 `windowState` 记住的几何猜,主窗就位后 `placeAll()` 补排一次 |
+| G3 macOS 多桌面下与主窗同一个 Space | ❌ **放弃** | 唯一实现是 `setParentWindow`,而它换来的正是上面那三条代价 |
+| G4 多扇不完全重叠 | ✅ | 不变 |
+| G5 不抢焦点 | ✅ | 仍是 `detach` + `activate: false` + `showInactive()` |
+| G6 关掉 DevTools 窗 = 关掉 DevTools | ✅ | 不变 |
+
+落点两处,每仓一处:`placeHost` 去掉 `setParentWindow` 那一句(只留 `setBounds`),
+`isAnchored()` 从 `=== '1'` 改回 `!== '0'`(第一次撤回时把它关成了 opt-in,折中方案成立后恢复默认开)。
+
+**落位只发生在开的那一刻**(以及主窗就位后补排一次)。**刻意不监听主窗的 `move`** —— 跟着主窗跑
+就又回到「拖主窗时 DevTools 一起动」,那正是被否掉的那个行为。
+
+### #7.1 防回归
+
+`setParentWindow` 是 G3 唯一的实现方式,所以它**非常容易被再次加回来** —— 这条回归已经发生过一次
+(2026-09-21 报、2026-09-22 再报)。`devtoolsPlacement.test.mjs` 因此多了一条**源码断言**:
+
+- `devtoolsAnchor.service.ts` 的代码(去掉注释之后)里不许出现 `setParentWindow` 或
+  `setVisibleOnAllWorkspaces`;
+- 同时钉住 `host.setBounds(devToolsHostBounds(` 还在 —— 否则把落位一起删掉也能让上一条通过;
+- 以及不许 `.on('move'` / `.on('moved'`。
+
+读源码而不是跑 Electron:整条锚定逻辑的行为要真实窗口才能观察,单测里没有窗口。
+要找回 Space 这一层,要找的是**一条不牺牲可拖动性的绑定方式**,不是把那一行加回来。

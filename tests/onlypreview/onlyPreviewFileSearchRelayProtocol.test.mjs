@@ -156,15 +156,17 @@ const createHarness = () => {
   const client = new FakeFileSearchClient();
   const broadcasts = [];
   const relay = new runtime.FileSearchRuntimeRelayService();
+  const protocolFailures = [];
   relay.attach({
     hostToken: 'host-token',
     hostId: 'bound-host-id',
     bootstrapToken: 'main-private-bootstrap-token',
     capability,
     client,
-    broadcast: (eventName, params) => broadcasts.push({ eventName, params })
+    broadcast: (eventName, params) => broadcasts.push({ eventName, params }),
+    onProtocolFailure: (rule) => protocolFailures.push(rule)
   });
-  return { broadcasts, client, relay };
+  return { broadcasts, client, relay, protocolFailures };
 };
 
 const initialize = async ({ client, relay }) => {
@@ -458,6 +460,51 @@ test('current snapshot extra keys, invalid entries, and non-finite memory fail c
   ]) {
     await expectSnapshotEventFailure(invalidSnapshot);
   }
+});
+
+test('a protocol latch names the failing rule and asks the host to recover', async () => {
+  // latch 是粘性的:一次拒绝之后这个运行时的搜索永久失效。在此之前它既不说是哪条规则挂的
+  // (日志只有 `reason=non-batch-event`,七个拒绝点压成一个词),也没有任何人因此重启运行时
+  // —— 用户只能重启整个应用。两件事一起修:规则名进日志,并且把 latch 接到宿主的恢复通路上。
+  const harness = createHarness();
+  const initializing = harness.relay.call(
+    'host-token',
+    'initialize',
+    { hostToken: 'host-token', workspaceId, generation },
+    5_000
+  );
+  assert.throws(
+    () =>
+      harness.relay.publish({
+        capability,
+        eventName: 'onlypreview/search-snapshot',
+        value: { snapshot: { ...snapshot, absolutePath: '/private/workspace' } }
+      }),
+    isIndexProtocolError
+  );
+  await assert.rejects(initializing, isIndexProtocolError);
+
+  assert.equal(harness.protocolFailures.length, 1, 'the host must be told exactly once');
+  assert.match(
+    harness.protocolFailures[0],
+    /^snapshot:/u,
+    'the rule must name the event that failed, not a generic word'
+  );
+
+  // 第二次拒绝不再重复通知 —— latch 已经落定,宿主已经在恢复了。
+  assert.throws(
+    () =>
+      harness.relay.publish({
+        capability,
+        eventName: 'onlypreview/search-snapshot',
+        value: { snapshot }
+      }),
+    isIndexProtocolError
+  );
+  assert.equal(harness.protocolFailures.length, 1);
+
+  harness.client.respond('initialize', { ok: true, value: snapshot });
+  harness.relay.detach();
 });
 
 test('an invalid specialized hint/media pair fails the pending initialize immediately', async () => {

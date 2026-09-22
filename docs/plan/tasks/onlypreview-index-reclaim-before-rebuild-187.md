@@ -1,7 +1,7 @@
 ---
 id: onlypreview-index-reclaim-before-rebuild-187
 scope: Break the disk-full rebuild deadlock by reclaiming a dead index before planning against it, bound quarantine/recovery residue, and stop a refused build from re-walking the workspace — mirrored to micromeet-cowork
-status: implemented; owner verification pending
+status: implemented; owner-verified 2026-09-22
 depends-on: [onlypreview-index-scratch-and-leaks-183]
 verify: node --test tests/onlypreview/onlyPreviewIndexDiskBudget.test.mjs tests/onlypreview/onlyPreviewSqliteRecovery.test.mjs tests/onlypreview/onlyPreviewSearchEngine.recovery.test.mjs tests/onlypreview/onlyPreviewSearchEngine.sqlite.test.mjs tests/onlypreview/onlyPreviewSearchEngine.scope.test.mjs tests/onlypreview/onlyPreviewIndexRecovery.test.mjs; yarn typecheck:node; no Electron/Playwright/E2E
 ---
@@ -145,3 +145,6 @@ the new contract rather than removed. The reference machine held ~10 GB in stack
   errors — 3 shared diagnostics on the `preload/onlypreview` surface, 19 in cowork — none in any file
   this task touched.
 - No Electron, Playwright or E2E run.
+- **人工验收通过（Ral 2026-09-22）**：重启后索引自行修复，且「删除文件索引也正常的没了」——
+  即增量删除在**重建后的新索引**上照常生效。这一条比"能搜到"更说明问题：它证明重建出来的不是
+  一个只读的快照，而是一个 watch 正常挂着、增量更新照常工作的活索引。

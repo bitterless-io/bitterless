@@ -3,8 +3,15 @@ import { windowStateService } from '@main/windows/windowState.service'
 import { devToolsHostBounds, type DevToolsHostRect } from './devtoolsPlacement'
 
 /**
- * Maestro 的 DevTools 一律跟着主窗走 —— 同一块显示器,macOS 下同一个桌面(Space)。
- * 全文判据见 docs/features/maestro-devtools-follow-main-window.md。
+ * Maestro 的 DevTools 一律开在**主窗所在的那块显示器**上。全文判据见 docs/features/maestro-devtools-follow-main-window.md。
+ *
+ * **只保显示器,不保 macOS 的 Space,也不 parent 到主窗**(Ral 2026-09-22 定,见该文档 #6):
+ * 父子窗是「同一个 Space」唯一可行的实现,但同一条也让子窗随父窗**移动**、永远**压在父窗上面**、
+ * 而且**自己不能被拖走**。三条加起来 DevTools 就成了焊在主窗上、位置不可调的挡板。所以放弃
+ * Space 那一层,换回一扇自由可拖的窗。Cowork 侧同构,两份一起改。
+ *
+ * 落位只发生在**开的那一刻**(以及主窗就位后补排一次)。**刻意不监听主窗的 move** —— 跟着主窗跑
+ * 就又回到「拖主窗时 DevTools 一起动」,那正是被否掉的那个行为。
  *
  * **为什么不能直接摆 Electron 内置的那扇 detach DevTools 窗**:它不是 BrowserWindow,JS 侧拿不到
  * (实测 Electron 40.10.6:开 DevTools 前后 `BrowserWindow.getAllWindows()` 数量不变,
@@ -17,7 +24,15 @@ import { devToolsHostBounds, type DevToolsHostRect } from './devtoolsPlacement'
 const hosts = new Map<WebContents, BrowserWindow>()
 let anchor: BrowserWindow | null = null
 
-/** 退回 Electron 内置行为的总闸(连带退回原来的乱跑)。 */
+/**
+ * 总闸:`COACH_DEVTOOLS_ANCHOR=0` 退回 Electron 内置行为(位置交给 Electron 决定)。
+ *
+ * 2026-09-22 这一天来回过一次,记在这里免得下一个人再绕一遍:上午整条路被**撤回、默认关**
+ * (原因就是当时 `placeHost` 里那句 `setParentWindow` 把 DevTools 焊在主窗上);同日 Ral 选了
+ * 折中方案 —— 去掉 parent、只按主窗所在显示器落位 —— 于是重新默认开启。
+ *
+ * **要把 parent 加回来之前,先解决「子窗不可拖动」这一条**,否则回来的还是同一个 bug。
+ */
 const isAnchored = (): boolean => process.env.COACH_DEVTOOLS_ANCHOR !== '0'
 
 const liveAnchor = (): BrowserWindow | null => (anchor && !anchor.isDestroyed() ? anchor : null)
@@ -37,12 +52,12 @@ const anchorWorkArea = (): DevToolsHostRect => {
 
 const placeHost = (host: BrowserWindow, index: number): void => {
   if (host.isDestroyed()) return
+  // **只摆位置,不建父子关系。** `host.setParentWindow(mainWindow)` 能换来 macOS 的「同一个
+  // Space」(子窗随父窗换桌面/进全屏),但同一条也让子窗随父窗移动、永远压在父窗上面、而且自己
+  // 不能被拖走 —— Ral 2026-09-22 实机报了这三条,需求随即收窄成只保「同一块显示器」。
+  // 想把 Space 那一层找回来,要找的是一条不牺牲可拖动性的绑定方式,**不是把这一行加回来**。
+  // `devtoolsPlacement.test.mjs` 里有一条源码断言钉着这里不出现 `setParentWindow`。
   host.setBounds(devToolsHostBounds({ workArea: anchorWorkArea(), index }))
-  // 同一个桌面靠**父子窗**,不靠猜:macOS 的子窗随父窗排序,父窗换 Space / 进全屏 / 隐藏显示,
-  // 子窗一并跟着。`setVisibleOnAllWorkspaces(true→false)` 只能钉到**当前活动**的 Space,
-  // 主窗不在前台时就钉错了。代价是子窗永远盖在父窗上面 —— 不想要就 COACH_DEVTOOLS_ANCHOR=0。
-  const parent = liveAnchor()
-  if (parent && host.getParentWindow() !== parent) host.setParentWindow(parent)
 }
 
 const placeAll = (): void => {

@@ -135,6 +135,13 @@ export class FileSearchWindowService {
   // built. See docs/issues/onlypreview-host-toggle-tears-down-the-new-runtime.md.
   private runtimeCapability: string | null = null;
   private runtimeClient: FileSearchRuntimePrivateApi | null = null;
+  /**
+   * `start()` 收到的那个"运行时没了"回调,存下来给协议 latch 用。
+   *
+   * 它比一次 `start()` 活得久:`rebindHost()` 会在不重启运行时的前提下把它交给新宿主,而那条路
+   * 拿不到原来的 `params`。latch 可能发生在宿主切换之后,那时也必须还能触发恢复。
+   */
+  private runtimeFailed: ((reason: string) => void) | undefined;
   private runtimeBroadcast: ((eventName: string, value: unknown) => void) | null = null;
   private privilegedRuntimeFatal: (() => void) | null = null;
   private lifecycleId = 0;
@@ -320,13 +327,16 @@ export class FileSearchWindowService {
       this.runtimeCapability = capability;
       this.runtimeClient = runtimeClient;
       this.runtimeBroadcast = params.broadcast;
+      this.runtimeFailed = params.onUnexpectedExit;
       fileSearchRuntimeRelayService.attach({
         hostToken: params.host.hostToken,
         hostId: params.host.hostId,
         bootstrapToken: params.bootstrapToken,
         capability,
         client: runtimeClient,
-        broadcast: params.broadcast
+        broadcast: params.broadcast,
+        onProtocolFailure: (rule) =>
+          this.runtimeFailed?.(`File-search runtime protocol failed (${rule}).`)
       });
       this.diagnostics.emit('runtime-window', {
         tag: diagnostic.tag,
@@ -406,6 +416,9 @@ export class FileSearchWindowService {
       capability: this.runtimeCapability as string,
       client: this.runtimeClient as FileSearchRuntimePrivateApi,
       broadcast,
+      // 宿主换了,但运行时还是那一个 —— latch 的恢复口不能在切换时掉。
+      onProtocolFailure: (rule) =>
+        this.runtimeFailed?.(`File-search runtime protocol failed (${rule}).`),
       // The index in that renderer never stopped, so its workspace binding must survive with it.
       preserveWorkspace: true
     });

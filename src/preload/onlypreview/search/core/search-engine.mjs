@@ -199,8 +199,6 @@ export class OnlyPreviewSearchEngine {
     this.buildEpoch = 0;
     this.activeQueryCount = 0;
     this.resolveReaderDrain = undefined;
-    // >0 表示本引擎已经在索引任务队列里跑着,嵌套的索引变更直接执行,不再提交(见 runIndexTask)。
-    this.indexTaskDepth = 0;
   }
 
   releaseSearchSnapshotReader() {
@@ -435,7 +433,8 @@ export class OnlyPreviewSearchEngine {
       readSignature: () => readOnlyPreviewWorkspaceConfigSignature(rootRealPath),
       initialSignature: await readOnlyPreviewWorkspaceConfigSignature(rootRealPath),
       applyConfig: async (config) => {
-        if (config.hash !== this.config.hash) await this.refreshFromWatchInternal(config);
+        if (config.hash === this.config.hash) return;
+        await this.runIndexTask('config-refresh', () => this.refreshFromWatchInternal(config));
       },
       isCurrent: () => this.watchRevision === watchRevision,
       onError: this.onConfigError,
@@ -455,7 +454,7 @@ export class OnlyPreviewSearchEngine {
       onReconcile: (change) =>
         this.enqueue(async () => {
           if (this.watchRevision !== watchRevision) return;
-          await this.applyWatchChangesInternal(change);
+          await this.runIndexTask('reconcile', () => this.applyWatchChangesInternal(change));
         }),
       onError: () => undefined
     });
@@ -513,7 +512,7 @@ export class OnlyPreviewSearchEngine {
       });
       this.emitBuildProgress({ buildRevision, phase: 'indexing', completed: 0, total });
       diagnostic.phase = 'rebuild';
-      await this.buildAndPromoteCandidate({
+      await this.buildAndPromoteCandidateExclusive({
         seedIndex,
         reconcileExisting: canReconcile,
         buildRevision,
@@ -545,25 +544,25 @@ export class OnlyPreviewSearchEngine {
   }
 
   /**
-   * 把一个索引变更排进该库的任务队列(`index-queue.mjs`,并发度 1)。
+   * 把一个索引写入操作排进该库的任务队列(`index-queue.mjs`,并发度 1)。
    *
-   * **不嵌套提交。** 初始化整段本身就是一个队列任务,它内部的重建和删除恢复如果再各自提交,
-   * 就会等一条永远不会前进的队 —— 死锁。`indexTaskDepth` 标记"本引擎已经在任务里",嵌套调用
-   * 直接执行任务体。这个标记按实例记是安全的:同一实例的索引操作本来就被 `operationTail`
-   * 串成一条,不会有第二条流同时进来;而**另一个**实例的标记是各自的,它照样得去真队列里排。
+   * **提交只发生在公共入口,内部一律走无锁体** —— `initialize` / `refresh` / `config-refresh` /
+   * `reconcile` / `forget-paths` / `finish-delete-task` 各提交一次,它们内部调用的是
+   * `buildAndPromoteCandidateExclusive`、`refreshInternal`、`forgetPathsIndexed` 这些不再提交的
+   * 版本。所以这里不需要任何可重入机制。
+   *
+   * 早先版本用一个实例级的 `indexTaskDepth` 计数来判"已在任务里",那是错的:它在任务**刚排进
+   * 队、还没轮到**的时候就已经置位,于是本引擎在排队期间发起的任何别的写入都会认为自己是嵌套的,
+   * 直接绕过队列执行 —— 恰好和**另一个**引擎正在跑的任务并发。实例级计数器从原理上就分不清
+   * "嵌套"和"并发且独立"。
    */
   async runIndexTask(name, operation, key = this.databasePath) {
-    if (this.indexTaskDepth > 0) return await operation();
-    this.indexTaskDepth += 1;
-    try {
-      return await submitIndexTask(key, name, operation);
-    } finally {
-      this.indexTaskDepth -= 1;
+    // 键必须和后续写入用的 `this.databasePath` 完全一致,否则会排进两条不同的队,互斥变成摆设。
+    // 唯一会分叉的情形是索引目录在两次初始化之间被换成了符号链接 —— 静默失去互斥比报错糟得多。
+    if (key !== undefined && this.databasePath !== undefined && key !== this.databasePath) {
+      this.diagnostics.emit('index-queue-key-mismatch', { task: name });
     }
-  }
-
-  async buildAndPromoteCandidate(params) {
-    return await this.runIndexTask('build', () => this.buildAndPromoteCandidateExclusive(params));
+    return await submitIndexTask(key, name, operation);
   }
 
   async buildAndPromoteCandidateExclusive({
@@ -970,7 +969,9 @@ export class OnlyPreviewSearchEngine {
     this.requireWorkspace(workspaceId, generation);
     this.globalSearchSession.revokeResults();
     if (this.refreshPromise) return await this.refreshPromise;
-    const build = this.enqueue(async () => await this.refreshInternal());
+    const build = this.enqueue(
+      async () => await this.runIndexTask('refresh', () => this.refreshInternal())
+    );
     this.currentBuildPromise = build;
     this.refreshPromise = build.finally(() => {
       this.refreshPromise = undefined;
@@ -1004,7 +1005,7 @@ export class OnlyPreviewSearchEngine {
       this.emitBuildProgress({ buildRevision, phase: 'indexing', completed: 0, total });
       const seedIndex = this.index;
       if (!seedIndex) throw new TypeError('Search index is not initialized');
-      await this.buildAndPromoteCandidate({
+      await this.buildAndPromoteCandidateExclusive({
         seedIndex,
         reconcileExisting: !configChanged && seedIndex.canReconcile(this.identity),
         buildRevision,
@@ -1086,11 +1087,15 @@ export class OnlyPreviewSearchEngine {
   async beginDeleteTask({ workspaceId, generation, relativePaths }) {
     this.requireWorkspace(workspaceId, generation);
     if (!this.databasePath) throw new TypeError('Search index is not initialized');
-    const task = await beginDeleteTask(this.databasePath, {
-      workspaceId,
-      rootPath: this.rootPath,
-      relativePaths
-    });
+    // 日志的读-改-写必须和别的索引写入排同一条队:两次删除同时在飞(多选删除、或者手快点两下)
+    // 就是两段交叠的读-改-写,后写的会把先写的那条任务整个吞掉。它很快,不会占住队列。
+    const task = await this.runIndexTask('begin-delete-task', () =>
+      beginDeleteTask(this.databasePath, {
+        workspaceId,
+        rootPath: this.rootPath,
+        relativePaths
+      })
+    );
     return { taskId: task.taskId };
   }
 
@@ -1103,10 +1108,21 @@ export class OnlyPreviewSearchEngine {
   async finishDeleteTask({ workspaceId, generation, taskId, removedPaths }) {
     this.requireWorkspace(workspaceId, generation);
     if (!this.databasePath) throw new TypeError('Search index is not initialized');
-    await advanceDeleteTaskToIndex(this.databasePath, { taskId, removedPaths });
-    const outcome = await this.forgetPaths({ workspaceId, generation, relativePaths: removedPaths });
-    await clearDeleteTask(this.databasePath, taskId);
-    return outcome;
+    // 换挡、清索引、销账三步**在同一个队列任务里**。
+    //
+    // 拆开会有两个后果。一是日志的读-改-写不再是临界区:两次删除同时在飞(多选删除,或者手快
+    // 点了两下)就是两段交叠的 RMW,后写的把先写的那条任务整个吞掉。二是中间那步清索引会和别的
+    // 引擎的构建并发 —— 正是队列本身要消灭的东西。
+    return await this.runIndexTask('finish-delete-task', async () => {
+      await advanceDeleteTaskToIndex(this.databasePath, { taskId, removedPaths });
+      const outcome = await this.forgetPathsIndexed({
+        workspaceId,
+        generation,
+        relativePaths: removedPaths
+      });
+      await clearDeleteTask(this.databasePath, taskId);
+      return outcome;
+    });
   }
 
   /**
@@ -1132,6 +1148,10 @@ export class OnlyPreviewSearchEngine {
     if (!tasks.length) return;
     for (const task of tasks) {
       try {
+        // 只认属于本工作区的任务。日志现在跟着库文件走,同一份日志理应只有本工作区的任务;
+        // 但一份来自旧版本、或被手工搬过的日志仍可能带着别人的条目,而下面是拿**本**工作区的
+        // 根路径去解析相对路径的 —— 张冠李戴地判"文件已不存在",就会清掉本工作区里同名的索引行。
+        if (task.workspaceId !== this.workspaceId || task.rootPath !== this.rootPath) continue;
         const settled = [];
         for (const relativePath of task.relativePaths) {
           // 还在盘上 = 上次没删成,跳过它。
@@ -1139,7 +1159,11 @@ export class OnlyPreviewSearchEngine {
           settled.push(relativePath);
         }
         if (settled.length) {
-          const outcome = await this.forgetPaths({
+          // 没有活索引就没法清 —— `forgetPathsIndexed` 会在 `!this.index` 时直接返回。此时销账
+          // 等于把一笔没还的债抹掉。留着不花任何代价:下次启动发现文件早就没了,再清一次,
+          // 清一行不存在的索引行是幂等的。
+          if (!this.index) continue;
+          const outcome = await this.forgetPathsIndexed({
             workspaceId: this.workspaceId,
             generation: this.generation,
             relativePaths: settled
@@ -1203,12 +1227,24 @@ export class OnlyPreviewSearchEngine {
       }
       this.index.applyFilenameTierMutations({ upsertPaths: [], deletePaths: deletedIndexedPaths });
       this.treeEntries = this.treeEntries.filter(({ relativePath }) => !owned(relativePath));
-      const committedTree = this.index.applyTreeSnapshotMutations({
-        upserts: [],
-        removedPaths: roots,
-        maxDepthReached: this.maxDepthReached
-      });
-      this.treeMetadataReady = committedTree.treeMetadataReady;
+      // **树没就绪就只改内存,不碰持久化的树快照。**
+      //
+      // `applyTreeSnapshotMutations` 会无条件把 `tree_state` 置成 `'ready'` 并写下当前的
+      // `tree_max_depth_reached`。树本来就不就绪时(上一次增量提交被打断会留下 `'invalid'`),
+      // 这等于拿一份崩溃前的旧 `search_tree` 冒充就绪,还把"深度没有被截断"这个多半是假的结论
+      // 一起固化。之后那次重建若失败或被取消,引擎会带着一棵假就绪的树进入 ready 状态,而
+      // reconciler 的修复路径以 `treeMetadataReady` 为闸,永远不会再来碰它。
+      //
+      // 保持 `'invalid'` 则什么都不丢:内存里的条目已经剔干净,持久层留给正常的修复流程。
+      // `watch-reconciler.mjs` 在同一个位置也是这么把关的。
+      if (this.treeMetadataReady) {
+        const committedTree = this.index.applyTreeSnapshotMutations({
+          upserts: [],
+          removedPaths: roots,
+          maxDepthReached: this.maxDepthReached
+        });
+        this.treeMetadataReady = committedTree.treeMetadataReady;
+      }
       return { removedFileCount: deletedIndexedPaths.length };
     } finally {
       writer.release();

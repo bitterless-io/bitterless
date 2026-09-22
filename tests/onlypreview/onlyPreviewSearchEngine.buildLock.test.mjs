@@ -6,16 +6,14 @@
 // 2026-09-21 参考机上同一个库同时活着三个引擎,各拷一份 2.6 GB 候选,两小时把磁盘吃掉 14 GB,
 // 并且产生了两份真损坏的库和两份被冤枉隔离的健康库。
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 
-import {
-  OnlyPreviewSearchEngine,
-  createOnlyPreviewSearchEngine
-} from '../../src/preload/onlypreview/search/core/search-engine.mjs';
+import { createOnlyPreviewSearchEngine } from '../../src/preload/onlypreview/search/core/search-engine.mjs';
 import {
   indexQueueState,
   submitIndexTask
@@ -108,26 +106,61 @@ test('a failed index task releases the queue for the next one', async () => {
   assert.equal(state.peak, 1);
 });
 
-test('a nested index mutation does not re-enter the queue and deadlock', async () => {
-  // 初始化整段是一个队列任务,它内部还会做重建和删除清理。若那些再各自提交,就会等一条
-  // 永远不前进的队。`runIndexTask` 用 `indexTaskDepth` 判定"已在任务里",嵌套直接执行。
-  const engine = Object.create(OnlyPreviewSearchEngine.prototype);
-  engine.databasePath = '/tmp/nested/index.sqlite';
-  engine.indexTaskDepth = 0;
+// ── 源码断言:索引写入的队列提交只许出现在公共入口 ────────────────────────────────────────
+//
+// 队列并发度是 1,而且**不可重入** —— 早先那个 `indexTaskDepth` 计数被删掉了:它在任务刚排进队、
+// 还没轮到的时候就已经置位,于是本引擎排队期间发起的任何别的写入都会以为自己是嵌套的,直接绕过
+// 队列,恰好和另一个引擎正在跑的任务并发。实例级计数器从原理上分不清"嵌套"和"并发且独立"。
+//
+// 代价是任何一处嵌套提交都会**死锁**(外层占着队,内层等外层),而死锁在测试里表现为**挂住**
+// 而不是失败 —— 2026-09-22 我自己就留下过 9 个挂死的测试进程。所以这条不变量必须由断言守住:
+// 内部调用点一律走无锁体(`buildAndPromoteCandidateExclusive` / `forgetPathsIndexed` /
+// `refreshInternal`),提交只发生在 `initialize` / `refresh` / `config-refresh` / `reconcile` /
+// `forget-paths` / `begin-delete-task` / `finish-delete-task` 这几个公共入口。
+//
+// 读源码而不是跑运行时:死锁没法用超时以外的方式观测,而超时断言既慢又脆。
+test('index-queue submissions only ever happen at public entry points', () => {
+  const source = readFileSync(
+    new URL('../../src/preload/onlypreview/search/core/search-engine.mjs', import.meta.url),
+    'utf8'
+  );
+  const code = source.replace(/\/\*[\s\S]*?\*\//gu, '').replace(/(^|[^:])\/\/.*$/gmu, '$1');
 
-  const seen = [];
-  const outcome = await engine.runIndexTask('initialize', async () => {
-    seen.push('outer');
-    // 嵌套一层:真去排队的话这里永远不会返回。
-    await engine.runIndexTask('forget-paths', async () => {
-      seen.push('inner');
-    });
-    return 'done';
-  });
+  assert.equal(
+    /indexTaskDepth/u.test(code),
+    false,
+    'the reentrancy counter must stay gone — it cannot tell nesting from independent concurrency'
+  );
 
-  assert.equal(outcome, 'done');
-  assert.deepEqual(seen, ['outer', 'inner']);
-  assert.equal(engine.indexTaskDepth, 0, 'the depth counter must unwind');
+  const submitted = [...code.matchAll(/runIndexTask\(\s*'([a-z-]+)'/gu)].map((match) => match[1]);
+  assert.deepEqual(
+    [...new Set(submitted)].sort(),
+    [
+      'begin-delete-task',
+      'config-refresh',
+      'finish-delete-task',
+      'forget-paths',
+      'initialize',
+      'reconcile',
+      'refresh'
+    ],
+    'a new queue submission appeared (or one vanished) — check it cannot nest inside another'
+  );
+
+  // 嵌套路径上的三处调用必须是无锁体。写成正向断言,而不是"不许出现某个名字":
+  // 后者挡不住新增一条嵌套调用。
+  for (const required of [
+    'this.buildAndPromoteCandidateExclusive({',
+    'this.forgetPathsIndexed({',
+    'this.refreshInternal('
+  ]) {
+    assert.ok(code.includes(required), `nested call sites must bypass the queue: ${required}`);
+  }
+  assert.equal(
+    /this\.buildAndPromoteCandidate\(/u.test(code),
+    false,
+    'the queued build wrapper is gone; every caller is already inside a task'
+  );
 });
 
 test('promotion moves the live database together with its -wal and -shm', async () => {

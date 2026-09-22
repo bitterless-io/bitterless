@@ -1,5 +1,21 @@
 # Bitterless Documentation
 
+- [dev server 只绑 IPv6 → renderer 的动态 import 偶发取不回来](issues/control-app-async-chunk-fetch-failure.md) —
+  fixed 2026-09-22(**本仓未报过,按代码与环境形状从 micromeet-cowork 同步**);owner testing pending
+  (要重启 dev server)。Vite 默认 `host: 'localhost'` + Node 17+ verbatim DNS ⇒ 只绑 `[::1]:5173`,
+  而 `ELECTRON_RENDERER_URL` 是双栈名字 `localhost`,Chromium 把一部分 import 解析到 `127.0.0.1`
+  并被拒。修:renderer 段加 `server: { host: '127.0.0.1' }`;`ControlAuthApp.vue` 的重试 + 兜底面
+  保留为防御。现场与否证过程在 micromeet-cowork 那份。Paired with micromeet-cowork。
+
+- [DevTools 跟着主窗走 —— **只保同屏,放弃同 Space**](features/maestro-devtools-follow-main-window.md) — implemented
+  2026-09-22(两次往返后定案);owner testing pending。Ral 先报「devtool 看着独立、拖主窗时跟着走、
+  盖在主窗上、自己拖不动」并撤回整条需求,同日选了折中:**不 parent,只按
+  `screen.getDisplayMatching(主窗 bounds)` 落位**。于是 G1(之后开的)/ G2(之前开的)/ G4(错开)保留,
+  **G3(macOS 同一个 Space)放弃** —— 它唯一的实现 `setParentWindow` 正是那三条代价的来源。
+  `placeHost` 去掉那一句、`isAnchored()` 恢复默认开;`devtoolsPlacement.test.mjs` 新增一条**源码断言**
+  钉住不许再出现 `setParentWindow` / `setVisibleOnAllWorkspaces` / 监听主窗 `move`(这条回归已经发生
+  过一次)。Paired with micromeet-cowork。
+
 - [历史记录行一律开后台新 tab](features/history-row-opens-background-tab.md) — implemented; code-verified, human
   testing pending. 地址栏弹窗的 `accept` 现在按 `entries.some(...)` 分流:一条**历史记录**一律
   `openTab({ background: true })`,不再看当前 tab 的 `kind` —— 新 tab 立刻出现在 tab 条上并在后台

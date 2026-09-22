@@ -61,6 +61,7 @@ interface ActiveRuntime {
   buildProgress: OnlyPreviewSearchBuildProgress | null;
   broadcast(eventName: string, params: unknown): void;
   protocolFailure: OnlyPreviewContractError | null;
+  onProtocolFailure?: (rule: string) => void;
   protocolFailureSignal: Promise<OnlyPreviewContractError>;
   resolveProtocolFailure(error: OnlyPreviewContractError): void;
   stopped: Promise<void>;
@@ -123,6 +124,12 @@ export class FileSearchRuntimeRelayService {
     client: FileSearchRuntimeClient;
     broadcast(eventName: string, params: unknown): void;
     /**
+     * 协议 latch 触发时叫一次。latch 仍然 fail-closed —— 这个运行时之后确实不该再被信任 ——
+     * 但"作废这个运行时"不该等于"整个会话都不能再搜索"。调用方把它接到和渲染进程死亡同一条
+     * 恢复路径上,于是坏掉的那个被换掉,而不是让用户只能重启应用。
+     */
+    onProtocolFailure?: (rule: string) => void;
+    /**
      * The runtime is being handed to a NEW host without being restarted, so its workspace binding
      * is still live and must be carried over.
      *
@@ -165,6 +172,7 @@ export class FileSearchRuntimeRelayService {
       buildProgress: carried.buildProgress,
       broadcast: params.broadcast,
       protocolFailure: null,
+      onProtocolFailure: params.onProtocolFailure,
       protocolFailureSignal,
       resolveProtocolFailure,
       stopped,
@@ -245,7 +253,7 @@ export class FileSearchRuntimeRelayService {
         })
       ]);
       if (!this._isResponseResult(result, expectation)) {
-        throw this._latchProtocolFailure(active);
+        throw this._latchProtocolFailure(active, 'search-response-shape');
       }
       if (expectation.method === 'cancel' && this._isRecord(result) && result.ok === true) {
         active.retiredSearchRequests.retireCancelled(
@@ -323,7 +331,7 @@ export class FileSearchRuntimeRelayService {
     }
     if (active.protocolFailure) throw active.protocolFailure;
     if (!this._hasExactKeys(message, ['capability', 'eventName', 'value'])) {
-      throw this._latchProtocolFailure(active);
+      throw this._latchProtocolFailure(active, 'message-keys');
     }
     if (typeof message.eventName === 'string') this._handleEvent(active, message);
     return { ok: true };
@@ -340,9 +348,13 @@ export class FileSearchRuntimeRelayService {
     } as const;
     const property = eventShape[message.eventName as keyof typeof eventShape];
     if (!property) return;
-    if (!this._isRecord(message.value)) throw this._latchProtocolFailure(active);
+    if (!this._isRecord(message.value)) {
+      throw this._latchProtocolFailure(active, `${property}:value-not-record`);
+    }
     const envelope = message.value;
-    if (!this._hasExactKeys(envelope, [property])) throw this._latchProtocolFailure(active);
+    if (!this._hasExactKeys(envelope, [property])) {
+      throw this._latchProtocolFailure(active, `${property}:envelope-keys`);
+    }
     const value = envelope[property];
     if (
       !this._isRecord(value) ||
@@ -351,13 +363,13 @@ export class FileSearchRuntimeRelayService {
       !this._isBoundedToken(value.workspaceId) ||
       !this._isGeneration(value.generation)
     ) {
-      throw this._latchProtocolFailure(active);
+      throw this._latchProtocolFailure(active, `${property}:workspace-identity`);
     }
     if (value.workspaceId !== active.workspaceId || value.generation !== active.generation) return;
     if (property === 'batch') {
       const disposition = this._searchBatchDisposition(active, value);
       if (disposition === 'ignore') return;
-      if (disposition === 'invalid') throw this._latchProtocolFailure(active);
+      if (disposition === 'invalid') throw this._latchProtocolFailure(active, 'batch');
     }
     const progress = property === 'progress' && this._isBuildProgress(value) ? value : null;
     const valid =
@@ -369,7 +381,7 @@ export class FileSearchRuntimeRelayService {
       (property === 'failure' && isOnlyPreviewSearchFailure(value)) ||
       property === 'batch' ||
       (property === 'commit' && this._isWatchCommit(value));
-    if (!valid) throw this._latchProtocolFailure(active);
+    if (!valid) throw this._latchProtocolFailure(active, `${property}:payload-rule`);
     if (property === 'snapshot') active.latestSnapshot = value;
     if (progress) this._renewProgressingSearches(active, progress);
     active.broadcast(message.eventName, {
@@ -547,19 +559,35 @@ export class FileSearchRuntimeRelayService {
     return 'invalid';
   }
 
-  private _latchProtocolFailure(active: ActiveRuntime): OnlyPreviewContractError {
+  private _latchProtocolFailure(
+    active: ActiveRuntime,
+    rule = 'unspecified'
+  ): OnlyPreviewContractError {
     if (active.protocolFailure) return active.protocolFailure;
     // The one line that makes this diagnosable. Everything after the first rejection is an echo of
     // it — `publish` rethrows the latched error — so the reason is only worth recording here, once.
     // Rule names, indexes and lengths only: no path, no name, no snippet text, so it is safe to log
     // and cannot carry a path separator into the failure wire.
+    //
+    // `rule` 是 2026-09-22 补的。在那之前这里只写 `non-batch-event`,把七个互不相干的拒绝点
+    // 压成同一个词 —— 09-21 那次 latch 因此完全无法定位:看不出是快照、进度、目录列表还是
+    // watch commit,也看不出挂在形状校验还是内容校验上。而 latch 是粘性的,一次拒绝就让整个
+    // 会话的搜索永久失效,所以"下次能不能查出来"全押在这一行上。
     console.info(
-      `[onlypreview-search] event=protocol-latched reason=${this.lastBatchRejection ?? 'non-batch-event'}`
+      `[onlypreview-search] event=protocol-latched rule=${rule} ` +
+        `reason=${this.lastBatchRejection ?? 'non-batch-event'}`
     );
     this.lastBatchRejection = null;
     const error = indexProtocolError();
     active.protocolFailure = error;
     active.resolveProtocolFailure(error);
+    // 先把 latch 落定再通知:处理函数多半会去停运行时,而停运行时会绕回这里。
+    // 通知失败不能反过来毁掉 latch —— 那会让一个坏运行时继续被当成好的。
+    try {
+      active.onProtocolFailure?.(rule);
+    } catch {
+      // 恢复是尽力而为;latch 本身已经生效,搜索照样是安全地关着的。
+    }
     return error;
   }
 
