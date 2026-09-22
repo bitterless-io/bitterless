@@ -446,8 +446,7 @@ export class OnlyPreviewSearchEngine {
     this.diagnostics.emit('root-listing', {
       tag: diagnostic.tag,
       count: listing?.entries?.length ?? 0,
-      elapsedMs: this.diagnostics.elapsed(startedAt),
-      queued: false
+      elapsedMs: this.diagnostics.elapsed(startedAt)
     });
   }
 
