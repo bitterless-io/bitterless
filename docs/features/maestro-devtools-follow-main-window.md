@@ -1,5 +1,21 @@
 # DevTools 跟着主窗走
 
+> ## ⛔ 已撤回（2026-09-22）
+>
+> Ral：「devtool 要控制屏幕和位置的功能都去掉吧，会影响实际使用」。
+>
+> **整个自托管 + 落位机制已删除**：`devtoolsAnchor.service.ts`、`devtoolsPlacement.ts`
+> 与对应守卫都不在树上了；所有调用点回到 Electron 自己的
+> `openDevTools({ mode: 'detach', activate: false })`，位置由 Electron 决定。
+>
+> 保留这份文档是为了**不要再被重新提出来**：下面记的目标与判据都成立过，代价也都测过，
+> 但实机上不好用——自托管的 host 窗从一个角落按固定步长错开，几扇同时开时会互相压住，
+> 而「谁在上面」不可控。要重做的话，先解决这一条，不要从复制这份实现开始。
+>
+> 只有一件事留了下来，并且是独立的：**谁开不开** DevTools 的判据统一到了
+> `devtoolsGate.ts`（原来四份互不相认，任何关闭开关在 dev 下都是空操作）。
+> 见 `docs/issues/control-devtools-do-not-open-in-dev.md`。
+
 Status: **implemented — G3(同一个 Space)已于 2026-09-22 放弃,其余保留;默认开启,见 #7**。(原需求 2026-09-21,Ral:「agent browser 增加功能,启动后需要将在
 主窗口创建前后展示的 devtool 都和主窗口在一个屏幕下。mac 下可能有多显示器、多桌面,要确保 devtools
 都和主窗口一个桌面」)。
@@ -104,11 +120,22 @@ Maestro 的启动顺序是:**隐藏的 sqlite 宿主窗 → 主窗**(`maestroWin
 
 - 宽 = `clamp(round(workArea.width * 0.45), 640, 1100)`,高 = `clamp(round(workArea.height * 0.8), 480, 900)`,
   两者都再收进 `workArea − 2×MARGIN`(小屏上不会比工作区还大);
-- 基准位 = 工作区**右上角**内缩 `MARGIN`(24) —— 主窗默认 1360 宽偏左,右上角冲突最小;
-- 第 `index` 扇按 `28px` 向左下错开,`index % 6` 回绕(G4);
+- 基准位 = 工作区**左下角**内缩 `MARGIN`(24)(Ral 2026-09-22:「将 devtool 窗口默认配置到屏幕
+  左下角打开」);
+- 第 `index` 扇按 `28px` 向**右上**错开,`index % 6` 回绕(G4)。方向跟着基准位走:从左下往左/往下
+  错会立刻撞到工作区边缘、被 clamp 压成同一个位置,G4 就名存实亡;
 - 最后整体 clamp 回 workArea,保证任何 index 都不会跑出屏幕。
 
 `index` = 当前已存活的 host 数。关掉一扇再开会复用腾出来的槽位,这是有意的:槽位是"错开",不是身份。
+
+### #4.1 这是角落偏好,不是避让算法
+
+上一版基准位取右上角,写的理由是「主窗默认 1360 宽偏左,右上角冲突最小」—— **实机不成立**,
+Ral 2026-09-22 报的正是它照样压在主窗上。改成左下角是他点名的固定偏好。
+
+但要说清楚:**会不会盖住主窗,取决于主窗此刻多宽、摆在哪**。1512×920 的工作区上第一扇是
+`x=24, y=185, 680×736`(右边缘 704),主窗若是默认 1360 宽、靠左,仍然会重叠。真要保证不重叠,
+得读主窗几何再挑空位 —— 那是另一件事,这一版没做。
 
 ## #5 接进去的地方
 
@@ -119,6 +146,10 @@ Maestro 的启动顺序是:**隐藏的 sqlite 宿主窗 → 主窗**(`maestroWin
 | `maestro/windows/main/maestroWorkbenchView.service.ts` | 同上 | 同上,标题 `Maestro workbench` |
 | `maestro/windows/main/maestroBrowserView.service.ts` `openOperationDevTools()` | `isDevToolsOpened()` 去重 | 交给映射去重,标题 `Maestro operation` |
 | `maestro/windows/main/maestroBrowserView.service.ts` `openPinnedHomeDevTools()` | 同上 | 同上,标题 `Maestro home` |
+
+**只有上表这五个入口被锚定。** 其余 11 处 `openDevTools({ mode: 'detach' })`(zellij、onlypreview、
+omni、todo、submodules、eyesOnAgents、llama、pluginTest)仍然走 Electron 自己的落位,不受 #4 影响 ——
+它们要不要一起接进来,是一个没问过的问题。
 
 标题:host 窗默认会被 DevTools 页面标题覆盖成 `DevTools`(实测),所以 `page-title-updated` 一律
 `preventDefault()` 再 `setTitle('DevTools — <surface>')` —— 五扇 DevTools 同时开着时,这是唯一能一眼

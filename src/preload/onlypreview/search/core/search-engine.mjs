@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, resolve } from 'node:path';
-import { backup } from 'node:sqlite';
 
 import { BACKGROUND_BUILD_TRANSACTION_FILES } from './constants.mjs';
+import { cloneDatabaseFile } from './database-clone.mjs';
 import { submitIndexTask } from './index-queue.mjs';
 import {
   advanceDeleteTaskToIndex,
@@ -652,10 +652,33 @@ export class OnlyPreviewSearchEngine {
     let candidate;
     const buildCandidate = async (reconcileCandidate) => {
       const backupStartedAt = this.diagnostics.now();
-      if (reconcileCandidate) await backup(seedIndex.database, candidatePath);
+      let mode = 'fresh';
+      if (reconcileCandidate) {
+        // **读写闸内取一份文件级镜像,而不是用 SQLite 的 `backup()`。**
+        //
+        // `backup()` 逐页搬、遇写者竞争还要重启:同一个 2.7 GB 库实测 26,568 ms(病态情形
+        // 128,688),而裸文件拷贝 7,906 ms、APFS clonefile 只要 95 ms。这一步是纯 IO,后台工作
+        // 切片器完全节流不到它,它把页缓存冲光 —— 那正是 4 核 8G 机器上"更新索引时整机发顿"的
+        // 主因(Ral 2026-09-22)。
+        //
+        // 提速让方案变安全,不只是变快:`backup()` 的唯一好处是容忍并发写入,而裸拷贝不能。
+        // 写入现在全部经 `index-queue.mjs` 串行(本方法就在一个队列任务里),所以缺的只是
+        // "读者也不能动"和"WAL 是空的"。95 毫秒可以整段放在闸内,26.5 秒绝对不行 ——
+        // 这就是当初必须用 `backup()` 的原因,现在这个原因消失了。
+        const writer = await this.acquireSearchSnapshotWriter();
+        try {
+          // WAL 里已提交的帧必须先落回主库,否则文件级镜像会漏掉它们。
+          seedIndex.database.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+          mode = await cloneDatabaseFile(this.databasePath, candidatePath);
+        } finally {
+          writer.release();
+        }
+      }
       this.diagnostics.emit('candidate-backup', {
         tag: diagnostic.tag,
-        mode: reconcileCandidate ? 'backup' : 'fresh',
+        // `clone` / `copy` / `fresh` —— 退化成 `copy` 时耗时差两个数量级,不记下来现场会看不懂
+        // 为什么忽然慢了。
+        mode,
         elapsedMs: this.diagnostics.elapsed(backupStartedAt)
       });
       candidate = new OnlyPreviewSqliteIndex(candidatePath);
@@ -1229,8 +1252,14 @@ export class OnlyPreviewSearchEngine {
         if (task.workspaceId !== this.workspaceId || task.rootPath !== this.rootPath) continue;
         const settled = [];
         for (const relativePath of task.relativePaths) {
+          const absolutePath = resolve(this.rootPath, relativePath);
+          // **越出工作区的路径一律不认。** 日志里的相对路径来自磁盘上一个 JSON 文件,而
+          // `delete-journal.mjs` 的 `isPath` 只管长度和非空,`../…` 是能通过的。拿它去
+          // `resolve` 就会指到工作区外面,那里的"文件不存在"根本不代表本工作区欠了账。
+          // 影响本来有限(只有字面匹配的索引行会被清),但这一行的代价是零。
+          if (!pathIsWithin(this.rootPath, absolutePath)) continue;
           // 还在盘上 = 上次没删成,跳过它。
-          if (await pathExists(resolve(this.rootPath, relativePath))) continue;
+          if (await pathExists(absolutePath)) continue;
           settled.push(relativePath);
         }
         if (settled.length) {

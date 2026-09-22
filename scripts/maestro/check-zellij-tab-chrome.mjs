@@ -192,45 +192,24 @@ assert(
   `${BROWSER_VIEW}: setTabAlias must clamp to the INLINE limit — the 64-char form cap belongs to the overlay card, ` +
     'not to a chip whose width the strip already budgeted.'
 )
+// ── ⑤ 双击改名已撤回:这个手势不许回来 ─────────────────────────────────────────────────────────
+//
+// Ral 2026-09-22:「取消 tab 双击改名的功能,只能右击点击 alias 改名」。改名入口从此**只有**右键
+// 菜单的 `Alias…`(tab-alias.md G1);Zellij chip 上那个双击口子连同整套就地编辑状态一起删了
+// (zellij-tab-inline-rename.md 已标撤回)。
+//
+// 钉成**反向**断言,而不是删掉了事:这类手势最容易被"顺手加回来"(它看起来只是一行 `@dblclick`),
+// 而加回来之后不会有任何测试变红 —— 就地编辑的每一处状态都得跟着回来才会有人发现。
 assert(
-  /tab\.kind === MAESTRO_ZELLIJ_TAB_ID/.test(slice(tabStore, /canRename\(tab: TabInfo\): boolean \{[\s\S]*?\n  \}/, `${TAB_STORE}: expected to find canRename()`)),
-  `${TAB_STORE}: the double-click gesture exists on Zellij chips only (G2).`
+  !/@dblclick/.test(menuBar),
+  `${MENU_BAR}: tab chip 不许再绑 dblclick —— 改名只走右键 Alias…(Ral 2026-09-22 撤回双击改名)。`
 )
-assert(
-  /slice\(0, MAESTRO_TAB_INLINE_RENAME_MAX_LENGTH\)/.test(
-    slice(tabStore, /updateRenameDraft\(value: string\): void \{[\s\S]*?\n  \}/, `${TAB_STORE}: expected to find updateRenameDraft()`)
-  ),
-  `${TAB_STORE}: truncate BEFORE the value reaches state. IME composition, paste and drop all get past the ` +
-    "input's maxlength, and the chip's width budget is already spent (#5)."
-)
-const commitRename = slice(
-  tabStore,
-  /async commitRename\(\): Promise<void> \{[\s\S]*?\n  \}/,
-  `${TAB_STORE}: expected to find commitRename()`
-)
-assert(
-  commitRename.indexOf('this.cancelRename()') < commitRename.indexOf('coach.setTabAlias('),
-  `${TAB_STORE}: clear the local edit state BEFORE the XPC call — main rebroadcasts the strip, and an open input ` +
-    'left behind gets overwritten by that broadcast mid-typing.'
-)
-
-// ── ⑤ 编辑期间拖拽与点击让路 ───────────────────────────────────────────────────────────────────
-assert(
-  /@dblclick="onTabDblClick\(tab\)"/.test(menuBar),
-  `${MENU_BAR}: the tab chip needs the double-click entry`
-)
-assert(
-  /:draggable="!tab\.pinned && !tabStore\.isRenaming\(tab\.id\)"/.test(menuBar),
-  `${MENU_BAR}: a chip being renamed must not be draggable — otherwise selecting text drags the tab away (#7).`
-)
-assert(
-  /if \(tabStore\.isRenaming\(id\)\) return/.test(menuBar),
-  `${MENU_BAR}: clicking inside the rename input places a caret; it must not also re-activate the tab.`
-)
-assert(
-  /v-if="tabStore\.isRenaming\(tab\.id\)"[\s\S]{0,600}?:maxlength="tabStore\.renameMaxLength"/.test(menuBar),
-  `${MENU_BAR}: the inline input must carry maxlength so the 21st KEYSTROKE does nothing (G4's feel); the real ` +
-    'truncation still lives in the store.'
-)
+for (const gone of ['isRenaming', 'renameDraft', 'renamingTabId', 'beginRename', 'commitRename', 'canRename']) {
+  assert(
+    !new RegExp(gone).test(tabStore) && !new RegExp(gone).test(menuBar),
+    `${TAB_STORE} / ${MENU_BAR}: 就地改名已撤回,不该再出现 \`${gone}\` —— 要恢复的话先回到 ` +
+      'docs/features/zellij-tab-inline-rename.md 看它为什么被撤回。'
+  )
+}
 
 console.log('[check-zellij-tab-chrome] ok')

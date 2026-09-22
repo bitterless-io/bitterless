@@ -61,7 +61,7 @@ assert(sqlitePreload.includes("location.pathname.endsWith('/maestro/sqlite/index
 assert(
   controlViewSource.includes("import.meta.env.VITE_MODE !== 'debug'") &&
     controlViewSource.includes("process.env.BITTERLESS_E2E === '1'") &&
-    controlViewSource.includes('if (shouldOpenControlDevTools())'),
+    controlViewSource.includes("if (shouldOpenDevTools('control'))"),
   'release and E2E modes must not open detached Maestro Control DevTools'
 )
 assert(

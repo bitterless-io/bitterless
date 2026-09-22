@@ -151,3 +151,50 @@ be invisible state.
 Verification: `tests/maestro/slashSkills.test.mjs` drives the real `ShortcutStore` outside any DOM —
 command/skill ordering, empty-skill byte-identity, commit returning the skill rather than running a
 command, and skills never entering the command registry.
+
+## `/export` — zip this session's model I/O directory (2026-09-22)
+
+`/copy_session_path` hands over the path; `/export` hands over **the thing you can actually send**:
+the same directory, zipped, saved where the owner picks. Both resolve the directory through
+`resolveSessionIoDirectory` — by **session identity**, never from a path the renderer supplies — so
+copy-path, open-folder and export cannot point at different places.
+
+The archive is written with `cwd` set to the directory's **parent** and the directory name as input,
+so it unpacks as one top-level folder instead of scattering files where someone extracted it.
+
+### Two steps, not one call
+
+Ral, 2026-09-22: there must be a waiting indicator while it compresses. That requirement decides the
+shape of the interface — the command is split in two:
+
+| Step | Method | Who is busy |
+| --- | --- | --- |
+| 1 | `pickSessionIoExportTarget` | the **person**, deciding where to save |
+| 2 | `writeSessionIoArchive` | the machine, compressing and writing |
+
+The indicator (Arco `Message.loading`, `duration: 0`) is raised only after step 1 returns and closed
+only after step 2 does, so **it lasts exactly as long as the compression**. Done in one call, the
+loading state would cover the whole time the save dialog is open — a fake "compressing" over a person
+thinking.
+
+Step 2 **re-resolves the directory** rather than taking step 1's `path`: the view may have switched
+sessions in between, and the command means "export this session" — identity is the criterion, the
+path is only a result. The `target` the renderer holds is a save location, not a source path that
+could bypass the identity check.
+
+### Cancelling is not a failure
+
+The contract keeps `cancelled` and `error` on separate branches (`SessionIoExportTarget` /
+`SessionIoExportResult`). Changing your mind in the save dialog is not a fault — nothing is written
+to the timeline and nothing turns red. A `duration: 0` message never expires on its own, so it is
+closed in a `finally`: success, failure and throw all have to clear it, or a "compressing" toast
+hangs on screen forever.
+
+### Verification
+
+`tests/maestro/exportSessionArchive.test.mjs` (same shape in cowork's `tests/unit/`): each step stays
+in its lane (step 1 never calls `createArchive`, step 2 never calls `showSaveDialog`), both go through
+the same directory resolver, the cancel branch exists, the archive has one top-level folder, **the
+indicator is raised after the pick and before the write**, and it is closed in a `finally`. 6/6 in each
+repo, red-checked — moving the indicator before the pick, or folding compression back into step 1,
+each turns one test red.

@@ -1,13 +1,13 @@
 import { runPiAutoCompactionTest, type AutoCompactionTestReport } from './piAutoCompactionTest'
 import { createPiCompactionExtension } from './piNativeCompaction'
 import { resolvePiCompactionSettings } from './piCompactionPolicy'
-import { appendCurrentSkillCatalog } from './skillCatalogRequest'
 import { describeAuthFile } from './authDiagnostic'
 import type { AgentRuntimeAdapter, AgentRuntimeSession, AgentRuntimeSessionOptions } from './agentRuntime.types'
 import type { CodexDebugEvent } from './runtime.types'
 import { bindPiTools, createPiResourceLoader, type PiModule, type TypeBoxFactory } from './piRuntimeProtocol'
 import { applyPiSessionPolicy, PiRuntimeSession, type PiSession } from './piRuntimeSession'
 import { resolveRuntimeToolPolicy } from './runtimeSessionPolicy'
+import { createInterruptibleBash } from './piInterruptibleBash'
 import { resolveRuntimeSystemPrompt } from './runtimeSystemPrompt'
 
 // pi is ESM-only; dynamic imports keep the Electron CJS main bundle loadable.
@@ -134,8 +134,21 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
     await resources.reload()
     const promptSource = Object.assign(prompt, { resourceRevision: () => options.skillResources?.revision?.() || '', skillPrompt: (activeTools: string[]) => {
       const reader = activeTools.includes('read') ? 'read' : activeTools.includes('bash') ? 'bash' : undefined
+      // 这里是 `setSystemPrompt()` 的**校验镜像** —— 它要复算出 pi 会产出的那份 system 来比对,
+      // 所以必须和 pi 的 `_rebuildSystemPrompt()` 用同一个渲染器。A8 完整目录走的是另一条路
+      // (资源加载器的 `getAppendSystemPrompt()`),不在这里拼,否则比对必然失配。
       return reader ? pi.formatSkillsForPrompt(resources.getSkills().skills, reader) : ''
     } })
+    // 可被打断的 `bash` —— 覆盖 pi 的内置同名工具(customTools 按名字覆盖 builtin,
+    // `agent-session.js:2119`)。目的只有一个:人在 tooling 期间发的消息要有**边界**可以落地
+    // (`piInterruptibleBash.ts` 的文件头写了完整理由)。
+    // 只在真的开了内置 bash 的会话上做 —— 一次性/无工具会话不需要,也不该多一个工具定义。
+    const interruptibleBash = builtinNames.includes('bash')
+      ? createInterruptibleBash(pi.createLocalBashOperations())
+      : undefined
+    const bashTool = interruptibleBash
+      ? pi.createBashToolDefinition(prompt.cwd, { operations: interruptibleBash.operations })
+      : undefined
     const { session } = await pi.createAgentSession({
       model,
       modelRuntime,
@@ -144,7 +157,9 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
       ...(allowedToolNames ? { tools: allowedToolNames } : { noTools: customTools.length > 0 ? 'builtin' : 'all' }),
       cwd: prompt.cwd,
       ...(options.agentDir ? { agentDir: options.agentDir } : {}),
-      customTools,
+      // `createBashToolDefinition` 的泛型是它自己的 schema,与 `customTools` 的通配签名不兼容 ——
+      // 这里只是把它放进同一张表,不读它的参数类型,所以按 pi 自己的宽签名收窄一次。
+      customTools: bashTool ? [...customTools, bashTool as unknown as (typeof customTools)[number]] : customTools,
       // pi adds cwd metadata itself; the host text is passed through without trimming.
       resourceLoader: resources,
       // Without this, pi reads `<cwd>/.pi/settings.json` as TRUSTED project settings
@@ -174,15 +189,21 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
       const native = session.agent.transformContext
       session.agent.transformContext = async (messages, signal) => {
         const current = native ? await native(messages, signal) : messages
-        const catalog = await options.beforeModelRequest?.()
-        if (!catalog) return current
-        const latest = appendCurrentSkillCatalog({ messages: current, catalog, contextWindow: model.contextWindow, maxTokens: model.maxTokens, systemPrompt: options.systemPrompt })
-        options.onDebug?.({ scope: options.scope, phase: 'skills-catalog-request', level: 'info', message: 'Complete current Skills catalog attached to model request.', detail: { catalog }, ts: Date.now() })
-        return latest
+        // **只保留就绪副作用,不再追加目录消息。**这个回调里做的是机构授权与云端目录就绪
+        // (`skillScopeContext.authorize()` / `skillCloud.ensureCatalog()`),那一步仍然必要:
+        // 它保证下面系统提示词里的 A8 目录是授权后的完整快照。
+        //
+        // 追加那一步去掉了:目录现在是 A8,走资源加载器的 `getAppendSystemPrompt()` 进系统提示词,
+        // 每会话一份(`overmind:areas/agent-runtime/chat/prompt-structure.html` 表 1)。
+        // 原来那行 `appendCurrentSkillCatalog()` 会在每次请求末尾再挂一条同样的 user 消息,
+        // 而且超预算时直接 `throw` —— 抛出不改变上下文,下一轮压缩仍不触发、依然抛,
+        // 是一条只能新开会话的死路(`chat/compaction/compaction.html` #7.3)。
+        await options.beforeModelRequest?.()
+        return current
       }
     }
     applyPiSessionPolicy(session as PiSession, debug, options.autoCompaction !== false)
-    return new PiRuntimeSession(session as PiSession, debug, promptSource, compactionState)
+    return new PiRuntimeSession(session as PiSession, debug, promptSource, compactionState, interruptibleBash)
   }
 }
 

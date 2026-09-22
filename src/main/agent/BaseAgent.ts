@@ -84,9 +84,16 @@ export interface BaseAgentOptions {
   /** pi builtin tools to enable (read/bash/edit/write/grep/find/ls). Empty/absent = host tools only. */
   builtinTools?: string[]
   /**
+   * 会话级技能指引,拼进表 2(见 `MaestroAgent.systemPrompt()`)。建会话时求值一次。
+   * 它承接的是原来每轮重发的内置文本流程清单与安装/创作纪律 —— 常量不该按轮计费。
+   */
+  skillGuidance?: (projectRoot?: string) => string
+  /**
    * 一整个回合(整条 ReAct)的墙钟上限(per-session)。省略 → 环境变量 → 默认 600s。
-   * 钻探的探索回合是几十页的一次遍历,600s 不够(它真正的边界是 exploreSession 自己的 120min
-   * 预算 + 无进展检测)。抬高见 CoworkAgent。
+   *
+   * **`0` = 不设上限。** 聊天回合用的就是它(Ral 2026-09-22:「有的任务或 tool 耗时就是就
+   * 例如,下载 … 不能设置超时的,一直静默就静默着」)—— 一个工具要跑几小时是合法的,而墙钟上限
+   * 掐掉的从来不是故障,是耗时本身。标题生成、waba 回复这类短活仍然吃默认值:它们**该**有上限。
    */
   turnTimeoutMs?: number
   /**
@@ -184,7 +191,12 @@ export class BaseAgent {
   setSkillCatalogProvider(provider: () => Promise<string>, resources?: AgentRuntimeSessionOptions['skillResources']): void { this.skillCatalogProvider = provider; this.skillResources = resources }
   private projectInstructions = ''
   /** The bound project root, or undefined when none. Source of A6 and of the next session's cwd. */
-  private projectRoot?: string
+  /**
+   * 这个会话**显式绑定**的工作区根;没绑定就是 undefined(不是默认工作区)。
+   * `systemPrompt()` 要拿它去算技能作者根目录 —— 不能改用 `resolveCwd()`,那个在
+   * 未绑定时会回落成默认工作区,而作者根目录在未绑定时该落到全局 Shared 库。
+   */
+  protected projectRoot?: string
   // Runtime overrides set by the UI provider switch; take precedence over env/opts.
   private providerOverride?: string
   private modelOverride?: string
@@ -462,7 +474,7 @@ export class BaseAgent {
       compactPrompt: this.opts.compactPrompt,
       sessionFile: managed ? this.opts.sessionFile : undefined,
       beforeModelRequest: () => this.skillCatalogProvider?.(),
-      skillResources: { revision: () => this.skillResources?.revision?.() || '', getSkills: () => this.skillResources?.getSkills() ?? { skills: [], diagnostics: [] }, reload: () => this.skillResources?.reload() },
+      skillResources: { revision: () => this.skillResources?.revision?.() || '', getSkills: () => this.skillResources?.getSkills() ?? { skills: [], diagnostics: [] }, reload: () => this.skillResources?.reload(), catalogText: () => this.skillResources?.catalogText?.() || '' },
       target: { providerId, modelId, thinkingLevel: this.resolveThinkingLevel() },
       authPath,
       modelsPath: this.opts.modelsPath,
@@ -729,18 +741,26 @@ export class BaseAgent {
    * resolves the pending prompt() so the turn ends with whatever partial output it has. Then drop
    * the session so aborted output is never reused as later model context. No-op when idle.
    */
-  async abort(): Promise<void> {
+  /**
+   * 停止 = **立刻**(Ral 2026-09-22:「stop 应该立刻结束会话并尽量结束正在执行的命令」)。
+   *
+   * **参照就是 pi —— 本仓的运行时本来就是它。** `@earendil-works/pi-coding-agent@0.85.1`:
+   * `onEscape → agent.abort()`,而 `pi-agent-core` 的 `agent.abort()` 全文一行 ——
+   * `this.activeRun?.abortController.abort()`,**同步、不 await**。「尽量结束正在执行的命令」
+   * 靠的是同一个 signal:pi 内置工具签名是 `execute(id, args, signal, …)`,`core/tools/bash.js`
+   * 收到就杀整棵进程树。
+   *
+   * 原来这里还 race 了 500ms + 1500ms 才放行 —— 有界,但那两秒是白等的:取消信号在第一毫秒
+   * 就已经发出去了,剩下的只是对方什么时候咽气。`reset()` 本来就会异步 abort 掉旧 session
+   * (见它内部那句 `void existing.then((session) => session.abort())`),所以这里只要发信号 + 放行。
+   */
+  abort(): Promise<void> {
     this.activeSteeringInbox?.cancel('Stopped before this message was delivered.')
-    if (!this.busy || !this.sessionPromise) return
-    try {
-      const session = await Promise.race([this.sessionPromise, sleep(500).then(() => null)])
-      if (session) await Promise.race([session.abort(), sleep(1500)])
-    } catch {
-      /* best effort — the turn may already be resolving */
-    } finally {
-      this.reset()
-      this.busy = false
-    }
+    if (!this.busy || !this.sessionPromise) return Promise.resolve()
+    // `reset()` 丢掉 session 引用并**异步**对它 abort;旧 session 的残余产出因此进不了下一个回合。
+    this.reset()
+    this.busy = false
+    return Promise.resolve()
   }
 
 
@@ -858,7 +878,7 @@ export class BaseAgent {
       }
     })
     try {
-      await withCompactionAwareTimeout(async () => {
+      const runTurn = async (): Promise<void> => {
         let next: AgentRuntimePrompt | undefined = message
         while (next) {
           if (steeringInbox?.isClosed) break
@@ -877,7 +897,11 @@ export class BaseAgent {
           if (steeringInbox?.isClosed) break
           next = steeringInbox?.next(session)
         }
-      }, session, timeoutMs, () => new TimeoutError(`pi agent turn timed out after ${Math.round(timeoutMs / 1000)}s of non-compaction work`))
+      }
+      // `timeoutMs` 为 0 = **不设上限**,直接跑(见 `turnTimeoutMs` 的说明)。
+      await (timeoutMs > 0
+        ? withCompactionAwareTimeout(runTurn, session, timeoutMs, () => new TimeoutError(`pi agent turn timed out after ${Math.round(timeoutMs / 1000)}s of non-compaction work`))
+        : runTurn())
     } catch (err) {
       steeringInbox?.cancel(`The turn failed before this message was delivered: ${err instanceof Error ? err.message : String(err)}`)
       if (isTimeoutError(err)) {

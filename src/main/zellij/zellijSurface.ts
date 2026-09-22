@@ -2,6 +2,7 @@ import { app, View, WebContentsView, type BaseWindow } from 'electron';
 import { is } from '@electron-toolkit/utils';
 import { join } from 'node:path';
 import { autoOpenZellijDevTools, bindZellijDevTools } from './zellijDevTools.helper';
+import { MAESTRO_SDK_INSTANCE_ARGUMENT } from '@shared/maestroSdk.api';
 import { ZellijTerminalView, type ZellijTerminalRect } from './zellijTerminalView';
 import {
   ZELLIJ_CHROME_BACKGROUND,
@@ -122,6 +123,10 @@ export class ZellijSurface {
     const controls = new WebContentsView({
       webPreferences: {
         preload: join(app.getAppPath(), 'out', 'preload', 'zellij.js'),
+        // `MAESTROSDK` 靠这一格判断一条刷新广播是不是发给自己的。这里**天然是对的**:tab 承载时
+        // `surfaceId` 就是 `host.instanceId`(`zellijWindow.service.ts` 的 `openOnTab` 这么取的),
+        // 而 surface 是按 id 建的;独立窗口那一份的 id 是 `'window'`,永远不会与任何 tab 的广播相等。
+        additionalArguments: [`${MAESTRO_SDK_INSTANCE_ARGUMENT}${this.surfaceId}`],
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: false

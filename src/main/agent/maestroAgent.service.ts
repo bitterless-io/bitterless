@@ -1,3 +1,4 @@
+import { createArchive } from '@main/maestro/files/archive.service';
 import { agentDecisionRegistry } from '@main/agent/decisionRegistry.service';
 import { skillAuthoringRuntime } from './runtime/skillAuthoring'
 import { workflowLibraryRuntime } from '@main/workflowLibrary/workflowLibraryRuntime';
@@ -14,7 +15,7 @@ import { buildWebSearchTools } from './tools/webSearchTools'
 import { buildWebFetchTools } from './tools/webFetchTools'
 import { readProjectInstructions } from './prompt/projectInstructions'
 import { isAbsolute } from 'node:path'
-import { clipboard, dialog, shell } from 'electron'
+import { app, clipboard, dialog, shell } from 'electron'
 import type { BrowserWindow } from 'electron'
 import { createXpcMainEmitter, xpcMain } from 'electron-xpc/main'
 import { createHash, randomUUID } from 'crypto'
@@ -36,12 +37,12 @@ import type {
   ContextExportSummary,
   ContextGraphRequest,
   ContextGraphResult,
-  SessionIoPathResult
-} from '@maestro-shared/coach.api'
+  SessionIoPathResult, SessionIoExportResult, SessionIoExportTarget } from '@maestro-shared/coach.api'
 import { MaestroAgent } from '@main/agent/MaestroAgent'
 import { DelegateAgent } from '@main/agent/DelegateAgent'
 import { readHostToolCatalog } from '@main/agent/hostToolCatalog'
 import { DEEP_FETCH_BUILTIN_SKILL } from '@main/agent/deepFetch.skill'
+import { RELOAD_SKILLS_BUILTIN_SKILL } from '@main/agent/reloadSkills.skill'
 import { DRILL_BUILTIN_SKILL } from '@main/agent/drill.skill'
 import { extractVariablesFromMessage } from '@main/agent/naturalLanguageVariables'
 import {
@@ -79,6 +80,7 @@ import {
   MAX_ATTACHMENT_BYTES,
   agentMediaMimeForPath,
   buildAgentTurnPrompt,
+  buildSessionSkillGuidance,
   buildConversationCompactPrompt,
   describeActiveTabLine,
   localNow,
@@ -243,7 +245,6 @@ export interface MaestroAgentInstances {
 }
 
 interface ActiveAgentTurn extends AgentTurnSnapshot {
-  abortOperation?: Promise<{ ok: true }>
   continuationOf?: string
   generation: number
   rootStarted: boolean
@@ -459,6 +460,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         new MaestroAgent({
           ...agentPorts(),
           compactPrompt: () => this._state.readMaestroSettings().compactPrompt,
+          skillGuidance: root => this.sessionSkillGuidance(root),
           onCompaction: (state) => xpcMain.broadcast('coach/agent-compaction', { sessionId: 'default', ...state }),
           buildTools: () => this._state.buildPiTools({ ingest: true, sessionKey: 'default' }),
           authPath: maestroAuthPath(),
@@ -469,6 +471,11 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
           // docs/features/agent-cwd-follows-workspace.md.
           cwd: ensureDefaultWorkspace(),
           onDebug: broadcastCodexDebug,
+          // **聊天回合不设墙钟上限**(`0`)。Ral 2026-09-22:「有的任务或 tool 耗时就是就 例如,
+          // 下载 … 不能设置超时的,一直静默就静默着」。一个工具跑几小时是合法的,而
+          // `BaseAgent` 的默认 600s 会把它当成挂死掐掉 —— 掐掉的是耗时,不是故障。
+          // 回合只由「跑完」或「人按 Stop」结束。
+          turnTimeoutMs: 0,
           onActivity: (step) => this.relayAgentActivity('default', step),
           onThinking: (state) => this.relayAgentThinking('default', state),
           onStream: (delta) => this.relayAgentStream('default', delta),
@@ -1073,6 +1080,56 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     }
   }
 
+  /**
+   * `/export` 的**第一步**:解析目录 + 让人选保存位置。**不压缩。**
+   *
+   * 拆成两步是因为界面要在压缩期间显示等待提示(Ral 2026-09-22),而保存对话框开着的那段时间
+   * 是**人在想**,不是机器在忙 —— 一次调用里做完的话,加载态会盖住人挑目录的全过程,
+   * 显示的是一个假的"正在压缩"。
+   *
+   * 目录经 `resolveSessionIoDirectory` 按**会话身份**取,与 `/copy_session_path`、右键"打开目录"
+   * 同一个来源,三者不会指向不同的地方。第二步会再取一次,所以界面拿到的 `target` 只是保存位置,
+   * 不是可以绕过身份校验的源路径。
+   *
+   * 用 `showSaveDialog` 而不是只选目录:存一个压缩包要定的是目录**和**文件名两件事。
+   * 默认名带会话目录名,免得几次导出互相覆盖。取消返回 `cancelled`,不是错误。
+   */
+  async pickSessionIoExportTarget(params: { sessionId: string; workspace?: WorkspaceRef }): Promise<SessionIoExportTarget> {
+    try {
+      const dir = await this.resolveSessionIoDirectory(params?.sessionId, params.workspace);
+      const chosen = await dialog.showSaveDialog({
+        title: 'Export session logs',
+        defaultPath: join(app.getPath('downloads'), `${basename(dir)}.zip`),
+        filters: [{ name: 'Zip archive', extensions: ['zip'] }]
+      });
+      if (chosen.canceled || !chosen.filePath) return { ok: false, cancelled: true };
+      return { ok: true, path: dir, target: chosen.filePath };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /**
+   * `/export` 的**第二步**:真正压缩。界面在调它之前亮出等待提示,它返回之后才收 ——
+   * 于是提示的存续区间恰好等于"压缩 + 落盘"。
+   *
+   * 目录**再解析一次**而不是接收第一步的返回值:两步之间界面可能换了会话,而这条命令的语义是
+   * "导出这个会话" —— 身份是判据,路径只是结果。
+   */
+  async writeSessionIoArchive(params: { sessionId: string; target: string; workspace?: WorkspaceRef }): Promise<SessionIoExportResult> {
+    try {
+      const dir = await this.resolveSessionIoDirectory(params?.sessionId, params.workspace);
+      const target = typeof params?.target === 'string' ? params.target.trim() : '';
+      if (!target) throw new Error('A save location is required.');
+      // `cwd` 设成目录的父级、输入用目录名 —— 压缩包里是一个顶层文件夹,不是一堆散文件摊在解压处。
+      // `-y` 覆盖同名,人已经在保存对话框里确认过一次了。
+      await createArchive(target, [basename(dir)], { cwd: join(dir, '..') });
+      return { ok: true, path: dir, archive: target };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
   private async resolveSessionIoDirectory(sessionId: string, workspace?: WorkspaceRef): Promise<string> {
     const id = typeof sessionId === 'string' ? sessionId.trim() : ''
     if (!id) throw new Error('A chat session is required.')
@@ -1135,7 +1192,6 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         userChainPath: chainFilePath(maestroUserChainDir(), sessionKey),
         currentUrl,
         catalog: registry.catalogPrompt(this._state.projectRootForSession(sessionKey)),
-        workflows: workflowLibraryRuntime.catalogPrompt(),
         skillAuthoring: skillAuthoringRuntime(registry.scopeStorage.shared),
         // Where the model is actually working when nothing is selected (Ral 2026-09-18).
         defaultWorkspacePath: ensureDefaultWorkspace(),
@@ -1244,7 +1300,6 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         userChainPath: chainFilePath(maestroUserChainDir(), sessionKey),
         currentUrl,
         catalog: registry.catalogPrompt(this._state.projectRootForSession(sessionKey)),
-        workflows: workflowLibraryRuntime.catalogPrompt(),
         skillAuthoring: skillAuthoringRuntime(registry.scopeStorage.shared),
         // Where the model is actually working when nothing is selected (Ral 2026-09-18).
         defaultWorkspacePath: ensureDefaultWorkspace(),
@@ -1542,7 +1597,6 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       if (record.finished.turn.sessionId === sessionKey) record.continuationBlocked = true
     }
     if (!turn) return { ok: true }
-    if (turn.abortOperation) return turn.abortOperation
     turn.state = 'aborting'
     turn.stopError = undefined
     turn.steeringInbox.cancel('Stopped before this message was delivered.')
@@ -1555,24 +1609,26 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     // **挂着的拍板也要了结。**(docs/features/agent-decision-sheet.md)
     // `ask_user` 是阻塞的:没人 resolve 它,那个工具调用会永远挂着,而它所在的回合已经没了。
     agentDecisionRegistry.cancelSession(sessionKey);
-    turn.abortOperation = Promise.resolve().then(async () => {
-      // Join both operations before allowing a retry, including when cleanup fails.
-      const results = await Promise.allSettled([
-        this.workflowHost?.stopSession({ sessionId: sessionKey }),
-        this.getExistingMaestroAgent(params.sessionId)?.abort()
-      ])
-      const failure = results.find((result) => result.status === 'rejected')
-      if (failure?.status === 'rejected') throw failure.reason
-      this.finishAgentTurn(turn, 'stopped')
-      return { ok: true as const }
-    }).catch((error) => {
-      turn.stopError = error instanceof Error ? error.message : String(error)
-      this.broadcastAgentTurn({ turn: this.agentTurnSnapshot(turn) })
-      throw error
-    }).finally(() => {
-      turn.abortOperation = undefined
-    })
-    return turn.abortOperation
+    /**
+     * **取消同步、清理后台**(Ral 2026-09-22:「stop 应该立刻结束会话并尽量结束正在执行的命令」)。
+     *
+     * 上面每一句都是同步的:取消 steering、取消拍板、取消本会话的任务。下面这一句
+     * `agent.abort()` 现在也是同步的(BaseAgent.abort:丢 session + 放行,旧 session 由 `reset()`
+     * 异步 abort)—— 它就是 pi 的 `agent.abort()`,一次 `AbortController.abort()`;内置工具全都
+     * 拿着那个 signal,bash 收到就杀整棵进程树。
+     *
+     * 原来这里要 `await` workflow worker 终止 + agent abort **之后**才 `finishAgentTurn`,于是回合
+     * 的释放被挂在了一段秒级起步的清理后面,而界面只能跟着等
+     * (docs/issues/chat-stop-never-confirms-and-the-ui-has-no-escape.md)。现在回合当场结束,
+     * worker 的终止(SIGTERM → 宽限 → SIGKILL → 确认)留在后台跑完 —— 取消信号早发出去了,
+     * 剩下的是清理,不是前置条件。
+     */
+    this.getExistingMaestroAgent(params.sessionId)?.abort()
+    void Promise.resolve()
+      .then(() => this.workflowHost?.stopSession({ sessionId: sessionKey }))
+      .catch(() => undefined)
+    this.finishAgentTurn(turn, 'stopped')
+    return { ok: true }
   }
 
   async abortDelegate(params?: { sessionId?: string }): Promise<void> {
@@ -1660,6 +1716,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         new MaestroAgent({
           ...agentPorts(),
           compactPrompt: () => this._state.readMaestroSettings().compactPrompt,
+          skillGuidance: root => this.sessionSkillGuidance(root),
           onCompaction: (state) => xpcMain.broadcast('coach/agent-compaction', { sessionId: key, ...state }),
           buildTools: () => this._state.buildPiTools({ ingest: true, sessionKey: key }),
           sessionFile: this.nativeSessionFile(key),
@@ -1671,6 +1728,11 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
           // docs/features/agent-cwd-follows-workspace.md.
           cwd: ensureDefaultWorkspace(),
           onDebug: broadcastCodexDebug,
+          // **聊天回合不设墙钟上限**(`0`)。Ral 2026-09-22:「有的任务或 tool 耗时就是就 例如,
+          // 下载 … 不能设置超时的,一直静默就静默着」。一个工具跑几小时是合法的,而
+          // `BaseAgent` 的默认 600s 会把它当成挂死掐掉 —— 掐掉的是耗时,不是故障。
+          // 回合只由「跑完」或「人按 Stop」结束。
+          turnTimeoutMs: 0,
           onActivity: (step) => this.relayAgentActivity(key, step),
           onThinking: (state) => this.relayAgentThinking(key, state),
           onStream: (delta) => this.relayAgentStream(key, delta),
@@ -1927,6 +1989,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     return [
       DRILL_BUILTIN_SKILL,
       DEEP_FETCH_BUILTIN_SKILL,
+      RELOAD_SKILLS_BUILTIN_SKILL,
       ...recordings.map((skill) => {
       const recipe = skill.recipePath ? registry.readRecipe(skill.id) : null
       const seed = recipe ? extractVariablesFromMessage(message, recipe) : {}
@@ -1946,6 +2009,24 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     ]
   }
 
+  /**
+   * 表 2 的会话级技能指引。与 cowork 的 `sessionSkillGuidance()` 成对。
+   *
+   * 只含**内置文本流程**:recordings 那份完整目录已经走 A8(`catalogText`),重复一遍就是
+   * 同一份清单发两遍(2026-09-22 实测一条消息 57,083 tok,三份目录占 92.1%)。
+   */
+  private sessionSkillGuidance(projectRoot?: string): string {
+    // 根目录由 `MaestroAgent.systemPrompt()` 给出 —— 那个 agent 自己绑定的那个,与 cwd 同源。
+    // 不在这里按 sessionKey 再查一次:未绑定时它会回落成默认工作区,把 package root 指到
+    // 一个和 cwd 不同的目录(cowork 2026-09-22 实测)。
+    const registry = this._state.existingSkillRegistry() || this._state.ensureServices().registry
+    return buildSessionSkillGuidance({
+      briefs: [DRILL_BUILTIN_SKILL, DEEP_FETCH_BUILTIN_SKILL, RELOAD_SKILLS_BUILTIN_SKILL],
+      skillAuthoring: skillAuthoringRuntime(registry.scopeStorage.shared),
+      workspacePath: projectRoot
+    })
+  }
+
   private buildMessagePrompt(message: string, context: AgentConversationContext | undefined, windowTabs: AgentWindowTabSnapshot, sessionKey: string, includeConversationMemory: boolean, sentAt = localNow()): string {
     const currentUrl = windowTabs.activeTab?.kind === 'web' ? windowTabs.activeTab.url : ''
     const registry = this._state.existingSkillRegistry() || this._state.ensureServices().registry
@@ -1955,7 +2036,6 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       activeTab: windowTabs.activeTab, openTabs: windowTabs.openTabs,
       userChainPath: chainFilePath(maestroUserChainDir(), sessionKey), currentUrl,
       catalog: registry.catalogPrompt(this._state.projectRootForSession(sessionKey)),
-      workflows: workflowLibraryRuntime.catalogPrompt(),
       skillAuthoring: skillAuthoringRuntime(registry.scopeStorage.shared),
         // Where the model is actually working when nothing is selected (Ral 2026-09-18).
         defaultWorkspacePath: ensureDefaultWorkspace(),
@@ -2004,6 +2084,10 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     const windowTabs = options?.windowTabs ?? this._state.describeWindowTabs()
     const registry = this._state.existingSkillRegistry() || this._state.ensureServices().registry
     const recordings = registry.withWorkspace(this._state.projectRootForSession(sessionKey), () => registry.listSkills()).filter(skill => skill.scope !== 'institution' || Boolean(authorizedSkillContext))
+    // `revision()` 每次 prompt 前都会跑,**绝不能抛** —— 抛了就建不出会话。workflow 那份在运行时
+    // provider 还没注册时取不到(启动早期,以及只加载部分模块的测试),那时按空目录算:少触发一次
+    // reload 是可恢复的,建不出会话不是。
+    const workflowCatalogSafe = (): string => { try { return workflowLibraryRuntime?.catalogPrompt() || '' } catch { return '' } }
     agent.setSkillCatalogProvider(async () => {
       if (skillScopeContext.current()) {
         await skillScopeContext.authorize().catch(() => null)
@@ -2011,9 +2095,14 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       }
       return registry.catalogPrompt(this._state.projectRootForSession(sessionKey))
     }, {
-      revision: () => registry.resourceRevision(this._state.projectRootForSession(sessionKey)),
+      revision: () => `${registry.resourceRevision(this._state.projectRootForSession(sessionKey))}|${createHash('sha1').update(workflowCatalogSafe()).digest('hex')}`,
       getSkills: () => registry.getPiSkills(this._state.projectRootForSession(sessionKey)),
-      reload: () => { registry.reload(this._state.projectRootForSession(sessionKey)) }
+      reload: () => { registry.reload(this._state.projectRootForSession(sessionKey)) },
+      // 完整目录进系统提示词(每会话一份),不再每轮随消息发。
+      catalogText: () => registry.catalogPrompt(this._state.projectRootForSession(sessionKey)),
+      // workflow 目录同路进系统提示词,不再每轮随消息发。版本号把它算进去 —— 否则库变了
+      // (fs watcher 已更新)而资源版本没变,系统提示词里那份目录会一直是旧的。
+      workflowCatalogText: workflowCatalogSafe
     })
     const skillBriefs = this.agentSkillBriefs(message, recordings, registry)
     const nowLocal = options?.messageSentAt || localNow()
@@ -2027,7 +2116,6 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       userChainPath: chainFilePath(maestroUserChainDir(), this.agentSessionKey(options?.sessionKey)),
       currentUrl,
       catalog: registry.catalogPrompt(this._state.projectRootForSession(sessionKey)),
-      workflows: workflowLibraryRuntime.catalogPrompt(),
       skillAuthoring: skillAuthoringRuntime(registry.scopeStorage.shared),
       briefs: skillBriefs
     })
@@ -2199,9 +2287,36 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       }
     }
     const modelReturnedNothing = (result.toolCalls ?? 0) === 0 && !result.stopReason
+    /**
+     * **气泡里的话是给人看的,诊断进日志。**(Ral 2026-09-22,在 Cowork 上报告,同一份代码)
+     *
+     * 原来这两句把 `stop: toolUse`、`tools used: 4`、`re-record the skill` 直接写进聊天 ——
+     * 前两个是协议字段,第三个在这一轮根本没有技能时不成立。判据没变,只是分流:人得到一句
+     * 能照着做的话,原始事实进 Workbench ▸ Log。
+     *
+     * 见 `micromeet-cowork/apps/cowork/docs/issues/chat-shows-internal-diagnostics-as-user-facing-text.md`
+     * ——聊天是两个产品的共同功能(BL 叫 Maestro,Cowork 叫 Cowork),这段按同一份判据同步修改。
+     */
+    broadcastCodexDebug({
+      scope: 'agent',
+      phase: 'empty-agent-turn',
+      level: 'warn',
+      message: `这一轮没有可用产出:${backend} stop=${result.stopReason || 'unknown'} tools=${result.toolCalls ?? 0}`,
+      detail: {
+        stopReason: result.stopReason || null,
+        toolCalls: result.toolCalls ?? 0,
+        modelReturnedNothing,
+        // 技能/重放都没有的一轮,「re-record the skill」那句建议从来就不成立 —— 记下来,
+        // 免得下次又有人把它写回气泡。
+        hadSkill: Boolean(skill || skills?.length)
+      },
+      ts: Date.now()
+    })
+    // ⚠ 这两句是**契约文案**:渲染层按原文认出它们,再换成 `i18nHelper.maestroControl.chat` 里
+    // 那一条(BL 的聊天文案一律在渲染侧组装)。改动必须两边一起改 —— `check-empty-turn-copy.mjs` 会拦。
     const text = modelReturnedNothing
-      ? `${backend} returned an empty response (no text, no action). This usually means that subscription is rate-limited or temporarily unavailable — wait a bit and retry, or switch the model from the provider selector. It is not a problem with the skill or this page.`
-      : `The assistant (${backend}) ended without acting (stop: ${result.stopReason || 'unknown'}, tools used: ${result.toolCalls ?? 0}). Try a clearer instruction, make sure the page is logged in, or re-record the skill if its steps no longer fit this page.`
+      ? 'The model returned nothing this turn. Send it again, or pick a different model above.'
+      : 'I did not get a usable result this turn. Send it again, in different words if that helps.'
     return {
       ok: false,
       text,

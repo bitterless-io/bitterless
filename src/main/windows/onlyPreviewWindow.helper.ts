@@ -342,11 +342,22 @@ export class OnlyPreviewWindowHelper {
    * `mount.onHostGone` 里被吊销(本文件 `attachSurface` 末尾那个监听),所以晚一步就什么都问不到了。
    */
   private armStandaloneCloseTakeover(hostToken: string): void {
-    if (shuttingDown) return;
-    if (this.standaloneHost?.hostToken !== hostToken) return;
-    if (this.standaloneMount?.kind !== 'standalone') return;
+    // **每条早退都要留痕。** 四个条件里任何一个命中,现象都完全一样:那一格 tab 永远停在
+    // 「已在独立窗口打开」的占位页。不记下来是哪一条,现场就只能靠读代码猜 —— 2026-09-22
+    // 我拿着完整日志也没能定位,因为这四条全是静默 `return`。
+    const skip = (reason: string): void => {
+      console.info(`[onlypreview] event=deferred-tab phase=not-armed reason=${reason}`);
+    };
+    if (shuttingDown) return skip("shutting-down");
+    if (this.standaloneHost?.hostToken !== hostToken) return skip("host-token-mismatch");
+    if (this.standaloneMount?.kind !== 'standalone') {
+      return skip(`mount-kind-${this.standaloneMount?.kind ?? "none"}`);
+    }
+    // `capture` 返回 undefined 的唯一原因是那一格不在占位态(`deferredTabState() !== deferred`)。
     const captured = this.standaloneCloseTakeover?.capture(hostToken);
-    if (captured === undefined) return;
+    if (captured === undefined) {
+      return skip(this.standaloneCloseTakeover ? "no-deferred-tab" : "takeover-unregistered");
+    }
     // 只存快照,不排队升格 —— 升格由 `'closed'` 那一侧的 `commitStandaloneCloseTakeover` 触发。
     this.pendingCloseTakeover = { hostToken, captured };
   }
@@ -1490,16 +1501,21 @@ export class OnlyPreviewWindowHelper {
         nodeIntegration: false,
         webSecurity: true,
         backgroundThrottling: mode !== 'shell',
-        additionalArguments: getOnlyPreviewRendererArguments(
-          host,
-          mode,
-          previewRuntimeToken,
-          officeBrokerCapability,
-          previewReadBrokerCapability,
-          openTag,
-          // The Shell renders the window controls this host can honour, and nothing else.
-          this.standaloneMount?.kind === 'cowork' ? 'cowork' : 'window'
-        )
+        // 宿主参数摊在最后:Maestro tab 承载时带上这个 tab 的身份,给 `MAESTROSDK` 认自己的刷新
+        // 广播用;独立窗口承载时是空数组,行为逐字不变。
+        additionalArguments: [
+          ...(this.standaloneMount?.maestroRendererArguments() ?? []),
+          ...getOnlyPreviewRendererArguments(
+            host,
+            mode,
+            previewRuntimeToken,
+            officeBrokerCapability,
+            previewReadBrokerCapability,
+            openTag,
+            // The Shell renders the window controls this host can honour, and nothing else.
+            this.standaloneMount?.kind === 'cowork' ? 'cowork' : 'window'
+          )
+        ]
       }
     });
     if (mode === 'globalSearch') view.setBackgroundColor('#00000000');

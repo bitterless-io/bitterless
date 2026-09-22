@@ -1,6 +1,6 @@
 # 双击 Zellij tab 就地改名
 
-Status: implemented — owner testing pending(2026-09-16,Ral:「browser tab 增加双击编辑 alias 的功能,
+Status: **withdrawn 2026-09-22 —— 功能已从代码里删除,见 #8**。(原需求 2026-09-16,Ral:「browser tab 增加双击编辑 alias 的功能,
 但只给 miniapp zellij 开放。1. input 长度和文字输入长度匹配,超出 20 个字截断。2. 清空文本点击回车保存
 的时候,直接还原到 zellij 作为 title。3. 回车保存 zellij tab 的 title 需要持久化,重启恢复」)。
 
@@ -118,3 +118,38 @@ chip 里,chip 的宽度是被 tab 条的收缩算法钳死的,所以它有自己
 | PQ-1 | 其余 composite(OnlyPreview / Trench)要不要也开双击? | 先不开 —— Ral 点名只给 Zellij。要开,改的是 #2 那一个判据,两处一起改 | G2 的边界 | **已定** — 只给 Zellij |
 | PQ-2 | 普通网页 tab 要不要开双击? | 不要 —— 双击 tab 条在浏览器里普遍是「最大化窗口」,抢掉它会让每个用户都踩一次 | | **已定** — 不开 |
 | PQ-3 | 20 字上限要不要按显示宽度算(中文占两格)? | 不要 —— 「20 个字」是 Ral 的原话,按**字符**数最直白;宽度由 `max-width: 100%` 兜底 | | **已定** — 按字符 |
+
+## #8 撤回(Ral 2026-09-22)
+
+> 取消 tab 双击改名的功能,只能右击点击 alias 改名
+
+改名入口收敛成**一个**:右键菜单的 `Alias…`([tab-alias.md](tab-alias.md) G1)。整套就地编辑
+**从代码里删掉了**,不是藏起来 —— 留着一条没有入口的编辑态,只会让下一个人以为它还在用。
+
+删掉的东西:
+
+| 位置 | 删掉的 |
+|---|---|
+| `MenuBar.vue` | tab chip 的 `@dblclick`、`onTabDblClick` / `renameWidth` / `onRenameKeydown`、进入编辑时聚焦全选的那个 `watch`、chip 里的 `<input>`、`onTabClick` 里让位给光标的那道闸、`:draggable` 里的 `isRenaming` 项、以及 `:title` 里那句「双击可重命名」 |
+| `tab.store.ts` | `renamingTabId` / `renameDraft` / `renameMaxLength` / `canRename` / `isRenaming` / `beginRename` / `updateRenameDraft` / `cancelRename` / `commitRename` |
+| `i18n/en.ts` · `i18n/zh.ts` | `menuBar.maestro.renameTab` 与 `renameTabHint`(两种语言一起,`check:renderer-i18n` 要求 key 对齐) |
+
+**没删、刻意留着的:** main 侧的 `setTabAlias` XPC(`coach.api.ts` → `coach.handler.ts` →
+`maestroWindow.controller.ts` → `maestroBrowserView.service.ts`)连同它的 Zellij-only 拒绝与
+`MAESTRO_TAB_INLINE_RENAME_MAX_LENGTH`(20 字)截断。它现在**没有调用方** —— 唯一那个是
+`commitRename`。留着的理由有两条:`check-zellij-tab-chrome` 的 ④ 段以「XPC 是独立入口,任何 renderer
+都能调,而它会写 settings 与 sqlite」为由钉着那道 main 侧判据,那条理由与手势本身无关;而删掉它要
+横跨四个文件。**这是一处已知的死代码,要不要一起清掉是 Ral 的决定。**
+
+一个真实的行为后果:Zellij chip 的 alias 现在只能经覆盖层那张卡片设置,而它的上限是 **64**
+(`MAESTRO_TAB_ALIAS_MAX_LENGTH`),不是就地编辑那 20。#5 当初把 20 的理由写成「chip 的宽度账已经
+按 20 个字算好了」—— 现在 Zellij chip 和其余每一种 tab 一样,靠 tab 条的收缩算法与 CSS 兜。
+
+### #8.1 防回归
+
+`check-zellij-tab-chrome.mjs` 的 ⑤ 段从「钉住这个手势存在」**反转**成「钉住它不存在」:
+`MenuBar.vue` 里不许再出现 `@dblclick`,`tab.store.ts` / `MenuBar.vue` 里不许再出现
+`isRenaming` / `renameDraft` / `renamingTabId` / `beginRename` / `commitRename` / `canRename`。
+
+反向钉的理由:这个手势看起来只是一行 `@dblclick`,极容易被"顺手加回来",而加回来之后**不会有任何
+测试变红** —— 就地编辑的每一处状态都得跟着回来,才会有人发现。

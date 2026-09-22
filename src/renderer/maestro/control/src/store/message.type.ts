@@ -107,7 +107,6 @@ export interface Turn {
   activity: AgentActivityStep[]
   thinking: boolean
   startedAt: number
-  lastActivityAt: number
   aborting: boolean
   stopError?: string
   retry?: { attempt: number; max: number }

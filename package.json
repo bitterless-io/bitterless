@@ -1,6 +1,6 @@
 {
   "_name": "Bitterless",
-  "_version": "0.0.124",
+  "_version": "0.0.125",
   "anydoc_version": "0.2.4",
   "bun_version": "1.3.14",
   "fd_version": "10.5.0",
@@ -49,6 +49,7 @@
     "test:motto": "node --test tests/motto/*.test.mjs",
     "test:omni-layout": "node --test tests/omni/omniLayoutLifecycle.test.mjs",
     "test:indexing": "node --test tests/indexing/indexingPipeline.test.mjs",
+    "test:read-gate": "node --test tests/files/readGate.test.mjs",
     "test:onlypreview": "node --test tests/onlypreview/*.test.mjs",
     "indexing": "node tests/indexing/cli.mjs",
     "bench:indexing:matrix": "node tests/indexing/bench/planMatrix.bench.mjs",
@@ -72,6 +73,8 @@
     "test:maestro-pi-agent-dir": "node --test scripts/maestro/piAgentDir.test.ts",
     "test:maestro-crms-residue": "node --test scripts/maestro/crmsResidueCleanup.test.ts",
     "check:chat-composer": "node scripts/maestro/check-chat-composer.mjs",
+    "check:empty-turn-copy": "node scripts/maestro/check-empty-turn-copy.mjs",
+    "check:turn-has-no-timeout": "node scripts/maestro/check-turn-has-no-timeout.mjs",
     "check:new-tab-focus": "node scripts/maestro/check-new-tab-focus.mjs",
     "check:history-background-tab": "node scripts/maestro/check-history-background-tab.mjs",
     "check:tab-alias": "node scripts/maestro/check-tab-alias.mjs",
@@ -192,7 +195,6 @@
     "test:skill-script": "node --test tests/maestro/skillScriptInterpreter.test.mjs",
     "test:tool-approval": "node --test tests/maestro/toolApprovalHasAButton.test.mjs",
     "test:default-workspace": "node --test tests/maestro/defaultWorkspace.test.mjs",
-    "test:devtools-placement": "node --test tests/maestro/devtoolsPlacement.test.mjs",
     "typecheck:skill-scopes": "tsc --noEmit -p tests/skillScopes/tsconfig.node.json && vue-tsc --noEmit -p tests/skillScopes/tsconfig.web.json"
   },
   "dependencies": {
@@ -328,7 +330,7 @@
     "rigs/*",
     "rig_dev/*"
   ],
-  "name": "Bitterless_DEBUG_DEV",
-  "version": "0.0.124",
-  "version_code": "260922113116"
+  "name": "Bitterless_PREVIEW",
+  "version": "0.0.125",
+  "version_code": "260922143524"
 }

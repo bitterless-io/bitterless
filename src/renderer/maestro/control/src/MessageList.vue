@@ -45,6 +45,10 @@ onUnmounted(() => {
   <div ref="containerRef" class="message-list">
     <div ref="listRef" class="message-list__scroll" @scroll.passive="onScroll">
       <MessageItem v-for="m in messages" :key="m.id" :message="m" />
+      <!-- 状态条落在这里 —— **跟着最后一条消息走**(Ral 2026-09-22)。用插槽而不是让 MessageList
+           自己引入 ResponseStatus:这个组件的契约一直是 `props: { messages }` + 纯渲染。
+           见 areas/agent-runtime/chat/decision/manual-decision.html #3。 -->
+      <slot name="tail" />
     </div>
     <button
       v-if="distanceFromBottom > SCROLL_BOTTOM_VISIBLE_PX"

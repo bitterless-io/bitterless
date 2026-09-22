@@ -72,12 +72,54 @@ export class SkillRegistryService {
     this.snapshots.set(key, { catalog, pi })
     return catalog
   }
+  /**
+   * 目录里的一条。**只发模型用得上的字段**(Ral 2026-09-22:「我的期望是技能标题和 description」
+   * 「将浪费的那些技能信息读取都去掉」):
+   * · `name` / `description` —— 判断"是不是这一个"的全部依据;
+   * · `path` —— 按需 `read_file` 读正文的入口(渐进披露靠它,不能省);
+   * · `source` —— 三源可见性;
+   * · `ref` —— **仅重名时**(见 catalogPrompt 里那段);
+   * · `displayName` —— **仅当与 name 不同**,否则是同一个字符串发两遍;
+   * · `domain` —— 只在有值时;那句「Recorded execution requires matching domain.」是**常量**,
+   *   原来每条带 domain 的技能都重复一遍,现在合并进结尾说明,只说一次;
+   * · `allowImplicitInvocation` —— 只在 `false` 时发:`true` 是常态,不必每条都说,
+   *   而 `false` 才会改变行为(不得自动选中)。
+   * 已移除:`revision`(64 位内容哈希,宿主缓存令牌,模型无用)。
+   */
+  private catalogRow(skill: SkillSummary, ambiguous: (skill: SkillSummary) => boolean): Record<string, unknown> {
+    const name = skill.canonicalName || skill.name;
+    return {
+      name,
+      description: skill.description,
+      source: skill.layer,
+      path: skill.path,
+      ...(ambiguous(skill) ? { ref: skill.reference || skill.id } : {}),
+      ...(skill.displayName && skill.displayName !== name ? { displayName: skill.displayName } : {}),
+      ...(skill.domain ? { domain: skill.domain } : {}),
+      ...(skill.allowImplicitInvocation === false ? { allowImplicitInvocation: false } : {})
+    };
+  }
+
   catalogPrompt(workspace = this.workspace.getStore()): string {
     const catalog = this.catalog(workspace)
     const available = catalog.skills.filter(skill => skill.status === 'ready' && skill.scope !== 'unassigned' && skill.enabled !== false)
-    return '[Current complete Skills catalog]\n' + JSON.stringify({ catalogRevision: catalog.revision, workspace: catalog.workspace, institution: this.scopeStorage.current()?.institutionId || null,
+    // 围栏与 cowork 同形(`skillCatalogPrompt.ts` 的 START/END)—— `keepLatestSkillCatalog()`
+    // 靠这一对标记找到并替换历史消息里重复的目录,两端共用同一个纯函数。
+    // 重名才需要限定引用:`resolveSkill()` 先按 reference/id/alias 找,找不到就按
+    // `name` / `canonicalName` 找,**只在匹配到多于一个时**才抛 `Ambiguous skill`。
+    // 所以名字唯一时,名字本身就是引用 —— 再发一份 `ref` 是纯冗余,而典型 ref 是
+    // `workspace:<64hex>:<64hex>`,139 个字符去标识一个叫 `aliyun-finance-send` 的技能。
+    const seen = new Map<string, number>();
+    for (const skill of available) {
+      for (const key of new Set([skill.canonicalName || skill.name, skill.name].filter(Boolean).map(n => n!.toLowerCase()))) {
+        seen.set(key, (seen.get(key) || 0) + 1);
+      }
+    }
+    const ambiguous = (skill: SkillSummary): boolean =>
+      (seen.get((skill.canonicalName || skill.name).toLowerCase()) || 0) > 1;
+    return '<host_skill_catalog>\n[Current complete Skills catalog]\n' + JSON.stringify({ catalogRevision: catalog.revision, workspace: catalog.workspace, institution: this.scopeStorage.current()?.institutionId || null,
       counts: Object.fromEntries(['global','workspace','institution'].map(layer => [layer, { available: available.filter(skill => skill.layer === layer).length, errors: catalog.skills.filter(skill => skill.layer === layer && skill.status === 'error').length }])),
-      skills: available.map(skill => ({ name: skill.canonicalName || skill.name, displayName: skill.displayName, description: skill.description, source: skill.layer, ref: skill.reference || skill.id, path: skill.path, revision: skill.skillRevision, allowImplicitInvocation: skill.allowImplicitInvocation, ...(skill.domain ? { domain: skill.domain, execution: 'Recorded execution requires matching domain.' } : {}) })) }) + '\nCatalog entries are metadata only, not loaded bodies. Read get_skill_contract or read_file on demand. This current catalog supersedes historical inventories; never treat an old body as the current revision. Same names require a qualified ref.'
+      skills: available.map(skill => this.catalogRow(skill, ambiguous)) }) + '\nCatalog entries are metadata only, not loaded bodies. Read get_skill_contract or read_file on demand. This current catalog supersedes historical inventories; never treat an old body as the current revision. A name resolves on its own; `ref` appears only where two skills share a name. A skill carrying `domain` executes its recording only on a matching domain.\n</host_skill_catalog>'
   }
   reload(workspace = this.workspace.getStore()): SkillCatalogSnapshot {
     this.invalidate()

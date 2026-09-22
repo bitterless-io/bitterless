@@ -1,5 +1,4 @@
-import { createSyntheticSourceInfo, formatSkillsForPrompt } from '@maestro-main/skills/piSkillSdk'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import moment from 'moment'
 import { renderChainPathLine } from '@main/agent/userChainStore.service'
 import { DEEP_FETCH_BROWSER_WORKFLOW } from '@main/agent/deepFetch.skill'
@@ -225,6 +224,132 @@ const NEW_FILE_PLACEMENT = [
   'Classify it the way a domain-driven layout does — by the business domain it belongs to, and by the role it plays inside that domain (entity/model, service, repository, api, docs, tests) — never by file type alone. Mirror the existing folder names and language conventions rather than introducing your own. If nothing in the tree fits, create the smallest new folder named for the business concept, and say in one line where you put it and why.'
 ].join('\n')
 
+/**
+ * **会话级静态指引(表 2 产品层)。** 零插值、与本轮消息无关,原先逐字拼进**每一条** user 消息 ——
+ * 聊 N 轮就重发 N 遍(`overmind:areas/agent-runtime/chat/compaction/compaction-closeout1.md` B4)。
+ * 按表 3 的契约每轮只该有 D1–D4;常量属于系统提示词。
+ *
+ * 经 `BaseAgent.fullSystemPrompt()` 注入,**两个 runtime 共用同一条路** —— 这一点是刻意的:
+ * `getAppendSystemPrompt()` 只属 pi 的资源加载器。技能目录(A8)才走那条路,因为它需要随
+ * `session.reload()` 重建;这些常量永远不变,不需要。
+ */
+export const STATIC_TURN_GUIDANCE = [
+  // 逃生阀原来只挡「用户明确说别用浏览器工具」,也只挡浏览器那一组。一句 hi 不触发它的任何一个
+  // 条件,于是模型照着上面的指令墙自己编了个任务、连跑 41 步
+  // (issues/turn-prompt-buries-the-user-message.md,cowork 实录,本仓同一条路径)。
+  // 现在它按**请求本身**判,并覆盖全部工具。
+  'GREETINGS AND SMALL TALK GET A PLAIN REPLY. If the request is a greeting, an acknowledgement, a',
+  'thank-you, a question about you, or anything else that needs no file, no page and no command —',
+  'just answer it in chat and call NO tool at all. The material above describes what you CAN do; it',
+  'never says you must do any of it. Doing "a bit of research first" on a greeting is wrong, not thorough.',
+  'If the user explicitly asks for a chat-only answer, a model-token test, or says not to use browser tools,',
+  'answer directly in chat and do not call browser tools (including deep_fetch, open_tab, page_snapshot or ui_act) for that turn.',
+  'Browser-use status: start_browser_use/end_browser_use require an exact tab_id and only change this task\'s use marker. They never select/show/navigate a page or change drill recording. Page tools automatically begin use; end it explicitly when finished with a tab. Historical targets are not active-use markers.',
+  '',
+  'When the task needs current or sourced information, a failed web_search does not remove the need to verify it.',
+  'Follow retry guidance for that service only, then use the built-in browser workflow below. Try public sources before asking the user to repair search.',
+  DEEP_FETCH_BROWSER_WORKFLOW,
+  '',
+  // "above" 指的是同在系统提示词里的技能目录(A8),不是每轮消息 —— 两者现在同层。
+  'For builtin: text skills, follow their supplied steps directly; they have no recorded recipe. get_skill_contract reads both Markdown Skills and recording contracts; follow next_offset for long bodies.',
+  'If a recorded skill above fits the request, load and run it (the fast path). If NONE fit — or none',
+  'are recorded — do NOT refuse: fall back to browser_use, i.e. page_snapshot to observe the page then',
+  'ui_act to operate it, looping observe→act until the goal is reached.',
+  '',
+  // ── 钻探（drill-001）。从 cowork 逐字搬入,**话术一字未改** —— 它是被多轮实测调出来的:
+  //    完成判定按"地点覆盖"而不是"模块标签"、支线要收、控件欠账要补、focus 要落到站点上真实
+  //    存在的字样。改动任何一句之前先读 cowork 的 `check-auto-explore` 与那几份 drill issue。
+  //    其中「永不反问下一个钻哪个」那几条是 Ral 2026-09-10 加的:那不是澄清,是把决策推回给人,
+  //    而钻探能跑两小时,每一次反问都让它停在那里等一个不必要的回答。
+  DRILL_ROUTE
+].join('\n');
+
+/**
+ * **会话级技能指引** —— 内置文本流程清单 + 技能创作/安装纪律。
+ *
+ * Ral 2026-09-22:「先做 2 每轮的提示词,是最需要精简的」。这些段零插值或只插**会话级**的值
+ * (authoring root / bun 路径),却原本拼在**每一条** user 消息上 —— 聊 N 轮就重发 N 遍。
+ * 与 cowork 的 `buildSessionSkillGuidance()` 成对(paired-development)。
+ *
+ * 归属与 `STATIC_TURN_GUIDANCE` 一致:走表 2 产品层(`MaestroAgent.systemPrompt()`),
+ * 而不是 pi 的 `getAppendSystemPrompt()` —— `fullSystemPrompt()` 是每个 runtime 共用的装配点。
+ * 技能目录(A8)走那条路是因为它要随 `session.reload()` 重建;这些指引只在建会话时定一次。
+ *
+ * **留在每轮的只有一件事**:`domain` —— 它由 `currentUrl` 推导,逐轮会变。
+ *
+ * 代价(与 A6/cwd 同):会话中途换 workspace 不会刷新这里的 package root。
+ */
+/**
+ * 工作区纪律 —— **会话级**,不是每轮。分叉只看「这个会话有没有绑定工作区」,那是会话级事实:
+ * 换工作区会 `setProjectRoot()` → cwd 变 → `reset()` → 新会话重新组装系统提示词,分支跟着刷新。
+ * 路径**这条事实**仍归 D2(`- Active workspace: …`),规则归这里。与 cowork 成对。
+ */
+const workspaceRules = (workspaceSelected: boolean): string => workspaceSelected
+  ? [
+      'Use workspace tools for project files: workspace_context, list_workspace_files, search_files, read_file, write_file, create_artifact, preview_file, open_workspace_folder, list_archive, extract_archive, create_archive.',
+      // 2026-09-22(cowork 实录,本仓同一条路径):模型用 `bash` 对整个工作区跑
+      // `grep -rli … .`(93 GB),11 分钟没返回,把整个回合钉死、期间人一句话都插不进去
+      // (`docs/issues/bash-tool-has-no-timeout-and-wedges-the-turn.md`)。
+      // 宿主的 search_files / 内置 grep 都有 gitignore 感知,同一次查询 38ms 就回来了。
+      'SEARCHING: use search_files or the built-in grep. NEVER run a recursive search over the whole workspace with bash (`grep -r … .`, `find . -type f`, and the like) — the workspace can be tens of gigabytes, such a command runs for many minutes, and while it runs nothing the operator says can reach you. If you must use bash for a search, point it at one concrete subdirectory.',
+      // A7 说「open it for the user with the preview tool」,这里就是那个工具的名字。
+      // 2026-09-21 起 bl 也有 `preview_file`(Ral 指定要补),它比 `open_workspace_folder` 多两件事:
+      // 够得到工作区**外**的路径,以及能带行号。所以 A7 那条纪律现在指向它。
+      // `open_workspace_folder` 保留原样 —— 它仍是「把工作区本身摆出来」的那个动作。
+      'To SHOW the user a file or folder, call preview_file on its path — it opens in OnlyPreview, the local preview app, and takes an optional 1-based line. Do not read a file and retell it when they asked to look at it.',
+      'You may create/update files and generated artifacts inside this workspace. Do not delete, rename, move, or target the workspace directory itself.',
+      NEW_FILE_PLACEMENT,
+      'Folders are listed/searched before individual files are read. Archives are listed or extracted into a new or empty folder rather than passed to read_file; extraction refuses links/special entries and password-protected archive creation is refused.',
+      'If a workspace tool reports workspace-not-found / workspace-not-directory, the app clears the stale reference; ask the user to choose the new location.'
+    ].join('\n')
+  : [
+      'No workspace selected: every workspace tool works in the ONE shared default workspace instead — write_file and create_artifact included. Its path is the Active workspace line above.',
+      'To SHOW the user a file or folder, call preview_file on its path — it opens in OnlyPreview, the local preview app, and takes an optional 1-based line.',
+      NEW_FILE_PLACEMENT,
+      'Never ask the user to select a workspace for a file operation; every write reports its absolute destination, which is how they find it.'
+    ].join('\n')
+
+export const buildSessionSkillGuidance = (params: {
+  briefs: AgentSkillBrief[]
+  skillAuthoring?: { globalRoot: string; bunPath: string }
+  workspacePath?: string
+}): string => {
+  // 内置文本流程进不了 A8 那份目录(registry 的 `catalogPrompt()` 按 status/scope 过滤),
+  // 所以它们从这条路进系统提示词。
+  const builtinOnly = params.briefs.filter(brief => !brief.path);
+  const list = builtinOnly.length
+    ? 'Built-in text workflows (not in the system skill catalog; follow their steps directly, never get_skill_contract):\n'
+      + JSON.stringify(builtinOnly.map(brief => ({
+        ref: brief.reference || brief.id, name: brief.name, description: brief.description,
+        ...(brief.triggers.length ? { triggers: brief.triggers } : {})
+      })))
+    : '';
+  return [
+    'Workspace:',
+    workspaceRules(Boolean(params.workspacePath)),
+    '',
+    list,
+    ...(params.skillAuthoring ? [
+      // 读写一律优先宿主工具(Ral 2026-09-22:「read 是兜底 skillRuntime 任何 runtime bl cowork 都要
+      // 这样,因为 read_file 有用到一些额外技术效果更好」)。pi 的 read/write/edit 只做兜底。
+      'Create or update reusable skills as standard SKILL.md packages with read_file and write_skill_file — prefer them over the built-in read/write/edit, which apply none of the host-side handling these do; fall back to the built-ins only when a host tool is unavailable. Use bash for scripts.',
+      'For a new reusable skill, use skill_creator init (instruction or script template), fill its SKILL_CREATOR_TODO markers with existing file tools, then skill_creator check. Ask only essential missing task details. Sidecars are optional; add resources only when useful. For existing packages, inspect before editing and check afterward.',
+      'Choose representative input and the expected observable outcome when useful; verify it with existing tools only when appropriate and authorized. Report generated, format-checked and behavior-verified separately with evidence. A passed format check never proves behavior; if no behavior was executed, report not verified.',
+      'For a new skill in this conversation, use ' + JSON.stringify(params.workspacePath ? join(params.workspacePath, '.agents', 'skills') : params.skillAuthoring.globalRoot) + ' as the package root. An explicitly selected workspace takes priority; otherwise use the Global root. Create a named subdirectory with SKILL.md and any scripts/resources. Never guess an institution destination.',
+      'Run skill JavaScript/TypeScript scripts with the bundled Bun executable ' + "'" + params.skillAuthoring.bunPath.replaceAll("'", "'\\''") + "'" + ' through bash, followed by the quoted absolute script path and arguments. Other scripts follow the commands declared by the skill. Read the current package before executing it.',
+      'Use skill_diagnose with the exact skill_ref to inspect a declared entry, interpreter and dependencies before execution or when runtime conditions are missing. It does not install software or verify behavior; follow its concrete repair guidance only within the user-authorized task.',
+      // 这条以前说「用 file tools 建/改完技能要去点 Skills refresh 或者新开 Chat」—— 对本应用自己的
+      // 技能工具是**错的**:skill_install / skill_creator / write_skill_file 都会 `registry.invalidate()`,
+      // 下一条消息前 `piRuntimeSession.prompt()` 自己就会 `session.reload()` 重建 A8。照旧话术答,
+      // 用户会被白白劝去重开会话(Ral 2026-09-22 问的正是这件事)。
+      'This app\'s own skill tools (skill_install, skill_creator, write_skill_file) refresh the catalog themselves: a skill installed or authored this turn is callable from your NEXT message, with no refresh action and no new Chat. Only changes made OUTSIDE them — the built-in write/edit, bash, an editor, git pull, another session — stay invisible; for those call reload_skills. No custom registration is required.',
+      'Skill installer guidance: use skill_install inspect for a requested source or pasted skills add command, then select exact candidate paths and install under its returned scope. Use list/update/remove for managed sources; do not bypass local-edit protection. Prefer existing tools, bundled Bun and direct HTTPS retrieval; avoid installing extra software when those suffice. Treat an npx command as installation intent: identify the exact source, requested version/ref and CLI behavior before choosing an execution path; do not run it verbatim by default.',
+      'If the original source CLI is necessary, use bundled Bun only after verifying compatibility. Consider app-private Node/npm/Git when a required runtime is missing; automatic runtime preparation is not implemented. Use skill_install for supported GitHub archives, npm tarballs and HTTPS Git sources; it records a local source ledger without executing a CLI. Installing necessary dependencies is allowed when existing capabilities are insufficient; never default to global installs or PATH changes.',
+      'Preserve the complete legal skill package, including scripts/references/assets and binary files, in the authoring root above (selected workspace first, otherwise Shared); never overwrite an existing package implicitly. Use skill_creator check for format evidence, keep behavior verification separate, and use Skills Refresh or a new Chat after file-tool edits. Local installation does not require an institution. If the available tools cannot retrieve, unpack or execute the source, report the exact missing capability rather than claiming installation succeeded.'
+    ] : [])
+  ].filter(Boolean).join('\n');
+};
+
 export const buildAgentTurnPrompt = (params: {
   message: string
   context?: AgentConversationContext
@@ -255,12 +380,6 @@ export const buildAgentTurnPrompt = (params: {
   userChainPath?: string
   currentUrl: string
   catalog?: string
-  /**
-   * The installed workflow packages, resident rather than behind `workflow_list`
-   * (docs/features/workflow-catalog-in-prompt.md ①). Without it the model only learns a workflow
-   * exists if it guesses to call the tool — so it does the work itself and never routes.
-   */
-  workflows?: string
   skillAuthoring?: { globalRoot: string; bunPath: string }
   /**
    * The directory actually in use when no workspace is selected (Ral 2026-09-18:
@@ -279,12 +398,18 @@ export const buildAgentTurnPrompt = (params: {
   } catch {
     /* keep raw */
   }
-  const list = formatSkillsForPrompt(params.briefs.map(brief => ({
-    name: brief.name, description: brief.description, filePath: brief.path || brief.reference || brief.id,
-    baseDir: brief.path ? dirname(brief.path) : '',
-    sourceInfo: createSyntheticSourceInfo(brief.path || brief.id, { source: brief.layer || 'global' }),
-    disableModelInvocation: brief.allowImplicitInvocation === false
-  })), 'read') + (params.briefs.length ? '\nHost skill references and recording inputs:\n' + JSON.stringify(params.briefs) : `(none recorded for ${domain})`)
+  // **一份,不是三份。**(Ral 2026-09-22:「技能目录在一个会话里应该只有一份」;
+  // cowork 侧 2026-09-18 已按同一条指示去掉 XML 那份:「只需要一种……只要 json 就够了」)
+  //
+  // 这一行原来把**同一个 `params.briefs` 数组**渲染了两遍 —— 先 `formatSkillsForPrompt()` 的
+  // `<available_skills>` XML,再 `JSON.stringify(briefs)` 的原始 JSON —— 而 `params.catalog`
+  // (registry 的 `catalogPrompt()`)在同一条消息的后面还有第三遍。2026-09-22 实测一条消息
+  // 57,083 tok,三份目录占 52,556 tok(92.1%);聊了 4 句就越过压缩线
+  // (`overmind:areas/agent-runtime/chat/compaction/compaction.html` #8)。
+  //
+  // XML 是 JSON 的**字段子集**,一个字段都没多;briefs 原始 JSON 相对 `params.catalog` 也只多出
+  // 两个 builtin 条目(`inputs`/`missing` 全空,`triggers` 65 条里只有 2 条有值,其余字段是改名)。
+  // 所以保留 `params.catalog` 作为唯一目录,这里只补它按 `status`/`scope` 过滤掉的 builtin。
   const recentMessages = params.context?.recentMessages || []
   const recentContext = recentMessages.length
     ? recentMessages
@@ -296,27 +421,9 @@ export const buildAgentTurnPrompt = (params: {
     : '(none)'
   const compactSummary = params.context?.compactSummary?.trim() || '(none)'
   const workspace = params.context?.workspace
-  // 只留**指导**;路径那条事实归 D2(见下面的动态前缀),否则同一个路径在提示词里出现两次。
-  const workspaceContext = workspace?.path
-    ? [
-        'Use workspace tools for project files: workspace_context, list_workspace_files, search_files, read_file, write_file, create_artifact, preview_file, open_workspace_folder, list_archive, extract_archive, create_archive.',
-        // A7 说「open it for the user with the preview tool」,这里就是那个工具的名字。
-        // 2026-09-21 起 bl 也有 `preview_file`(Ral 指定要补),它比 `open_workspace_folder` 多两件事:
-        // 够得到工作区**外**的路径,以及能带行号。所以 A7 那条纪律现在指向它。
-        // `open_workspace_folder` 保留原样 —— 它仍是「把工作区本身摆出来」的那个动作。
-        'To SHOW the user a file or folder, call preview_file on its path — it opens in OnlyPreview, the local preview app, and takes an optional 1-based line. Do not read a file and retell it when they asked to look at it.',
-        'You may create/update files and generated artifacts inside this workspace. Do not delete, rename, move, or target the workspace directory itself.',
-        NEW_FILE_PLACEMENT,
-        'Folders are listed/searched before individual files are read. Archives are listed or extracted into a new or empty folder rather than passed to read_file; extraction refuses links/special entries and password-protected archive creation is refused.',
-        'If a workspace tool reports workspace-not-found / workspace-not-directory, the app clears the stale reference; ask the user to choose the new location.'
-      ].join('\n')
-    : [
-        'No workspace selected: every workspace tool works in the ONE shared default workspace instead — write_file and create_artifact included. Its path is the Active workspace line above.',
-        'To SHOW the user a file or folder, call preview_file on its path — it opens in OnlyPreview, the local preview app, and takes an optional 1-based line.',
-        NEW_FILE_PLACEMENT,
-        'Never ask the user to select a workspace for a file operation; every write reports its absolute destination, which is how they find it.'
-      ].join('\n')
-  const memoryBlock = params.includeConversationMemory
+  // 水合但**什么都没有**时不要发那几行「(none)」—— 它和不水合时那一行说的是同一件事。
+  const hydrate = params.includeConversationMemory && (compactSummary !== '(none)' || recentContext !== '(none)')
+  const memoryBlock = hydrate
     ? [
         'Conversation memory restored for this agent session:',
         'Compacted older context (summary of older turns):',
@@ -365,63 +472,27 @@ export const buildAgentTurnPrompt = (params: {
     ...(params.message.trim()
       ? [
           `This turn's request, verbatim: ${clipText(params.message.trim(), 600)}`,
-          'That is a preview so it is not buried at the end; the authoritative copy is inside <user_message> below. Same request, not two.',
+          // **不要在散文里写出 `<user_message>` 这个字面量。** 它是结构哨兵:任何按标签切分的
+          // 消费方(守卫、上下文导出、将来的解析器)都用 `indexOf('<user_message>')` 定位,
+          // 散文里先出现一次,切出来的就是这句话到真围栏之间的**整面墙**。cowork 侧 2026-09-21
+          // 判红后已改,本仓漏了同一处(paired-development)—— `turnPromptFencesTheRequest` 四条判红。
+          'That is a preview so it is not buried at the end; the authoritative copy is in the fenced block at the end of this message. Same request, not two.',
           ''
         ]
       : []),
     dynamicPrefix,
     '',
-    `Complete Skills inventory (current execution domain: ${domain}). Recorded Skills remain listed across domains but execute only on their original site:`,
-    list,
-    ...(params.skillAuthoring ? [
-      'Create or update reusable skills with Pi read/write/edit tools as standard SKILL.md packages; use bash for scripts.',
-      'For a new reusable skill, use skill_creator init (instruction or script template), fill its SKILL_CREATOR_TODO markers with existing file tools, then skill_creator check. Ask only essential missing task details. Sidecars are optional; add resources only when useful. For existing packages, inspect before editing and check afterward.',
-      'Choose representative input and the expected observable outcome when useful; verify it with existing tools only when appropriate and authorized. Report generated, format-checked and behavior-verified separately with evidence. A passed format check never proves behavior; if no behavior was executed, report not verified.',
-      'For a new skill in this conversation, use ' + JSON.stringify(params.context?.workspace?.path ? join(params.context.workspace.path, '.agents', 'skills') : params.skillAuthoring.globalRoot) + ' as the package root. An explicitly selected workspace takes priority; otherwise use the Global root. Create a named subdirectory with SKILL.md and any scripts/resources. Never guess an institution destination.',
-      'Run skill JavaScript/TypeScript scripts with the bundled Bun executable ' + "'" + params.skillAuthoring.bunPath.replaceAll("'", "'\\''") + "'" + ' through bash, followed by the quoted absolute script path and arguments. Other scripts follow the commands declared by the skill. Read the current package before executing it.',
-      'Use skill_diagnose with the exact skill_ref to inspect a declared entry, interpreter and dependencies before execution or when runtime conditions are missing. It does not install software or verify behavior; follow its concrete repair guidance only within the user-authorized task.',
-      'After creating or editing a skill with file tools, use the existing Skills refresh action or start a new Chat to reload the catalog before its first turn; ordinary chat turns keep the loaded snapshot. No custom registration is required.',
-      'Skill installer guidance: use skill_install inspect for a requested source or pasted skills add command, then select exact candidate paths and install under its returned scope. Use list/update/remove for managed sources; do not bypass local-edit protection. Prefer existing tools, bundled Bun and direct HTTPS retrieval; avoid installing extra software when those suffice. Treat an npx command as installation intent: identify the exact source, requested version/ref and CLI behavior before choosing an execution path; do not run it verbatim by default.',
-      'If the original source CLI is necessary, use bundled Bun only after verifying compatibility. Consider app-private Node/npm/Git when a required runtime is missing; automatic runtime preparation is not implemented. Use skill_install for supported GitHub archives, npm tarballs and HTTPS Git sources; it records a local source ledger without executing a CLI. Installing necessary dependencies is allowed when existing capabilities are insufficient; never default to global installs or PATH changes.',
-      'Preserve the complete legal skill package, including scripts/references/assets and binary files, in the authoring root above (selected workspace first, otherwise Shared); never overwrite an existing package implicitly. Use skill_creator check for format evidence, keep behavior verification separate, and use Skills Refresh or a new Chat after file-tool edits. Local installation does not require an institution. If the available tools cannot retrieve, unpack or execute the source, report the exact missing capability rather than claiming installation succeeded.'
-    ] : []),
-    '',
-    // 逃生阀原来只挡「用户明确说别用浏览器工具」,也只挡浏览器那一组。一句 hi 不触发它的任何一个
-    // 条件,于是模型照着上面的指令墙自己编了个任务、连跑 41 步
-    // (issues/turn-prompt-buries-the-user-message.md,cowork 实录,本仓同一条路径)。
-    // 现在它按**请求本身**判,并覆盖全部工具。
-    'GREETINGS AND SMALL TALK GET A PLAIN REPLY. If the request is a greeting, an acknowledgement, a',
-    'thank-you, a question about you, or anything else that needs no file, no page and no command —',
-    'just answer it in chat and call NO tool at all. The material above describes what you CAN do; it',
-    'never says you must do any of it. Doing "a bit of research first" on a greeting is wrong, not thorough.',
-    'If the user explicitly asks for a chat-only answer, a model-token test, or says not to use browser tools,',
-    'answer directly in chat and do not call browser tools (including deep_fetch, open_tab, page_snapshot or ui_act) for that turn.',
-    'Browser-use status: start_browser_use/end_browser_use require an exact tab_id and only change this task\'s use marker. They never select/show/navigate a page or change drill recording. Page tools automatically begin use; end it explicitly when finished with a tab. Historical targets are not active-use markers.',
-    '',
-    'When the task needs current or sourced information, a failed web_search does not remove the need to verify it.',
-    'Follow retry guidance for that service only, then use the built-in browser workflow below. Try public sources before asking the user to repair search.',
-    DEEP_FETCH_BROWSER_WORKFLOW,
-    '',
-    'For builtin: text skills, follow their supplied steps directly; they have no recorded recipe. get_skill_contract reads both Markdown Skills and recording contracts; follow next_offset for long bodies.',
-    'If a recorded skill above fits the request, load and run it (the fast path). If NONE fit — or none',
-    'are recorded — do NOT refuse: fall back to browser_use, i.e. page_snapshot to observe the page then',
-    'ui_act to operate it, looping observe→act until the goal is reached.',
-    '',
-    '',
-    // ── 钻探（drill-001）。从 cowork 逐字搬入,**话术一字未改** —— 它是被多轮实测调出来的:
-    //    完成判定按"地点覆盖"而不是"模块标签"、支线要收、控件欠账要补、focus 要落到站点上真实
-    //    存在的字样。改动任何一句之前先读 cowork 的 `check-auto-explore` 与那几份 drill issue。
-    //    其中「永不反问下一个钻哪个」那几条是 Ral 2026-09-10 加的:那不是澄清,是把决策推回给人,
-    //    而钻探能跑两小时,每一次反问都让它停在那里等一个不必要的回答。
-    DRILL_ROUTE,
-    '',
-    'Workspace:',
-    workspaceContext,
+    // 只留**这一轮才会变**的那一件事:当前执行域。清单与创作/安装纪律已搬进系统提示词
+    // (`buildSessionSkillGuidance()`,经 `MaestroAgent.systemPrompt()`)—— 它们零插值或只插
+    // 会话级的值,留在每轮等于聊 N 轮发 N 遍。
+    `Current execution domain: ${domain}. Recorded Skills remain listed across domains but execute only on their original site.`,
     '',
     ...memoryBlock,
     '',
-    params.catalog || '',
-    params.workflows || '',
+    // 完整技能目录与 workflow 目录都**不在这里** —— 它们在系统提示词里,经 pi 的
+    // `getAppendSystemPrompt()` 每会话一份、随资源版本重建。每轮该带的只有 D1–D4
+    // (prompt-structure.html 表 3;Ral 2026-09-22:「每次发消息都要带上的系统提示词,
+    // 并不包含完整技能目录,只有 D1-D4」)。`params.catalog` 仍在签名里,供导出/诊断用。
     // 用户那句话是这条消息的**最后 0.02%** —— 2026-09-18 在 cowork 同一条路径上实测 74,547 字符里
     // 的 2 个字符,`User message:` 落在第 74,531 位。没有围栏时模型分不出「参考资料」和「这一轮要我
     // 做的事」,一句 hi 就能让它把指令墙当成任务(issues/turn-prompt-buries-the-user-message.md)。

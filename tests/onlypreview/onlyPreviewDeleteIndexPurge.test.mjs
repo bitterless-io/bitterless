@@ -38,6 +38,19 @@ const withWorkspace = async (callback) => {
   }
 };
 
+// 只实现引擎真正调用的那四个成员;`emit` 把事件收下来供断言。
+const recordingDiagnostics = () => {
+  const events = [];
+  let tag = 0;
+  return {
+    events,
+    emit: (event, fields = {}) => events.push({ event, ...fields }),
+    now: () => 0,
+    elapsed: () => 0,
+    nextTag: (prefix = "d") => `${prefix}${(tag += 1)}`
+  };
+};
+
 const searchPaths = async (engine, query) => {
   const found = [];
   await engine.search({
@@ -144,6 +157,112 @@ test('a delete interrupted before the index purge is finished on the next start'
         await readDeleteJournal(databasePath),
         [],
         'the task must be cleared once its purge actually ran'
+      );
+    } finally {
+      await second.shutdown();
+    }
+  });
+});
+
+test('a folder deleted while the app was closed is gone from the index after the next start', async () => {
+  // 这一格没有任何删除任务可依靠 —— 删除发生在 app 之外,日志是空的。能救它的只有启动时那次
+  // reconcile:遍历磁盘拿到 `seen`,再把索引里没被看到的路径删掉(`sqlite-index.mjs` 的
+  // `commitDeleteBatch`)。Ral 2026-09-22 问的正是这一格。
+  await withWorkspace(async ({ workspace, databasePath }) => {
+    const first = createOnlyPreviewSearchEngine();
+    await first.initialize({
+      workspaceId: 'workspace',
+      generation: 1,
+      rootPath: workspace,
+      databasePath
+    });
+    assert.deepEqual(await searchPaths(first, 'zebracode'), [
+      'keep.txt',
+      'nested/child.txt',
+      'nested/deep/grandchild.txt'
+    ]);
+    await first.shutdown();
+
+    // app 关着的时候在 Finder / 终端里删掉整个目录。
+    await rm(join(workspace, 'nested'), { recursive: true, force: true });
+    assert.deepEqual(await readDeleteJournal(databasePath), [], 'there is no task to recover from');
+
+    const second = createOnlyPreviewSearchEngine();
+    try {
+      const snapshot = await second.initialize({
+        workspaceId: 'workspace',
+        generation: 1,
+        rootPath: workspace,
+        databasePath
+      });
+      assert.equal(snapshot.state, 'ready');
+      assert.deepEqual(
+        await searchPaths(second, 'zebracode'),
+        ['keep.txt'],
+        'offline deletions must be reconciled away by the startup build'
+      );
+    } finally {
+      await second.shutdown();
+    }
+  });
+});
+
+test('a journal path that escapes the workspace is ignored by recovery', async () => {
+  // 日志里的相对路径来自磁盘上一个 JSON 文件,而 `delete-journal.mjs` 的 `isPath` 只管长度和
+  // 非空 —— `../…` 能通过。拿它去 `resolve(rootPath, …)` 就指到工作区外面,那里的"文件不存在"
+  // 根本不代表本工作区欠了账。恢复必须拒认这种路径。
+  await withWorkspace(async ({ workspace, databasePath }) => {
+    const engine = createOnlyPreviewSearchEngine();
+    await engine.initialize({
+      workspaceId: 'workspace',
+      generation: 1,
+      rootPath: workspace,
+      databasePath
+    });
+    const before = await searchPaths(engine, 'zebracode');
+    const rootRealPath = engine.rootPath;
+    await engine.shutdown();
+
+    // 手工写一条越界任务:路径指到工作区之外(那里当然"不存在")。
+    await writeFile(
+      deleteJournalPath(databasePath),
+      JSON.stringify({
+        version: 1,
+        tasks: [
+          {
+            taskId: 'escaping-task',
+            workspaceId: 'workspace',
+            rootPath: rootRealPath,
+            relativePaths: ['../outside-the-workspace'],
+            phase: 'index',
+            createdAt: 1
+          }
+        ]
+      }),
+      'utf8'
+    );
+
+    const diagnostics = recordingDiagnostics();
+    const second = createOnlyPreviewSearchEngine({ diagnostics });
+    try {
+      await second.initialize({
+        workspaceId: 'workspace',
+        generation: 1,
+        rootPath: workspace,
+        databasePath
+      });
+      // **关键断言。** 没有工作区守卫时,这条越界路径会被当成"文件已不存在"从而进入 settled,
+      // 于是 `forgetPathsIndexed` 被真的调用一次并发出 `delete-journal-recovered`。
+      // 只断言"索引没变"是不够的:越界路径匹配不到任何索引行,不带守卫也照样不变。
+      assert.equal(
+        diagnostics.events.some((entry) => entry.event === 'delete-journal-recovered'),
+        false,
+        'recovery must not act on a journal path outside the workspace'
+      );
+      assert.deepEqual(
+        await searchPaths(second, 'zebracode'),
+        before,
+        'an out-of-workspace journal path must not change the index'
       );
     } finally {
       await second.shutdown();

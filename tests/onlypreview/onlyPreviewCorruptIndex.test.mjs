@@ -280,10 +280,11 @@ test('a healthy persisted index retains its warm reconcile path with no quaranti
     const opens = warm.logs.filter((line) => line.includes('event=sqlite-open'));
     assert.equal(opens.length, 1);
     assert.match(opens[0], /reusable=true reconcile=true/);
+    // 候选镜像走文件级克隆(APFS clonefile),不支持克隆的卷退化成普通拷贝。两者都属于
+    // 「从现有索引复制一份」这条路径,`fresh` 才是另一条 —— 所以认 clone|copy,不写死其中一个:
+    // 测试跑在什么文件系统上不是测试能控制的。
     assert.ok(
-      warm.logs.some(
-        (line) => line.includes('event=candidate-backup') && line.includes('mode=backup')
-      )
+      warm.logs.some((line) => /event=candidate-backup .*mode=(clone|copy)\b/u.test(line))
     );
     assert.ok(
       warm.logs.some(
@@ -306,8 +307,10 @@ test('corruption first read by warm reconciliation retries a fresh candidate and
     assert.deepEqual(
       runtime.logs
         .filter((line) => line.includes('event=candidate-backup'))
-        .map((line) => /mode=(\w+)/.exec(line)[1]),
-      ['backup', 'fresh']
+        // clone 与 copy 归一成 reuse:这条断言关心的是「先复用既有索引、失败后重来一份 fresh」
+        // 这个**顺序**,而不是复用时用的哪种文件系统能力。
+        .map((line) => /mode=(\w+)/.exec(line)[1].replace(/^(clone|copy)$/u, 'reuse')),
+      ['reuse', 'fresh']
     );
     assert.equal(runtime.logs.filter((line) => line.includes('event=sqlite-recovery')).length, 1);
     const quarantines = await assertQuarantined(fixture, damaged);

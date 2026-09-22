@@ -3,7 +3,10 @@ import type { CodexDebugEvent } from './runtime.types'
 import { normalizePiEvent, type PiSessionEvent } from './piRuntimeProtocol'
 import { RUNTIME_SESSION_POLICY } from './runtimeSessionPolicy'
 import { decideStreamingBehavior, type SteeringMode } from '../steering/steeringPolicy'
+import { steeringInterruptReason, type InterruptibleBash } from './piInterruptibleBash'
 import { resolveRuntimeSystemPrompt } from './runtimeSystemPrompt'
+import { measurePrune, pruneToolOutputs } from './pruneToolOutputs'
+import { keepLatestSkillCatalog, measureSkillCatalogs } from './keepLatestSkillCatalog'
 
 const STEERING_MODE = RUNTIME_SESSION_POLICY.steeringMode
 
@@ -80,10 +83,66 @@ export class PiRuntimeSession implements AgentRuntimeSession {
     private readonly session: PiSession,
     private readonly debug?: (event: Omit<CodexDebugEvent, 'ts' | 'scope'>) => void,
     private readonly promptSource?: { hostText: string; cwd: string; resourceRevision?: () => string; skillPrompt?: (activeTools: string[]) => string },
-    private readonly compactionState?: import('./piNativeCompaction').PiCompactionState
+    private readonly compactionState?: import('./piNativeCompaction').PiCompactionState,
+    /**
+     * 可被打断的 bash(`piInterruptibleBash.ts`)。没有内置 bash 的会话上是 `undefined` ——
+     * 那种会话本来也没有「一条命令卡住整个回合」这个问题。
+     */
+    private readonly bash?: InterruptibleBash
   ) {
     this.appliedResourceRevision = promptSource?.resourceRevision?.()
     if (compactionState) compactionState.onEvent = event => { if (this.compacting && !this.aborting) this.emit(event) }
+    this.installToolOutputPrune()
+  }
+
+  /**
+   * 历史轮次的快照类工具输出直接裁掉,不送进压缩(设计:`chat/compaction/compaction.html` #7)。
+   *
+   * 必须挂**两处**,因为两个钩子改的不是同一样东西:
+   * - `prepareNextTurnWithContext`(`agent-loop.js:90`,内层工具循环里)返回的 context 会整体
+   *   替换 `currentContext`(`:92`),所以只有这一处能让 pi 的 `shouldCompact` 读到裁后体积;
+   *   但它被 `if (lastCompletedTurn)` 挡着,**每个 run 的第一次请求跑不到**。
+   * - `transformContext`(`:180`)每次请求都跑,能补上首轮;但它只改发给 provider 的 payload,
+   *   **不回写** `currentContext.messages`,所以单挂它等于 payload 小了而压缩照旧按全文跑。
+   *
+   * 顺序上宿主在外层:pi 在 `AgentSession` 构造函数里就装好了自己的包装(`agent-session.js:157`),
+   * 我们拿到的是已构造好的 session 再包一层。把裁剪后的 turn 传进内层,pi 的阈值判断在同一次
+   * 调用里就读到裁后体积,不存在一轮延迟。
+   */
+  private installToolOutputPrune(): void {
+    const agent = this.session.agent
+    if (!agent) return
+    const priorTransform = agent.transformContext
+    agent.transformContext = async (messages, signal) => {
+      const pruned = pruneToolOutputs(messages)
+      // 一个会话只留一份技能目录:历史消息里那几份换成占位行(Ral 2026-09-22)。
+      const next = keepLatestSkillCatalog(pruned)
+      if (next !== pruned) {
+        const measured = measureSkillCatalogs(pruned, next)
+        if (measured.supersededMessages > 0) this.debug?.({
+          phase: 'pi-skill-catalog-dedupe',
+          level: 'info',
+          message: `one catalog per session: superseded ${measured.supersededMessages} stale copy(ies), ${measured.beforeChars} → ${measured.afterChars} chars`,
+          detail: measured
+        })
+      }
+      return priorTransform ? await priorTransform(next, signal) : next
+    }
+    const priorPrepare = agent.prepareNextTurnWithContext
+    agent.prepareNextTurnWithContext = async (turn, signal) => {
+      const messages = pruneToolOutputs(turn.context.messages)
+      if (messages !== turn.context.messages) {
+        const measured = measurePrune(turn.context.messages, messages)
+        if (measured.prunedMessages > 0) this.debug?.({
+          phase: 'pi-tool-output-prune',
+          level: 'info',
+          message: `pruned ${measured.prunedMessages} historical snapshot tool result(s): ${measured.beforeChars} → ${measured.afterChars} chars`,
+          detail: measured
+        })
+      }
+      const next = { ...turn, context: { ...turn.context, messages } }
+      return priorPrepare ? await priorPrepare(next, signal) : { context: next.context }
+    }
   }
 
   /**
@@ -231,6 +290,20 @@ export class PiRuntimeSession implements AgentRuntimeSession {
       this.pendingSteering = this.pendingSteering.filter(item => item !== queued)
       throw error
     }
+    // 排完队就打断正在跑的那条命令 —— **这是这条消息能被读到的唯一机会**。pi 只在工具边界
+    // 投递 steering(`agent-loop.js:158`),一条不返回的命令就等于没有边界
+    // (`docs/issues/bash-tool-has-no-timeout-and-wedges-the-turn.md`)。
+    // 杀的只是那一条命令,回合与已完成的工具结果都留着;停不停、接下来怎么做由**模型**判断
+    // (Ral 2026-09-22:「ai 判断要不要停止这个 bash 并重新判断该如何操作」)。
+    const runningForMs = this.bash?.runningForMs()
+    if (this.bash?.interrupt(steeringInterruptReason(message))) {
+      this.debug?.({
+        phase: 'steering-interrupted-bash',
+        level: 'info',
+        message: `interrupted the running bash after ${Math.round((runningForMs ?? 0) / 1000)}s so this message can reach the model.`,
+        detail: { runningForMs }
+      })
+    }
   }
 
   private releaseHeldSteering(): void {
@@ -245,10 +318,23 @@ export class PiRuntimeSession implements AgentRuntimeSession {
   }
 
   takePendingSteering(): AgentRuntimePrompt[] {
-    this.session.clearQueue?.()
+    // `clearQueue()` 的返回值**不许丢**。pi 把它的用途写成「restoring to editor when user aborts」——
+    // 它是「pi 手上还剩几条没投出去」的唯一权威。宿主这边的 `pendingSteering` 是镜像(带 messageId,
+    // inbox 要靠它认领),两者应当同量;不同量就说明有一侧漏了,宁可在日志里看见也不要静默。
+    const dropped = this.session.clearQueue?.()
+    const held = this.heldSteering.size
     this.heldSteering.clear()
     const pending = this.pendingSteering
     this.pendingSteering = []
+    const piSide = (dropped?.steering.length ?? 0) + (dropped?.followUp.length ?? 0)
+    if (piSide || pending.length || held) {
+      this.debug?.({
+        phase: 'steering-dropped',
+        level: piSide === pending.length ? 'info' : 'warn',
+        message: `turn ended with ${pending.length} undelivered steering message(s)${held ? ` (+${held} held for compaction)` : ''}; pi still had ${piSide}.`,
+        detail: { hostQueued: pending.length, piQueued: piSide, heldForCompaction: held }
+      })
+    }
     return pending
   }
 
@@ -316,6 +402,18 @@ export class PiRuntimeSession implements AgentRuntimeSession {
  * (`isStreaming` / `isCompacting` / `steeringMode` / `getSteeringMessages`),
  * 标可选是为了让 SDK 大版本挪动字段时退化成「按不在流式处理」,而不是让整个回合炸掉。
  */
+/** pi 传进回合前钩子的快照(只列本文件读到的部分)。 */
+export interface PiTurnSnapshot {
+  readonly context: { readonly messages: unknown[] } & Record<string, unknown>
+  readonly [key: string]: unknown
+}
+
+/** 回合前钩子的返回值。`context` 缺省表示沿用原上下文。 */
+export interface PiNextTurnSnapshot {
+  readonly context?: { readonly messages: unknown[] } & Record<string, unknown>
+  readonly [key: string]: unknown
+}
+
 export interface PiSession extends PiSteeringModeSurface {
   compact?: (instructions?: string) => Promise<{ summary: string; tokensBefore: number; estimatedTokensAfter?: number }>
   abortCompaction?: () => void
@@ -339,7 +437,19 @@ export interface PiSession extends PiSteeringModeSurface {
   /** pi `AgentSession.sessionManager`(公开只读,`agent-session.d.ts:165`)。压缩的候选批住这里。 */
   readonly sessionManager?: PiSessionManagerSurface
   /** pi AgentSession.agent.state is public; assigning messages copies the top-level array. */
-  readonly agent?: { readonly state: { messages: unknown[] } }
+  readonly agent?: {
+    readonly state: { messages: unknown[] }
+    transformContext?: (messages: unknown[], signal?: AbortSignal) => Promise<unknown[]>
+    /**
+     * pi 的回合前钩子(`agent-loop.js:90`,在**内层工具循环**里)。返回的 `context` 会整体
+     * 替换循环的 `currentContext`(`:92`),所以这是宿主唯一能让 pi 的阈值判断读到改后上下文的位置。
+     * 只写最小结构:我们只读 `turn.context.messages`、只改 `context`,其余字段原样透传。
+     */
+    prepareNextTurnWithContext?: (
+      turn: PiTurnSnapshot,
+      signal?: AbortSignal
+    ) => Promise<PiNextTurnSnapshot | undefined>
+  }
 }
 
 /**

@@ -26,7 +26,6 @@ import SessionTitle from './SessionTitle.vue'
 import SessionsDrawer from './SessionsDrawer.vue'
 import SessionSearchModal from './SessionSearchModal.vue'
 import { sessionActions } from './store/sessionActions.store'
-import ResponseStatus from './ResponseStatus.vue'
 import WorkflowTaskBar from './WorkflowTaskBar.vue'
 import ChatConfirmSheet from './task/ChatConfirmSheet.vue'
 import DecisionSheet from './task/DecisionSheet.vue'
@@ -454,7 +453,6 @@ onMounted(async () => {
     {
       session.compacting = state.active
       session.compactionRetry = state.active && state.retry ? { ...state.retry, startedAt: Date.now() } : undefined
-      if (session.turn) session.turn.lastActivityAt = Date.now()
     }
     if (!state.active && state.errorMessage) messageStore.pushErrorCard(state.sessionId, new Error(state.errorMessage), { subtitle: 'Context compaction failed' })
   })
@@ -535,7 +533,8 @@ onMounted(async () => {
                所以放在滚动容器之外(docs/features/agent-decision-sheet.md)。 -->
           <DecisionSheet :session="activeSession" />
           <WorkflowTaskBar :session-id="activeSession.id" />
-          <ResponseStatus :session="activeSession" />
+          <!-- 状态条已搬进消息列表末尾(由 ChatPanel 经 MessageList 的 tail 插槽渲染),
+               见 areas/agent-runtime/chat/decision/manual-decision.html #3。 -->
           <div
             v-if="llmConfig && !activeLlmProviderAllowed"
             name="control__llm__unavailable"

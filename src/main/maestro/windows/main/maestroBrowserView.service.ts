@@ -1,3 +1,4 @@
+import { shouldOpenDevTools } from '@maestro-main/windows/devtoolsGate'
 import { prepareBrowserDocument } from './browserDocumentPreparation'
 import { bindBrowserHistoryRecorder } from './browserHistoryRecorder';
 import type { BrowserHistoryApi } from '@maestro-shared/browserHistory.api';
@@ -5,6 +6,11 @@ import { Menu, WebContentsView, clipboard } from 'electron'
 import type { BrowserWindow, ContextMenuParams, MenuItemConstructorOptions, View, WebContents } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { createXpcMainEmitter, xpcMain } from 'electron-xpc/main'
+import {
+  MAESTRO_SDK_INSTANCE_ARGUMENT,
+  MAESTRO_SDK_REFRESH_EVENT,
+  type MaestroSdkRefreshBroadcast
+} from '@shared/maestroSdk.api'
 import { createHash, randomBytes, randomUUID } from 'crypto'
 import { injectable } from 'inversify'
 import { isAbsolute, join } from 'path'
@@ -17,7 +23,6 @@ import { normalizeUrl } from '@maestro-main/settings/coachSettings.service'
 import { getMaestroPreviewOpener } from './previewOpener.registry'
 import { focusAddressBarForBlankTab } from './newTabFocus'
 import { MAESTRO_PARTITION } from '@maestro-main/data/maestroDataRoot'
-import { openAnchoredDevTools } from '@maestro-main/windows/devtoolsAnchor.service'
 import { moduleLog } from '@main/logging/moduleLog'
 import type {
   AgentActivityStep,
@@ -64,16 +69,7 @@ import {
  */
 const mintTabInstanceId = (): string => randomBytes(6).toString('hex')
 
-export const shouldOpenOperationDevTools = (): boolean => {
-  if (import.meta.env.VITE_MODE !== 'debug') return false
-  if (process.env.BITTERLESS_E2E === '1') return false
-  return process.env.COACH_DEVTOOLS === '1'
-}
 
-export const shouldOpenPinnedHomeDevTools = (): boolean => {
-  if (import.meta.env.VITE_MODE !== 'debug') return false
-  return process.env.BITTERLESS_E2E !== '1'
-}
 
 const LOCAL_HOME_TITLE = 'Home'
 const LOCAL_HOME_FAVICON = ''
@@ -600,6 +596,18 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
   async reload(): Promise<void> {
     const active = this.getActiveTab()
     if (!active) return
+    // composite mini app 先截胡,**在碰 `active.view` 之前**。
+    //
+    // 两件事合在这一句里。其一是把刷新交给 mini app:宿主对这种 tab 没有正确的重载动作可做 ——
+    // 硬重载会毁掉 Zellij 的终端会话、OnlyPreview 的工作区绑定,所以这里只发事件,一个 view 都不碰
+    // (`docs/features/maestro-sdk-refresh-events.md` #3)。其二是修掉一个既有缺陷:composite tab
+    // 没有 `tab.view`,于是原来这一路会落进 `warmAndLoad` → `ensureWarm`,而 `ensureWarm` 只特判了
+    // `home`,会给这个 tab 取一个浏览器 view slot 再拿 `tab.url` 去导航 —— 不是"没反应",是给
+    // mini app 盖一层浏览器 view(#0.1)。
+    if (this.compositeTabs.has(active.id)) {
+      this.broadcastSdkRefresh(active)
+      return
+    }
     const wc = active.view?.webContents
     if (!wc || wc.isDestroyed()) {
       await this.warmAndLoad(active)
@@ -613,6 +621,31 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     }
     active.navigationRequest = (active.navigationRequest ?? 0) + 1
     wc.reload()
+  }
+
+  /**
+   * 把一次刷新发给这个 tab 里的 mini app:先 `before`,再 `refresh`。
+   *
+   * 广播而不是点对点:`electron-xpc` 的注册表是 `handleName → webContentsId`,一个名字只有一个主人,
+   * N 个 mini app 没法各占一个通道;而 `XpcMainHandler` 又拿不到 sender,main 也没法反查身份。
+   * 收方按 `instanceId` 自己过滤(`maestroSdk.preload.ts`)。
+   *
+   * 两条都是 fire-and-forget —— `broadcast` 明确不等订阅方。这里不需要等:上面那条分支已经决定
+   * 宿主对 composite tab 什么都不做,没有东西在和 handler 抢时间。
+   */
+  /** 这个 instanceId 是不是**当前活动**的那个 tab —— `MAESTROSDK.confirm()` 的前台判据。 */
+  isActiveInstance(instanceId: string): boolean {
+    if (!instanceId) return false
+    const active = this.getActiveTab()
+    return Boolean(active && active.instanceId === instanceId)
+  }
+
+  private broadcastSdkRefresh(tab: OperationTab): void {
+    const instanceId = tab.instanceId
+    if (!instanceId) return
+    for (const phase of ['before', 'refresh'] as const) {
+      xpcMain.broadcast(MAESTRO_SDK_REFRESH_EVENT, { instanceId, phase } satisfies MaestroSdkRefreshBroadcast)
+    }
   }
 
   async goBack(): Promise<void> {
@@ -660,12 +693,12 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
   }
 
   openOperationDevTools(): void {
-    if (!shouldOpenOperationDevTools()) return
+    if (!shouldOpenDevTools('operation')) return
     if (this.getActiveTab()?.kind !== 'browser') return
     const wc = this._state.operationView?.webContents
-    if (!wc || wc.isDestroyed()) return
+    if (!wc || wc.isDestroyed() || wc.isDevToolsOpened()) return
     try {
-      openAnchoredDevTools(wc, { title: 'Maestro operation' })
+      wc.openDevTools({ mode: 'detach', activate: false })
     } catch (err) {
       this._state.emitTrace({ kind: 'error', msg: 'operation devtools: ' + (err as Error).message, ts: Date.now() })
     }
@@ -996,7 +1029,8 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       // 的 host 还是它自己 —— 换页面类型是就地改造,tab 不会离开条,但它的 mini-app 已经被注销了,
       // 而 `close(host)` 里好几个 mount 是按「宿主没了」来走拆卸的。注销先于 `close` 调用,
       // 所以拆卸期间这里必然是 false,和关 tab 那条路径看到的一致。
-      isOpen: () => this.compositeHosts.get(tab.id) === host && this.tabs.includes(tab) && !tab.closeReady
+      isOpen: () => this.compositeHosts.get(tab.id) === host && this.tabs.includes(tab) && !tab.closeReady,
+      rendererArguments: () => [`${MAESTRO_SDK_INSTANCE_ARGUMENT}${host.instanceId}`]
     }
     this.compositeHosts.set(tab.id, host)
     try {
@@ -1146,11 +1180,14 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
   }
 
   private openPinnedHomeDevTools(tab: OperationTab | undefined, view: WebContentsView | null): void {
-    if (!shouldOpenPinnedHomeDevTools()) return
+    if (!shouldOpenDevTools('home')) return
     if (!tab || !view || !this.isPinnedHomeTab(tab) || !this.isLiveTabView(tab, view)) return
     const wc = view.webContents
+    // 自托管撤回之后 `isDevToolsOpened()` 恢复可用,重新是正确的去重闸
+    // (自托管期间它恒为 false,这道闸当时被迫拿掉)。
+    if (wc.isDevToolsOpened()) return
     try {
-      openAnchoredDevTools(wc, { title: 'Maestro home' })
+      wc.openDevTools({ mode: 'detach', activate: false })
     } catch (err) {
       this._state.emitTrace({ kind: 'error', msg: 'Home devtools: ' + (err as Error).message, ts: Date.now() })
     }

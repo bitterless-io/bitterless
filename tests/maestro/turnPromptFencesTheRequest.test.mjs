@@ -17,7 +17,7 @@ import { build } from 'esbuild'
  */
 const root = resolve(import.meta.dirname, '../..')
 const output = await build({
-  stdin: { contents: "export { buildAgentTurnPrompt } from './src/main/agent/runtime/agentPrompt';", resolveDir: root, loader: 'ts' },
+  stdin: { contents: "export { buildAgentTurnPrompt, STATIC_TURN_GUIDANCE } from './src/main/agent/runtime/agentPrompt';", resolveDir: root, loader: 'ts' },
   bundle: true, write: false, platform: 'node', format: 'esm', tsconfig: resolve(root, 'tsconfig.node.json'),
   // 这个虚拟模块由打包插件在真实构建里提供。本测试只关心提示词的拼装,所以在这里把它解析成一个
   // 空模块 —— 标 external 不行:那样 `virtual:` 会原样留在产物里,Node 的 ESM loader 认不了它。
@@ -41,7 +41,7 @@ const output = await build({
     }
   }]
 })
-const { buildAgentTurnPrompt } = await import(`data:text/javascript;base64,${Buffer.from(output.outputFiles[0].text).toString('base64')}`)
+const { buildAgentTurnPrompt, STATIC_TURN_GUIDANCE } = await import(`data:text/javascript;base64,${Buffer.from(output.outputFiles[0].text).toString('base64')}`)
 
 const base = { nowLocal: '2026-09-18 17:41:08 +08:00 (Asia/Shanghai)', currentUrl: '', activeTab: null, openTabs: [], briefs: [] }
 const buildPrompt = (message, extra = {}) => buildAgentTurnPrompt({ ...base, message, ...extra })
@@ -68,14 +68,17 @@ test('围栏前面明说上面是参考资料,不是任务', () => {
 })
 
 test('闲聊逃生阀按请求本身判,并覆盖全部工具', () => {
-  const prompt = buildPrompt('hi')
-  assert.match(prompt, /GREETINGS AND SMALL TALK GET A PLAIN REPLY/, '问候要有明确判据')
-  assert.match(prompt, /call NO tool at all/i, '覆盖全部工具,不只是浏览器那一组')
+  // 2026-09-22:逃生阀是常量,已从**每轮消息**搬到**系统提示词**(表 2 产品层,
+  // `MaestroAgent.systemPrompt()` → `STATIC_TURN_GUIDANCE`)。模型照样每次都读得到,
+  // 但不再聊 N 轮发 N 遍(closeout1 B4)。守卫钉的还是同三件事,只是换了落点。
+  assert.match(STATIC_TURN_GUIDANCE, /GREETINGS AND SMALL TALK GET A PLAIN REPLY/, '问候要有明确判据')
+  assert.match(STATIC_TURN_GUIDANCE, /call NO tool at all/i, '覆盖全部工具,不只是浏览器那一组')
   // 原来那条只在用户「明确要求」时才生效 —— 一句 hi 触发不了它的任何一个条件。留着它没问题,
   // 但它不能是唯一的一条,否则这次的回归会原样复发。
-  const explicitOnly = prompt.indexOf('If the user explicitly asks for a chat-only answer')
-  const byRequest = prompt.indexOf('GREETINGS AND SMALL TALK')
+  const explicitOnly = STATIC_TURN_GUIDANCE.indexOf('If the user explicitly asks for a chat-only answer')
+  const byRequest = STATIC_TURN_GUIDANCE.indexOf('GREETINGS AND SMALL TALK')
   assert.ok(byRequest >= 0 && byRequest < explicitOnly, '按请求判的那条要在前面,不能只留「明确要求」那条')
+  assert.ok(!buildPrompt('hi').includes('GREETINGS AND SMALL TALK'), '常量不该回到每轮消息里')
 })
 
 test('旧的裸 `User message:` 收尾不能再出现', () => {

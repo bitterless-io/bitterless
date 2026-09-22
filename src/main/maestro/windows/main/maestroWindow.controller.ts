@@ -1,6 +1,6 @@
 import { skillScopeContext } from '@maestro-main/skills/skillScope.context'
 import { buildSkillInstallTools } from '@main/agent/tools/skillInstallTools'
-import type { SkillInstallationRequest, SkillInstallationResult } from '@maestro-shared/coach.api'
+import type { SkillInstallationRequest, SkillInstallationResult, SessionIoExportResult, SessionIoExportTarget } from '@maestro-shared/coach.api'
 import { skillCloud } from '@maestro-main/skills/skillCloud.runtime'
 import { defaultWorkspaceRoot } from '@maestro-main/files/defaultWorkspace'
 import type { SkillSharingScope, SkillScopeContextInfo } from '@maestro-shared/coach.api'
@@ -32,6 +32,7 @@ import type { PiToolSpec } from '@main/agent/BaseAgent'
 import { buildFileTools } from '@main/agent/tools/fileTools'
 import { buildDecisionTools } from '@main/agent/tools/decisionTools'
 import { buildSkillCreatorTools } from '@main/agent/tools/skillCreatorTools'
+import { buildReloadSkillsTool } from '@main/agent/tools/reloadSkillsTool'
 import { skillAuthoringRuntime } from '@main/agent/runtime/skillAuthoring'
 import { buildArchiveTools } from '@main/agent/tools/archiveTools'
 import { buildWebFetchTools } from '@main/agent/tools/webFetchTools'
@@ -200,8 +201,6 @@ class MaestroWindowController
   protected showOnReady = false
   // The main app window — base WindowHelper remembers its size/position/display.
   protected windowStateKey = 'maestro' as const
-  // ...and it is the window every DevTools window follows onto its display/Space.
-  protected isDevToolsAnchor = true
 
   constructor(
     @inject(Symbol.for(MaestroLlmService.name))
@@ -1133,6 +1132,14 @@ class MaestroWindowController
     return await this.agentService.copySessionIoPath(params)
   }
 
+  async pickSessionIoExportTarget(params: { sessionId: string }): Promise<SessionIoExportTarget> {
+    return await this.agentService.pickSessionIoExportTarget(params)
+  }
+
+  async writeSessionIoArchive(params: { sessionId: string; target: string }): Promise<SessionIoExportResult> {
+    return await this.agentService.writeSessionIoArchive(params)
+  }
+
   async editControlText(params: { action: 'undo' }): ReturnType<CoachXpcContract['editControlText']> {
     return this.controlView.editControlText(params);
   }
@@ -1233,6 +1240,24 @@ class MaestroWindowController
   requestCloseConfirm(params: { terminalLabels: string[] }): Promise<boolean> {
     this.historyView.hide();
     return this.tabAliasView.requestCloseConfirm(params)
+  }
+
+  /**
+   * `MAESTROSDK.confirm()` 的落点。
+   *
+   * **只认活动 tab**:一个背景 tab 弹出来的对话框,人根本不知道是谁在问,而且它会挡住前台那个
+   * mini-app 的操作区。非活动的一律答 `false`,不弹。
+   */
+  requestSdkConfirm(params: {
+    instanceId: string
+    title: string
+    message: string
+    confirmLabel?: string
+    cancelLabel?: string
+  }): Promise<boolean> {
+    if (!this.browserView.isActiveInstance(params.instanceId)) return Promise.resolve(false)
+    this.historyView.hide();
+    return this.tabAliasView.requestSdkConfirm(params)
   }
 
   tabAliasSnapshot(): MaestroTabAliasSnapshot {
@@ -1435,6 +1460,21 @@ class MaestroWindowController
       // 会话级(docs/features/agent-decision-sheet.md)。
       ...buildDecisionTools(sessionKey),
       ...this.skillInstallationTools(sessionKey),
+      // `/reload-skills`(builtin:reload-skills 的执行面)。应用外部改过的 SKILL.md
+      // 对已开着的会话不可见 —— 目录是会话级常量(prompt-structure.html 表 1 A8)。
+      buildReloadSkillsTool({
+        current: () => {
+          const workspace = this.workspaceFile.projectRootForSession(sessionKey)
+          const registry = this.ensureServices().registry
+          return { skills: registry.catalog(workspace).skills.length, revision: registry.resourceRevision(workspace) }
+        },
+        reload: () => {
+          const workspace = this.workspaceFile.projectRootForSession(sessionKey)
+          const registry = this.ensureServices().registry
+          const snapshot = registry.reload(workspace)
+          return { skills: snapshot.skills.length, revision: registry.resourceRevision(workspace) }
+        }
+      }),
       ...buildSkillCreatorTools({
         workspace: () => this.workspaceFile.projectRootForSession(sessionKey),
         sharedRoot: () => this.ensureServices().registry.scopeStorage.shared,

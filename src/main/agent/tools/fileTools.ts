@@ -33,8 +33,9 @@ export const buildFileTools = (host: FileToolHost, sessionKey: string): AgentToo
       'or a path relative to the selected workspace (else the user’s home). ' +
       'Supports Word (.doc/.docx/.docm), PowerPoint (.ppt/.pps/.pot/.pptx/.pptm/.ppsx/.ppsm), ' +
       'Excel (.xls/.xlsx/.xlsm/.xlsb), OpenDocument (.odt/.ods/.odp), RTF, EPUB, PDF, ' +
-      'and text/code/csv/json/markdown/html. Text/code (including csv) return with line numbers; ' +
-      'use offset/limit to page through large files. Other supported documents convert to Markdown. ' +
+      'and text/code/csv/json/markdown/html. Text/code (including csv) return with line numbers. ' +
+      'Other supported documents convert to Markdown. ' +
+      'Output is capped at 2000 lines OR 50KB, whichever is hit first; a truncated result states the exact offset to continue from, so page through with offset/limit rather than assuming you saw the whole file. A single line larger than 50KB (minified or base64 content) is not returned at all — the result hands you a bash command for it instead. ' +
       'A scanned PDF without a text layer returns a needs-OCR message.',
     params: [
       {
@@ -46,13 +47,13 @@ export const buildFileTools = (host: FileToolHost, sessionKey: string): AgentToo
         name: 'offset',
         type: 'number',
         required: false,
-        description: 'Text files only: 1-based start line (default 1).'
+        description: '1-based start line (default 1). Also pages converted documents.'
       },
       {
         name: 'limit',
         type: 'number',
         required: false,
-        description: 'Text files only: max lines to return (default 2000).'
+        description: 'Max lines to return. The 2000-line / 50KB cap still applies — whichever is hit first wins.'
       }
     ],
     execute: async (args) =>

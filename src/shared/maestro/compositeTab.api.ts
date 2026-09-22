@@ -44,6 +44,15 @@ export interface MaestroCompositeTabHostApi {
   setDisplayUrl(url: string): void
   /** Whether this tab is still in the strip. */
   isOpen(): boolean
+  /**
+   * 建自己那个带 preload 的 view 时,要摊进 `additionalArguments` 的一串。
+   *
+   * 里面装的是这个 tab 的身份(`--maestro-instance-id=`),`MAESTROSDK` 靠它判断一条广播是不是发给
+   * 自己的 —— 见 `docs/features/maestro-sdk-refresh-events.md` #2.1。做成一格宿主能力而不是让
+   * mini app 自己拼字符串:拼错了是静默失效(收不到任何事件),而这一格在写 `webPreferences` 的地方
+   * 就摆在眼前。
+   */
+  rendererArguments(): string[]
 }
 
 /** A registered composite mini app: how to build it into a tab, and how to take it down. */

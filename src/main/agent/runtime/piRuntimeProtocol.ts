@@ -20,7 +20,27 @@ export const createPiResourceLoader = (pi: PiModule, systemPrompt: string | (() 
   getAgentsFiles: () => ({ agentsFiles: [] }),
   getSystemPrompt: () => typeof systemPrompt === 'function' ? systemPrompt() : systemPrompt,
   getSystemPromptSource: () => undefined,
-  getAppendSystemPrompt: () => [],
+  /**
+   * **A8 · 完整技能目录**(`overmind:areas/agent-runtime/chat/prompt-structure.html` 表 1)。
+   *
+   * 走 pi 的正式追加口:`_rebuildSystemPrompt()` 在 `agent-session.js:753` 读这个函数,
+   * 把返回的每段追加到系统提示词。所以它**每会话一份、不随轮数累加**,并且
+   * `session.reload()` 会连同技能一起重建它 —— 与 pi `/reload` 的语义一致。
+   *
+   * 为什么不靠 pi 自己那份:`_rebuildSystemPrompt()` 用 `formatSkillsForPrompt(getSkills())`
+   * 渲染,那是**字段子集**,缺 `ref`/`layer`/`revision`/`domain`/`implicit`,模型据此做不了
+   * `get_skill_contract` 与域判断;而且 `toPiSkills()` 按 `path && path !== 'builtin'` 过滤,
+   * 内置文本流程根本进不去。宿主这份补齐这两处。
+   *
+   * 为什么不在每轮消息里:每轮该带的只有 D1–D4(表 3)。目录挂在每条用户消息上时,历史那几份
+   * 从不回收 —— 2026-09-22 实测 BL 四句短话 228,312 tok,92% 是重复的目录,越过压缩线
+   * (`chat/compaction/compaction.html` #8)。
+   */
+  getAppendSystemPrompt: () => {
+    // 技能目录 + workflow 目录 —— 两份都是会话级清单,都靠 `revision()` 变化触发 reload 重建。
+    // workflow 以前挂在每一条 user 消息上,那是技能目录搬家前的同一个毛病。
+    return [skills?.catalogText?.(), skills?.workflowCatalogText?.()].filter((text): text is string => Boolean(text))
+  },
   getAppendSystemPromptSources: () => [],
   extendResources: () => undefined,
   reload: async () => {

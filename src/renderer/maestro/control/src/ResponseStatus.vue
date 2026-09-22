@@ -1,10 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import {
-  IconAlertTriangle,
-  IconChevronDown,
-  IconClock,
   IconCornerDownRight,
+  IconPointFilled,
   IconSquares
 } from '@tabler/icons-vue'
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
@@ -23,8 +21,7 @@ interface StatusView {
   tone: 'wait' | 'run'
   text: string
   meta?: string
-  subject?: MaestroTask
-  background?: boolean
+  // 【没有 background 角标了】Ral 2026-09-22:「background 也去掉吧先」。
 }
 
 const tick = ref(Date.now())
@@ -54,12 +51,6 @@ const retryProgress = (attempt: number, max: number): string =>
   i18nHelper.maestroControl.responseStatus.retryProgress
     .replace('{attempt}', String(attempt))
     .replace('{max}', String(max))
-const compactNumber = (value: number): string =>
-  value >= 1_000_000
-    ? `${(value / 1_000_000).toFixed(1)}M`
-    : value >= 1_000
-      ? `${Math.round(value / 1_000)}K`
-      : String(value)
 
 const elapsed = (from: number): string => {
   const ms = Math.max(0, tick.value - from)
@@ -72,100 +63,92 @@ const taskMeta = (task: MaestroTask): string => {
   const parts: string[] = []
   if (progress?.total) parts.push(`${progress.done ?? 0}/${progress.total}`)
   if (progress?.subject) parts.push(progress.subject)
-  if (progress?.tokens) {
-    parts.push(
-      i18nHelper.maestroControl.responseStatus.tokens.replace(
-        '{count}',
-        compactNumber(progress.tokens)
-      )
-    )
-  }
+  // 【不报 token 消耗】Ral 2026-09-22:「meta 中 34K tokens token 消耗的显示先去掉」。
+  // `task.state.progress.tokens` 仍在上报,只是不往这一行放。Paired with micromeet-cowork。
   parts.push(elapsed(task.state.time.start))
   return parts.join(' · ')
 }
 
+/**
+ * **status 是一组词,不是一句话**(Ral 2026-09-22:「status bar status 本身需要分类,例如 thinking
+ * wait for response 算一类,如果是执行工具不要展示工具的命令字符串了,统一用 tooling 还有
+ * compacting 这一类统一就叫做 status」)。先匹配先赢。细节搬到下面的 `action`。
+ *
+ * **tone 的判据换成「要不要人动手」**:只有拍板和审批是 `wait`;压缩、重试、任务在等外部环节
+ * 都会自己往前走,用琥珀色是在喊一个不需要人处理的狼。
+ *
+ * **没有「正在停止」这一档了**(「停止失败 就不该有 stop 必须能停止成功」)。停止现在是同步的,
+ * 生命周期 0ms —— `stopError` / `stopStalledAt` 连同按钮一起删掉了。
+ * 见 docs/features/chat-status-bar-status-and-action.md。Paired with micromeet-cowork。
+ */
 const status = computed<StatusView | null>(() => {
-  if (props.session.compacting) {
-    const retry = props.session.compactionRetry
-    if (retry) {
-      const seconds = Math.ceil(Math.max(0, retry.startedAt + retry.delayMs - tick.value) / 1000)
-      return { tone: 'wait', text: i18nHelper.maestroControl.responseStatus.compactionRetry.replace('{attempt}', String(retry.attempt)).replace('{max}', String(retry.maxAttempts)),
-        meta: i18nHelper.maestroControl.responseStatus.compactionWait.replace('{seconds}', String(seconds)) + (retry.error ? ' · ' + retry.error : '') }
-    }
-    return { tone: 'wait', text: i18nHelper.maestroControl.responseStatus.compacting, meta: turn.value?.steering?.pending ? i18nHelper.maestroControl.responseStatus.compactionQueued : undefined }
-  }
-  const retry = turn.value?.retry
-  if (retry) return { tone: 'wait', text: retryProgress(retry.attempt, retry.max) }
-  // **拍板与工具审批分开措辞**(Ral 2026-09-22)。两件事后果差一个量级,却曾经共用同一句
-  // `Waiting on you`。判据仍是同一条(未被回答的卡),只是文案分岔。
-  const decision = pendingDecisionMessages(props.session)[0]?.decision;
+  const copy = i18nHelper.maestroControl.responseStatus
+  const decision = pendingDecisionMessages(props.session)[0]?.decision
   if (decision) {
     return {
       tone: 'wait',
-      text: i18nHelper.maestroControl.chat.decision.needsYourCall.replace('{title}', decision.questions[0]?.question || decision.questions[0]?.header || ''),
-      meta: i18nHelper.maestroControl.chat.decision.pickBelow
-    };
+      text: copy.needsYourCall,
+      meta: decision.questions[0]?.question || decision.questions[0]?.header || i18nHelper.maestroControl.chat.decision.pickBelow
+    }
   }
-
   const confirm = confirming.value
   if (confirm) {
     return {
       tone: 'wait',
-      text: i18nHelper.maestroControl.responseStatus.waitingDecision.replace(
-        '{title}',
-        confirm.state.pendingConfirm?.title || taskLabel(confirm)
-      ),
-      meta: i18nHelper.maestroControl.responseStatus.actionPanelBelow,
-      subject: confirm
+      text: copy.waitingOnYou,
+      meta: confirm.state.pendingConfirm?.title || copy.actionPanelBelow
     }
   }
+  if (props.session.compacting) {
+    const retry = props.session.compactionRetry
+    const seconds = retry ? Math.ceil(Math.max(0, retry.startedAt + retry.delayMs - tick.value) / 1000) : 0
+    return {
+      tone: 'run',
+      text: copy.compacting,
+      meta: retry
+        ? retryProgress(retry.attempt, retry.maxAttempts) + ' · ' + copy.compactionWait.replace('{seconds}', String(seconds)) + (retry.error ? ' · ' + retry.error : '')
+        : turn.value?.steering?.pending ? copy.compactionQueued : undefined
+    }
+  }
+  const retry = turn.value?.retry
+  if (retry) return { tone: 'run', text: copy.retrying, meta: `${retry.attempt}/${retry.max}` }
+  const active = turn.value
+  if (active?.thinking) return { tone: 'run', text: copy.thinking, meta: elapsed(active.startedAt) }
+  // 工具:**不再把命令字符串放进 status**。谁在跑、跑到哪一步,全在下面的 `action`。
+  const runningTask = waiting.value || live.value[0]
+  if (runningTask) {
+    return { tone: 'run', text: copy.tooling, meta: taskMeta(runningTask) }
+  }
+  if (!active) return null
+  if (active.activity.length) return { tone: 'run', text: copy.tooling, meta: elapsed(active.startedAt) }
+  return {
+    tone: 'run',
+    text: active.phase === 'streaming' ? copy.responding : copy.waitingForResponse,
+    meta: elapsed(active.startedAt)
+  }
+})
 
+/**
+ * **`action` —— agent 最新的动作**(Ral 2026-09-22:「statusbar 中增加个 action 组件显示 agent
+ * 最新的 action」)。整条里变化最快的一行,所以排在 `status` **上面** —— 贴着输入框的那一行留给
+ * 最稳定的信息。都没有就整行不渲染。
+ */
+const action = computed<{ text: string; meta?: string } | null>(() => {
   const held = waiting.value
   if (held) {
     return {
-      tone: 'run',
-      text: i18nHelper.maestroControl.responseStatus.waitingFor
-        .replace('{task}', taskLabel(held))
-        .replace('{target}', held.state.waitingFor || ''),
-      meta: taskMeta(held),
-      subject: held,
-      background: !turn.value
+      text: i18nHelper.maestroControl.responseStatus.waitingFor.replace('{task}', taskLabel(held)).replace('{target}', held.state.waitingFor || '')
     }
   }
-
   const running = live.value[0]
-  if (running) {
-    return {
-      tone: 'run',
-      text: taskLabel(running),
-      meta: taskMeta(running),
-      subject: running,
-      background: !turn.value
-    }
-  }
-
-  const active = turn.value
-  if (!active) return null
-  if (active.aborting) {
-    return { tone: 'wait', text: active.stopError ? i18nHelper.workflow.stopError : i18nHelper.maestroControl.responseStatus.stopping }
-  }
-  if (active.thinking) {
-    return {
-      tone: 'run',
-      text: i18nHelper.maestroControl.responseStatus.thinking,
-      meta: elapsed(active.startedAt)
-    }
-  }
-  const latest = active.activity[active.activity.length - 1]
-  if (latest) return { tone: 'run', text: latest.label, meta: elapsed(active.startedAt) }
-  return {
-    tone: 'run',
-    text:
-      active.phase === 'streaming'
-        ? i18nHelper.maestroControl.responseStatus.responding
-        : i18nHelper.maestroControl.responseStatus.sentWaiting,
-    meta: elapsed(active.startedAt)
-  }
+  if (running) return { text: taskLabel(running) }
+  /**
+   * **本回合的工具活动【不】进这一行**(Ral 2026-09-22:「messageItem__activity 类的消息已经足够
+   * 展示工具动作了……这个是多余的」)。重复是**结构上保证的**:`ensureSink` 把 `turn.activity`
+   * 按引用交给气泡,消息气泡渲染整份清单,而这里原来取的是同一个数组的最后一项。
+   * Paired with micromeet-cowork。
+   */
+  return null
 })
 
 /**
@@ -232,24 +215,53 @@ const retryAgain = async (): Promise<void> => {
   if (!result || isRejection(result)) props.session.retryable = previous
 }
 
-const roster = computed(() => live.value.filter((task) => task !== status.value?.subject))
-const rosterOpen = ref(false)
-const rosterLabel = computed(() =>
-  (roster.value.length === 1
-    ? i18nHelper.maestroControl.responseStatus.otherRunningTask
-    : i18nHelper.maestroControl.responseStatus.otherRunningTasks
-  ).replace('{count}', String(roster.value.length))
-)
-const rootEl = ref<HTMLElement | null>(null)
+/**
+ * 【没有 roster,也没有 `+N`】Ral 2026-09-22:「`__others` 这种设计也去掉」。
+ *
+ * 原来状态行右侧有一个 `+3` 角标,点开是一张"同时在跑的其它任务"浮层。两样一起删掉了 ——
+ * 角标没了入口就没有意义,浮层没了角标就够不着。想看全部任务去 Workbench;这一行只回答
+ * 「现在处于哪一档」。随之不再需要:`status` / `action` 上的 `subject`、点外面/按 Esc 收起浮层的
+ * 两个 document 监听、以及那个 `rootEl`。Paired with micromeet-cowork。
+ */
 
-const onDocumentPointer = (event: MouseEvent): void => {
-  if (!rosterOpen.value) return
-  if (rootEl.value && event.target instanceof Node && rootEl.value.contains(event.target)) return
-  rosterOpen.value = false
-}
-const onDocumentKeydown = (event: KeyboardEvent): void => {
-  if (event.key === 'Escape') rosterOpen.value = false
-}
+/**
+ * **状态条一变高,就补一次滚动到底**(Ral 2026-09-22:「发消息滚动条是滚动了,但是 statusbar
+ * 从不显示到显示,是发生在后面,这个时候应该再往底部滚动一次」)。
+ *
+ * `send()` 的顺序本身没错 —— 先置 `session.turn`(状态条的 `v-if` 从那一刻起为真),再
+ * `scrollToBottom(true)`。错的是**那之后状态条还会继续长高**:`Waiting for a response` 换成
+ * `Thinking…`、`action` 行出现、后台 Agent / steering 行出现、文案换行 —— 每一次都只缩小列表的
+ * 可视高度,而**改高度不触发 `scroll` 事件**,所以既没人重算 `stickToBottom`,也没人补滚。
+ *
+ * 三个要点:
+ * · **不 force** —— 由 `stickToBottom` 把关,人自己往上滚过就不该被拽回来。这里安全的理由正是
+ *   上面那条:改高度不发 `scroll`,所以 `stickToBottom` 保持着变高之前的值。
+ * · **观察 ref 而不是在 `onMounted` 里 observe** —— 根元素带 `v-if`,空闲时不存在;而
+ *   `ResizeObserver` 在 `observe()` 时会立刻回调一次,所以「从不显示到显示」这一跳自然被覆盖。
+ * · **`ResizeObserver` 可能不存在** —— renderer 测试装置(linkedom)里没有它,不兜底就是整套守卫红。
+ *
+ * Paired with micromeet-cowork。见 docs/issues/status-bar-appearing-pushes-the-last-message-out-of-view.md。
+ */
+const rootEl = ref<HTMLElement | null>(null)
+let sizeObserver: ResizeObserver | undefined
+let lastHeight = 0
+watch(
+  rootEl,
+  (el) => {
+    sizeObserver?.disconnect()
+    sizeObserver = undefined
+    lastHeight = 0
+    if (!el || typeof ResizeObserver === 'undefined') return
+    sizeObserver = new ResizeObserver(() => {
+      const height = el.offsetHeight
+      if (height === lastHeight) return
+      lastHeight = height
+      messageStore.scrollToBottom()
+    })
+    sizeObserver.observe(el)
+  },
+  { flush: 'post' }
+)
 
 let clock: ReturnType<typeof setInterval> | undefined
 const stopClock = (): void => {
@@ -266,41 +278,24 @@ watch(
   },
   { immediate: true }
 )
-watch(
-  () => roster.value.length,
-  (count) => {
-    if (!count) rosterOpen.value = false
-  }
-)
-
-onMounted(() => {
-  document.addEventListener('mousedown', onDocumentPointer)
-  document.addEventListener('keydown', onDocumentKeydown)
-})
 onUnmounted(() => {
   stopClock()
-  document.removeEventListener('mousedown', onDocumentPointer)
-  document.removeEventListener('keydown', onDocumentKeydown)
+  sizeObserver?.disconnect()
+  sizeObserver = undefined
 })
 </script>
 
 <template>
   <div
-    v-if="status || canRetry || steeringLabel || backgroundAgents"
+    v-if="status || action || canRetry || steeringLabel || backgroundAgents"
     ref="rootEl"
     name="maestro__response_status"
     class="response-status"
   >
-    <div v-if="rosterOpen && roster.length" class="response-status__roster">
-      <div v-for="task in roster" :key="task.id" class="response-status__task-row">
-        <span class="response-status__task-name">{{ task.name }}</span>
-        <span class="response-status__task-title" :title="taskLabel(task)">{{ taskLabel(task) }}</span>
-        <span class="response-status__task-meta">{{ taskMeta(task) }}</span>
-      </div>
-    </div>
 
+    <!-- 没有警示三角(Ral 2026-09-22:「bl cowork 中都不要 IconAlertTriangle」)——
+         红字 + 按钮已经把性质说完了。Paired with micromeet-cowork。 -->
     <div v-if="canRetry" class="response-status__retry">
-      <IconAlertTriangle :size="13" stroke="1.9" />
       <span class="response-status__retry-count">{{ retriedLabel }}</span>
       <button type="button" class="response-status__retry-button" @click="retryAgain">
         {{ i18nHelper.maestroControl.responseStatus.tryAgain }}
@@ -322,6 +317,15 @@ onUnmounted(() => {
       <span :title="steeringLabel">{{ steeringLabel }}</span>
     </div>
 
+    <!-- **action —— agent 最新的动作**(Ral 2026-09-22)。工具调用的原文从 status 里搬出来,
+         单独一行;它是整条里变化最快的一行,所以排在 status **上面** —— 贴着输入框的那一行
+         留给最稳定的信息。 -->
+    <div v-if="action" name="maestro__response_status__action" class="response-status__action">
+      <IconPointFilled :size="11" stroke="1.9" />
+      <span class="response-status__action-text" :title="action.text">{{ action.text }}</span>
+      <span v-if="action.meta" class="response-status__action-meta">{{ action.meta }}</span>
+    </div>
+
     <div v-if="status" class="response-status__bar">
       <span
         class="response-status__dot"
@@ -330,27 +334,13 @@ onUnmounted(() => {
           'response-status__dot--run': status.tone === 'run'
         }"
       ></span>
-      <IconAlertTriangle v-if="status.tone === 'wait'" :size="13" stroke="1.9" />
+      <!-- 没有警示三角。`wait` 仍有两条通道:琥珀色的圆点/文字,以及行尾那个时钟。 -->
       <div class="response-status__copy">
         <span class="response-status__text" :class="`response-status__text--${status.tone}`" :title="status.text">
           {{ status.text }}
         </span>
-        <span v-if="status.background" class="response-status__background">
-          {{ i18nHelper.maestroControl.responseStatus.background }}
-        </span>
         <span v-if="status.meta" class="response-status__meta">{{ status.meta }}</span>
       </div>
-      <button
-        v-if="roster.length"
-        type="button"
-        class="response-status__others"
-        :title="rosterLabel"
-        @click="rosterOpen = !rosterOpen"
-      >
-        <span>+{{ roster.length }}</span>
-        <IconChevronDown :size="10" stroke="2.4" :class="{ 'response-status__chevron--open': rosterOpen }" />
-      </button>
-      <IconClock v-if="status.tone === 'wait'" :size="12" stroke="1.8" class="response-status__clock" />
     </div>
   </div>
 </template>

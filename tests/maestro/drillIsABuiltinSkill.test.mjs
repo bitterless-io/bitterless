@@ -8,7 +8,7 @@ import { build } from 'esbuild'
 const APP_ROOT = resolve(import.meta.dirname, '../..')
 const output = await build({
   stdin: {
-    contents: "export { buildAgentTurnPrompt } from './src/main/agent/runtime/agentPrompt'; export { DRILL_BUILTIN_SKILL, DRILL_ROUTE } from './src/main/agent/drill.skill';",
+    contents: "export { buildAgentTurnPrompt, buildSessionSkillGuidance, STATIC_TURN_GUIDANCE } from './src/main/agent/runtime/agentPrompt'; export { DRILL_BUILTIN_SKILL, DRILL_ROUTE } from './src/main/agent/drill.skill';",
     resolveDir: APP_ROOT, loader: 'ts'
   },
   bundle: true, write: false, platform: 'node', format: 'esm', tsconfig: resolve(APP_ROOT, 'tsconfig.node.json'),
@@ -45,11 +45,12 @@ const real = await import(`data:text/javascript;base64,${Buffer.from(output.outp
  *  · `begin` 之前 / `end` 之后必须知道的路由**在**提示词里 —— 删过头会让模型不知道从哪开始;
  *  · `BEGIN_GUIDANCE` 确实覆盖了被删掉的那些主题 —— 否则"搬去按需交付"只是把它弄丢了。
  */
-const { buildAgentTurnPrompt, DRILL_BUILTIN_SKILL, DRILL_ROUTE } = real
+const { buildAgentTurnPrompt, buildSessionSkillGuidance, STATIC_TURN_GUIDANCE, DRILL_BUILTIN_SKILL, DRILL_ROUTE } = real
 
 const prompt = buildAgentTurnPrompt({
   message: 'hi', nowLocal: '2026-09-18 17:41:08 +08:00 (Asia/Shanghai)', currentUrl: '', activeTab: null, openTabs: [], briefs: [DRILL_BUILTIN_SKILL]
 })
+const skillGuidance = buildSessionSkillGuidance({ briefs: [DRILL_BUILTIN_SKILL] })
 const beginGuidance = readFileSync(join(APP_ROOT, 'src/main/maestro/sitemap/exploreSession.service.ts'), 'utf8')
   .split('const BEGIN_GUIDANCE = [')[1].split("].join(")[0]
 
@@ -71,15 +72,25 @@ const ROUTE_ONLY = [
   'Already-explored site'
 ]
 
-test('每轮提示词里只有路由,没有循环正文', () => {
+test('路由在系统提示词里,循环正文哪儿都不在', () => {
+  // 2026-09-22:路由从**每轮消息**搬到**系统提示词**(表 2 产品层,`MaestroAgent.systemPrompt()`)。
+  // 它零插值、与本轮无关,原先聊 N 轮就重发 N 遍(closeout1 B4)。守卫钉的仍是同三件事,
+  // 只是第一件的落点从 `buildAgentTurnPrompt()` 换成 `STATIC_TURN_GUIDANCE`。
   for (const phrase of ROUTE_ONLY) {
-    assert.ok(prompt.includes(phrase), `路由缺了「${phrase}」—— 模型会不知道钻探从哪一步开始`)
+    assert.ok(STATIC_TURN_GUIDANCE.includes(phrase), `路由缺了「${phrase}」—— 模型会不知道钻探从哪一步开始`)
   }
   for (const phrase of LOOP_ONLY) {
+    assert.ok(!STATIC_TURN_GUIDANCE.includes(phrase), `「${phrase}」又回到常驻指引里了。它归 explore_session begin 的回包`)
+    assert.ok(!prompt.includes(phrase), `「${phrase}」又回到每轮提示词里了`)
+  }
+})
+
+test('路由不再每轮重发', () => {
+  for (const phrase of ROUTE_ONLY) {
     assert.ok(
       !prompt.includes(phrase),
-      `「${phrase}」又回到每轮提示词里了。它归 explore_session begin 的回包,按需交付 —— `
-      + '放回来就等于每说一句话都发一遍'
+      `「${phrase}」还在每轮消息里。它是常量,该在系统提示词里发一次 —— `
+      + '留在每轮等于聊 N 轮发 N 遍(closeout1 B4)'
     )
   }
 })
@@ -109,7 +120,11 @@ test('简介留在技能清单里,并且自己就说得清怎么走', () => {
   assert.match(DRILL_BUILTIN_SKILL.description, /explore_session/)
   assert.match(DRILL_BUILTIN_SKILL.description, /ingest_recording/)
   assert.match(DRILL_BUILTIN_SKILL.description, /不用 get_skill_contract/, '内置技能不走 contract,要写明')
-  assert.ok(prompt.includes('"builtin:drill"'), '简介必须真的出现在这一轮的技能清单里')
+  // 2026-09-22:内置文本流程清单也从每轮消息搬进系统提示词(`buildSessionSkillGuidance`,表 2)。
+  // 它进不了 A8 那份目录(registry 的 catalogPrompt 按 status/scope 过滤),所以这条守卫是唯一
+  // 钉住"简介没被弄丢"的地方 —— 落点换了,断言跟着换,意图不变。与 cowork 成对。
+  assert.ok(skillGuidance.includes('"builtin:drill"'), '简介必须真的出现在会话级技能清单里')
+  assert.ok(!prompt.includes('"builtin:drill"'), '简介又回到每轮消息里了 —— 它是会话常量,聊 N 轮会重发 N 遍')
 })
 
 test('钻探正文不再由 agentPrompt 自己持有', () => {

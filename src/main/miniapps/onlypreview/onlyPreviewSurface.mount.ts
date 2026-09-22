@@ -114,6 +114,14 @@ export interface OnlyPreviewMount {
    * rather than the window. The standalone host needs nothing: its window already owns its chords.
    */
   registerSurfaceView(webContents: WebContents): void;
+  /**
+   * 建 surface view 时要摊进 `additionalArguments` 的宿主参数。
+   *
+   * Maestro 的 tab 承载时给出这个 tab 的身份(`MAESTROSDK` 靠它认出发给自己的刷新广播);独立窗口
+   * 承载时是空的 —— 那儿没有 tab,也就没有 tab 级的刷新可捕获。
+   * 见 `docs/features/maestro-sdk-refresh-events.md` #2.1。
+   */
+  maestroRendererArguments(): string[];
 
   reportTitle(title: string): void;
 

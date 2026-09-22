@@ -121,6 +121,9 @@ export class ShortcutStore {
         case '/copy_session_path':
           await context.copySessionPath()
           return { ok: true }
+        case '/export':
+          await context.exportSession()
+          return { ok: true }
         case '/test_show_error':
           await context.testShowError()
           return { ok: true }

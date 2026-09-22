@@ -72,7 +72,19 @@ export interface AgentRuntimeSessionOptions {
   autoCompaction?: boolean
   compactPrompt?: () => string | undefined
   sessionFile?: string
-  skillResources?: { revision?(): string; getSkills(): import('@earendil-works/pi-coding-agent').LoadSkillsResult; reload(): void | Promise<void> }
+  /**
+   * `catalogText` 是**完整技能目录**的同步文本。它进的是**系统提示词**,不是每轮消息 ——
+   * 每轮该带的只有 D1–D4(`overmind:areas/agent-runtime/chat/prompt-structure.html` 表 3),
+   * 而 `getSkills()` 交给 pi 的 `formatSkillsForPrompt` 渲染出来是**字段子集**,缺
+   * `ref`/`layer`/`revision`/`domain`/`implicit`,模型据此没法做 get_skill_contract 与域判断。
+   * 缺省时回退到 pi 的渲染,行为与以前一致。
+   */
+  /**
+   * `workflowCatalogText` 与 `catalogText` 同路进系统提示词。它不走表 2(`MaestroAgent.systemPrompt()`),
+   * 因为那条在建会话时求值一次,而 workflow 库带 fs watcher —— 用户丢一个包进目录就该被看见。
+   * 所以它跟着 `revision()` 走 reload 重建,和技能目录同一条链路。
+   */
+  skillResources?: { revision?(): string; getSkills(): import('@earendil-works/pi-coding-agent').LoadSkillsResult; reload(): void | Promise<void>; catalogText?(): string; workflowCatalogText?(): string }
   beforeModelRequest?: () => Promise<string | undefined> | undefined
   target: AgentRuntimeTarget
   authPath: string

@@ -2,20 +2,39 @@ import { open, readFile, stat } from 'fs/promises'
 import { basename, extname } from 'path'
 import { AnydocError, anydocToMarkdown } from '@maestro-main/files/anydoc.service'
 import { isArchivePath } from '@maestro-main/files/archive.service'
+import { applyReadGate, splitLines } from '@maestro-main/files/readGate'
 
 // Text/code stays pageable and line-numbered. Other supported documents are converted to
 // Markdown by the staged anydoc CLI child process.
 
 const MAX_BYTES = 25 * 1024 * 1024
+/**
+ * anydoc **转换阶段**的工作上限 —— 不是进上下文的闸。
+ *
+ * 进上下文的闸在 `readGate.applyReadGate()`(2000 行 ∧ 50KB,与 pi 内置 `read` 同口径)。
+ * 这个常量以前兼着两个角色,而 120,000 **字符**对 base64 等于 72,541 token(2026-09-22 现场)——
+ * 字符数根本约束不住 token。分开之后它只管"别让 anydoc 无限转下去"。
+ */
 const MAX_OUTPUT_CHARS = 120_000
+/**
+ * 进**缓存**的文档全文上限(不是单次进上下文的上限)。缓存必须存全文,否则 `read_file` 的
+ * offset/limit 翻页永远到不了后面的内容。2M 字符只是个防炸内存的天花板。
+ */
+const DOC_CACHE_MAX_CHARS = 2_000_000
 const SNIFF_BYTES = 8192
-const DEFAULT_TEXT_LINES = 2000
 
 export interface ReadFileOptions {
-  /** 1-based first line for text files (default 1). Ignored for documents. */
+  /** 1-based first line (default 1). */
   offset?: number
-  /** Max lines for text files (default 2000). Ignored for documents. */
+  /** Max lines to return; the 2000-line / 50KB gate still applies, whichever comes first. */
   limit?: number
+  /**
+   * 返回**未截断**的全文,给 `documentReader` 写缓存用。
+   *
+   * 默认(false)由 `applyReadGate()` 按 2000 行 ∧ 50KB 裁一次 —— 那是"单次能往上下文里塞多少"。
+   * 缓存要的是另一件事:存全文,才能让 offset/limit 翻到后面的内容。
+   */
+  fullDocument?: boolean
 }
 
 export class FileReadError extends Error {
@@ -65,27 +84,21 @@ const extOf = (path: string): string => {
   return ''
 }
 
-const clampChars = (text: string): string =>
-  text.length <= MAX_OUTPUT_CHARS
-    ? text
-    : text.slice(0, MAX_OUTPUT_CHARS) + `\n\n…[truncated: output exceeded ${MAX_OUTPUT_CHARS} characters]`
+/**
+ * 1-based line numbers, tab-separated — the format coding agents are tuned to.
+ *
+ * **整份编号,不分页** —— 编号宽度按全文行数算,所以同一行在第 1 页和第 9 页拿到的是同一个号。
+ * 分页与截断一律交给 `applyReadGate()`。
+ */
+const numberLines = (content: string): string => {
+  const lines = splitLines(content)
+  const width = String(lines.length).length
+  return lines.map((line, index) => `${String(index + 1).padStart(width, ' ')}\t${line}`).join('\n')
+}
 
-const formatText = (content: string, options?: ReadFileOptions): string => {
-  const lines = content.split(/\r?\n/)
-  const total = lines.length
-  const start = Math.max(1, Math.floor(options?.offset || 1))
-  const limit = Math.max(1, Math.floor(options?.limit || DEFAULT_TEXT_LINES))
-  const end = Math.min(total, start - 1 + limit)
-  if (start > total) return `(file has ${total} lines; offset ${start} is past the end)`
-  const width = String(end).length
-  const body = lines
-    .slice(start - 1, end)
-    .map((line, index) => `${String(start + index).padStart(width, ' ')}\t${line}`)
-    .join('\n')
-  const more = end < total
-    ? `\n\n…[truncated: showing lines ${start}-${end} of ${total}; pass offset/limit for more]`
-    : ''
-  return clampChars(body + more)
+const formatText = (content: string, path: string, options?: ReadFileOptions): string => {
+  const numbered = numberLines(content)
+  return options?.fullDocument ? numbered : applyReadGate(numbered, path, options).text
 }
 
 const readHead = async (path: string, length: number): Promise<Buffer | null> => {
@@ -160,14 +173,18 @@ export const readFileForAgent = async (
   const ext = extOf(absPath)
   if (DOCUMENT_EXTS.has(ext)) {
     try {
-      const { text } = await anydocToMarkdown(absPath, { maxChars: MAX_OUTPUT_CHARS })
+      // `options.fullDocument` 时不在这里截断:调用方(documentReader)要把**全文**存进缓存,
+      // 然后按 offset/limit 翻页。在这里截掉等于把翻页焊死。
+      const { text } = await anydocToMarkdown(absPath, {
+        maxChars: options?.fullDocument ? DOC_CACHE_MAX_CHARS : MAX_OUTPUT_CHARS
+      })
       if (!text.trim()) {
         throw new FileReadError(
           `Parsed .${ext} but it contained no extractable text.`,
           'empty'
         )
       }
-      return text
+      return options?.fullDocument ? text : applyReadGate(text, absPath, options).text
     } catch (err) {
       if (err instanceof FileReadError) throw err
       throw new FileReadError(
@@ -179,7 +196,7 @@ export const readFileForAgent = async (
 
   if (TEXT_EXTS.has(ext)) {
     try {
-      return formatText(await readFile(absPath, 'utf8'), options)
+      return formatText(await readFile(absPath, 'utf8'), absPath, options)
     } catch (err) {
       throw new FileReadError(
         `Failed to read .${ext} as UTF-8 text: ${err instanceof Error ? err.message : String(err)}`,
@@ -189,7 +206,7 @@ export const readFileForAgent = async (
   }
 
   const head = await readHead(absPath, SNIFF_BYTES)
-  if (head && looksLikeText(head)) return formatText(await readFile(absPath, 'utf8'), options)
+  if (head && looksLikeText(head)) return formatText(await readFile(absPath, 'utf8'), absPath, options)
 
   throw new FileReadError(
     `Unsupported file type ".${ext || '?'}". Supported: ${SUPPORTED_FORMATS_TEXT}.`,

@@ -150,6 +150,10 @@ export class OnlyPreviewCoworkMount implements OnlyPreviewMount {
     this.deps.defer();
   }
 
+  maestroRendererArguments(): string[] {
+    return this.deps.rendererArguments();
+  }
+
   registerSurfaceView(): void {
     // Nothing to register. Maestro's tab chords are decided per keystroke from the FOCUSED WINDOW,
     // so a view inside the Maestro window is covered the moment it exists — the enrollment this

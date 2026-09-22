@@ -1,6 +1,6 @@
 import { agentDecisionRegistry } from '@main/agent/decisionRegistry.service';
 import type { AgentDecisionAnswer, AgentDecisionRequest } from '@shared/agentDecision.api';
-import type { SkillInstallationRequest } from '@maestro-shared/coach.api'
+import type { SkillInstallationRequest, SessionIoExportResult, SessionIoExportTarget } from '@maestro-shared/coach.api'
 import type { SkillSharingScope, SkillScopeContextInfo } from '@maestro-shared/coach.api'
 import { XpcMainHandler } from 'electron-xpc/main'
 import { applicationAuth } from '@main/auth/applicationAuth.service';
@@ -274,6 +274,14 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
     return await maestroWindowHelper.copySessionIoPath(params)
   }
 
+  async pickSessionIoExportTarget(params: { sessionId: string }): Promise<SessionIoExportTarget> {
+    return await maestroWindowHelper.pickSessionIoExportTarget(params);
+  }
+
+  async writeSessionIoArchive(params: { sessionId: string; target: string }): Promise<SessionIoExportResult> {
+    return await maestroWindowHelper.writeSessionIoArchive(params);
+  }
+
   async showSessionMenu(params: { sessionId: string }): ReturnType<CoachXpcContract['showSessionMenu']> {
     return maestroWindowHelper.showSessionMenu(params)
   }
@@ -298,8 +306,12 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
     return await maestroWindowHelper.resetDelegateConversation(params)
   }
 
-  async abortAgent(params: { sessionId: string; turnId: string }): Promise<void> {
-    await maestroWindowHelper.abortAgent(params)
+  // **回执必须原样返回。** renderer 的 `stop()` 只认 `{ ok: true }`,收到别的就判停止失败、
+  // 不执行 `forceStop`,于是回合永远不清 —— 一次成功的停止在界面上变成永久的「Stopping…」。
+  // 这里曾经声明 `Promise<void>` 并把返回值扔掉,`tsc` 为此报了 TS2416
+  // (见 docs/issues/chat-stop-never-confirms-and-the-ui-has-no-escape.md #3)。
+  async abortAgent(params: { sessionId: string; turnId: string }): Promise<{ ok: true }> {
+    return await maestroWindowHelper.abortAgent(params)
   }
 
   async abortDelegate(params?: { sessionId?: string }): Promise<void> {

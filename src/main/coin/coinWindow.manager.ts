@@ -46,7 +46,15 @@ export class CoinWindowManager {
     const view = new WebContentsView({
       webPreferences: {
         preload: join(__dirname, '../preload/trench.js'),
-        additionalArguments: ['--mode=standalone', `--trenchSurfaceToken=${token}`],
+        // `MAESTROSDK` 的身份。建 view 时可能还没 dock 进 tab(`this.tabHost` 为 null),而
+        // `openOnTab` 是**搬**这同一个 view、不重建 —— 所以「先开独立窗口、后 dock」的那份收不到
+        // 刷新事件。已知缺口,记在 docs/features/maestro-sdk-refresh-events.md 的 PQ-4;
+        // 严格胜于误触发:拿不到身份就一条都不跑,绝不去替别的 tab 刷新。
+        additionalArguments: [
+          '--mode=standalone',
+          `--trenchSurfaceToken=${token}`,
+          ...(this.tabHost?.rendererArguments() ?? [])
+        ],
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,

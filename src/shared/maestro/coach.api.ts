@@ -101,6 +101,11 @@ export interface CoachXpcContract {
    */
   ensureSessionIo(params: { sessionId: string; workspace?: WorkspaceRef }): Promise<SessionIoPathResult>
   copySessionIoPath(params: { sessionId: string; workspace?: WorkspaceRef }): Promise<SessionIoPathResult>
+  /** 把会话的模型 I/O 目录打包成 zip 并让人选保存位置。见 maestroAgent.service.ts。 */
+  /** 第一步:选保存位置(不压缩)。界面据此决定要不要亮等待提示。 */
+  pickSessionIoExportTarget(params: { sessionId: string; workspace?: WorkspaceRef }): Promise<SessionIoExportTarget>
+  /** 第二步:压缩落盘。等待提示的存续区间就是这一次调用。 */
+  writeSessionIoArchive(params: { sessionId: string; target: string; workspace?: WorkspaceRef }): Promise<SessionIoExportResult>
   showSessionMenu(params: { sessionId: string }): Promise<SessionMenuResult>
   // Editable Cmd/Ctrl+Z reaches Chromium's undo stack in the fixed, focused Control view.
   editControlText(params: { action: 'undo' }): Promise<{ ok: boolean; error?: string }>;
@@ -937,6 +942,21 @@ export interface ContextExportRequest {
 
 /** 会话日志操作的回包。`path` 是已复制或已在系统文件管理器打开的绝对目录。 */
 export type SessionIoPathResult = { ok: true; path: string } | { ok: false; error: string }
+
+/**
+ * `/export` 的结果。`cancelled` 与出错**分开** —— 人在保存对话框里改主意不是故障,
+ * 界面不该为它弹红。
+ */
+/** `/export` 第一步的结果:人选好的保存位置,或取消。 */
+export type SessionIoExportTarget =
+  | { ok: true; path: string; target: string }
+  | { ok: false; cancelled: true }
+  | { ok: false; error: string }
+
+export type SessionIoExportResult =
+  | { ok: true; path: string; archive: string }
+  | { ok: false; cancelled: true }
+  | { ok: false; error: string }
 
 export interface SessionTitleRequest {
   requestId: string;

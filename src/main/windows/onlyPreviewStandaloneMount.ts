@@ -121,6 +121,11 @@ export class OnlyPreviewStandaloneMount implements OnlyPreviewMount {
     if (this.isAlive()) this.baseWindow.destroy();
   }
 
+  /** 独立窗口没有 Maestro tab,也就没有 tab 级刷新可捕获。 */
+  maestroRendererArguments(): string[] {
+    return [];
+  }
+
   registerSurfaceView(): void {
     // Nothing to enroll: this composite's views live inside a window whose chords are already the
     // application's own.

@@ -9,7 +9,6 @@ import {
 } from '@maestro-shared/coach.api'
 import type { TabsApi, SavedTab } from '@maestro-shared/tabs.api'
 import { MAESTRO_ZELLIJ_TAB_ID } from '@maestro-shared/compositeTab.identity'
-import { MAESTRO_TAB_INLINE_RENAME_MAX_LENGTH } from '@maestro-shared/tabAlias.api'
 import { menuBarStore } from './menuBar.store'
 
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
@@ -101,9 +100,6 @@ class TabStoreState {
    * 只可能是一个 Zellij tab(docs/features/zellij-tab-inline-rename.md #2)。编辑期间 chip 的点击
    * 与拖拽都要让路,否则「选一段文字」会变成「把 tab 拖走」。
    */
-  renamingTabId: string | null = null
-  renameDraft = ''
-  readonly renameMaxLength = MAESTRO_TAB_INLINE_RENAME_MAX_LENGTH
 
   get activeTab(): TabInfo | undefined {
     return this.tabs.find((t) => t.active)
@@ -352,47 +348,6 @@ class TabStoreState {
   }
 
   /** 这个 tab 允不允许双击改名。**只有 Zellij** —— 其余每一种上这个手势不存在(G2)。 */
-  canRename(tab: TabInfo): boolean {
-    return tab.kind === MAESTRO_ZELLIJ_TAB_ID
-  }
-
-  isRenaming(id: string): boolean {
-    return this.renamingTabId === id
-  }
-
-  /** 双击进入编辑,预填**当前显示的名字**(alias 优先,没有就是 spec 的 `Zellij`)。 */
-  beginRename(tab: TabInfo): void {
-    if (!this.canRename(tab)) return
-    this.renamingTabId = tab.id
-    this.renameDraft = (tab.alias?.trim() || tab.title || '').slice(0, MAESTRO_TAB_INLINE_RENAME_MAX_LENGTH)
-  }
-
-  /**
-   * 截断在**写进状态之前**,不是只靠 `maxlength`:输入法组字、粘贴、拖放三条路都能绕过那个属性,
-   * 而 chip 的宽度账已经按 20 个字算好了(#5)。
-   */
-  updateRenameDraft(value: string): void {
-    this.renameDraft = String(value ?? '').slice(0, MAESTRO_TAB_INLINE_RENAME_MAX_LENGTH)
-  }
-
-  cancelRename(): void {
-    this.renamingTabId = null
-    this.renameDraft = ''
-  }
-
-  /**
-   * 提交(回车 / 失焦)。空串 = **删除别名**,chip 退回 spec 给的 `Zellij`(G6)。
-   *
-   * 先清本地编辑态再发 XPC:main 会广播一份新的 tab 条回来,留着编辑态会让那一份广播在输入框还开
-   * 着的时候盖掉草稿。
-   */
-  async commitRename(): Promise<void> {
-    const id = this.renamingTabId
-    if (!id) return
-    const alias = this.renameDraft.trim()
-    this.cancelRename()
-    await coach.setTabAlias({ id, alias })
-  }
 }
 
 export const tabStore = reactive<TabStoreState>(new TabStoreState())

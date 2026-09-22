@@ -11,6 +11,10 @@ const fieldRef = ref<HTMLElement | null>(null)
 const dialog = computed(() => tabAliasStore.dialog)
 const aliasDialog = computed(() => (dialog.value?.variant === 'alias' ? dialog.value : null))
 const closeDialog = computed(() => (dialog.value?.variant === 'closeConfirm' ? dialog.value : null))
+// mini-app 通过 `MAESTROSDK.confirm()` 要的确认。**文案是它给的成品字符串**,这里一个字都不拼 ——
+// 作者是那个 mini-app(它自己有 i18n),main 与这一层都只是管道
+// (docs/features/maestro-sdk-refresh-events.md)。按钮文案可省,省了就退回本层的默认。
+const sdkDialog = computed(() => (dialog.value?.variant === 'sdkConfirm' ? dialog.value : null))
 const text = computed(() => i18nHelper.maestroTabAlias)
 // 关闭确认的文案全部在渲染层。单复数用 `terminalLabels.length` 选键而不是插值:`i18nHelper` 是纯
 // 对象取值,没有 `$t()` 的参数能力,而把计数拼进 main 侧文案等于把文案搬回 main
@@ -120,6 +124,25 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true))
         </a-button>
         <a-button size="mini" type="primary" status="danger" :disabled="tabAliasStore.busy" @click="tabAliasStore.confirm()">
           {{ closeText.confirm }}
+        </a-button>
+      </div>
+    </section>
+    <section
+      v-else-if="sdkDialog"
+      name="maestro__sdkConfirmPanel"
+      class="maestro-tab-alias__panel"
+      role="alertdialog"
+      aria-modal="true"
+      :aria-label="sdkDialog.title"
+    >
+      <h1 name="maestro__sdkConfirmTitle" class="maestro-tab-alias__title">{{ sdkDialog.title }}</h1>
+      <p name="maestro__sdkConfirmMessage" class="maestro-tab-alias__hint">{{ sdkDialog.message }}</p>
+      <div name="maestro__sdkConfirmActions" class="maestro-tab-alias__actions">
+        <a-button size="mini" type="text" :disabled="tabAliasStore.busy" @click="tabAliasStore.cancel()">
+          {{ sdkDialog.cancelLabel || closeText.cancel }}
+        </a-button>
+        <a-button size="mini" type="primary" :disabled="tabAliasStore.busy" @click="tabAliasStore.confirm()">
+          {{ sdkDialog.confirmLabel || closeText.confirm }}
         </a-button>
       </div>
     </section>

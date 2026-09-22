@@ -161,6 +161,17 @@ const onlyPreviewDevCspPlugin = {
   }
 };
 
+/**
+ * 独立 esbuild 调用要自己的别名表 —— 它们不吃 vite 的 `resolve.alias`。
+ *
+ * 一份常量而不是各写各的:`@preload/maestroSdk`(`MAESTROSDK` 的注入实现)是每个 mini-app preload
+ * 都要引的,漏在哪一个 sandbox 构建里,就是那一个 mini-app 在打包版里构建失败。
+ */
+const maestroSdkPreloadAlias = {
+  '@shared': resolve('src/shared'),
+  '@preload': resolve('src/preload')
+};
+
 const onlyPreviewSandboxPreloadPlugin = {
   name: 'bitterless:onlypreview-sandbox-preload',
   async writeBundle() {
@@ -176,6 +187,10 @@ const onlyPreviewSandboxPreloadPlugin = {
       format: 'cjs',
       target: 'node22',
       external: ['electron'],
+      // 这两个 sandbox preload 走的是**独立的 esbuild 调用**,不吃 vite 的 `resolve.alias` ——
+      // 少一个别名就是一条 `Could not resolve` 的构建失败,而且只在 `dev:prod` / 打包时才炸
+      // (typecheck 用 tsconfig 的 paths,看不见这里)。新增共享模块时要连这里一起加。
+      alias: maestroSdkPreloadAlias,
       define: bitterlessPreloadBuildDefine,
       sourcemap: false,
       logLevel: 'silent'
@@ -195,9 +210,7 @@ const trenchSandboxPreloadPlugin = {
       format: 'cjs',
       target: 'node22',
       external: ['electron'],
-      alias: {
-        '@shared': resolve('src/shared')
-      },
+      alias: maestroSdkPreloadAlias,
       sourcemap: false,
       logLevel: 'silent'
     });

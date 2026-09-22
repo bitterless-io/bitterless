@@ -1,5 +1,6 @@
 import './coach.handler'
 import './tabAlias.handler'
+import './maestroSdk.handler'
 import './browserHistory.handler';
 import '@maestro-main/security/sqliteKey.service'
 

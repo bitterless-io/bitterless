@@ -62,54 +62,10 @@ function pinnedGroupDivider(tab: TabInfo, i: number): boolean {
 }
 
 async function onTabClick(id: string): Promise<void> {
-  // 正在这个 chip 里改名 —— 点击是在放光标,不是在切 tab。
-  if (tabStore.isRenaming(id)) return
   await workbenchStore.background()
   await tabStore.activate(id)
 }
 
-/**
- * 双击 Zellij chip 就地改名(docs/features/zellij-tab-inline-rename.md)。
- *
- * 其余每一种 tab 上这个手势**不存在** —— 不是置灰:双击 tab 条在浏览器里普遍是别的意思,抢掉它
- * 会让每个用户都踩一次(#pending-questions PQ-2)。
- */
-function onTabDblClick(tab: TabInfo): void {
-  tabStore.beginRename(tab)
-}
-
-/** 输入框宽度跟着字走,上限由 `.less` 的 `max-width: 100%` 钳在 chip 内(#6)。 */
-const renameWidth = computed(() => `${Math.max(1, tabStore.renameDraft.length)}ch`)
-
-function onRenameKeydown(event: KeyboardEvent): void {
-  // 输入法组字中的回车是在**选词**,不是在保存。
-  if (event.isComposing) return
-  if (event.key === 'Enter') {
-    event.preventDefault()
-    void tabStore.commitRename()
-    return
-  }
-  if (event.key === 'Escape') {
-    event.preventDefault()
-    // 放弃会拆掉输入框,于是紧跟着触发一次 blur —— `commitRename()` 那时 `renamingTabId` 已经是
-    // null 并直接返回,所以「Escape 之后又被 blur 提交一次」不会发生。顺序是承重的。
-    tabStore.cancelRename()
-  }
-}
-
-// 进入编辑就聚焦并全选:常见动作是「把这个名字换掉」,第一个键应该覆盖而不是追加。
-// 按 `name` 查 DOM 而不是用 `ref`——它在 `v-for` 里会收成数组,而同时只可能有一个在编辑。
-watch(
-  () => tabStore.renamingTabId,
-  async (id) => {
-    if (!id) return
-    await nextTick()
-    const input = document.querySelector<HTMLInputElement>('input[name="menubar__tab__rename"]')
-    if (!input) return
-    input.focus()
-    input.select()
-  }
-)
 // The fixed Home tab is a bundled renderer, so its icon must be bundled too.
 import bitterlessIcon from '@maestro-renderer/common/assets/icons/bitterless-icon.png'
 
@@ -260,10 +216,8 @@ function fixedTabClass(tab: TabInfo): string {
       <div class="maestro-menu-bar__tab-list">
         <template v-for="(tab, i) in tabStore.tabs" :key="tab.id">
           <div
-            :title="tabStore.canRename(tab)
-              ? `${tabLabel(tab)} · ${i18nHelper.menuBar.maestro.renameTabHint}`
-              : tabLabel(tab)"
-            :draggable="!tab.pinned && !tabStore.isRenaming(tab.id)"
+            :title="tabLabel(tab)"
+            :draggable="!tab.pinned"
             class="maestro-menu-bar__tab"
             :class="[
               tabClass(tab),
@@ -273,7 +227,6 @@ function fixedTabClass(tab: TabInfo): string {
             ]"
             :style="!tab.pinned && lockedTabWidth ? { width: lockedTabWidth + 'px', flexShrink: 0 } : undefined"
             @click="onTabClick(tab.id)"
-            @dblclick="onTabDblClick(tab)"
             @contextmenu.prevent="tabStore.showMenu(tab.id)"
             @dragstart="tabStore.startDrag($event, tab.id)"
             @dragover.prevent="tabStore.dragOver($event, tab.id)"
@@ -307,29 +260,7 @@ function fixedTabClass(tab: TabInfo): string {
               @error="markFaviconFailed(tab.favicon)"
             />
             <IconCommon v-else class="maestro-menu-bar__fallback-icon" />
-            <!-- 就地改名:只在 Zellij chip 上出现,宽度跟着字走并被 `max-width: 100%` 钳在 chip
-                 内。`maxlength` 负责让第 21 个**按键**当场没反应,真正的截断在 store 里
-                 (输入法组字/粘贴/拖放都绕得过这个属性)。 -->
-            <input
-              v-if="tabStore.isRenaming(tab.id)"
-              name="menubar__tab__rename"
-              class="maestro-menu-bar__tab-rename"
-              :style="{ width: renameWidth }"
-              :maxlength="tabStore.renameMaxLength"
-              :aria-label="i18nHelper.menuBar.maestro.renameTab"
-              :value="tabStore.renameDraft"
-              spellcheck="false"
-              autocomplete="off"
-              draggable="false"
-              @click.stop
-              @dblclick.stop
-              @dragstart.stop.prevent
-              @input="tabStore.updateRenameDraft(($event.target as HTMLInputElement).value)"
-              @keydown.stop="onRenameKeydown($event)"
-              @blur="tabStore.commitRename()"
-            />
             <span
-              v-else
               class="maestro-menu-bar__tab-label"
               :class="{ 'maestro-menu-bar__tab-label--pinned': tab.pinned }"
               >{{ tabLabel(tab) }}</span

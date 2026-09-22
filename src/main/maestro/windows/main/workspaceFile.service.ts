@@ -9,7 +9,8 @@ import { existsSync, mkdirSync, realpathSync, statSync, writeFileSync, type Dire
 import { readdir, readFile as readFileAsync, stat as statAsync } from 'fs/promises'
 import { injectable } from 'inversify'
 import { maestroDataRoot } from '@maestro-main/data/maestroDataRoot'
-import { readFileForAgent, FileReadError } from '@maestro-main/files/fileReader.service'
+import { FileReadError } from '@maestro-main/files/fileReader.service'
+import { readDocumentForAgent } from '@maestro-main/files/documentReader.service'
 import {
   mdDirLink,
   WorkspaceArchiveService,
@@ -476,9 +477,12 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
         return `ERROR: "${pathArg}" is a folder, not a file. Use list_workspace_files with path "${target}" to see what is inside (or search_files to find something in it), then read_file the individual files it reports.`
       }
       if (!stats.isFile()) return `ERROR: "${pathArg}" is not a file.`
-      const result = await readFileForAgent(target, options)
+      // `readDocumentForAgent` 而不是 `readFileForAgent`:它在后者外面套了全文缓存 + 翻页
+      // (docs/features/maestro-large-file-chunked-read.md #3)。没有它,offset/limit 只能在
+      // 一份已经被截断的正文上翻,翻不到后面的内容。
+      const result = await readDocumentForAgent(target, options)
       assertSkillFilePath(maestroDataRoot(), target)
-      return result
+      return result.text
     } catch (err) {
       if (err instanceof FileReadError) return `ERROR: ${err.message}`
       if (isPermissionError(err)) {

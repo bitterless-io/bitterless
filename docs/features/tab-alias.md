@@ -129,3 +129,9 @@ composite 自己容器的子节点,不是 `win.contentView` 的。复用它等�
 | PQ-4 | 换页面类型(`setTabKind`)后 alias 保不保留? | 保留 —— 名字是**这个 tab 的**,不是它当前内容的 | bl 的 `becomeWebTab()` 会把 `title` 清空,alias 必须显式豁免 | **已定并实施** — 两个仓的换类型路径都只动 `title`,`alias` 原样留在 tab 上 |
 | PQ-5 | 默认固有 tab 换成自定义主页后,原来那条(如果有)alias 怎么办? | alias 跟着 **tab** 走,不跟槽位走 —— 换槽位不动任何 alias | 与 custom-homepage-tab.md 的交点 | **已定** — 换槽位不动任何 tab 的 alias;`Set as homepage` 把这个 tab **已有的** alias 一起搬进设置,`Restore default homepage` 把设置里那条清掉 |
 | PQ-6 | 自定义主页的 alias 存哪儿?它是 pinned,不进 `tabs` 表 | 存 settings 的 `homeAlias`,与 `homeCompositeId` / `homeInstanceId` 同一条记录 —— **不放松** `isRestorableComposite` 的 `!t.pinned`(放松了固有 tab 会在启动时被 restore 再开一份) | G5 在固有槽位上的落地;`Set as homepage` 还会关掉旧 Home tab,连第二份带名字的副本都没有 | 已定,见 custom-homepage-tab.md #2.1 |
+
+## 改名入口只有这一个(2026-09-22)
+
+Ral 2026-09-22:「取消 tab 双击改名的功能,只能右击点击 alias 改名」。原本 Zellij chip 上还有一个
+双击就地改名的入口([zellij-tab-inline-rename.md](zellij-tab-inline-rename.md)),已连同整套编辑态
+从代码里删除并加了反向守卫。**本文档的 G1 现在是唯一入口。**

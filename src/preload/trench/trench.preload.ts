@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import 'electron-xpc/preload';
+import '@preload/maestroSdk';
 import '../omni/omniCellActiveFrame.sdk';
 import { COIN_IPC_CHANNELS, type CoinBridge } from '../../shared/coin/coinBridge.type';
 import type { TrenchHostContext } from '@shared/trench/trenchXpc.type';

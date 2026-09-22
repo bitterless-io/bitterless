@@ -96,15 +96,19 @@ test('explicit reload discovers creation, rename and linked target changes witho
   assert.doesNotMatch(source, /setInterval|setTimeout|\bwatch\(/)
 })
 
-const { buildAgentTurnPrompt } = await load('src/main/agent/runtime/agentPrompt.ts')
+const { buildAgentTurnPrompt, buildSessionSkillGuidance } = await load('src/main/agent/runtime/agentPrompt.ts')
 const { appendCurrentSkillCatalog } = await load('src/main/agent/runtime/skillCatalogRequest.ts')
 test('prompt and request catalog helpers refresh without history rewrite and reject overflow', t => {
   const f=fixture(t), root=join(f.workspace,'.agents/skills'); const dir=skill(root,'changing','Original')
   const catalog=f.registry.catalogPrompt(f.workspace)
+  // 目录**不再进每轮 prompt** —— 它是 A8,走资源加载器的 getAppendSystemPrompt() 进系统提示词
+  // (prompt-structure.html 表 1;Ral 2026-09-22)。这里原来断言 pending 里含着那份目录。
   const pending=buildAgentTurnPrompt({ message:'Inspect skills', currentUrl:'', briefs:[], catalog })
+  assert.ok(!pending.includes('<host_skill_catalog>'), '每轮 prompt 里不该再有完整目录')
   const history=[{ role:'user', content:pending, timestamp:1 }]
+  // appendCurrentSkillCatalog 本身仍在(供别的调用方),但产线路径已不再用它挂消息。
   const request=appendCurrentSkillCatalog({messages:history,catalog,contextWindow:262144,maxTokens:8192,systemPrompt:'Fixture'})
-  assert.ok(pending.includes(request.at(-1).content)); assert.equal(history.length,1)
+  assert.equal(request.at(-1).content,catalog); assert.equal(history.length,1)
   writeFileSync(join(dir,'assets.txt'),'Resource revision 2')
   assert.equal(f.registry.catalogPrompt(f.workspace),catalog)
   f.registry.reload(f.workspace)
@@ -166,18 +170,44 @@ test('native prompt preserves complete metadata and skill authoring targets the 
   const briefs = Array.from({ length: 251 }, (_, n) => ({ id: `shared:${n}`, name: `skill-${n}`, description: 'A & B <fixture>', path: `/fixture/${n}/SKILL.md`, inputs: [], triggers: [], seed: {}, missing: [] }))
   const params = { message: 'Create a reusable skill', currentUrl: '', briefs, skillAuthoring: { globalRoot, bunPath } }
   const global = buildAgentTurnPrompt(params)
-  assert.equal((global.match(/<skill>/g) || []).length, 251)
-  assert.ok(global.includes('<description>A &amp; B &lt;fixture&gt;</description>'))
-  assert.ok(global.includes(JSON.stringify(globalRoot)))
-  assert.ok(global.includes("'/fixture/owner'\\''s app/bun'"))
-  const workspace = buildAgentTurnPrompt({ ...params, context: { workspace: { path: '/fixture/workspace' } } })
+  // **目录在一个会话里只有一份**(Ral 2026-09-22)。这里原来断言 251 个 `<skill>` XML ——
+  // 那是 `buildAgentTurnPrompt` 自己又把 briefs 渲染一遍的产物,和 `params.catalog` 里 registry
+  // 的那一份重复。2026-09-22 实测:一条消息 57,083 tok,同一份目录三份占 52,556 tok(92.1%),
+  // 聊四句就越过压缩线。现在 briefs 只用来补 registry 过滤掉的 builtin,目录本身只由
+  // `params.catalog` 提供一次。
+  assert.equal((global.match(/<skill>/g) || []).length, 0, 'briefs 不该再被渲染成第二份目录')
+  assert.ok(!global.includes('skill-250'), '普通技能条目不从 briefs 走')
+  assert.ok(!global.includes('A &amp; B &lt;fixture&gt;'), 'XML 那份已移除')
+  // 有 path 的是普通技能(归 registry),没有 path 的是 builtin 文本流程 —— 只有后者从这里补。
+  // 2026-09-22 第二轮:内置文本流程清单与创作/安装纪律也从**每轮消息**搬进**系统提示词**
+  // (`buildSessionSkillGuidance()`,经 `MaestroAgent.systemPrompt()`)。每轮只剩 D1–D4 加
+  // 一行当前执行域。所以这些断言的落点从 `buildAgentTurnPrompt` 换成会话级指引,意图不变。
+  const guidanceParams = { briefs: [
+    ...briefs.slice(0, 3),
+    { id: 'builtin:drill', name: '钻探 (Drill)', description: 'drill it', inputs: [], triggers: ['钻探'], seed: {}, missing: [] }
+  ], skillAuthoring: { globalRoot, bunPath } }
+  const withBuiltin = buildSessionSkillGuidance(guidanceParams)
+  assert.ok(withBuiltin.includes('builtin:drill'), 'builtin 必须还在')
+  assert.ok(withBuiltin.includes('"triggers":["钻探"]'), 'builtin 的 triggers 要留着')
+  assert.ok(!withBuiltin.includes('skill-0'), '有 path 的普通技能不从 briefs 走')
+  assert.ok(!buildAgentTurnPrompt({ ...params, briefs: guidanceParams.briefs }).includes('builtin:drill'), 'builtin 清单不该回到每轮消息里')
+  // 传了 catalog 也不该渲染进每轮 prompt —— 它属于 A8,在系统提示词里。
+  const catalog = '<host_skill_catalog>\n{"catalogRevision":"r1","skills":[]}\n</host_skill_catalog>'
+  const withCatalog = buildAgentTurnPrompt({ ...params, catalog })
+  assert.ok(!withCatalog.includes('<host_skill_catalog>'), '每轮 prompt 里一次都不该出现')
+  const globalGuidance = buildSessionSkillGuidance({ briefs, skillAuthoring: { globalRoot, bunPath } })
+  assert.ok(globalGuidance.includes(JSON.stringify(globalRoot)))
+  assert.ok(globalGuidance.includes("'/fixture/owner'\\''s app/bun'"))
+  assert.ok(!global.includes(JSON.stringify(globalRoot)), '作者根目录不该回到每轮消息里')
+  const workspace = buildSessionSkillGuidance({ briefs, skillAuthoring: { globalRoot, bunPath }, workspacePath: '/fixture/workspace' })
   assert.ok(workspace.includes('"/fixture/workspace/.agents/skills" as the package root'))
   assert.ok(!workspace.includes('"/fixture/global skills" as the package root'))
 })
 
 test('rendered installer guidance uses managed sources without unnecessary runtime installation', () => {
   for (const workspace of [undefined, { path: '/fixture/selected' }]) {
-    const prompt = buildAgentTurnPrompt({ message: 'Install the skill from this npx command', currentUrl: '', briefs: [], context: { workspace }, skillAuthoring: { globalRoot: '/fixture/shared', bunPath: '/fixture/bun' } })
+    // 安装器指引同样搬进了系统提示词(表 2)——断言跟着它走。
+    const prompt = buildSessionSkillGuidance({ briefs: [], workspacePath: workspace?.path, skillAuthoring: { globalRoot: '/fixture/shared', bunPath: '/fixture/bun' } })
     assert.match(prompt, /Prefer existing tools, bundled Bun and direct HTTPS retrieval/)
     assert.match(prompt, /Treat an npx command as installation intent: identify the exact source, requested version\/ref and CLI behavior/)
     assert.match(prompt, /do not run it verbatim by default/)

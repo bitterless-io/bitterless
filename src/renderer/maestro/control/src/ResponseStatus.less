@@ -1,6 +1,16 @@
+// **两行封顶、截断、不可滚**(Ral 2026-09-22)。状态条已搬进消息列表末尾,不再占固定位置,
+// 而它的内容长度由 agent 决定(任务名、问题标题、重试计数)—— 一条突然变成六行的状态会把
+// 最后一条消息顶出视野,而人正要看的就是那条。状态条是**瞥一眼**的东西,不是要读的东西。
+//
+// `52px` = 2 × 26px,即本文件里 `.response-status__bar` 那条 `min-height` 的两倍 —— 跟着它走,
+// 那一行改了这里也要改。刻意**不给** `overflow-y: auto`:一个能滚的状态条等于邀请人去滚它。
+// (原来还有一个 roster 浮层,已随 `+N` 一起删除。)
+// 见 areas/agent-runtime/chat/decision/manual-decision.html #3。
 .response-status {
   position: relative;
+  max-height: 52px;
   margin-bottom: 8px;
+  overflow: hidden;
   color: var(--color-text-2);
   font-size: 11px;
 }
@@ -8,6 +18,7 @@
 .response-status__bar,
 .response-status__retry,
 .response-status__agents,
+.response-status__action,
 .response-status__steering {
   display: flex;
   min-height: 26px;
@@ -36,6 +47,10 @@
 .response-status__agents-meta { flex-shrink: 0; color: var(--color-text-4); font-size: 10.5px; font-variant-numeric: tabular-nums; }
 
 .response-status__steering { min-height: 22px; color: #4e5882; font-weight: 650; }
+/* action：变化最快的一行，所以视觉上比 status 轻 —— 它是细节，不是判据。 */
+.response-status__action { min-height: 22px; color: var(--color-text-3); }
+.response-status__action-text { min-width: 0; flex: 1; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.response-status__action-meta { flex-shrink: 0; color: var(--color-text-4); font-size: 10.5px; font-variant-numeric: tabular-nums; }
 .response-status__steering span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .response-status__dot {
@@ -52,18 +67,7 @@
 .response-status__text--run { color: #4e5882; }
 .response-status__text--wait { color: #b25e09; }
 .response-status__meta { margin-left: 6px; color: var(--color-text-4); font-size: 10.5px; font-variant-numeric: tabular-nums; }
-.response-status__background { margin-left: 6px; border-radius: 4px; background: #eef0f7; padding: 1px 4px; color: #606b9d; font-size: 9px; font-weight: 700; text-transform: uppercase; }
-.response-status__clock { flex-shrink: 0; color: var(--color-text-4); }
-.response-status__others { display: flex; height: 20px; align-items: center; gap: 2px; border: 0; border-radius: 5px; background: #eef0f7; padding: 0 6px; color: #606b9d; font-size: 10px; font-weight: 650; }
-.response-status__others:hover { background: #e2e5f0; color: #323955; }
-.response-status__chevron--open { transform: rotate(180deg); }
 
-.response-status__roster { position: absolute; right: 0; bottom: 100%; left: 0; z-index: 20; max-height: 224px; margin-bottom: 4px; overflow-y: auto; border: 1px solid #d9ddea; border-radius: 8px; background: #fff; padding: 4px; box-shadow: 0 10px 24px rgb(50 57 85 / 14%); }
-.response-status__task-row { display: flex; align-items: baseline; gap: 8px; border-radius: 5px; padding: 5px 7px; }
-.response-status__task-row:hover { background: #f3f5fc; }
-.response-status__task-name { flex-shrink: 0; color: #323955; font: 650 10.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.response-status__task-title { min-width: 0; flex: 1; overflow: hidden; color: var(--color-text-3); text-overflow: ellipsis; white-space: nowrap; }
-.response-status__task-meta { flex-shrink: 0; color: var(--color-text-4); font-size: 10px; font-variant-numeric: tabular-nums; }
 
 @keyframes response-status-pulse { 50% { opacity: 0.35; transform: scale(0.75); } }
 @media (prefers-reduced-motion: reduce) {

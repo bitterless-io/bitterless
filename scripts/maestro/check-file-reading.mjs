@@ -15,6 +15,10 @@ const externalTools = read('scripts/maestro/externalTools.cjs')
 const packageToolsDispatcher = read('scripts/prepare-maestro-package-tools.cjs')
 const builderTemplate = read('electron-builder.tmp.yml')
 const messageItem = read('src/renderer/maestro/control/src/MessageItem.vue')
+const readGate = read('src/main/maestro/files/readGate.ts')
+const docReader = read('src/main/maestro/files/documentReader.service.ts')
+const docCache = read('src/main/maestro/files/docParseCache.service.ts')
+const workspaceFile = read('src/main/maestro/windows/main/workspaceFile.service.ts')
 const archiveService = read('src/main/maestro/files/archive.service.ts')
 const workspaceArchive = read('src/main/maestro/files/workspaceArchive.service.ts')
 
@@ -90,13 +94,62 @@ assert(
 )
 
 assert(
-  fileReader.includes('await anydocToMarkdown(absPath, { maxChars: MAX_OUTPUT_CHARS })'),
+  fileReader.includes('await anydocToMarkdown(absPath, {') && fileReader.includes('anydocToMarkdown'),
   'supported documents should be converted through the staged anydoc CLI'
 )
 assert(
-  fileReader.includes(".map((line, index) => `${String(start + index).padStart(width, ' ')}\\t${line}`)") &&
-    fileReader.includes('pass offset/limit for more'),
-  'plain text should remain line-numbered and pageable'
+  fileReader.includes(".map((line, index) => `${String(index + 1).padStart(width, ' ')}\\t${line}`)"),
+  'plain text should remain line-numbered'
+)
+
+// ── 出口闸(docs/features/maestro-large-file-chunked-read.md #1 #2)────────────────────────
+// 2026-09-22:一份 150 行的 HTML 被 `limit: 2000` 放行,单次 120,049 字符 / 72,541 token,96% 是
+// 内嵌 base64 字体,正文一个字都没到。字符数约束不住 token,行数约束不住"行少字节多"的文件 ——
+// 所以闸必须同时有字节这个维度,而且只能有**一个**闸(两套闸门就是那次事故的形状)。
+assert(
+  readGate.includes('export const MAX_READ_LINES = 2000') &&
+    readGate.includes('export const MAX_READ_BYTES = 50 * 1024'),
+  'the read gate must stay at pi parity: 2000 lines AND 50KB'
+)
+assert(
+  readGate.includes("Buffer.byteLength(text, 'utf8')") && readGate.includes("stoppedBy = 'bytes'"),
+  'the gate must measure BYTES, not characters — a character cap does not bound tokens'
+)
+assert(
+  readGate.includes('Use bash: sed -n') && readGate.includes('exceeds ${formatSize(MAX_READ_BYTES)} limit'),
+  'a single over-sized line must be refused with an actionable bash fallback instead of returned'
+)
+assert(
+  readGate.includes('PARTIAL: lines ${start}-${end} of ${total}') &&
+    readGate.includes('call read_file again with offset=${end + 1} to continue') &&
+    readGate.includes('Do NOT summarise from this fragment alone'),
+  'a truncated read must state where it stopped, how to continue, and that it must not be summarised'
+)
+assert(
+  !fileReader.includes('const clampChars') && !docReader.includes('const MAX_READ_CHARS'),
+  'there must be exactly ONE gate (readGate); a second char-based clamp is the two-gate bug'
+)
+assert(
+  fileReader.includes('applyReadGate(') && docReader.includes('applyReadGate('),
+  'both the text path and the document path must go out through the shared gate'
+)
+
+// ── 全文缓存 + 翻页(同一份文档 #3)──────────────────────────────────────────────────────
+// 先截后存等于把翻页焊死:那是 BL 此前的形状 —— 一份长 docx 永远只有前 120k 字符可读。
+assert(fileReader.includes('fullDocument?: boolean'), 'the full-document read option must exist')
+assert(
+  fileReader.includes('options?.fullDocument ? DOC_CACHE_MAX_CHARS : MAX_OUTPUT_CHARS'),
+  'the cache path must ask anydoc for the untruncated text'
+)
+assert(docReader.includes('fullDocument: true'), 'documentReader must cache the FULL text')
+assert(
+  docCache.includes('params.mtimeMs') && docCache.includes('params.size') && docCache.includes('PARSER_VERSION'),
+  'the cache key must be path + mtime + size + parser version'
+)
+assert(
+  workspaceFile.includes('readDocumentForAgent(target, options)') &&
+    !workspaceFile.includes('readFileForAgent('),
+  'read_file must go through documentReader (cache + paging), never straight to fileReader'
 )
 assert(
   fileReader.includes('if (isArchivePath(absPath))') && fileReader.includes('Use list_archive'),

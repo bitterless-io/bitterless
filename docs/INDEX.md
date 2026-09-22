@@ -1,5 +1,39 @@
 # Bitterless Documentation
 
+- [发消息之后最后一条被顶出视野 —— 状态条是在滚动**之后**才出现的](issues/status-bar-appearing-pushes-the-last-message-out-of-view.md) —
+  fixed 2026-09-22；owner testing pending。与 `micromeet-cowork` 同形同修：状态条变高只缩小列表可视高度、
+  且**不触发 `scroll` 事件**，于是 `stickToBottom` 不被重算、也没人补滚；修法是根元素挂 `ResizeObserver`，
+  高度一变补一次非强制的 `scrollToBottom()`。本仓没有等价的 renderer 测试装置，未新增守卫。
+  Paired with `micromeet-cowork`。
+
+- [状态条重构：status 收成一组词，action 单独一行，停止不再有「失败」这一态](features/chat-status-bar-status-and-action.md) —
+  implemented 2026-09-22（Ral 当场口述的规格）；owner testing pending。与 `micromeet-cowork` 同形：
+  `status` 只出枚举词、工具命令字符串搬进新的 **`action`** 行、`tone` 只在「需要人动手」时才是 `wait`、
+  停止不再有失败态。本仓另把 `aborting` 相位从任务相位之后提到队首的那一步，因为整档被删而不再需要。
+  本仓没有等价的 renderer 测试装置，未新增守卫。Paired with `micromeet-cowork`。
+
+- [按下停止之后聊天永久卡在「Stopping…」—— 两个出口都被自己关了，回执还从 2026-08-31 起被丢掉](issues/chat-stop-never-confirms-and-the-ui-has-no-escape.md) —
+  fixed 2026-09-22（Ral：「用户反馈 stopping 的时候卡死」）；owner testing pending。两条根因：
+  ① `stop()` 里 `await coach.abortAgent(...)` 没有期限，而唯一能清掉回合的两件事都排在 main 那一整段
+  资源清理之后 —— 等待期间停止和发送都被禁用，状态条只有一句不带计时的 `Stopping…`；
+  ② **本仓独有**：`coach.handler.abortAgent` 声明成 `Promise<void>` 并把 `{ ok: true }` 扔掉，
+  于是一次**成功**的停止在 renderer 看来永远是失败的（`forceStop` 到不了）。这不是推断——
+  `tsc` 从 `6e7e8b30` 起一直在报 `coach.handler.ts(305,9) TS2416`，只是被当成基线噪声。
+  修完 `main` surface **65 → 64**。界面侧同 `micromeet-cowork`：10s 期限 → `stopStalledAt` →
+  带计时的状态句 + 停止按钮重新可用，超期后再按 = 放行，`stopError` 仍是重试；
+  并把 `aborting` 相位**提到任务相位之前**（原来只要还有 live task，按停止后显示的仍是那个任务在跑）。
+  守卫：#2/#4 在本仓还没有（cowork 那边有），#3 的守卫就是 `tsc`。
+  Ral 当场否掉了我那个 A/B，照 pi 的形状改成**同步停止**，第一版加的超期/放行中间态随之删除。见该文档 #5。Paired with `micromeet-cowork`。
+
+- [双击 Zellij tab 就地改名 —— **已撤回,代码已删**](features/zellij-tab-inline-rename.md) — withdrawn
+  2026-09-22(Ral:「取消 tab 双击改名的功能,只能右击点击 alias 改名」)。改名入口收敛成一个:右键
+  `Alias…`([tab-alias.md](features/tab-alias.md) G1)。整套就地编辑从代码里删掉(`MenuBar.vue` 的
+  `@dblclick` + `<input>` + 三个 handler + 聚焦 watch,`tab.store.ts` 的九个成员,两种语言的
+  `renameTab` / `renameTabHint`),而不是藏起来 —— 留一条没有入口的编辑态只会误导下一个人。
+  `check-zellij-tab-chrome` 的 ⑤ 段**反转**成「这个手势不许回来」(它看起来只是一行 `@dblclick`,
+  加回来不会有任何测试变红)。已知遗留:main 侧 `setTabAlias` XPC 现在没有调用方,刻意留着 ——
+  理由与去留决定见该文档 #8。Paired with micromeet-cowork(那边从来没有过这个入口)。
+
 - [dev server 只绑 IPv6 → renderer 的动态 import 偶发取不回来](issues/control-app-async-chunk-fetch-failure.md) —
   fixed 2026-09-22(**本仓未报过,按代码与环境形状从 micromeet-cowork 同步**);owner testing pending
   (要重启 dev server)。Vite 默认 `host: 'localhost'` + Node 17+ verbatim DNS ⇒ 只绑 `[::1]:5173`,
@@ -340,6 +374,19 @@ Older implementation notes remain under `doc/` and are reference-only unless lin
 design document.
 
 ## Feature contracts
+
+- [大文件的读取闸、位置标记与分片](features/maestro-large-file-chunked-read.md) — #1 #2 #3 implemented
+  2026-09-22(Ral 指定),owner testing pending;#4 #5 仍未实现。`read_file` 的出口闸从「120,000 **字符**」
+  换成 **2000 行 ∧ 50KB 双闸**(与 pi 内置 `read` 逐字同口径),永不返回半行;截断回执带
+  `offset=` 坐标 + 「不许据此总结」,单行超 50KB 时**不返回内容**改给 `sed -n` 兜底。
+  同时新建全文缓存 + 翻页(`docParseCache` + `documentReader`)—— 此前一份长 docx **永远只有前 120k 可读**
+  且每次重转。起因是 2026-09-22 的一次真实会话:一份 **150 行**的 HTML 单次吃掉 **72,541 token**,
+  96% 是内嵌 base64 字体,正文一个字都没到(`overmind:areas/agent-runtime/chat/file-reading.html`)。
+  Paired with micromeet-cowork。
+
+- [`MAESTROSDK` —— 给 miniapp 的宿主 SDK(第一发:刷新事件)](features/maestro-sdk-refresh-events.md) — 实现完成,待 owner 验收;
+  `MAESTROSDK.beforeRefresh` / `.onRefresh` 由一行共享 preload 注入,main 在刷新 composite tab 时按 `instanceId` 广播;
+  顺带修掉「刷新 miniapp tab 会给它套一层浏览器 view」的既有缺陷。
 
 - [Sessions, undo, search and background titles](features/session-management.md) — implemented; code-verified, human testing pending;
   title-only search, one business undo, native text undo, and isolated first-message naming with late-result protection.

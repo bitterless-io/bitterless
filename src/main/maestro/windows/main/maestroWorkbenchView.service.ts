@@ -1,3 +1,4 @@
+import { shouldOpenDevTools } from '@maestro-main/windows/devtoolsGate'
 import { WebContentsView } from 'electron'
 import type { BrowserWindow } from 'electron'
 import { is } from '@electron-toolkit/utils'
@@ -9,15 +10,7 @@ import type { ViewRect, WorkbenchTabState } from '@maestro-shared/coach.api'
 import type { TraceEvent } from '@maestro-shared/trace.types'
 import { MAESTRO_PARTITION } from '@maestro-main/data/maestroDataRoot'
 import { createBoundsApplier } from './viewBounds'
-import { openAnchoredDevTools } from '@maestro-main/windows/devtoolsAnchor.service'
 
-export const shouldOpenWorkbenchDevTools = (): boolean => {
-  if (import.meta.env.VITE_MODE !== 'debug') return false
-  if (process.env.BITTERLESS_E2E === '1') return false
-  if (process.env.COACH_DEMO_SMOKE_OUT) return false
-  if (process.env.COACH_WORKBENCH_DEVTOOLS === '0') return false
-  return is.dev || process.env.COACH_WORKBENCH_DEVTOOLS === '1' || process.env.COACH_DEVTOOLS === '1' || process.env.COACH_OPEN_DEVTOOLS === '1'
-}
 
 export interface MaestroWorkbenchViewServiceState {
   browserWindow: BrowserWindow | null
@@ -53,10 +46,10 @@ export class MaestroWorkbenchViewService extends CommonService<MaestroWorkbenchV
     win.contentView.addChildView(view)
     this._state.layout()
 
-    if (shouldOpenWorkbenchDevTools()) {
+    if (shouldOpenDevTools('workbench')) {
       view.webContents.once('did-finish-load', () => {
         try {
-          openAnchoredDevTools(view.webContents, { title: 'Maestro workbench' })
+          view.webContents.openDevTools({ mode: 'detach', activate: false })
         } catch (err) {
           this._state.emitTrace({ kind: 'error', msg: 'workbench devtools: ' + (err as Error).message, ts: Date.now() })
         }

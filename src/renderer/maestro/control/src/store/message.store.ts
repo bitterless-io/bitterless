@@ -712,7 +712,6 @@ export class MessageStoreState {
       activity: [],
       thinking: false,
       startedAt: snapshot.startedAt,
-      lastActivityAt: Date.now(),
       aborting: snapshot.state === 'aborting',
       stopError: snapshot.stopError
     }
@@ -1319,7 +1318,6 @@ export class MessageStoreState {
       ) {
         continue
       }
-      this.turnService.touchForTask(bound.sessionId)
       const part: MaestroTaskPart = {
         type: 'task',
         taskId: task.id,
@@ -1418,7 +1416,6 @@ export class MessageStoreState {
     )
     if (message?.confirm && !message.confirm.answer) {
       message.confirm.answer = 'elsewhere'
-      this.turnService.touchForTask(session.id)
       // 撤回这一支只改一条已有消息,没有追加、没有封口 → 走窄通道(审计的第 2 步)。
       void this.persistMessages(session, [message])
     }
@@ -1429,7 +1426,6 @@ export class MessageStoreState {
     if (!card || card.answer) return { ok: false }
     const session = this.sessions.find((item) => item.messages.includes(message))
     card.answer = confirm ? 'confirm' : 'cancel'
-    if (session) this.turnService.touchForTask(session.id)
     const result = await coach
       .respondTaskConfirm({ taskId: card.taskId, confirmId: card.confirmId, confirm })
       .catch(() => ({ ok: false }))

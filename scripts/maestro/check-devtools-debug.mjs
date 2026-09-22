@@ -19,46 +19,84 @@ const assert = (condition, message) => {
   if (!condition) throw new Error(message)
 }
 
-const loadDevToolsGate = (source, functionName) => {
-  const match = source.match(
-    new RegExp(`export const ${functionName} = \\(\\): boolean => \\{([\\s\\S]*?)\\n\\}`)
+const gateSource = readFileSync(join(root, 'main/maestro/windows/devtoolsGate.ts'), 'utf8')
+
+// 2026-09-22：五份各写各的判据合成一个 `shouldOpenDevTools(surface)`（原来只有 window/control
+// 认关闭开关，其余只看 `=== '1'`，而 `is.dev` 排在最前面短路掉 —— 任何 `=0` 在 dev 下都是空操作）。
+// 守卫照旧**真的执行**那份判据，只是现在只需要执行一份，按 surface 传参。
+const loadDevToolsGate = () => {
+  const match = gateSource.match(
+    /export const shouldOpenDevTools = \(surface: DevToolsSurface\): boolean => \{([\s\S]*?)\n\}/
   )
-  assert(match, `${functionName} should remain an exported, bounded policy function`)
+  assert(match, 'shouldOpenDevTools should remain an exported, bounded policy function')
+  const optIn = gateSource.match(/const OPT_IN_ONLY[^=]*=[^[]*\[([^\]]*)\]/)?.[1] || ''
+  const surfaceEnv = gateSource.match(/const SURFACE_ENV[^=]*= \{([\s\S]*?)\}/)?.[1] || ''
   const body = (match?.[1] || '')
     .replaceAll('import.meta.env.VITE_MODE', 'viteMode')
     .replaceAll('process.env', 'environment')
     .replaceAll('is.dev', 'development')
-  const evaluate = new Function('viteMode', 'environment', 'development', body)
-  return ({ viteMode, environment = {}, development = false }) =>
-    Boolean(evaluate(viteMode, environment, development))
+    .replace(/const surfaceEnv = SURFACE_ENV\[surface\]/, 'const surfaceEnv = SURFACE_ENV[surface]')
+    .replace(/if \(OPT_IN_ONLY\.has\(surface\)\) return false/, 'if (OPT_IN_ONLY.has(surface)) return false')
+  const alwaysOn = gateSource.match(/const ALWAYS_ON_IN_DEBUG[^=]*=[^[]*\[([^\]]*)\]/)?.[1] || ''
+  const evaluate = new Function(
+    'surface', 'viteMode', 'environment', 'development', 'SURFACE_ENV', 'OPT_IN_ONLY', 'ALWAYS_ON_IN_DEBUG', body
+  )
+  const envMap = Object.fromEntries(
+    [...surfaceEnv.matchAll(/(\w+):\s*'([^']+)'/g)].map((m) => [m[1], m[2]])
+  )
+  const optInSet = new Set([...optIn.matchAll(/'([^']+)'/g)].map((m) => m[1]))
+  return (surface) => ({ viteMode, environment = {}, development = false }) =>
+    Boolean(evaluate(surface, viteMode, environment, development, envMap, optInSet,
+      new Set([...alwaysOn.matchAll(/'([^']+)'/g)].map((m) => m[1]))))
 }
 
+const gateFor = loadDevToolsGate()
 const devToolsGates = {
-  window: loadDevToolsGate(windowHelperSource, 'shouldOpenDevTools'),
-  control: loadDevToolsGate(controlViewSource, 'shouldOpenControlDevTools'),
-  workbench: loadDevToolsGate(workbenchViewSource, 'shouldOpenWorkbenchDevTools'),
-  operation: loadDevToolsGate(browserViewSource, 'shouldOpenOperationDevTools'),
-  pinnedHome: loadDevToolsGate(browserViewSource, 'shouldOpenPinnedHomeDevTools')
+  window: gateFor('window'),
+  control: gateFor('control'),
+  workbench: gateFor('workbench'),
+  operation: gateFor('operation'),
+  pinnedHome: gateFor('home')
 }
 
+// 关闭开关必须**对每个 surface 一视同仁**，并且排在强制打开之前 —— 否则 `=1` 能绕过 `=0`，
+// 又回到"没有一个开关说了算"（docs/issues/control-devtools-do-not-open-in-dev.md）。
+for (const kill of ["import.meta.env.VITE_MODE !== 'debug'", "process.env.BITTERLESS_E2E === '1'",
+                    'process.env.COACH_DEMO_SMOKE_OUT', "process.env.COACH_OPEN_DEVTOOLS === '0'",
+                    "process.env.COACH_DEVTOOLS === '0'"]) {
+  assert(gateSource.includes(kill), `the single gate must honour the kill switch ${kill}`)
+}
+assert(
+  gateSource.indexOf("COACH_OPEN_DEVTOOLS === '0'") < gateSource.indexOf("COACH_OPEN_DEVTOOLS === '1'"),
+  'kill switches must be evaluated before the force-open switches'
+)
+// 各表面不得再自建判据。
 for (const [name, source] of Object.entries({
-  window: windowHelperSource,
-  control: controlViewSource,
-  workbench: workbenchViewSource,
-  operation: browserViewSource
+  control: controlViewSource, workbench: workbenchViewSource,
+  operation: browserViewSource, window: windowHelperSource
 })) {
   assert(
-    source.includes("import.meta.env.VITE_MODE !== 'debug'"),
-    `${name} devtools must reject non-debug compiled modes`
+    !/const shouldOpen\w*DevTools = \(\): boolean/.test(source),
+    `${name} must ask the shared gate instead of keeping its own`
   )
+  assert(source.includes("shouldOpenDevTools('"), `${name} should call shouldOpenDevTools(surface)`)
+}
+
+// 位置交给 Electron：自托管那套 2026-09-22 已撤回（Ral：「devtool 要控制屏幕和位置的功能都去掉」）。
+for (const [name, source] of Object.entries({
+  control: controlViewSource, workbench: workbenchViewSource,
+  operation: browserViewSource, window: windowHelperSource
+})) {
   assert(
-    source.includes("process.env.BITTERLESS_E2E === '1'"),
-    `${name} devtools must stay suppressed during E2E`
+    !/openAnchoredDevTools|setDevToolsAnchor/.test(source),
+    `${name} must not re-introduce anchored devtools`
   )
 }
-assert(workbenchViewSource.includes("process.env.COACH_WORKBENCH_DEVTOOLS === '1'"), 'workbench-specific devtools env should be supported')
-assert(workbenchViewSource.includes("process.env.COACH_DEVTOOLS === '1'"), 'global coach devtools env should be supported')
-assert(workbenchViewSource.includes("process.env.COACH_OPEN_DEVTOOLS === '1'"), 'legacy/global open devtools env should be supported')
+
+// 三个强制开关现在都住在统一闸里（workbench 的那个通过 SURFACE_ENV 映射）。
+assert(gateSource.includes("workbench: 'COACH_WORKBENCH_DEVTOOLS'"), 'workbench-specific devtools env should be supported')
+assert(gateSource.includes("process.env.COACH_DEVTOOLS === '1'"), 'global coach devtools env should be supported')
+assert(gateSource.includes("process.env.COACH_OPEN_DEVTOOLS === '1'"), 'legacy/global open devtools env should be supported')
 assert(
   /view\.webContents\.openDevTools\(\{\s*mode: 'detach',\s*activate: false\s*\}\)/.test(controlViewSource),
   'control panel devtools should open detached without stealing focus'
@@ -74,10 +112,10 @@ const workbenchCreateMatch = workbenchViewSource.match(
 )
 assert(workbenchCreateMatch, 'workbench service should keep a bounded create flow')
 assert(
-  /if \(shouldOpenWorkbenchDevTools\(\)\) \{[\s\S]*view\.webContents\.openDevTools\(\{\s*mode: 'detach',\s*activate: false\s*\}\)/.test(
+  /if \(shouldOpenDevTools\('workbench'\)\) \{[\s\S]*view\.webContents\.openDevTools\(\{\s*mode: 'detach',\s*activate: false\s*\}\)/.test(
     workbenchCreateMatch?.[1] || ''
   ),
-  'workbench create should check shouldOpenWorkbenchDevTools before opening detached devtools'
+  'workbench create should check the shared gate before opening detached devtools'
 )
 assert(
   /wc\.openDevTools\(\{\s*mode: 'detach',\s*activate: false\s*\}\)/.test(browserViewSource),
@@ -88,7 +126,7 @@ const operationDevToolsMatch = browserViewSource.match(
 )
 assert(operationDevToolsMatch, 'browser view service should keep a bounded operation devtools facade')
 assert(
-  /if \(!shouldOpenOperationDevTools\(\)\) return[\s\S]*wc\.openDevTools\(\{\s*mode: 'detach',\s*activate: false\s*\}\)/.test(
+  /if \(!shouldOpenDevTools\('operation'\)\) return[\s\S]*wc\.openDevTools\(\{\s*mode: 'detach',\s*activate: false\s*\}\)/.test(
     operationDevToolsMatch?.[1] || ''
   ),
   'operation devtools should check the compiled-mode policy before opening'
@@ -176,7 +214,7 @@ const pinnedHomeDevToolsMatch = browserViewSource.match(
 assert(pinnedHomeDevToolsMatch, 'browser view service should keep a bounded fixed Home DevTools opener')
 const pinnedHomeDevToolsBody = pinnedHomeDevToolsMatch?.[1] || ''
 assert(
-  pinnedHomeDevToolsBody.includes('if (!shouldOpenPinnedHomeDevTools()) return'),
+  pinnedHomeDevToolsBody.includes("if (!shouldOpenDevTools('home')) return"),
   'fixed Home opener should enforce its compiled-mode policy'
 )
 assert(

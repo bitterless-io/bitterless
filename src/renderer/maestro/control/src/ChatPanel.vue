@@ -9,6 +9,7 @@ import { MAESTRO_ONLY_PREVIEW_APP_NAME } from '@maestro-shared/compositeTab.iden
 import type { AgentReply } from '@maestro-shared/coach.api'
 import type { CoachXpcContract } from '@maestro-shared/coach.api'
 import type { ContextGraphView } from '@maestro-shared/coach.api'
+import type { SessionIoExportResult } from '@maestro-shared/coach.api'
 import ContextGraphModal from './ContextGraphModal.vue'
 import WorkflowTaskBar from './WorkflowTaskBar.vue'
 // Session tabs 暂时隐藏(Ral 2026-09-18);模板里那行也一并注释掉了。留着 import 会因
@@ -19,6 +20,7 @@ import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
 import IconBtn from '../../../common/components/IconBtn/IconBtn.vue'
 import ChatErrorModal from './task/ChatErrorModal.vue'
 import MessageList from './MessageList.vue'
+import ResponseStatus from './ResponseStatus.vue'
 import SlashMenu from './SlashMenu.vue'
 import { ShortcutStore, skillShortcutRows, slashTokenAt, parseCompactCommand } from './store/shortcut.store'
 import { channelStore } from './store/channel.store'
@@ -33,6 +35,8 @@ import './ChatPanel.less'
 
 const tasksVisible = ref(false)
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
+// 固定 id:`/export` 的等待提示与它之后的成功/失败提示占同一个槽位,不会叠成两条。
+const EXPORT_MESSAGE_ID = 'maestro-session-export'
 const props = defineProps<{ session: MessageSession; sendDisabled?: boolean }>()
 const emit = defineEmits<{ sent: [reply: AgentReply] }>()
 // 选中的技能。挂载入口是 `/` 面板的 skill 条目(maestro-slash-commands.md「Skills in the slash
@@ -73,6 +77,8 @@ const shortcutStore = reactive(new ShortcutStore([
   { kind: 'command', name: '/clear', get hint() { return i18nHelper.maestroControl.chat.slashClear } },
   { kind: 'command', name: '/view_context', get hint() { return i18nHelper.maestroControl.chat.slashViewContext } },
   { kind: 'command', name: '/copy_session_path', get hint() { return i18nHelper.maestroControl.chat.slashCopySessionPath } },
+  // 与 `/copy_session_path` 同源:同一个会话目录,一个给路径、一个给压缩包。
+  { kind: 'command', name: '/export', get hint() { return i18nHelper.maestroControl.chat.slashExport } },
   { kind: 'command', name: '/test_show_error', get hint() { return i18nHelper.maestroControl.chat.slashTestShowError } },
   { kind: 'command', name: '/view_context_graph', get hint() { return i18nHelper.maestroControl.chat.slashViewContextGraph } },
   { kind: 'command', name: '/workflow', get hint() { return i18nHelper.workflow.commandHint } }
@@ -99,7 +105,8 @@ const withCount = (copy: string, count: number): string => copy.replace('{count}
 const turnLocked = computed(() => Boolean(props.session.turn))
 // 照搬 cowork 同名判据(ChatPanel.vue `stopEnabled`)——Escape-停止要知道"现在真有能停的东西",
 // 不是只看 `turnLocked`(那条连 compacting-without-a-turn 的情况都不算)。
-const stopEnabled = computed(() => Boolean(props.session.compacting || (props.session.turn && (!props.session.turn.aborting || props.session.turn.stopError))))
+// 停止是同步的、必然成功的(Ral 2026-09-22),所以这道闸只剩一个问题:**现在有没有能停的东西**。
+const stopEnabled = computed(() => Boolean(props.session.compacting || props.session.turn))
 const skillLayerLabel = (layer?: string): string => layer === 'workspace' ? i18nHelper.maestroControl.chat.skillWorkspace : layer === 'institution' ? i18nHelper.maestroControl.chat.skillInstitution : i18nHelper.maestroControl.chat.skillGlobal
 
 const workspace = computed(() => props.session.detail.workspace)
@@ -148,7 +155,12 @@ async function send(): Promise<void> {
   if (slashVisible.value) { await commitShortcut(); return }
   const message = input.value.trim()
   // Text is REQUIRED to send, even when files are attached.
-  if (!message || props.sendDisabled || props.session.turn?.aborting) return
+  if (!message || props.sendDisabled) return
+  // 【这里原来有一道「正在收尾就不投」的闸,已删。】回合收尾中按下回车,现在和回合活跃时
+  // 走同一条路:进 steering,投不进去就由 `turn.service` 把它顺延成下一个回合
+  // (Ral 2026-09-22:「静默吞掉和按钮禁用都不对 … 先进 queue 等结尾完结再发出去就行」)。
+  // 队列是**看得见的**——那条人类消息当场进时间线,接在收尾那条消息下面,而不是留在输入框里
+  // 等一个 watch。
   if (messageStore.turnService.busyElsewhere(props.session.id)) {
     Modal.warning({
       title: i18nHelper.maestroControl.chat.busyTitle,
@@ -170,6 +182,19 @@ async function send(): Promise<void> {
   const reply = await messageStore.turnService.send(props.session.id, message, files, undefined, context)
   if (composerDisposed) return
   if (reply && !isRejection(reply)) {
+    // **没投出去的 steering 要把字还回来。** 回合被停掉 / 换掉时,inbox 把每条排队消息判成
+    // `steer-failed`,而这条回包 **不是** `isRejection`(它带 `error` 不带 `reason`),于是一路走到
+    // 这一支 —— 输入框早就清空了,人打的字就这么没了。pi 自己把 `clearQueue()` 的用途写成
+    // 「restoring to editor when user aborts」,说的正是这件事
+    // (auto-steer.html #5 第 2 条;Ral 2026-09-22 指定要做)。
+    // 只在输入框仍为空时还原,免得盖掉这几秒里新打的字 —— 与下面那条分支同一个判据。
+    if (reply.error === 'steer-failed' && !input.value.trim()) {
+      input.value = message
+      if (files?.length) selectedFiles.value = files.slice()
+      selectedSkill.value = sentSkill
+      await nextTick()
+      resizeComposer()
+    }
     if (!reply.mergedIntoTurn) emit('sent', reply)
     return
   }
@@ -381,7 +406,7 @@ async function stop(): Promise<void> {
 // `.chat-error-modal` 是 bl 独有的(cowork 没有 ChatErrorModal 的对应物)。
 const escapeStopBlockedByOverlay = (): boolean => {
   const overlays = document.querySelectorAll<HTMLElement>(
-    '.arco-modal, .arco-drawer, .arco-trigger-popup-wrapper, .context-graph, .response-status__roster, .chat-error-modal, [role="dialog"], [role="menu"], [role="listbox"]'
+    '.arco-modal, .arco-drawer, .arco-trigger-popup-wrapper, .context-graph, .chat-error-modal, [role="dialog"], [role="menu"], [role="listbox"]'
   )
   for (const overlay of overlays) {
     if (!overlay.getClientRects().length) continue
@@ -510,6 +535,28 @@ async function commitShortcut(): Promise<void> {
       if (composerDisposed || props.session.id !== sessionId) return
       messageStore.pushLocalNote(sessionId, reply.path)
       Message.success(i18nHelper.maestroControl.chat.slashPathCopied)
+    },
+    // 两步走:先选位置,再压缩;等待提示只罩住第二步。保存对话框开着的那段时间是**人在想**,
+    // 把它算进"正在压缩"就是显示一个假的进度(Ral 2026-09-22)。
+    exportSession: async () => {
+      const picked = await coach.pickSessionIoExportTarget({ sessionId })
+      // 取消不是失败 —— 人在保存对话框里改主意,不该弹红,也不该往时间线里写一行。
+      if (!picked.ok && 'cancelled' in picked) return
+      if (!picked.ok) throw new Error(picked.error)
+      // `duration: 0` 才不会自己消失(压缩多久不知道),所以收尾必须在 `finally` ——
+      // 抛出去的那条路也要收,否则界面上永远挂着一个"正在压缩"。
+      const pending = Message.loading({ id: EXPORT_MESSAGE_ID, duration: 0, content: i18nHelper.maestroControl.chat.slashCompressing })
+      let reply: SessionIoExportResult
+      try {
+        reply = await coach.writeSessionIoArchive({ sessionId, target: picked.target })
+      } finally {
+        pending.close()
+      }
+      if (!reply.ok && 'cancelled' in reply) return
+      if (!reply.ok) throw new Error(reply.error)
+      if (composerDisposed || props.session.id !== sessionId) return
+      messageStore.pushLocalNote(sessionId, reply.archive)
+      Message.success(i18nHelper.maestroControl.chat.slashExported.replace('{path}', reply.archive))
     },
     copyContext: async () => {
       const context = messageStore.buildAgentContext(props.session, undefined, selectedFiles.value.map((file) => file.path))
@@ -681,7 +728,11 @@ async function stopUsingWorkspace(): Promise<void> {
         </Tooltip>
       </div>
     </div>
-    <MessageList :messages="session.messages" />
+    <MessageList :messages="session.messages">
+      <template #tail>
+        <ResponseStatus :session="session" />
+      </template>
+    </MessageList>
     <Modal v-model:visible="tasksVisible" :title="i18nHelper.workflow.tasks" :footer="false" :width="620" :mask-closable="true" :unmount-on-close="true" modal-class="chat-panel__tasks-modal">
       <WorkflowTaskBar :session-id="session.id" history @close="tasksVisible = false" />
     </Modal>
@@ -823,9 +874,9 @@ async function stopUsingWorkspace(): Promise<void> {
             name="maestro__composer__stop"
             class="chat-panel__stop-button"
             :class="{ 'chat-panel__stop-button--aborting': session.turn?.aborting }"
-            :disabled="session.turn?.aborting && !session.turn?.stopError"
-            :title="session.turn?.stopError ? i18nHelper.workflow.retry : session.turn?.aborting ? i18nHelper.maestroControl.chat.stopping : i18nHelper.maestroControl.chat.stop"
-            :aria-label="session.turn?.stopError ? i18nHelper.workflow.retry : session.turn?.aborting ? i18nHelper.maestroControl.chat.stopping : i18nHelper.maestroControl.chat.stop"
+            :disabled="!stopEnabled"
+            :title="i18nHelper.maestroControl.chat.stop"
+            :aria-label="i18nHelper.maestroControl.chat.stop"
             @click="stop"
           >
             <IconPlayerStop class="chat-panel__button-icon" :size="15" stroke="1.8" />
@@ -834,7 +885,7 @@ async function stopUsingWorkspace(): Promise<void> {
             v-else
             name="maestro__composer__send"
             class="chat-panel__send-button"
-            :disabled="!input.trim() || Boolean(session.archivedAt) || sendDisabled || Boolean(session.turn?.aborting)"
+            :disabled="!input.trim() || Boolean(session.archivedAt) || sendDisabled"
             :title="session.turn ? i18nHelper.maestroControl.chat.sendIntoTurn : i18nHelper.maestroControl.chat.send"
             :aria-label="i18nHelper.maestroControl.chat.send"
             @click="send"

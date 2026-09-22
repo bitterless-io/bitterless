@@ -20,12 +20,6 @@ import type { MessageStoreState } from './message.store'
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
 
 /**
- * 沉默看门狗。看的是【沉默】而不是【总时长】—— 钻探是能跑满时间预算的单个长回合,但每几秒就有工具
- * 活动刷新 `turn.lastActivityAt`,永远撞不到"沉默 11min";只有真挂住(11min 没任何产出)才掐。
- */
-const CHAT_TURN_TIMEOUT_MS = 11 * 60_000
-
-/**
  * 并发上限。**这是工程策略,不是模型限制** —— Main 现在也原子持有同一个全局 root Turn 槽,
  * renderer 这一层保留同步 UX 闸门。即使将来放开模型并发,仍有两类全局状态需要先拆开:
  *
@@ -39,7 +33,7 @@ const MAX_CONCURRENT_TURNS = 4
 /**
  * 投递**之前**那四档的墙钟预算。
  *
- * 为什么必须有:`withInactivityTimeout` 只护住投递之后。投递之前这四个跨进程 await
+ * 为什么必须有:投递本体已经没有任何超时(见 send() 里的说明),而投递之前这四个跨进程 await
  * 一个超时都没有,main 侧任一处不回,这一轮就永久挂着 —— turn 占着、Stop 常亮、
  * 永远没有回复,而且 `finally` 里那句 abort 也永远不会执行,那个全局 root 闸就此锁死,
  * **后续每一次发送都会被判成 busy**。这才是它真正的代价
@@ -61,7 +55,7 @@ const PRE_DISPATCH_BUDGET_MS: Record<MaestroTurnStage, number> = {
   workspace: 15_000,
   attachments: 120_000,
   compaction: 180_000,
-  // 投递本体不走这套 —— 它由 `withInactivityTimeout` 按「静默多久」判,而不是墙钟总时长。
+  // 投递本体不走这套,也不走任何别的超时 —— 一个工具跑几小时是合法的,静默就静默着。
   dispatch: 0
 }
 
@@ -100,6 +94,26 @@ const interpolateChatCopy = (
   template.replace(/\{([A-Za-z0-9_]+)\}/g, (placeholder, key: string) =>
     Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : placeholder
   )
+/**
+ * 「这一轮没有可用产出」—— 换成本地化的说法。
+ *
+ * main 侧写死了两句**契约文案**(`maestroAgent.service.ts` 的 `empty-agent-turn`),这里按原文
+ * 认出来再取 `i18nHelper` 里对应的那条。BL 的聊天文案一律在这一侧组装(`stopped` / `done` /
+ * `failed` 同理),所以本地化也在这一侧做。
+ *
+ * 认不出来就返回空,走原来的 `safeReplyText || fallback` —— 模型自己写的正文永远原样。
+ * 见 `micromeet-cowork/apps/cowork/docs/issues/chat-shows-internal-diagnostics-as-user-facing-text.md`。
+ */
+const EMPTY_TURN_MODEL_SILENT = 'The model returned nothing this turn. Send it again, or pick a different model above.'
+const EMPTY_TURN_NO_RESULT = 'I did not get a usable result this turn. Send it again, in different words if that helps.'
+const emptyTurnCopy = (reply: AgentReply): string => {
+  if (reply.ok || reply.error !== 'empty-agent-turn') return ''
+  const text = reply.text?.trim()
+  if (text === EMPTY_TURN_MODEL_SILENT) return i18nHelper.maestroControl.chat.emptyTurnModelSilent
+  if (text === EMPTY_TURN_NO_RESULT) return i18nHelper.maestroControl.chat.emptyTurnNoResult
+  return ''
+}
+
 const summarizeTitle = (text: string): string => {
   const firstLine = text.trim().split('\n')[0]?.trim() || 'New chat'
   return firstLine.length > 36 ? firstLine.slice(0, 36) + '…' : firstLine
@@ -116,38 +130,6 @@ const titleFromFirstMessage = (session: MessageSession, message: ChatMessage): b
     return true
   }
   return false
-}
-
-/**
- * 只在 `idleMs` 内**完全没有产出**时中止,不限制总时长。`lastActivity()` 给出最近一次
- * stream / thinking / activity / 任务快照的时刻。
- */
-const withInactivityTimeout = async <T>(
-  promise: Promise<T>,
-  idleMs: number,
-  lastActivity: () => number,
-  message: string,
-  onTimeout?: () => Promise<void>
-): Promise<T> => {
-  let interval: ReturnType<typeof setInterval> | undefined
-  let timedOut = false
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        interval = setInterval(() => {
-          if (Date.now() - lastActivity() > idleMs) {
-            timedOut = true
-            if (interval) clearInterval(interval)
-            reject(new Error(message))
-          }
-        }, Math.min(idleMs, 30_000))
-      })
-    ])
-  } finally {
-    if (interval) clearInterval(interval)
-    if (timedOut && onTimeout) await onTimeout().catch(() => undefined)
-  }
 }
 
 /** `send()` 拒绝的原因。**必须可解释** —— 过去返回裸 null,调用方已清空输入框,人打的字就没了。 */
@@ -330,12 +312,15 @@ export class TurnService extends CommonService<MessageStoreState> {
   private async sendSteering(session: MessageSession, text: string, existingMessage?: ChatMessage, capturedContext?: AgentConversationContext, snapshot?: AgentMessageSnapshot): Promise<SendResult> {
     const store = this._state
     const turn = session.turn!
-    if (turn.aborting) return { ok: false, reason: 'not-sendable' }
+    // 【原来这里有一道「正在收尾就不投」的闸,已删。】收尾中照样收下 —— 投不进去也没关系,
+    // 下面那条「没投出去就顺延成下一回合」的路会接住它(Ral 2026-09-22:「静默吞掉和按钮禁用
+    // 都不对 … 先进 queue 等结尾完结再发出去就行」)。收尾窗口恰恰是人最想改口的时刻,
+    // 这一档不该比别的档更难发出去。
     const context = capturedContext || store.buildAgentContext(session)
     const pendingRoot = this.rootDispatchWaiters.get(turn.id)
     if (pendingRoot) {
       const ready = await pendingRoot.promise
-      if (!ready || turn.aborting || session.turn?.id !== turn.id) return { ok: false, reason: 'not-sendable' }
+      if (!ready || session.turn?.id !== turn.id) return { ok: false, reason: 'not-sendable' }
     }
     const humanMessage = existingMessage || this.appendTimelineEntry(
       session,
@@ -374,6 +359,23 @@ export class TurnService extends CommonService<MessageStoreState> {
       if (live) live.steering = { count: (live.steering?.count ?? 0) + 1, pending: pendingCount > 0, pendingCount }
       void store.persistSession(session)
       return reply
+    }
+
+    // **没投出去 ≠ 失败 —— 它还在队列里。**
+    //
+    // 一条排队消息没能并进当前回合,意思只有一个:模型**一个字都没看见它**。那它就该等这个回合
+    // 收尾,然后作为**下一个回合**发出去 —— 同一条消息、同一个气泡,不重建、不退回输入框、
+    // 不要人再按一次回车(Ral 2026-09-22:「先进 queue 等结尾完结再发出去就行 … UI 上直接拼到
+    // 结尾那个消息下面」)。
+    //
+    // 这里不需要等:停止是**同步**的(`forceStop` 当场清掉 `session.turn`),自然跑完那一档
+    // 走的是上面的 `continueAsRoot`。所以走到这里而 `session.turn` 已空,就是「回合真的没了」。
+    if (!session.turn && !session.archivedAt && store.getSession(session.id) === session) {
+      const resent = await this.send(session.id, text, undefined, humanMessage, context, snapshot)
+      if (resent && !isRejection(resent)) {
+        void store.persistSession(session)
+        return resent
+      }
     }
 
     // A failed receipt identifies this undelivered message; temporary queueing is not failure.
@@ -483,7 +485,6 @@ export class TurnService extends CommonService<MessageStoreState> {
       rootText: text,
       phase: 'accepted',
       startedAt: Date.now(),
-      lastActivityAt: Date.now(),
       activity: [],
       thinking: false,
       sealedAssistantSegments: 0,
@@ -580,28 +581,28 @@ export class TurnService extends CommonService<MessageStoreState> {
       dispatched = true
       this.settleRootDispatch(turn.id, true)
       turnDiagnostics.emit('stage-start', { turnId: turn.id, stage: 'dispatch' })
-      reply = await withInactivityTimeout(
-        store.dispatch(
-          session,
-          text,
-          humanMessage.id,
-          stagedFiles.map((file) => file.path),
-          'root',
-          turn.id, capturedContext, snapshot
-        ),
-        CHAT_TURN_TIMEOUT_MS,
-        // Waiting for an in-app decision is an explicit paused state, not a hung provider. Once the
-        // card is answered, message.store touches the Turn so the silence clock resumes from zero.
-        () =>
-          session.compacting || session.messages.some((item) => item.type === 'confirm' && item.confirm && !item.confirm.answer)
-            ? Date.now()
-            : session.turn?.lastActivityAt ?? turn.lastActivityAt,
-        interpolateChatCopy(i18nHelper.maestroControl.chat.inactivityTimeout, {
-          minutes: Math.round(CHAT_TURN_TIMEOUT_MS / 60_000)
-        }),
-        async () => {
-          await coach.abortAgent({ sessionId: session.id, turnId: turn.id }).catch(() => undefined)
-        }
+      /**
+       * **投递本身没有超时。**(Ral 2026-09-22:「有的任务或 tool 耗时就是就 例如,下载 …
+       * 不能设置超时的,一直静默就静默着」)
+       *
+       * 这里原来套着一个 11 分钟的**沉默看门狗**。它看的是"多久没有产出",而一个长工具调用
+       * (下载、长时间抓取)**只在开始时发一次 `tool_start`,之后到结束都没有任何事件** ——
+       * 于是一次要跑几小时的下载会在第 11 分钟被判成"供应商挂住了"并掐掉。它掐掉的从来不是
+       * 故障,而是耗时本身。
+       *
+       * 现在回合只有两个终点:**跑完**,或者**人按 Stop**。一个真挂住的供应商因此会一直转 ——
+       * 那是刻意的:界面上转着圈和一个正在下载的工具从外面看本来就一样,而只有人知道自己还要不要等。
+       * 要掌握进展,应当由 agent 自己决定怎么查(定时看一下下载进度之类),而不是由宿主替它判死。
+       *
+       * 投递**之前**那四档 `withStageTimeout` 保留:它们守的是跨进程 await 不回,不是模型工作。
+       */
+      reply = await store.dispatch(
+        session,
+        text,
+        humanMessage.id,
+        stagedFiles.map((file) => file.path),
+        'root',
+        turn.id, capturedContext, snapshot
       )
     } catch (err) {
       const error = String(err)
@@ -768,7 +769,7 @@ export class TurnService extends CommonService<MessageStoreState> {
             error: reply.error || i18nHelper.maestroControl.chat.unknownError,
             text: safeReplyText
           })
-        : safeReplyText || fallback
+        : emptyTurnCopy(reply) || safeReplyText || fallback
     store.finishAssistant(assistant, body)
     session.retryable =
       !wasAborted && !reply.ok && reply.retryExhausted && turn.rootHumanMessageId
@@ -793,20 +794,22 @@ export class TurnService extends CommonService<MessageStoreState> {
     await store.persistSession(session)
   }
 
+  /**
+   * **停止必须成功**(Ral 2026-09-22:「停止失败 就不该有 stop 必须能停止成功」)。
+   *
+   * main 侧现在是同步的:发取消信号 + 同步放行,清理在后台排干(见 `maestroAgent.abortAgent`
+   * 与 `BaseAgent.abort`,照 pi 的做法 —— pi 的 `onEscape` 就是一句不 await 的 `agent.abort()`)。
+   * 既然它不会失败、也没有「停到一半」,这一侧就**不该为一次 IPC 往返等待**:先本地收尾,
+   * 再把信号发出去。`aborting` / `stopError` / 超期放行那一整套中间态因此都没有了。
+   */
   async stop(sessionId: string): Promise<void> {
     const session = this._state.getSession(sessionId)
     const turn = session?.turn
-    if (!session || session.archivedAt || !turn || (turn.aborting && !turn.stopError)) return
-    turn.aborting = true
-    turn.stopError = undefined
-    try {
-      const reply = await coach.abortAgent({ sessionId: session.id, turnId: turn.id })
-      if (reply?.ok !== true) throw new Error(i18nHelper.workflow.stopError)
-      this.forceStop(session, turn.id)
-    } catch (error) {
-      if (session.turn?.id !== turn.id) return
-      turn.stopError = error instanceof Error ? error.message : String(error)
-    }
+    if (!session || session.archivedAt || !turn) return
+    const turnId = turn.id
+    this.forceStop(session, turnId)
+    // 信号照发 —— 界面已经不欠它了,但 main 侧的 pi 会话、任务、workflow 仍然要被取消。
+    void coach.abortAgent({ sessionId: session.id, turnId }).catch(() => undefined)
   }
 
   /** 收尾一个回合。`turnId` 对不上说明它已被别处收尾,直接放行。 */
@@ -855,7 +858,6 @@ export class TurnService extends CommonService<MessageStoreState> {
     if (step.phase === 'think') return
     const session = this.sessionForAgentPayload(step)
     if (!session) return
-    this.touch(session)
     // 工具行**也建落点**,不只文字。否则两条播报之间的几十次工具调用只在状态条露一行,
     // 时间线上什么都看不到 —— 而这正是「不能继续感知工具调用」那条抱怨(Ral 2026-08-14)。
     // 建出来的落点会被下一条播报封口,所以它天然只装自己这一段的工具行。
@@ -872,7 +874,6 @@ export class TurnService extends CommonService<MessageStoreState> {
   pushThinking(payload: AgentThinkingState): void {
     const session = this.sessionForAgentPayload(payload)
     if (!session) return
-    this.touch(session)
     const turn = session.turn
     if (!turn) return
     if (payload.active) turn.phase = 'thinking'
@@ -885,7 +886,6 @@ export class TurnService extends CommonService<MessageStoreState> {
   pushStream(payload: AgentStreamDelta): void {
     const session = this.sessionForAgentPayload(payload)
     if (!session || !payload.delta) return
-    this.touch(session)
     // **第一个字符才建气泡** —— 这就是懒建的触发点。这是阶段转移,不是回合的开始。
     if (!this.ensureSink(session)) return
     if (session.turn) {
@@ -895,19 +895,6 @@ export class TurnService extends CommonService<MessageStoreState> {
     this._state.bufferStreamDelta(session.id, payload.delta)
   }
 
-  /**
-   * 任务快照在推进也算回合活着。
-   *
-   * **`explore_session` 那句描述的是 cowork,不是这里** —— bl 从来没有钻探能力
-   * (`src/main/sitemap` 在 bl 的整个历史里都不存在,agent 也不暴露 explore/drill 类工具;
-   * 见 `docs/issues/drill-skill-not-available-in-bitterless.md`)。这段代码是随 chat panel
-   * 一起从 cowork 移植过来的,判定本身通用,但别把那个工具名当成 bl 也有它的证据。
-   * bl 侧会推进任务快照的是 `ingest_recording` 一类。
-   */
-  touchForTask(sessionId: string): void {
-    const session = this._state.getSession(sessionId)
-    if (session) this.touch(session)
-  }
 
   /**
    * 新任务归哪个会话。**不再返回落点消息** —— 任务现在各自独占一条 `type: 'task'` 消息,按发生
@@ -944,10 +931,6 @@ export class TurnService extends CommonService<MessageStoreState> {
     if (!session || session.archivedAt) return null
     if (task.state.status === 'completed' || task.state.status === 'error') return null
     return { sessionId: session.id }
-  }
-
-  private touch(session: MessageSession): void {
-    if (session.turn) session.turn.lastActivityAt = Date.now()
   }
 
   private sessionForAgentPayload(payload: {

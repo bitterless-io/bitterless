@@ -83,7 +83,8 @@ test('new native Chat reloads external skills once; existing Chat turns reuse sn
     systemPrompt: 'Fixture host instructions', scope: 'maestro', builtinTools: ['read', 'bash'],
     tools: [{ name: 'fixture_tool', description: 'Fixture', params: [], execute: async () => 'Unused' }],
     beforeModelRequest: async () => registry.catalogPrompt(workspace),
-    skillResources: { revision: () => registry.resourceRevision(workspace), getSkills: () => registry.getPiSkills(workspace), reload: () => { reloads++; registry.reload(workspace) } }
+    // A8:完整目录经资源加载器的 getAppendSystemPrompt() 进**系统提示词**,不再每请求挂一条消息。
+    skillResources: { revision: () => registry.resourceRevision(workspace), getSkills: () => registry.getPiSkills(workspace), reload: () => { reloads++; registry.reload(workspace) }, catalogText: () => registry.catalogPrompt(workspace) }
   }
   const adapter = new PiRuntimeAdapter(), first = await adapter.createSession(options)
   assert.equal(reloads, 1)
@@ -92,7 +93,9 @@ test('new native Chat reloads external skills once; existing Chat turns reuse sn
   putSkill(join(workspace, '.agents/skills'), 'external-added')
   await first.prompt({ text: 'Continue existing Chat' })
   assert.ok(!nativeSessions[0].systemPrompt.includes('external-added'))
-  assert.ok(!JSON.parse(payloads(textOf(requests.at(-1).at(-1)))[0]).skills.some(skill => skill.name === 'external-added'))
+  // 目录在系统提示词里,不在请求消息里 —— 每轮该带的只有 D1–D4(prompt-structure.html 表 3)。
+  assert.ok(!textOf(requests.at(-1).at(-1)).includes('<host_skill_catalog>'), '请求消息里不该有完整目录')
+  assert.ok(!nativeSessions[0].systemPrompt.includes('"name":"external-added"'), '已建会话的 system 也不该凭空多出新技能')
   assert.equal(scans, originalScans); assert.equal(reloads, 1)
 
   const second = await adapter.createSession(options)
@@ -102,7 +105,10 @@ test('new native Chat reloads external skills once; existing Chat turns reuse sn
   assert.ok(nativeSessions[1].systemPrompt.includes('Edited before New Chat'))
   const afterNewChat = scans
   await second.prompt({ text: 'First turn in new Chat' })
-  assert.ok(JSON.parse(payloads(textOf(requests.at(-1).at(-1)))[0]).skills.some(skill => skill.name === 'external-added'))
+  // New Chat 重新组装:新会话的系统提示词里带着完整目录,且含新加的技能。
+  assert.ok(nativeSessions[1].systemPrompt.includes('<host_skill_catalog>'), 'A8 完整目录必须在系统提示词里')
+  assert.ok(JSON.parse(payloads(nativeSessions[1].systemPrompt)[0]).skills.some(skill => skill.name === 'external-added'))
+  assert.ok(!textOf(requests.at(-1).at(-1)).includes('<host_skill_catalog>'), '仍然不进请求消息')
   await second.prompt({ text: 'Next turn in new Chat' })
   await first.prompt({ text: 'Return to previously initialized Chat' })
   assert.equal(scans, afterNewChat, 'ordinary turns and returning to an existing Chat do not scan disk')
@@ -176,7 +182,11 @@ for (const hasInstitution of [true, false]) test(`real view_context and Pi reque
       SessionManager: { inMemory: () => ({}) }, createExtensionRuntime: () => ({}),
       createAgentSession: async options => { resources = options.resourceLoader; sessionStarts++; native.setActiveToolsByName(activeTools); return { session: native } }
     },
-    typebox: { Type: {} }
+    typebox: { Type: {} },
+    // 没选工作区时 agent 的 cwd 兜底。真模块会拉进 pathHelper 的别名(本 loader 解析不了),
+    // 而具体是哪个目录跟目录平价无关 —— 给一个固定路径即可。不给的话 loader 会把它换成 `{}`,
+    // 建 agent 时报 "ensureDefaultWorkspace is not a function"。
+    '@maestro-main/files/defaultWorkspace': { ensureDefaultWorkspace: () => '/fixture/default-workspace' }
   }, new Set([
     'node:path', 'crypto', 'async_hooks', 'path', 'fs',
     '@main/agent/BaseAgent', '@main/agent/contextExport.service', './runtime/contextExportLimit.service',

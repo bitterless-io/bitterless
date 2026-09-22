@@ -133,6 +133,32 @@ export class MaestroTabAliasViewService extends CommonService<MaestroTabAliasVie
   }
 
   /**
+   * 一个 mini-app 通过 `MAESTROSDK.confirm()` 要的确认。`true` = 人按了确认。
+   *
+   * **这一层起不来时答 `false`,与上面那条相反。** 关闭确认放行是因为拦住会让 tab 永远关不掉 ——
+   * 那是功能坏掉。这里没有那种不可逆的代价:mini-app 拿到 `false` 就是「没确认」,它自己不往下走,
+   * 什么都不会发生。默默替人答"是"才是危险的那一边。
+   */
+  requestSdkConfirm(params: {
+    title: string
+    message: string
+    confirmLabel?: string
+    cancelLabel?: string
+  }): Promise<boolean> {
+    return this.open(
+      {
+        variant: 'sdkConfirm',
+        dialogId: randomUUID(),
+        title: String(params.title || ''),
+        message: String(params.message || ''),
+        ...(params.confirmLabel ? { confirmLabel: String(params.confirmLabel) } : {}),
+        ...(params.cancelLabel ? { cancelLabel: String(params.cancelLabel) } : {})
+      },
+      { confirmed: false, value: '' }
+    ).then((answer) => answer.confirmed)
+  }
+
+  /**
    * 两种对话框唯一的开口。
    *
    * 一次只准有一个:第二个请求直接按**取消**收场而不是排队 —— 菜单是异步弹的,排队只会让一个早就

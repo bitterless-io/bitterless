@@ -1,3 +1,4 @@
+import { shouldOpenDevTools } from '@maestro-main/windows/devtoolsGate'
 import { BrowserWindow, BrowserWindowConstructorOptions, app, shell } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
@@ -8,10 +9,6 @@ import {
   type WindowStateController
 } from '@main/windows/windowState.service'
 import type { WindowStateKey } from '@shared/window/window.types'
-import {
-  openAnchoredDevTools,
-  setDevToolsAnchor
-} from '@maestro-main/windows/devtoolsAnchor.service'
 
 /**
  * Lean window base (bitterless WindowHelper pattern, trimmed for the MVP):
@@ -40,7 +37,6 @@ export abstract class WindowHelper {
    * 这一扇是不是 DevTools 要跟着走的那个主窗。只有 Maestro 主窗设 true ——
    * 隐藏的 sqlite 宿主窗比主窗先开,它的 DevTools 要锚到**主窗**,不是锚到它自己。
    */
-  protected isDevToolsAnchor = false
   private windowStateController: WindowStateController | null = null
 
   create(): BrowserWindow {
@@ -85,7 +81,6 @@ export abstract class WindowHelper {
     this.browserWindow = win
     // 在加载之前就注册:窗口自己的 DevTools 要到 did-finish-load 才开,而 sqlite 宿主窗那扇
     // 更早,两者都要能看到这个锚。
-    if (this.isDevToolsAnchor) setDevToolsAnchor(win)
     this.windowStateController = this.windowStateKey
       ? windowStateService.register(this.windowStateKey, win)
       : null
@@ -105,10 +100,8 @@ export abstract class WindowHelper {
       })
     }
     win.webContents.once('did-finish-load', () => {
-      // 去重由 openAnchoredDevTools 自己的映射负责 —— 自托管之后 `isDevToolsOpened()` 恒为
-      // false,拿它当闸等于每次都判成"还没开"。
-      if (shouldOpenDevTools()) {
-        openAnchoredDevTools(win.webContents, { title: this.rendererPath })
+      if (shouldOpenDevTools('window') && !win.webContents.isDevToolsOpened()) {
+        win.webContents.openDevTools({ mode: 'detach', activate: false })
       }
     })
     win.webContents.setWindowOpenHandler((details) => {
@@ -159,10 +152,3 @@ export abstract class WindowHelper {
   }
 }
 
-export const shouldOpenDevTools = (): boolean => {
-  if (import.meta.env.VITE_MODE !== 'debug') return false
-  if (process.env.BITTERLESS_E2E === '1') return false
-  if (process.env.COACH_DEMO_SMOKE_OUT) return false
-  if (process.env.COACH_OPEN_DEVTOOLS === '0') return false
-  return is.dev || process.env.COACH_OPEN_DEVTOOLS === '1'
-}
