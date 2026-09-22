@@ -1,9 +1,33 @@
 ---
 id: onlypreview-index-derived-copies-184
 scope: Remove two derived copies of chunk text from the search index, behind a benchmark — mirrored to micromeet-cowork
-status: proposed (benchmark first)
+status: **rejected by its own benchmark gate** (2026-09-22) — do not implement as specified
 depends-on: [onlypreview-index-scratch-and-leaks-183]
 verify: node tests/indexing/bench/queryHotspots.bench.mjs; node --test tests/onlypreview/onlyPreviewSearchEngineSqliteIndex.test.mjs tests/onlypreview/onlyPreviewGlobalSearchEngine.test.mjs tests/onlypreview/onlyPreviewSearchEngine.scope.test.mjs; yarn typecheck:node; no Electron/Playwright/E2E
+---
+
+# 结论:不做(2026-09-22 实测)
+
+任务自己写的闸门是「若实测回归大于磁盘收益,就写进文档并停手 —— 那是一个有效结论」。
+基准跑完了,三条都不通过。完整报告:
+[`areas/agent-runtime/preview/index-benchmark.html`](../../../../../areas/agent-runtime/preview/index-benchmark.html),
+脚本 `tmp/onlypreview-index-bench/`。
+
+1. **短查询慢 2–8 倍。** 去掉 `normalized_searchable` 后现场归一化(已用 SQL 用户函数,是最省的实现,
+   所以这是代价的下界)。231 MB 的语料上短查询本来就要 0.36–2.1 秒,乘 3–6 倍就是好几秒;
+   真实索引还要大 12 倍。3 字符以上(FTS5)与中日韩(倒排)两条路确认不受影响。
+2. **删除慢 1.8–3.4 倍。** 按 `(token, chunk_id)` 删比带索引删慢,只比无索引全扫快。
+3. **磁盘收益拿不到手。** 这是文档原方案里的硬伤:所有已建索引 `auto_vacuum=0`,
+   `PRAGMA incremental_vacuum` 实测 0–2 ms 且文件**一个字节没小**。SQLite 只允许在空库上设
+   `auto_vacuum`,之后要改必须跑全量 `VACUUM` —— 整文件重写,正是任务 183 要避开的那类操作。
+
+要重启这个任务,前提是找到一种**不需要全量 VACUUM 就能落地**、且短查询不回归的写法。
+在那之前,新建索引已经带上 `auto_vacuum = INCREMENTAL`(任务 185),存量索引在下次完整重建时跟上。
+
+**基准另外量出一件更值得做的事:** 增量新增 20 个文件要 0.9–15.3 秒,且随索引大小增长
+(43 / 467 / 767 ms 每文件,对应 84 / 66 / 231 MB 的库);而删除同样 20 个恒定 46–92 ms。
+新增路径里有一段按库大小计费而不是按改动量计费 —— 那是每次存盘都会走的路,收益面比本任务大。
+
 ---
 
 # Phase 2 — stop storing the same text three times

@@ -299,10 +299,21 @@ class OnlyPreviewHandler
         ? onlyPreviewWorkspaceRegistry.restore(host.hostToken)
         : await onlyPreviewRecentDirectoryService.restoreWorkspace(host.hostToken);
       if (!onlyPreviewSelectionCoordinator.isCurrent(host.hostToken, generation)) return workspace;
+      // **恢复之后重新取一次快照。**
+      //
+      // 上面那次 `current` 是在恢复**之前**取的,而 `onlyPreviewRecentDirectoryService.restoreWorkspace`
+      // 内部 `presentRestoredSelection` 缺省为 true —— 它自己已经把记住的文件呈现了一次。拿恢复前的
+      // 快照来比对,条件必然成立,于是同一个文件又被呈现一遍:启动时预览视图挂上、拆掉、再挂上,
+      // 日志里是两条 `preview-focus-claimed`,而那背后是两次真实的文件读取与渲染。
+      //
+      // 不能改成让 service 不呈现:它那一次带着 `authorizeProjectItem` 授权和 `workspaceRegistry.select`,
+      // 这里这次没有。所以保留 service 那条路,只把这里的比对换成看得见它的快照。
+      // `hasLiveExternalPresentation` 仍用恢复前的那份 —— 它决定的是要不要恢复,必须在恢复前判断。
+      const presented = resolveOnlyPreviewPreviewRegion(host.hostToken).snapshot(host.hostToken);
       if (!hasLiveExternalPresentation && workspace?.selectedRelativePath) {
         if (
-          current.fileRef?.workspaceId !== workspace.workspaceId ||
-          current.fileRef.relativePath !== workspace.selectedRelativePath
+          presented.fileRef?.workspaceId !== workspace.workspaceId ||
+          presented.fileRef.relativePath !== workspace.selectedRelativePath
         ) {
           await resolveOnlyPreviewPreviewRegion(host.hostToken).present(host.hostToken, {
             workspaceId: workspace.workspaceId,
@@ -311,7 +322,7 @@ class OnlyPreviewHandler
         }
       } else if (
         !hasLiveExternalPresentation &&
-        (current.fileRef || current.workspaceId !== (workspace?.workspaceId ?? null))
+        (presented.fileRef || presented.workspaceId !== (workspace?.workspaceId ?? null))
       ) {
         resolveOnlyPreviewPreviewRegion(host.hostToken).clearWorkspace(
           host.hostToken,

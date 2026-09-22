@@ -203,6 +203,7 @@ test('external Preview wiring keeps Project state separate and revokes exact rea
     restoreBody,
     /isExternalPreviewFileRef[\s\S]*hasLiveExternalPresentation[\s\S]*onlyPreviewWorkspaceRegistry\.restore[\s\S]*!hasLiveExternalPresentation/
   );
+
   const externalActionsBody = handler.slice(
     handler.indexOf('async openExternally('),
     handler.indexOf('async getSettings(')
@@ -214,5 +215,43 @@ test('external Preview wiring keeps Project state separate and revokes exact rea
   assert.match(
     externalActionsBody,
     /getExternalPreviewNativePath[\s\S]*inspectTarget\(externalPath\)[\s\S]*revalidateExternalPreviewNativePath[\s\S]*shell\.showItemInFolder\(revalidatedPath\)/
+  );
+});
+
+/**
+ * Ral 2026-09-22:「重启 app,启动 onlypreview 时,读取上次打开的文件的操作 读了两次」。
+ *
+ * 根因是快照取早了一步。`onlyPreviewRecentDirectoryService.restoreWorkspace` 内部
+ * `presentRestoredSelection` 缺省为 true —— 它自己已经把记住的文件呈现过一次。而 handler 随后
+ * 拿**恢复之前**取的 `current` 去比对恢复之后的 `workspace.selectedRelativePath`,条件必然成立,
+ * 于是同一个文件再呈现一遍:预览视图挂上、拆掉、再挂上,日志里两条 `preview-focus-claimed`,
+ * 背后是两次真实的文件读取与渲染。
+ *
+ * 不能改成让 service 别呈现:它那一次带着 `authorizeProjectItem` 授权与 `workspaceRegistry.select`,
+ * handler 这次没有。所以保留 service 那条路,只把比对换成看得见它的快照。
+ *
+ * 单独成一个用例(而不是并进上面那条),因为这个文件里先跑的断言目前是红的,
+ * 挂在它后面等于永远不执行。
+ */
+test('the restored selection is presented once — the comparison uses a post-restore snapshot', () => {
+  const handler = source('src/main/xpc/onlyPreview.handler.ts');
+  const restoreBody = handler.slice(
+    handler.indexOf('async restoreWorkspace('),
+    handler.indexOf('async selectStandaloneFile(')
+  );
+  assert.ok(restoreBody.length > 0, 'restoreWorkspace 的函数体必须能被切出来');
+  assert.ok(
+    restoreBody.indexOf('onlyPreviewRecentDirectoryService.restoreWorkspace') <
+      restoreBody.indexOf('const presented ='),
+    '比对用的快照必须在恢复之后取,否则看不见 service 刚刚做的那次呈现'
+  );
+  assert.ok(
+    restoreBody.indexOf('const current =') < restoreBody.indexOf('const hasLiveExternalPresentation'),
+    'hasLiveExternalPresentation 必须用恢复之前的快照 —— 它决定的是要不要恢复'
+  );
+  assert.doesNotMatch(
+    restoreBody.slice(restoreBody.indexOf('const presented =')),
+    /current\.fileRef/u,
+    '恢复之后就不该再读旧快照的 fileRef'
   );
 });
