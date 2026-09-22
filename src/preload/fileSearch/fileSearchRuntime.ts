@@ -88,6 +88,19 @@ const runOperation = async <T>(operation: () => Promise<T>): Promise<OnlyPreview
   }
 };
 
+/**
+ * 合并键 —— 只在三个字段都是预期的原始类型时才成立。
+ *
+ * 校验本身留给 `parseOnlyPreviewSearchInitializeRequest`(它在 `runOperation` 里跑,失败要变成
+ * 结果而不是异常);这里只求一个保守的同一性判断:拿不准就返回 null,那一路照旧不合并。
+ */
+const initializeCoalesceKey = (params: OnlyPreviewSearchInitializeRequest): string | null => {
+  const { hostToken, workspaceId, generation } = params ?? {};
+  if (typeof hostToken !== 'string' || typeof workspaceId !== 'string') return null;
+  if (!Number.isSafeInteger(generation)) return null;
+  return `${hostToken}\u0000${workspaceId}\u0000${generation}`;
+};
+
 const requireBootstrap = (
   value: OnlyPreviewSearchBootstrap | undefined,
   workspaceId: string
@@ -113,6 +126,10 @@ export class FileSearchRuntime implements OnlyPreviewSearchRuntimeApi {
   private sessionId = 0;
   private hostToken: string | null = null;
   private targetWorkspaceId: string | null = null;
+  private inFlightInitialize: {
+    key: string;
+    promise: Promise<OnlyPreviewResult<OnlyPreviewSearchSnapshot>>;
+  } | null = null;
 
   constructor(
     private readonly registration: FileSearchRuntimeRegistration,
@@ -120,7 +137,44 @@ export class FileSearchRuntime implements OnlyPreviewSearchRuntimeApi {
     private readonly diagnostics: OnlyPreviewSearchDiagnostics = createOnlyPreviewSearchDiagnostics()
   ) {}
 
+  /**
+   * 同一个 workspace+generation+host 的重复 initialize 合并到同一次运行。
+   *
+   * 不合并时它们会互相拆台,而不是排队:每次调用都 `++this.sessionId`,于是后来者一进门就让
+   * 前一个的 `_requireCurrentSession` 抛错。preview 的 tab 和独立窗口来回切正是这个形状 ——
+   * 参考机 2026-09-22 05:00 那次,第一次 initialize 排在索引重建后面等了 9 分 42 秒一次都没轮到,
+   * 用户再切一次,第二次没有取消也没有合并它,而是让它判 failure(elapsedMs=581878),接着自己
+   * 也失败,最后 `FileSearchLifecycleFence.onFailure` 把整个搜索运行时停掉。
+   *
+   * 切回去看的是同一个 workspace,要的就是同一份结果,所以第二个调用方等第一次的结果即可。
+   * 目标不同(换 workspace、换 generation)时照旧取代 —— 那才是 sessionId 存在的理由。
+   */
   async initialize(
+    params: OnlyPreviewSearchInitializeRequest,
+    internalBootstrap?: OnlyPreviewSearchBootstrap
+  ): Promise<OnlyPreviewResult<OnlyPreviewSearchSnapshot>> {
+    const key = initializeCoalesceKey(params);
+    const inFlight = this.inFlightInitialize;
+    if (key !== null && inFlight !== null && inFlight.key === key) {
+      this.diagnostics.emit('runtime-coalesced', {
+        tag: this.diagnostics.nextTag('r'),
+        method: 'initialize',
+        generation: params.generation
+      });
+      return await inFlight.promise;
+    }
+    const running = this._initializeExclusive(params, internalBootstrap);
+    if (key === null) return await running;
+    const entry = { key, promise: running };
+    this.inFlightInitialize = entry;
+    try {
+      return await running;
+    } finally {
+      if (this.inFlightInitialize === entry) this.inFlightInitialize = null;
+    }
+  }
+
+  private async _initializeExclusive(
     params: OnlyPreviewSearchInitializeRequest,
     internalBootstrap?: OnlyPreviewSearchBootstrap
   ): Promise<OnlyPreviewResult<OnlyPreviewSearchSnapshot>> {

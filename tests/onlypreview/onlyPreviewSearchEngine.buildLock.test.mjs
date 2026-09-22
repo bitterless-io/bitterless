@@ -226,3 +226,63 @@ test('promotion moves the live database together with its -wal and -shm', async 
     }
   });
 });
+
+/**
+ * Ral 2026-09-22:用户点开 workspace 时,后台 reconcile 还在一轮接一轮地抢先开跑 ——
+ * 参考机 04:42 那次有五轮插在一个已经在等的用户请求前面,用户等了 5 分 7 秒。
+ *
+ * 顺序归这里管(轮次由监听那边的退避管):只要有人在等,后台就不该再抢新的一轮。
+ * 不做抢占 —— 正在跑的那一轮已经拷了一半的库,打断它只是浪费已付出的 IO。
+ */
+test('an interactive task overtakes queued background work, but never preempts the running one', async () => {
+  const tick = () => new Promise((resolve) => setImmediate(resolve));
+  const path = '/tmp/onlypreview-priority-queue.sqlite';
+  const order = [];
+  const started = [];
+  const hold = (label) => {
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    return {
+      release,
+      run: async () => {
+        started.push(label);
+        await gate;
+        order.push(label);
+      }
+    };
+  };
+
+  const running = hold('background-running');
+  const queuedA = hold('background-queued-a');
+  const queuedB = hold('background-queued-b');
+  const interactive = hold('initialize');
+
+  const first = submitIndexTask(path, 'reconcile', running.run);
+  await tick();
+  assert.deepEqual(started, ['background-running'], '第一个后台任务已经在跑');
+
+  const a = submitIndexTask(path, 'reconcile', queuedA.run);
+  const b = submitIndexTask(path, 'reconcile', queuedB.run);
+  const i = submitIndexTask(path, 'initialize', interactive.run, { interactive: true });
+  await tick();
+  assert.deepEqual(started, ['background-running'], '在跑的那个不被抢占');
+
+  running.release();
+  await tick();
+  // 让路发生在这里:排在 initialize 之前入队的两个后台任务都要等它。
+  assert.deepEqual(started, ['background-running', 'initialize']);
+
+  interactive.release();
+  queuedA.release();
+  queuedB.release();
+  await Promise.all([first, a, b, i]);
+  assert.deepEqual(order, [
+    'background-running',
+    'initialize',
+    'background-queued-a',
+    'background-queued-b'
+  ]);
+  assert.deepEqual(indexQueueState(path), { depth: 0, running: '' }, 'the queue must be reclaimed');
+});

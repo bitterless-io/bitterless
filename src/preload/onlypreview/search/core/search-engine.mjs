@@ -408,7 +408,9 @@ export class OnlyPreviewSearchEngine {
           databaseRealPath,
           diagnostic
         }),
-      databaseRealPath
+      databaseRealPath,
+      // 用户点开 workspace 时盯着的就是这件事 —— 它要插到排队的后台 reconcile 前面。
+      { interactive: true }
     );
   }
 
@@ -613,13 +615,13 @@ export class OnlyPreviewSearchEngine {
    * 直接绕过队列执行 —— 恰好和**另一个**引擎正在跑的任务并发。实例级计数器从原理上就分不清
    * "嵌套"和"并发且独立"。
    */
-  async runIndexTask(name, operation, key = this.databasePath) {
+  async runIndexTask(name, operation, key = this.databasePath, { interactive = false } = {}) {
     // 键必须和后续写入用的 `this.databasePath` 完全一致,否则会排进两条不同的队,互斥变成摆设。
     // 唯一会分叉的情形是索引目录在两次初始化之间被换成了符号链接 —— 静默失去互斥比报错糟得多。
     if (key !== undefined && this.databasePath !== undefined && key !== this.databasePath) {
       this.diagnostics.emit('index-queue-key-mismatch', { task: name });
     }
-    return await submitIndexTask(key, name, operation);
+    return await submitIndexTask(key, name, operation, { interactive });
   }
 
   async buildAndPromoteCandidateExclusive({

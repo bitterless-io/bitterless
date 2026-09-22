@@ -558,3 +558,49 @@ test('beginDeleteTask and finishDeleteTask answer null without an active index, 
   const finish = await f.runtime.finishDeleteTask('task-000000000000001', ['docs/readme.md']);
   assert.deepEqual(finish, { ok: true, value: null });
 });
+
+/**
+ * Ral 2026-09-22:「preview 的 tab 和独立窗口来回切换会导致重复的 loading project ⋯
+ * 独立窗口中 loading 还没结束又切回到 tab 中」。
+ *
+ * 不合并时这两次调用互相拆台,而不是排队:每次 initialize 都 `++this.sessionId`,后来者一进门
+ * 就让前一个的 `_requireCurrentSession` 抛错。参考机 05:00 那次,第一次等了 9 分 42 秒一次都没
+ * 轮到,第二次把它判 failure,接着自己也失败,最后运行时被 FileSearchLifecycleFence 停掉。
+ */
+test('a repeated initialize for the same target joins the one in flight instead of superseding it', async (t) => {
+  const f = fixture();
+  t.after(() => f.runtime.dispose());
+  const first = f.runtime.initialize({ ...request, generation: 1 }, bootstrap);
+  await tick();
+  const second = f.runtime.initialize({ ...request, generation: 1 }, bootstrap);
+  await tick();
+
+  // 一个目标只起一个 coordinator —— 第二次没有取代第一次,也就没有把它判失败。
+  assert.equal(f.coordinators.length, 1);
+  const c = f.coordinators[0];
+  assert.equal(c.stopped, 0);
+
+  c.callbacks.onSnapshot(snapshot());
+  c.initializes[0].resolve(snapshot('ready'));
+  const [a, b] = await Promise.all([first, second]);
+  assert.equal(a.ok, true);
+  assert.equal(b.ok, true);
+  // 同一次运行的同一份结果,不是两次各建一份。
+  assert.equal(a.value.state, b.value.state);
+});
+
+test('a different generation still supersedes — that is what sessionId is for', async (t) => {
+  const f = fixture();
+  t.after(() => f.runtime.dispose());
+  const first = f.runtime.initialize({ ...request, generation: 1 }, bootstrap);
+  await tick();
+  const second = f.runtime.initialize({ ...request, generation: 2 }, bootstrap);
+  await tick();
+
+  assert.equal(f.coordinators.length, 2);
+  assert.equal((await first).ok, false, '换了 generation 的调用理应取代前一个');
+  const c = f.coordinators[1];
+  c.callbacks.onSnapshot(snapshot(undefined, 2));
+  c.initializes[0].resolve(snapshot('ready', 2));
+  assert.equal((await second).ok, true);
+});
