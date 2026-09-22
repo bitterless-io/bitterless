@@ -28,6 +28,10 @@ import { executeOnlyPreviewGlobalSearch } from './global-search-executor.mjs';
 import { previewOnlyPreviewGlobalSearchResult } from './global-search-preview.mjs';
 import { reclaimInterruptedSqliteArtifacts } from './sqlite-artifacts.mjs';
 import {
+  evictOnlyPreviewIndexCache,
+  recordOnlyPreviewIndexUse
+} from './index-cache-budget.mjs';
+import {
   onlyPreviewDiskFullMessage,
   onlyPreviewFreeBytes,
   planOnlyPreviewIndexBuild
@@ -450,6 +454,18 @@ export class OnlyPreviewSearchEngine {
   async initializeIndexed({ workspaceId, generation, rootRealPath, databaseRealPath, diagnostic }) {
     await mkdir(dirname(databaseRealPath), { recursive: true });
     await reclaimInterruptedSqliteArtifacts(databaseRealPath);
+    // 打开即记账,并把目录压回上限以内。淘汰的是缓存不是数据:被淘汰的 workspace 下次打开时
+    // 后台重建一次,没有任何东西会丢。当前这个库永远不淘汰。
+    await recordOnlyPreviewIndexUse(databaseRealPath);
+    await evictOnlyPreviewIndexCache({
+      activeDatabasePath: databaseRealPath,
+      onEvict: ({ evictedCount, totalBytes }) =>
+        this.diagnostics.emit('index-cache-evict', {
+          tag: diagnostic.tag,
+          evicted: evictedCount,
+          totalMiB: Math.round(totalBytes / (1024 * 1024))
+        })
+    });
     this.workspaceId = workspaceId;
     this.generation = generation;
     this.watchCommitRevision = 0;

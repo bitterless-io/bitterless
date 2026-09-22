@@ -38,6 +38,7 @@ const schemas = Object.freeze({
   'runtime-accepted': { tag: 'tag', method: ['initialize', 'search'], generation: 'count' },
   'runtime-terminal': { tag: 'tag', method: ['initialize', 'search'], outcome: ['success', 'failure'], elapsedMs: 'elapsed' },
   'runtime-coalesced': { tag: 'tag', method: ['initialize', 'search'], generation: 'count' },
+  'index-cache-evict': { tag: 'tag', evicted: 'count', totalMiB: 'count' },
   'shell-dispatch': { tag: 'tag', generation: 'count' },
   'restore-index-grace': { tag: 'tag', phase: ['scheduled', 'start', 'resumed', 'cancel', 'superseded', 'schedule-failure', 'action-failure'], generation: 'count', elapsedMs: 'elapsed' },
   'shell-initialized': { tag: 'tag', outcome: ['success', 'failure'], elapsedMs: 'elapsed' },

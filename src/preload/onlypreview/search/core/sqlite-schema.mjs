@@ -132,8 +132,12 @@ export const configureSearchDatabase = (database) => {
     PRAGMA mmap_size = 268435456;
     PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};
   `);
-  const previousVersion = Number(database.prepare('PRAGMA user_version').get().user_version);
   const tables = readSchemaTables(database);
+  // 空库才设得动 auto_vacuum —— 已经建过表的库要改就得整库 VACUUM,那是一次全量重写,
+  // 绝不能放在打开路径上。老库会在下一次重建时自然带上(重建建的是一个全新的候选库)。
+  // 作用是删除后归还页,而不是把文件永远停在历史最高水位。
+  if (tables.size === 0) database.exec('PRAGMA auto_vacuum = INCREMENTAL;');
+  const previousVersion = Number(database.prepare('PRAGMA user_version').get().user_version);
   const ftsSql = tables.get('chunk_fts') ?? '';
   const contentSchemaValid = CONTENT_SCHEMA_OBJECTS.every((name) => tables.has(name)) &&
     /content\s*=\s*''/iu.test(ftsSql) && /contentless_delete\s*=\s*1/iu.test(ftsSql);
