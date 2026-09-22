@@ -1,3 +1,4 @@
+import { agentDecisionRegistry } from '@main/agent/decisionRegistry.service';
 import { skillAuthoringRuntime } from './runtime/skillAuthoring'
 import { workflowLibraryRuntime } from '@main/workflowLibrary/workflowLibraryRuntime';
 import { applicationAuth } from '@main/auth/applicationAuth.service';
@@ -1551,6 +1552,9 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     this.broadcastAgentTurn({ turn: this.agentTurnSnapshot(turn) })
     this.hydratedMaestroAgentSessions.delete(sessionKey)
     taskRegistry.cancelSessionTasks({ sessionId: sessionKey, reason: 'active turn stopped' })
+    // **挂着的拍板也要了结。**(docs/features/agent-decision-sheet.md)
+    // `ask_user` 是阻塞的:没人 resolve 它,那个工具调用会永远挂着,而它所在的回合已经没了。
+    agentDecisionRegistry.cancelSession(sessionKey);
     turn.abortOperation = Promise.resolve().then(async () => {
       // Join both operations before allowing a retry, including when cleanup fails.
       const results = await Promise.allSettled([

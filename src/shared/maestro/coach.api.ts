@@ -1,3 +1,4 @@
+import type { AgentDecisionAnswer, AgentDecisionRequest } from '@shared/agentDecision.api';
 import type { CaptureMode, TraceEvent } from './trace.types'
 import type { SavedTab } from './tabs.api'
 import type { CaptureRule } from './captureFilter.api'
@@ -115,6 +116,9 @@ export interface CoachXpcContract {
   abortDelegate(params?: { sessionId?: string }): Promise<void>
   listTasks(): Promise<MaestroTask[]>
   respondTaskConfirm(params: { taskId: string; confirmId: string; confirm: boolean }): Promise<{ ok: boolean }>
+  /** 待人拍板的 decision(`ask_user` 唤起的那张卡)。见 docs/features/agent-decision-sheet.md。 */
+  listAgentDecisions(): Promise<AgentDecisionRequest[]>
+  respondAgentDecision(params: AgentDecisionAnswer): Promise<{ ok: boolean }>
   // Ingest the CURRENT, non-deleted records (each carrying its source event + the
   // operator `spec`) plus the overall workflow description into a skill. The renderer
   // is the source of truth here — NOT the main process's raw trace buffer.

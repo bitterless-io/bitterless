@@ -12,7 +12,7 @@ import { isTaskLive, type MaestroTask } from '@maestro-shared/task.api'
 import { workflowActivityFacts } from './workflow.presentation'
 import type { MessageSession } from './store/message.type'
 import { isRejection } from './store/turn.service'
-import { messageStore, pendingConfirmMessages } from './store/message.store'
+import { messageStore, pendingConfirmMessages, pendingDecisionMessages } from './store/message.store'
 import { taskStore } from './store/task.store'
 import { workflowStore } from './store/workflow.store'
 import './ResponseStatus.less'
@@ -96,6 +96,16 @@ const status = computed<StatusView | null>(() => {
   }
   const retry = turn.value?.retry
   if (retry) return { tone: 'wait', text: retryProgress(retry.attempt, retry.max) }
+  // **拍板与工具审批分开措辞**(Ral 2026-09-22)。两件事后果差一个量级,却曾经共用同一句
+  // `Waiting on you`。判据仍是同一条(未被回答的卡),只是文案分岔。
+  const decision = pendingDecisionMessages(props.session)[0]?.decision;
+  if (decision) {
+    return {
+      tone: 'wait',
+      text: i18nHelper.maestroControl.chat.decision.needsYourCall.replace('{title}', decision.questions[0]?.question || decision.questions[0]?.header || ''),
+      meta: i18nHelper.maestroControl.chat.decision.pickBelow
+    };
+  }
 
   const confirm = confirming.value
   if (confirm) {

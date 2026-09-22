@@ -1,3 +1,4 @@
+import { AGENT_DECISIONS_CHANGED, type AgentDecisionRequest } from '@shared/agentDecision.api';
 import { workflowCompletionId } from '@shared/workflowCompletion'
 import { workflowCompletionChatText } from '../workflow.presentation'
 import { workflowText } from '../workflow.text'
@@ -230,7 +231,17 @@ const jsonSafe = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 export const pendingConfirmMessages = (session: Pick<MessageSession, 'messages'>): ChatMessage[] =>
   (session.messages || []).filter((message) => message.type === 'confirm' && message.confirm && !message.confirm.answer)
 
-export const sessionAwaitsConfirm = (session: Pick<MessageSession, 'messages'>): boolean => pendingConfirmMessages(session).length > 0
+export const pendingDecisionMessages = (session: Pick<MessageSession, 'messages'>): ChatMessage[] =>
+  (session.messages || []).filter(
+    (message) => message.type === 'decision' && message.decision && !message.decision.picked && !message.decision.cancelled
+  );
+
+/** 「这个会话有事等你」的唯一判据 —— 审批和拍板都算。状态条、黄点、底部操作面共用它。 */
+export const sessionAwaitsAnswer = (session: Pick<MessageSession, 'messages'>): boolean =>
+  pendingConfirmMessages(session).length > 0 || pendingDecisionMessages(session).length > 0;
+
+/** @deprecated 名字只说了 confirm,实际语义已扩成"有事等你"。新代码用 `sessionAwaitsAnswer`。 */
+export const sessionAwaitsConfirm = sessionAwaitsAnswer;
 
 @injectable()
 export class MessageStoreState {
@@ -367,6 +378,12 @@ export class MessageStoreState {
       // subscribe() 是 set(handleName, cb),两处裸订阅会互相静默顶掉。
       subscribeControlChannel('agent/workflows', payload => {
         if (this.initialized) void this.applyWorkflowCompletions(payload.params as WorkflowSnapshot)
+      })
+      // 待人拍板的 decision(`ask_user`)。主进程持有 pending 状态并广播,渲染端把它投影成
+      // 时间线上的一条消息。经 relay 扇出,理由同上。
+      subscribeControlChannel(AGENT_DECISIONS_CHANGED, payload => {
+        const params = payload.params as { decisions?: AgentDecisionRequest[] } | undefined
+        this.applyDecisions(params?.decisions || [])
       })
     }
     const recovery = await coach.getActiveAgentTurn().catch(() => null)
@@ -1321,6 +1338,37 @@ export class MessageStoreState {
         void this.persistSession(session)
       }
     }
+  }
+
+  /**
+   * 广播来的待答 decision → 时间线消息。**只增不改**:已经在时间线上的不重画(会抹掉人点了
+   * 一半的选择);从广播里消失的说明已被答掉,答案由 `answerDecision()` 就地写在卡上。
+   */
+  private applyDecisions(decisions: AgentDecisionRequest[]): void {
+    for (const decision of decisions) {
+      const session = this.getSession(decision.sessionId);
+      if (!session) continue;
+      if (session.messages.some(message => message.decision?.decisionId === decision.decisionId)) continue;
+      session.messages.push(this.withTokenCount({
+        id: uid(), source: 'cowork', role: 'ai', type: 'decision', content: '', streaming: false,
+        promptExcluded: true, ts: Date.now(), decision: { ...decision }
+      }));
+    }
+  }
+
+  /**
+   * 人点了提交或取消。**先写卡、再发 XPC** —— 判据是"卡上有没有答案",答案一落卡,
+   * 状态条与黄点立刻消失;反过来先等主进程回,那几十毫秒里状态条还在喊「等你」而人已经点完了。
+   */
+  async answerDecision(decisionId: string, picked?: string[][]): Promise<{ ok: boolean }> {
+    for (const session of this.sessions) {
+      const message = session.messages.find(item => item.decision?.decisionId === decisionId);
+      if (!message?.decision) continue;
+      if (picked) message.decision.picked = picked;
+      else message.decision.cancelled = true;
+      break;
+    }
+    return await coach.respondAgentDecision(picked ? { decisionId, picked } : { decisionId, cancelled: true });
   }
 
   private syncTaskConfirm(session: MessageSession, task: MaestroTask): void {

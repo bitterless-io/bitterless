@@ -30,6 +30,7 @@ import {
 } from '@maestro-main/capture/networkInterception'
 import type { PiToolSpec } from '@main/agent/BaseAgent'
 import { buildFileTools } from '@main/agent/tools/fileTools'
+import { buildDecisionTools } from '@main/agent/tools/decisionTools'
 import { buildSkillCreatorTools } from '@main/agent/tools/skillCreatorTools'
 import { skillAuthoringRuntime } from '@main/agent/runtime/skillAuthoring'
 import { buildArchiveTools } from '@main/agent/tools/archiveTools'
@@ -1430,6 +1431,9 @@ class MaestroWindowController
       this.agentService.buildHostToolCatalogTool('cowork'),
       ...this.agentService.workflowTools(sessionKey),
       ...buildFileTools(this.workspaceFile, sessionKey),
+      // `ask_user` —— 要人拍板时唤起底面的一张卡,并把这次工具调用挂住直到人回答。
+      // 会话级(docs/features/agent-decision-sheet.md)。
+      ...buildDecisionTools(sessionKey),
       ...this.skillInstallationTools(sessionKey),
       ...buildSkillCreatorTools({
         workspace: () => this.workspaceFile.projectRootForSession(sessionKey),

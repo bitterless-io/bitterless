@@ -1,3 +1,5 @@
+import { agentDecisionRegistry } from '@main/agent/decisionRegistry.service';
+import type { AgentDecisionAnswer, AgentDecisionRequest } from '@shared/agentDecision.api';
 import type { SkillInstallationRequest } from '@maestro-shared/coach.api'
 import type { SkillSharingScope, SkillScopeContextInfo } from '@maestro-shared/coach.api'
 import { XpcMainHandler } from 'electron-xpc/main'
@@ -402,6 +404,16 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
   async respondTaskConfirm(params: { taskId: string; confirmId: string; confirm: boolean }): Promise<{ ok: boolean }> {
     return taskRegistry.resolveConfirm(params)
   }
+  /** 当前待人拍板的 decision —— 渲染端据此把它们投影成底面的卡。 */
+  async listAgentDecisions(): Promise<AgentDecisionRequest[]> {
+    return agentDecisionRegistry.list();
+  }
+
+  /** 人点了提交或取消。同一个 `decisionId` 只认第一次。 */
+  async respondAgentDecision(params: AgentDecisionAnswer): Promise<{ ok: boolean }> {
+    return agentDecisionRegistry.resolve(params);
+  }
+
 
   async trainSkill(params: { skillId: string; guidance: string }): Promise<SkillCreateResult> {
     return await maestroWindowHelper.trainSkill(params)

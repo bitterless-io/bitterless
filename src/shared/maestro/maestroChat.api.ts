@@ -4,7 +4,7 @@ import type { MaestroTaskConfirm, MaestroTaskPart } from './task.api'
 export type MaestroChatRole = 'human' | 'ai'
 // Persisted rows use the original source value; changing it requires a database migration.
 export type MaestroChatSource = 'cowork'
-export type MaestroChatMessageType = 'text' | 'files' | 'compact' | 'task' | 'confirm' | 'error'
+export type MaestroChatMessageType = 'text' | 'files' | 'compact' | 'task' | 'confirm' | 'error' | 'decision'
 
 export interface MaestroChatConfirm {
   taskId: string

@@ -526,6 +526,14 @@ export const zh: typeof en = {
   },
   maestroControl: {
     chat: {
+      decision: {
+        submit: '提交',
+        cancel: '取消',
+        other: '其他',
+        otherPlaceholder: '输入你自己的决定',
+        needsYourCall: '需要你拍板 · {title}',
+        pickBelow: '在下面的卡片上选一个'
+      },
       history: '会话',
       noHistory: '暂无会话',
       sessionRenamed: '已重命名为“{title}”',

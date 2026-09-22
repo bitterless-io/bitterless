@@ -534,6 +534,14 @@ export const en = {
   },
   maestroControl: {
     chat: {
+      decision: {
+        submit: 'Submit',
+        cancel: 'Cancel',
+        other: 'Something else',
+        otherPlaceholder: 'Type your own answer',
+        needsYourCall: 'Needs your call · {title}',
+        pickBelow: 'Pick one on the card below'
+      },
       history: 'Sessions',
       noHistory: 'No sessions',
       sessionRenamed: 'Renamed “{title}”',

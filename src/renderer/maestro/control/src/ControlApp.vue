@@ -29,6 +29,7 @@ import { sessionActions } from './store/sessionActions.store'
 import ResponseStatus from './ResponseStatus.vue'
 import WorkflowTaskBar from './WorkflowTaskBar.vue'
 import ChatConfirmSheet from './task/ChatConfirmSheet.vue'
+import DecisionSheet from './task/DecisionSheet.vue'
 import { channelStore } from './store/channel.store'
 import { messageStore } from './store/message.store'
 import { isRejection } from './store/turn.service'
@@ -530,6 +531,9 @@ onMounted(async () => {
       >
         <template #before-composer>
           <ChatConfirmSheet :session="activeSession" />
+          <!-- 拍板卡:与确认操作面同一条规矩 —— 挡住流程的问题必须在任意滚动位置都能一步点到,
+               所以放在滚动容器之外(docs/features/agent-decision-sheet.md)。 -->
+          <DecisionSheet :session="activeSession" />
           <WorkflowTaskBar :session-id="activeSession.id" />
           <ResponseStatus :session="activeSession" />
           <div

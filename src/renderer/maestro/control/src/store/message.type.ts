@@ -1,3 +1,4 @@
+import type { AgentDecisionRequest } from '@shared/agentDecision.api';
 import type { AgentActivityStep, ReplayResult, SkillSummary } from '@maestro-shared/coach.api'
 import type { MaestroChatConfirm, MaestroChatDetail, MaestroChatSessionSummary } from '@maestro-shared/maestroChat.api'
 import type { MaestroTaskPart } from '@maestro-shared/task.api'
@@ -35,7 +36,7 @@ export interface ChatMessage {
   id: string
   source: MessageSource
   role: MessageRole
-  type?: 'text' | 'files' | 'compact' | 'task' | 'confirm' | 'error'
+  type?: 'text' | 'files' | 'compact' | 'task' | 'confirm' | 'error' | 'decision'
   /**
    * `type: 'error'` 那张卡的内容(Ral 2026-09-10)。
    *
@@ -55,7 +56,13 @@ export interface ChatMessage {
   error?: boolean
   activity?: AgentActivityStep[]
   tasks?: MaestroTaskPart[]
-  confirm?: MaestroChatConfirm
+  confirm?: MaestroChatConfirm;
+  /**
+   * `type: 'decision'` 的载荷:`ask_user` 唤起的拍板卡。与 `confirm` 并列而不是复用它 ——
+   * 发起方(agent 自己 vs 任务审批)、选项数(N vs 2)、答案形状都不同。
+   * 见 docs/features/agent-decision-sheet.md。
+   */
+  decision?: AgentDecisionRequest & { picked?: string[][]; cancelled?: boolean }
   compressed?: boolean
   promptExcluded?: boolean
   /** Renderer-only notice; exclude it from every session save. */
