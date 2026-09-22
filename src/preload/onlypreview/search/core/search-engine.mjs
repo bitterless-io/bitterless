@@ -294,8 +294,27 @@ export class OnlyPreviewSearchEngine {
     await this.selectedFilePriority.prioritizeFile(priority);
   }
 
-  requireWorkspace(workspaceId, generation) {
+  /**
+   * 浏览面的就绪判据 —— `openBrowseSurface` 一跑完就成立,不等索引写锁。
+   */
+  requireBrowseWorkspace(workspaceId, generation) {
     if (!this.browseIndex || workspaceId !== this.workspaceId || generation !== this.generation) {
+      throw new TypeError('Search workspace generation is stale');
+    }
+  }
+
+  /**
+   * 读写索引的就绪判据。
+   *
+   * 比浏览面多一条:`databasePath` 必须已经落下。它只在队列里的 `initializeIndexed` 里赋值,
+   * 所以它恰好标记了「索引侧的脚手架(initialTreePromise、构建 epoch、identity)已经存在」。
+   * `openBrowseSurface` 把浏览面提前开了,这段窗口里索引还没轮到队列 —— 冷查询如果在这里放行,
+   * 会在 `initialTreePromise` 还不存在时判「索引没就绪」而直接失败,而不是等构建。
+   * 这一条把那段窗口还原成修复前的语义:浏览可用,索引调用照旧报 stale。
+   */
+  requireWorkspace(workspaceId, generation) {
+    this.requireBrowseWorkspace(workspaceId, generation);
+    if (this.databasePath === undefined) {
       throw new TypeError('Search workspace generation is stale');
     }
   }
@@ -368,6 +387,17 @@ export class OnlyPreviewSearchEngine {
     if (pathIsWithin(rootRealPath, databaseRealPath)) {
       throw new TypeError('Search database must stay outside the workspace');
     }
+    // 根目录列表先于队列发出去。它是一次 readdir —— 既不读库也不写库 —— 却本来排在
+    // 「排队 → 开库 → 补删除日志」之后。Shell 结束 loading 的唯一判据就是这份列表
+    // (`projectListingLoading` → `browseProjection.ready`),实测 16 ms;而它前面那段
+    // 实测中位 1.9 秒、最坏 306.7 秒,因为 `initialize` 是写任务,和后台 reconcile 抢
+    // 同一条 FIFO 队列,一次 reconcile 占 60–100 秒且还会连占五次。
+    // 见 docs/issues/onlypreview-loading-project-waits-behind-index-rebuilds.md。
+    //
+    // 队列语义一个字节都没动:锁、串行化、崩溃恢复仍然全部在 `runIndexTask` 里。挪出来的
+    // 只有「列一次根目录」,它从来不需要那把锁。
+    diagnostic.phase = 'browse-open';
+    await this.openBrowseSurface({ workspaceId, generation, rootRealPath, diagnostic });
     return await this.runIndexTask(
       'initialize',
       () =>
@@ -382,6 +412,39 @@ export class OnlyPreviewSearchEngine {
     );
   }
 
+  /**
+   * 在拿索引写锁**之前**把浏览面打开,并发出根目录列表。
+   *
+   * 只碰文件系统:读 workspace 配置、建遍历策略、建 browseIndex、列一次根目录。一个 SQLite
+   * 调用都没有,所以它不需要、也不该排进 `index-queue.mjs`。
+   *
+   * **browseIndex 必须是同一个实例活下去。** 目录令牌是每实例的 `randomUUID()`;用一个临时
+   * 实例发完就扔,Shell 拿到的令牌在真正的实例上不存在。队列内的 `initializeIndexed` 因此不再
+   * 重建它,而它稍后那次 `emitRootBrowseListing()` 经 `issueDirectoryToken` 复用同一批令牌,
+   * 是幂等的重发 —— 保留它是为了让「重建后重新广播」这条既有路径不变。
+   *
+   * 失败语义有一处刻意的变化:如果随后的索引初始化抛错,浏览面仍然是活的,Shell 会显示目录树
+   * 加一条错误横幅,而不是一个永远转下去的圈。
+   */
+  async openBrowseSurface({ workspaceId, generation, rootRealPath, diagnostic }) {
+    this.workspaceId = workspaceId;
+    this.generation = generation;
+    this.rootPath = rootRealPath;
+    this.config = await this.readWorkspaceConfig(rootRealPath);
+    this.searchPolicy = createTraversalPolicy(this.config);
+    this.browseIndex = createOnlyPreviewBrowseIndex(rootRealPath, {
+      searchPolicy: this.searchPolicy
+    });
+    const startedAt = this.diagnostics.now();
+    const listing = await this.emitRootBrowseListing();
+    this.diagnostics.emit('root-listing', {
+      tag: diagnostic.tag,
+      count: listing?.entries?.length ?? 0,
+      elapsedMs: this.diagnostics.elapsed(startedAt),
+      queued: false
+    });
+  }
+
   async initializeIndexed({ workspaceId, generation, rootRealPath, databaseRealPath, diagnostic }) {
     await mkdir(dirname(databaseRealPath), { recursive: true });
     await reclaimInterruptedSqliteArtifacts(databaseRealPath);
@@ -390,12 +453,9 @@ export class OnlyPreviewSearchEngine {
     this.watchCommitRevision = 0;
     this.rootPath = rootRealPath;
     this.databasePath = databaseRealPath;
-    diagnostic.phase = 'config';
-    this.config = await this.readWorkspaceConfig(rootRealPath);
-    this.searchPolicy = createTraversalPolicy(this.config);
-    this.browseIndex = createOnlyPreviewBrowseIndex(this.rootPath, {
-      searchPolicy: this.searchPolicy
-    });
+    // 配置、遍历策略与 browseIndex 都由 `openBrowseSurface` 在入队之前建好了。
+    // **这里绝不能重建 browseIndex**:目录令牌是 `randomUUID()`,按实例存在 `tokenByPath` 里,
+    // 换一个实例就等于把 Shell 手里那批令牌全部作废,点开任何目录都会拿到无效 capability。
     this.identity = {
       workspaceHash: createHash('sha256').update(rootRealPath).digest('hex'),
       configHash: this.config.hash,
@@ -476,14 +536,9 @@ export class OnlyPreviewSearchEngine {
     try {
       const buildRevision = ++this.buildRevision;
       const buildEpoch = ++this.buildEpoch;
-      diagnostic.phase = 'root-listing';
-      const rootListingStartedAt = this.diagnostics.now();
-      const rootListing = await this.emitRootBrowseListing();
-      this.diagnostics.emit('root-listing', {
-        tag: diagnostic.tag,
-        count: rootListing?.entries?.length ?? 0,
-        elapsedMs: this.diagnostics.elapsed(rootListingStartedAt)
-      });
+      // 根列表已经由 `openBrowseSurface` 在入队之前发过了,这里不再重发:同一个 browseIndex、
+      // 同一批令牌,重发一次只会让「一次 initialize 广播一次根列表」这个既有契约变成两次。
+      // 重建后的重新广播另有其路(`emitOpenBrowseListings`),不经过这里。
       this.emitBuildProgress({ buildRevision, phase: 'counting' });
       diagnostic.phase = 'snapshot';
       await this.emitSnapshot();
@@ -1047,7 +1102,8 @@ export class OnlyPreviewSearchEngine {
   }
 
   async browseDirectory({ workspaceId, generation, directoryToken }) {
-    this.requireWorkspace(workspaceId, generation);
+    // 浏览判据,不是索引判据 —— 展开目录不需要等索引写锁,这正是本次修复的要点。
+    this.requireBrowseWorkspace(workspaceId, generation);
     if (!this.browseIndex) throw new TypeError('Browse workspace is not initialized');
     return await this.browseIndex.list({ workspaceId, generation, directoryToken });
   }

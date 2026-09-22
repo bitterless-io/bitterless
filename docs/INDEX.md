@@ -241,6 +241,12 @@
   The paired defect and its fix are in
   [micromeet-cowork](../../micromeet-cowork/docs/issues/no-authorized-institution-blocks-chat-and-skills.md).
 
+- [Loading project 等的是索引写锁](issues/onlypreview-loading-project-waits-behind-index-rebuilds.md) — 修法 1 已实现;
+  owner testing pending。Shell 结束 loading 只认根目录列表(实测 16 ms),但它排在 `initialize` 这个写任务的
+  第 9 步,而写任务和后台 reconcile 抢同一条 FIFO 队列 —— 实测等待中位 1.9 s、最坏 306.7 s,还有一次排了
+  9 分 42 秒后直接失败。现在根列表在入队之前就发出去,队列语义一个字节没动。阶段拆解见
+  [loading-process.html](../../../areas/agent-runtime/preview/loading-process.html)。
+
 - [`INDEX_PROTOCOL_ERROR` names no rule](issues/onlypreview-index-protocol-error-names-no-rule.md) — implemented;
   code verified, owner testing pending. One rejected result batch latches search for the whole
   runtime until restart, and ~15 validator rules all reported the same sentence, so the second

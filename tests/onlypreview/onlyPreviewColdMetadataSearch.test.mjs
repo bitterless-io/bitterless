@@ -7,6 +7,7 @@ import { test } from 'node:test';
 
 import { createOnlyPreviewSearchEngine } from '../../src/preload/onlypreview/search/core/search-engine.mjs';
 import { OnlyPreviewSqliteIndex } from '../../src/preload/onlypreview/search/core/sqlite-index.mjs';
+import { submitIndexTask } from '../../src/preload/onlypreview/search/core/index-queue.mjs';
 
 const deferred = () => {
   let resolve;
@@ -115,15 +116,25 @@ const holdContentBuild = ({ engine, gate }) => {
   };
   return { ...held, traversals: () => traversals };
 };
+/**
+ * 在队列内的构建里、metadata 完成之前停住。
+ *
+ * 钩的是 `rejectLatchedDiskShortfall`(全文件唯一调用点,紧挨在 `count` 之前,且在
+ * `initialTreePromise` 建好之后),不是
+ * `emitRootBrowseListing`。后者从 2026-09-22 起在**入队之前**跑 —— 根目录列表不再等索引写锁,
+ * 见 docs/issues/onlypreview-loading-project-waits-behind-index-rebuilds.md。钩它会把这三条用例
+ * 停在索引脚手架(initialTreePromise、构建 epoch)还不存在的窗口里,冷查询在那里本来就该报
+ * stale,于是测的不再是「等构建、随构建一起失败」这件事。
+ */
 const holdBeforeMetadata = ({ engine, gate }, failure) => {
   const held = gate();
-  const emitRootBrowseListing = engine.emitRootBrowseListing.bind(engine);
-  engine.emitRootBrowseListing = async (...args) => {
-    const listing = await emitRootBrowseListing(...args);
+  const rejectLatchedDiskShortfall = engine.rejectLatchedDiskShortfall.bind(engine);
+  engine.rejectLatchedDiskShortfall = async (...args) => {
+    const result = await rejectLatchedDiskShortfall(...args);
     held.enter();
     await held.wait;
     if (failure) throw failure;
-    return listing;
+    return result;
   };
   return held;
 };
@@ -388,3 +399,84 @@ for (const cancelBuild of [false, true]) {
     });
   });
 }
+
+/**
+ * Ral 2026-09-22:「preview loading 的时间太久了,如何优化呢 才能做到几乎秒开」。
+ *
+ * Shell 结束 loading 的唯一判据是收到根目录列表。参考机上那次列表只要 16 ms,可它排在
+ * `initialize` 这个**写**任务里,而写任务和后台 reconcile 抢同一条 FIFO 队列 —— 实测等待
+ * 中位 1.9 秒、最坏 306.7 秒(一次还排了 9 分 42 秒后直接失败)。
+ *
+ * 修法是把根列表挪到入队之前:它是一次 readdir,既不读库也不写库,从来不需要那把锁。
+ * 这条用例占住队列再打开 workspace —— 列表必须在队列还被占着的时候就到。
+ */
+test('the root listing is published before the index write queue, not behind it', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'onlypreview-early-listing-'));
+  const rootPath = join(temp, 'workspace');
+  for (const [relativePath, content] of Object.entries(sampleFiles)) {
+    const path = join(rootPath, relativePath);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, content);
+  }
+  const databasePath = join(await realpath(temp), 'search.sqlite');
+  const engine = createOnlyPreviewSearchEngine({
+    watchFactory: () => ({ on: () => undefined, close: () => undefined })
+  });
+  const listings = [];
+  engine.onBrowseListing = (listing) => listings.push(listing);
+
+  // 一次进行中的 reconcile 就是这样占住队列的:同一个库路径,并发度 1。
+  const entered = deferred();
+  const release = deferred();
+  const occupier = submitIndexTask(databasePath, 'test-occupier', async () => {
+    entered.resolve();
+    await release.promise;
+  });
+  await bounded(entered.promise, 'queue occupied');
+
+  const initializing = engine.initialize({
+    workspaceId: 'workspace',
+    generation: 1,
+    rootPath,
+    databasePath
+  });
+  initializing.catch(() => undefined);
+  for (let attempt = 0; attempt < 200 && listings.length === 0; attempt += 1) await tick();
+
+  assert.equal(listings.length, 1, '根列表必须在队列还被占着的时候就发出来');
+  assert.equal(listings[0].relativePath, '');
+  assert.ok(listings[0].entries.length > 0);
+  // 队列仍然被占着 —— 索引一侧还没开始,`databasePath` 只在队内赋值。
+  assert.equal(engine.databasePath, undefined, '索引不该在队列让开之前就打开');
+
+  // 列表里的目录令牌必须在真正的实例上仍然有效:令牌是每实例的 randomUUID,
+  // 用临时实例发一份就扔会让 Shell 点开任何目录都失败。
+  const directory = listings[0].entries.find(({ directoryToken }) => directoryToken);
+  assert.ok(directory, '根列表里至少有一个目录');
+  const browsedWhileQueued = await bounded(
+    engine.browseDirectory({
+      workspaceId: 'workspace',
+      generation: 1,
+      directoryToken: directory.directoryToken
+    }),
+    'browse while the queue is still occupied'
+  );
+  assert.equal(browsedWhileQueued.relativePath, directory.relativePath);
+
+  release.resolve();
+  await bounded(occupier, 'occupier drains');
+  await bounded(initializing, 'initialize completes');
+
+  // 队列让开、索引建完之后,同一批令牌照样认。
+  const browsedAfter = await bounded(
+    engine.browseDirectory({
+      workspaceId: 'workspace',
+      generation: 1,
+      directoryToken: directory.directoryToken
+    }),
+    'browse after the build'
+  );
+  assert.equal(browsedAfter.relativePath, directory.relativePath);
+  await engine.shutdown?.();
+  await rm(temp, { recursive: true, force: true });
+});
