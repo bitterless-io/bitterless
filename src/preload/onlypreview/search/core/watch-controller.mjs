@@ -2,6 +2,7 @@ import { watch } from 'node:fs';
 
 import { MAX_WATCH_CHANGE_PATHS, WATCH_TRAILING_MS } from './constants.mjs';
 import { isWorkspaceConfigWatchPath } from './workspace-config.mjs';
+import { REBUILD_REQUIRED } from './watch-reconciler.mjs';
 
 const MAX_RECONCILE_RETRY_MS = 30_000;
 
@@ -195,7 +196,10 @@ export const createWorkspaceWatchController = ({
     const full = fullReconcile || retryFullReconcile;
     if (!full && paths.length === 0) return;
     // 全量退避。`force`(flushNow)与失败重试不受限:前者是调用方明确要求"现在就跑完",
-    // 后者本来就带指数退避。增量 reconcile 也不受限 —— 贵的是全量遍历,不是它。
+    // 后者本来就带指数退避。
+    //
+    // 增量 reconcile 不受限 —— 贵的是全量遍历,不是它。一次自称增量、却需要整库重建的变更,
+    // reconciler 会交还 REBUILD_REQUIRED(而不是就地跑完),下面把它重排成全量,于是它也走这道闸。
     if (full && !force && !retryFullReconcile) {
       const remainingMs = fullReconcileCooldownRemainingMs();
       if (remainingMs > 0) {
@@ -217,9 +221,16 @@ export const createWorkspaceWatchController = ({
     reconcileRunning = true;
     const reconcileChange = renamePaths.length > 0 ? { full, paths, renamePaths } : { full, paths };
     running = Promise.resolve()
-      .then(() => onReconcile(reconcileChange))
+      // `deferRebuild` 走第二个参数,不进 change —— 那个载荷的形状被
+      // `onlyPreviewSearchEngineWatchBoundary` 逐字钉着,多一个键就是改契约。
+      // 只在增量派发上打开:这批若需要整库重建,reconciler 交还 REBUILD_REQUIRED,
+      // 这里重排成全量,于是它也走上和全量同一道退避闸。
+      .then(() => onReconcile(reconcileChange, { deferRebuild: !full }))
       .then(
-        () => {
+        (result) => {
+          // 一次增量变更被判定需要整库重建 —— reconciler 没有就地跑,交还给这里重排成全量,
+          // 这样它和真正的全量共用同一道退避闸,而真增量依旧不受任何延迟。
+          if (result === REBUILD_REQUIRED) fullReconcile = true;
           if (!full) return;
           retryFullReconcile = false;
           reconcileRetryAttempt = 0;

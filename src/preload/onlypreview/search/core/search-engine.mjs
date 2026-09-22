@@ -511,10 +511,12 @@ export class OnlyPreviewSearchEngine {
         if (change.full) await this.emitOpenBrowseListings();
         else await this.watchReconciler.emitBrowseListingsForChangedPaths(this, change.paths);
       },
-      onReconcile: (change) =>
+      onReconcile: (change, options) =>
         this.enqueue(async () => {
           if (this.watchRevision !== watchRevision) return;
-          await this.runIndexTask('reconcile', () => this.applyWatchChangesInternal(change));
+          return await this.runIndexTask('reconcile', () =>
+            this.applyWatchChangesInternal(change, options)
+          );
         }),
       onError: () => undefined
     });
@@ -1335,8 +1337,10 @@ export class OnlyPreviewSearchEngine {
     );
   }
 
-  async applyWatchChangesInternal(change) {
-    await this.watchReconciler.apply(change);
+  async applyWatchChangesInternal(change, options) {
+    // 返回值必须透传:控制器靠它知道这批变更被判定需要整库重建,从而重排成全量、走退避闸。
+    // 见 watch-reconciler.mjs 的 REBUILD_REQUIRED。
+    return await this.watchReconciler.apply(change, options);
   }
 
   async memory() {

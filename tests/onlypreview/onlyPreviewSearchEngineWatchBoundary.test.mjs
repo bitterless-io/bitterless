@@ -23,6 +23,7 @@ import {
   readSingleWorkspaceFile
 } from '../../src/preload/onlypreview/search/core/traversal.mjs';
 import { createWorkspaceWatchController } from '../../src/preload/onlypreview/search/core/watch-controller.mjs';
+import { REBUILD_REQUIRED } from '../../src/preload/onlypreview/search/core/watch-reconciler.mjs';
 import { pathIsWithin } from '../../src/preload/onlypreview/search/core/workspace-config.mjs';
 
 const withTempDirectory = async (callback) => {
@@ -485,6 +486,46 @@ test('a full reconcile cannot restart until the previous one has been idle for a
   // 冷却结束后它自己补跑,不需要新的事件来推。
   await delay(2_000);
   assert.equal(fullReconciles.length, 2);
+
+  await controller.close();
+});
+
+/**
+ * Ral 2026-09-22:索引在空转 —— 参考机 5 小时 13 分跑了 149 轮重建,每轮拷 2.75 GB、
+ * 遍历 41,855 个条目,只为发现差 1 个文件。
+ *
+ * 根因不是缺少退避,而是退避拦不到它要拦的那类活:「要不要整库重建」是 watch-reconciler 才定的
+ * (目录变更、超出深度上限的路径、超量批次都会升级),而控制器的闸只看自己派发时的 `full`。
+ * 于是最贵的那条路整个绕开了冷却。现在升级会被交还,由控制器重排成全量,走上同一道闸。
+ */
+test('an incremental change that needs a rebuild is re-queued as a full reconcile, not run inline', async () => {
+  const emitter = new EventEmitter();
+  emitter.close = () => undefined;
+  let watchListener;
+  const dispatched = [];
+  const controller = createWorkspaceWatchController({
+    rootPath: '/workspace',
+    watchFactory: (_rootPath, _options, listener) => {
+      watchListener = listener;
+      return emitter;
+    },
+    onReconcile: async (change, options) => {
+      dispatched.push({ full: change.full, deferRebuild: options?.deferRebuild === true });
+      // 一次自称增量的变更,reconciler 判定它需要整库重建。
+      if (!change.full) return REBUILD_REQUIRED;
+    }
+  });
+
+  watchListener('change', 'note.md');
+  // 两个尾抖动窗口:第一个派出增量,交还之后控制器再排一次,第二个窗口才派出全量。
+  await delay(WATCH_TRAILING_MS * 2 + 600);
+
+  assert.deepEqual(dispatched, [
+    // 增量派发带 deferRebuild —— 允许交还,不许就地重建。
+    { full: false, deferRebuild: true },
+    // 交还后重排成全量;全量这一次不带 deferRebuild,它就是要跑完的那次。
+    { full: true, deferRebuild: false }
+  ]);
 
   await controller.close();
 });

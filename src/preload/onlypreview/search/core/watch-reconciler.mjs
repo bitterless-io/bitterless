@@ -38,6 +38,24 @@ const normalizedWatchRelativePath = (value) => {
 
 // 导出给 `search-engine.mjs` 的 `forgetPaths` 用:删一个目录时,"哪些行属于它的子孙"这件事
 // 两处必须用同一个判断,分叉了就会出现树里没了、`files` 表里还在的半删状态。
+/**
+ * `apply()` 的返回值:这批变更需要整库重建,但**没有就地重建**,请控制器按全量的规矩重排。
+ *
+ * 「要不要重建」是在这里才定的 —— 一个目录变更、一条超出深度上限的路径、一批超过
+ * `MAX_WATCH_CHANGE_PATHS` 的改动,都会把一次自称增量的变更升级成重建。控制器的全量退避只看
+ * 它自己派发时的 `full` 标志,于是最贵的那条路恰好整个绕开了冷却:参考机 5 小时 13 分跑了
+ * 149 轮,每轮拷 2.75 GB、遍历 41,855 个条目,只为发现差 1 个文件(Ral 2026-09-22)。
+ *
+ * 把升级**交还**给控制器,而不是在这里就地跑完,既保住了「退避只挡全量、不挡真增量」那条既有
+ * 契约(`onlyPreviewSearchEngineWatchBoundary` 钉着它),又让升级出来的重建走上和全量同一道闸。
+ * 控制器派发 `full: true` 时不会再回到这条路:那时 `requiresFullReconcile` 本就为真,直接重建。
+ *
+ * **只有控制器会把 `deferRebuild` 打开。** 直接驱动引擎的调用方(测试、refresh)身后没有人替它
+ * 重排,那里必须就地把重建做完 —— `onlyPreviewSearchEngineWatchBoundary` 的「超量突发」用例
+ * 正是这样调的:它先关掉控制器,再直接 apply。
+ */
+export const REBUILD_REQUIRED = Symbol('onlypreview-watch-rebuild-required');
+
 export const pathHasAncestorIn = (relativePath, ancestors) => {
   let candidate = relativePath;
   while (candidate) {
@@ -138,7 +156,7 @@ class OnlyPreviewSearchWatchReconciler {
     this.resolveContext = resolveContext;
   }
 
-  async apply({ full, paths, renamePaths = [] }) {
+  async apply({ full, paths, renamePaths = [] }, { deferRebuild = false } = {}) {
     const context = this.resolveContext();
     if (full) await context.configReconciler?.probe();
     // Queries do not serialize against this reconcile: engine.search() holds a reader lease while
@@ -179,7 +197,7 @@ class OnlyPreviewSearchWatchReconciler {
       if (requiresFullReconcile || normalizedPaths.length > 0) {
         context.watchNeedsFullReconcile = true;
       }
-      return;
+        return;
     }
     if (context.state !== 'ready') {
       if (requiresFullReconcile || normalizedPaths.length > 0) {
@@ -188,11 +206,13 @@ class OnlyPreviewSearchWatchReconciler {
       return;
     }
     if (!context.treeMetadataReady) {
+      if (deferRebuild) return REBUILD_REQUIRED;
       await context.refreshFromWatchInternal();
       this.emitWatchCommit(context, { full: true, paths: [] });
-      return;
+    return;
     }
     if (requiresFullReconcile || normalizedPaths.length > MAX_WATCH_CHANGE_PATHS) {
+      if (deferRebuild) return REBUILD_REQUIRED;
       await context.refreshFromWatchInternal();
       this.emitWatchCommit(context, { full: true, paths: [] });
       return;
@@ -211,6 +231,7 @@ class OnlyPreviewSearchWatchReconciler {
         return entry !== undefined && entry.nodeKind !== 'file';
       })
     ) {
+      if (deferRebuild) return REBUILD_REQUIRED;
       await context.refreshFromWatchInternal();
       this.emitWatchCommit(context, { full: true, paths: [] });
       return;
