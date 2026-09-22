@@ -559,3 +559,110 @@ test('the full-reconcile cooldown does not delay incremental reconciles', async 
 
   await controller.close();
 });
+
+/**
+ * Ral 2026-09-22:存一个文件就让整机发顿。
+ *
+ * 触发条件是「父目录还不在索引树里」—— `readParentDirectoryTreeEntry` 原本只要树里没有父目录
+ * 就判 `valid: false`,调用方据此升级成全量重建。于是新建功能目录、git checkout 带出新目录、
+ * 解压、脚手架生成,每一次都要克隆整库再遍历整棵树(参考机 2.75 GB + 41,855 条目)。
+ * 实测:往已在树里的目录加文件 1.6–2.8 ms,往新目录加一个文件是一次完整重建。
+ *
+ * 下面三条钉住:新目录走增量且内容真的可搜、嵌套新目录整条链补齐、而真正对不上的情形仍然升级。
+ */
+const rebuildHappened = (engine, run) => {
+  const before = engine.buildRevision;
+  return run().then(() => engine.buildRevision !== before);
+};
+
+test('a file created inside a brand-new directory reconciles incrementally and is searchable', async () => {
+  await withTempDirectory(async (temp) => {
+    const root = join(temp, 'workspace');
+    await write(join(root, 'seed.txt'), 'seed body token');
+    const engine = createOnlyPreviewSearchEngine({});
+    await engine.initialize({
+      workspaceId: 'workspace',
+      generation: 1,
+      rootPath: root,
+      databasePath: join(temp, 'cache', 'search.sqlite')
+    });
+    await engine.watchController.close({ drain: false });
+    engine.watchController = undefined;
+    engine.watchRevision += 1;
+
+    await write(join(root, 'fresh/leaf.txt'), 'fresh directory body token');
+    const rebuilt = await rebuildHappened(engine, () =>
+      applyWatch(engine, { full: false, paths: ['fresh/leaf.txt'] })
+    );
+
+    assert.equal(rebuilt, false, '新目录里建文件不该触发整库重建');
+    assert.ok(indexedPaths(engine).includes('fresh/leaf.txt'), '文件必须真的进了索引');
+    assert.equal((await search(engine, 'fresh directory body token')).results.length, 1);
+    // 新目录本身也要进树,否则面包屑与目录展开会少一层。
+    assert.ok(engine.treeEntries.some(({ relativePath }) => relativePath === 'fresh'));
+  });
+});
+
+test('a nested chain of brand-new directories is materialised whole, not rebuilt', async () => {
+  await withTempDirectory(async (temp) => {
+    const root = join(temp, 'workspace');
+    await write(join(root, 'seed.txt'), 'seed body token');
+    const engine = createOnlyPreviewSearchEngine({});
+    await engine.initialize({
+      workspaceId: 'workspace',
+      generation: 1,
+      rootPath: root,
+      databasePath: join(temp, 'cache', 'search.sqlite')
+    });
+    await engine.watchController.close({ drain: false });
+    engine.watchController = undefined;
+    engine.watchRevision += 1;
+
+    await write(join(root, 'a/b/c/deep.txt'), 'deep nested body token');
+    const rebuilt = await rebuildHappened(engine, () =>
+      applyWatch(engine, { full: false, paths: ['a/b/c/deep.txt'] })
+    );
+
+    assert.equal(rebuilt, false);
+    assert.ok(indexedPaths(engine).includes('a/b/c/deep.txt'));
+    assert.equal((await search(engine, 'deep nested body token')).results.length, 1);
+    // 缺一层都会让树断开,所以整条链都要在。
+    const treePaths = new Set(engine.treeEntries.map(({ relativePath }) => relativePath));
+    for (const directory of ['a', 'a/b', 'a/b/c']) {
+      assert.ok(treePaths.has(directory), `祖先链缺了 ${directory}`);
+    }
+  });
+});
+
+/**
+ * 安全没有放松:符号链接目录仍然升级成全量。
+ *
+ * 逐层校验里 `realpath(absolutePath) === absolutePath` 这一条等于宣告整条路径上没有符号链接,
+ * 它一层都没少跑 —— 只是现在对缺失的每一层都跑一遍,而不是见到缺失就整棵重来。
+ */
+test('a symlinked directory on the new chain still escalates to a full reconcile', async () => {
+  await withTempDirectory(async (temp) => {
+    const root = join(temp, 'workspace');
+    await write(join(root, 'seed.txt'), 'seed body token');
+    const outside = join(temp, 'outside');
+    await mkdir(join(outside, 'real'), { recursive: true });
+    await writeFile(join(outside, 'real', 'linked.txt'), 'linked body token');
+    const engine = createOnlyPreviewSearchEngine({});
+    await engine.initialize({
+      workspaceId: 'workspace',
+      generation: 1,
+      rootPath: root,
+      databasePath: join(temp, 'cache', 'search.sqlite')
+    });
+    await engine.watchController.close({ drain: false });
+    engine.watchController = undefined;
+    engine.watchRevision += 1;
+
+    await symlink(join(outside, 'real'), join(root, 'linkdir'));
+    const rebuilt = await rebuildHappened(engine, () =>
+      applyWatch(engine, { full: false, paths: ['linkdir/linked.txt'] })
+    );
+
+    assert.equal(rebuilt, true, '符号链接目录必须仍然走全量,增量补链不得放行它');
+  });
+});

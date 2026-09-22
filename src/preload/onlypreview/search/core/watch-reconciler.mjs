@@ -267,13 +267,13 @@ class OnlyPreviewSearchWatchReconciler {
         } else if (currentStat.isSymbolicLink()) {
           if (context.searchPolicy.isExcludedFilePath(relativePath)) {
             const parent = context.searchPolicy.isPhysicallyExcludedPath(relativePath)
-              ? { valid: true, entry: undefined }
+              ? { valid: true, entries: [] }
               : await this.readParentDirectoryTreeEntry(context, treeByPath, relativePath);
             if (!parent.valid) {
               requiresFullReconcile = true;
               break;
             }
-            mutations.push({ kind: 'remove', relativePath, parentEntry: parent.entry });
+            mutations.push({ kind: 'remove', relativePath, parentEntries: parent.entries });
           } else {
             requiresFullReconcile = true;
           }
@@ -285,13 +285,13 @@ class OnlyPreviewSearchWatchReconciler {
           const searchExcluded = context.searchPolicy.isExcludedFilePath(relativePath);
           if (searchExcluded) {
             const parent = context.searchPolicy.isPhysicallyExcludedPath(relativePath)
-              ? { valid: true, entry: undefined }
+              ? { valid: true, entries: [] }
               : await this.readParentDirectoryTreeEntry(context, treeByPath, relativePath);
             if (!parent.valid) {
               requiresFullReconcile = true;
               break;
             }
-            mutations.push({ kind: 'remove', relativePath, parentEntry: parent.entry });
+            mutations.push({ kind: 'remove', relativePath, parentEntries: parent.entries });
           } else {
             const parent = await this.readParentDirectoryTreeEntry(
               context,
@@ -302,7 +302,7 @@ class OnlyPreviewSearchWatchReconciler {
               requiresFullReconcile = true;
               break;
             }
-            mutations.push({ kind: 'upsert', relativePath, parentEntry: parent.entry });
+            mutations.push({ kind: 'upsert', relativePath, parentEntries: parent.entries });
           }
         } else requiresFullReconcile = true;
       } catch (error) {
@@ -312,7 +312,7 @@ class OnlyPreviewSearchWatchReconciler {
             break;
           }
           const parent = context.searchPolicy.isPhysicallyExcludedPath(relativePath)
-            ? { valid: true, entry: undefined }
+            ? { valid: true, entries: [] }
             : await this.readParentDirectoryTreeEntry(context, treeByPath, relativePath);
           if (!parent.valid) {
             requiresFullReconcile = true;
@@ -321,7 +321,7 @@ class OnlyPreviewSearchWatchReconciler {
           mutations.push({
             kind: 'remove',
             relativePath,
-            parentEntry: parent.entry
+            parentEntries: parent.entries
           });
         } else requiresFullReconcile = true;
       }
@@ -398,12 +398,11 @@ class OnlyPreviewSearchWatchReconciler {
           }
         }
         for (const mutation of mutations) {
-          if (
-            mutation.parentEntry &&
-            !pathHasAncestorIn(mutation.parentEntry.relativePath, treeReplacementPaths)
-          ) {
-            replacementEntries.set(mutation.parentEntry.relativePath, mutation.parentEntry);
-            treeUpserts.set(mutation.parentEntry.relativePath, mutation.parentEntry);
+          // 一条变更可能带回整条新建的祖先链(见 readParentDirectoryTreeEntry),逐层落。
+          for (const parentEntry of mutation.parentEntries ?? []) {
+            if (pathHasAncestorIn(parentEntry.relativePath, treeReplacementPaths)) continue;
+            replacementEntries.set(parentEntry.relativePath, parentEntry);
+            treeUpserts.set(parentEntry.relativePath, parentEntry);
           }
         }
         const replacementPaths = new Set(replacementEntries.keys());
@@ -485,19 +484,57 @@ class OnlyPreviewSearchWatchReconciler {
     }
   }
 
+  /**
+   * 解析一个变更路径的父目录,必要时把**整条缺失的祖先链**一并补进树。
+   *
+   * 原来的规则是「父目录必须已经在索引树里」,否则判 `valid: false`,调用方据此升级成全量重建。
+   * 于是「在一个新建的目录里建文件」这个每天都会做的动作 —— 新功能目录、git checkout 带出新目录、
+   * 解压、脚手架生成 —— 每次都要克隆整库再遍历整棵树(参考机上 2.75 GB + 41,855 条目)。
+   * 实测:往已在树里的目录加文件是 1.6–2.8 ms,往新目录加一个文件是一次完整重建(Ral 2026-09-22)。
+   *
+   * 「必须早就见过」从来不是安全所在。安全所在是每一层都要过的那套校验:在工作区根内、
+   * `realpath` 与自身相等(这一条等于宣告整条路径上没有符号链接)、`lstat` 确实是目录。
+   * 那套校验一层都没有放松,只是现在对缺失的每一层都跑一遍,而不是见到缺失就整棵重来。
+   *
+   * 仍然升级成全量的情形:任何一层过不了校验,或者树里存在同名但不是目录的条目 ——
+   * 那时的分歧不止这一个文件,重建才是对的。
+   */
   async readParentDirectoryTreeEntry(context, treeByPath, relativePath) {
     const parentRelativePath = normalizedRelativePath(dirname(relativePath));
     if (!parentRelativePath || parentRelativePath === '.') {
-      return { valid: true, entry: undefined };
+      return { valid: true, entries: [] };
     }
-    const existingParent = treeByPath.get(parentRelativePath);
-    if (existingParent?.nodeKind !== 'directory') return { valid: false, entry: undefined };
-    const absolutePath = resolve(context.rootPath, ...parentRelativePath.split('/'));
-    if (!pathIsWithin(context.rootPath, absolutePath)) return { valid: false, entry: undefined };
+    // 从父目录向上收集树里还没有的层,直到碰到树里已有的目录为止。
+    const missing = [];
+    let current = parentRelativePath;
+    while (current && current !== '.') {
+      const existing = treeByPath.get(current);
+      if (existing?.nodeKind === 'directory') break;
+      // 树里有同名条目却不是目录:真的对不上,交给全量。
+      if (existing !== undefined) return { valid: false, entries: [] };
+      missing.push(current);
+      current = normalizedRelativePath(dirname(current));
+    }
+    // 父目录即使已经在树里也要重新 stat 一次刷新 mtime —— 那是原来的行为,保持不变。
+    if (missing.length === 0) missing.push(parentRelativePath);
+    const entries = [];
+    // 由外向内:先祖先后子目录,合并进树时顺序才是对的。
+    for (const directoryRelativePath of missing.reverse()) {
+      const entry = await this.readDirectoryTreeEntry(context, directoryRelativePath);
+      if (!entry) return { valid: false, entries: [] };
+      entries.push(entry);
+    }
+    return { valid: true, entries };
+  }
+
+  /** 单层目录的校验与取值 —— 与改动前逐字相同,只是现在可以对多层各跑一次。 */
+  async readDirectoryTreeEntry(context, directoryRelativePath) {
+    const absolutePath = resolve(context.rootPath, ...directoryRelativePath.split('/'));
+    if (!pathIsWithin(context.rootPath, absolutePath)) return null;
     try {
       const canonicalPath = await realpath(absolutePath);
       if (canonicalPath !== absolutePath || !pathIsWithin(context.rootPath, canonicalPath)) {
-        return { valid: false, entry: undefined };
+        return null;
       }
       const currentStat = await lstat(absolutePath);
       if (
@@ -505,17 +542,14 @@ class OnlyPreviewSearchWatchReconciler {
         currentStat.isSymbolicLink() ||
         (await realpath(absolutePath)) !== canonicalPath
       ) {
-        return { valid: false, entry: undefined };
+        return null;
       }
-      return {
-        valid: true,
-        entry: toTreeDirectoryEntry({
-          relativePath: parentRelativePath,
-          modifiedMs: Math.trunc(currentStat.mtimeMs)
-        })
-      };
+      return toTreeDirectoryEntry({
+        relativePath: directoryRelativePath,
+        modifiedMs: Math.trunc(currentStat.mtimeMs)
+      });
     } catch {
-      return { valid: false, entry: undefined };
+      return null;
     }
   }
 
