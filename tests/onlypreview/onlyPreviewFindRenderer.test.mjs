@@ -639,3 +639,37 @@ test('Main shortcut predicates reserve Shift+CommandOrControl+F for Global Searc
   );
   assert.doesNotMatch(globalSearchBranch, /focusActiveContent|shellView\.webContents\.focus|xpcMain\.broadcast/);
 });
+
+/**
+ * Ral 2026-09-22:「cmd+f 文件内搜索的时候,如果是已经打开过搜索框的话,
+ * 再次点击 CMD+F 应该聚焦并全选搜索文字」。
+ *
+ * 两条路都要,因为 `PreviewToolbar` 用的是 `v-if="onlyPreviewFindStore.open"` ——
+ * 关掉再开是一次重新挂载(走 onMounted),已经开着再按一次 Cmd+F 走 focusRevision
+ * (`handleFocusRequest` 只在 `open` 已为真时递增它)。两种情形人要做的事一样:直接打新的词。
+ *
+ * 同一个 shell 里的 Global Search 早就是 focus + select,这条顺带把它钉成两者共同的约定 ——
+ * 两个搜索框在同一个界面上却行为不同,本身就是缺陷。
+ */
+test('re-invoking either search box focuses and selects the existing query', () => {
+  const findBar = source('src/renderer/onlypreview/shell/src/components/FindBar/FindBar.vue');
+  const globalSearch = source(
+    'src/renderer/onlypreview/shell/src/components/GlobalSearch/GlobalSearchWorkspace.vue'
+  );
+  const findStore = source('src/renderer/onlypreview/shell/src/onlyPreviewFind.store.ts');
+
+  for (const [name, source_] of [
+    ['FindBar', findBar],
+    ['GlobalSearchWorkspace', globalSearch]
+  ]) {
+    assert.match(source_, /\.focus\(\)/u, `${name} 必须聚焦输入框`);
+    assert.match(source_, /\.select\(\)/u, `${name} 必须全选已有的查询词`);
+  }
+
+  // 挂载与再次唤起两条路都要走同一段,否则"重新打开"和"再按一次"行为会分叉。
+  assert.match(findBar, /onMounted\(focusAndSelect\)/u);
+  assert.match(findBar, /focusRevision[\s\S]*nextTick\(focusAndSelect\)/u);
+
+  // 再次唤起只在已经打开时递增 focusRevision —— 没打开时走的是打开流程,不是聚焦流程。
+  assert.match(findStore, /if \(this\.open\) \{[\s\S]*this\.focusRevision \+= 1;/u);
+});

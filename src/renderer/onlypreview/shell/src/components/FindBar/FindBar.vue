@@ -114,11 +114,27 @@ const handleEnter = (event: KeyboardEvent): void => {
   else onlyPreviewFindStore.next();
 };
 
-onMounted(() => inputRef.value?.focus());
+// 聚焦即全选 —— 两条路都要。
+//
+// `v-if="onlyPreviewFindStore.open"`(PreviewToolbar)意味着关掉再开是一次重新挂载,所以
+// 「重新打开」走 onMounted,「已经开着再按一次 Cmd+F」走 focusRevision
+// (`handleFocusRequest` 只在 `open` 已为真时递增它)。两种情形下人要做的事都一样:
+// 直接打新的词。只聚焦不全选,就得先自己把旧词选掉。
+//
+// 同一个 shell 里的 Global Search 早就是 focus + select(`GlobalSearchWorkspace.vue`),
+// 这里只是把它对齐 —— 两个搜索框在同一个界面上却行为不同,本身就是缺陷。
+const focusAndSelect = (): void => {
+  const input = inputRef.value;
+  if (!input) return;
+  input.focus();
+  input.select();
+};
+
+onMounted(focusAndSelect);
 
 watch(
   () => onlyPreviewFindStore.focusRevision,
-  () => void nextTick(() => inputRef.value?.focus())
+  () => void nextTick(focusAndSelect)
 );
 </script>
 
