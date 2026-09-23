@@ -1,6 +1,6 @@
 # 聊天里的文件链接 —— 右键菜单 · Copy path
 
-**状态:** 🚧 **实现中**(2026-09-23)。**来源:** Ral 2026-09-23,对文件链接提了四条期望:
+**状态:** ✅ **已实现**(2026-09-23),两仓齐;守卫 `check:chat-file-link`(bl)。**来源:** Ral 2026-09-23,对文件链接提了四条期望:
 
 > 点击 DECISIONS.md,应该是以链接的形式渲染,且不包含括号后面的 URL。
 > 悬浮时,可以展示它完整的路径;点击之后,直接进入 Only Preview 中预览。
@@ -51,20 +51,19 @@
 | 解码 | `@shared/replyFileLink` 的 `decodeFileHref` | bl 没有这个共享件,用它自己的 `localPathFromHref` |
 | 文案 | `i18n/control/messages.ts` | `i18n/{en,zh}.ts` |
 
-## 5 · 配对时发现的两处分歧(**本文不擅自改,留给 Ral 裁**)
+## 5 · 配对时发现的两处分歧(**已按「以 cowork 交互为准」修掉**)
 
-查 bl 的同一条路时撞见两件与 cowork 不一致的事,都不是本功能引入的:
+查 bl 的同一条路时撞见两件与 cowork 不一致的事,都不是本功能引入的。Ral 2026-09-23
+裁定「以 cowork 交互为准」,已于同日修完 —— 见
+`bitterless/docs/issues/chat-file-link-opens-finder.md`,守卫 `check:chat-file-link`。
 
-1. **bl 的点击去的是访达,不是 OnlyPreview。** `MessageItem.vue:193` 调 `showFileInFolder`;
+1. **bl 的单击去的是访达,不是 OnlyPreview。** `MessageItem.vue` 调 `showFileInFolder`;
    cowork 走 `openWorkspaceInPreview`。而 `docs/INDEX.md` 里
    `features/cowork-reply-file-links.md` 那条写着这次改动「**synced to bitterless**」(2026-09-08)。
-   **文档说同步过,代码说没有** —— 要么当时没同步,要么之后回退了。Ral 这次的期望是
-   「点击之后,直接进入 Only Preview 中预览」,所以八成该改,但这是**改 bl 的既有行为**,
-   不在本文范围内。
-2. **bl 的链接没有 title**,所以悬浮显示不了可读全路径。bl 的 `mdDirLink` 用
-   `encodeURIComponent` 逐段编码,**空格那条缺陷它没有**(实测四种刁钻路径都正常渲染成链接),
-   所以不需要为了对齐做无意义的改动 —— 但 title 这条它确实缺。
+   **文档说同步过,代码说没有。** ✅ 已改为 `previewLocalFile → openWorkspaceInPreview`,
+   并把行为本身钉进守卫 —— 一句写在 INDEX 里的 "synced to X" 不会在 X 回退时变红。
+2. **bl 的链接没有 title**,悬浮显示不了可读全路径。✅ `mdDirLink` 已补 title(`"` / `\` 转义)。
 
-> 按工作区的配对规则:「A defect already absent or fixed in the other project needs
-> verification, not an artificial code change」—— 第 2 条的前半已验证不存在,不动;
-> 后半与第 1 条是**行为变更**,需要 Ral 点头。
+bl 的 `mdDirLink` 用 `encodeURIComponent` 逐段编码,**空格那条缺陷它没有**(实测四种刁钻路径
+都正常渲染成链接),所以按配对规则「A defect already absent in the other project needs
+verification, not an artificial code change」没做任何为了对齐的改动。
