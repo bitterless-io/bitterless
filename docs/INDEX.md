@@ -1,7 +1,7 @@
 # Bitterless Documentation
 
 - [`ui_act` 在后台 tab 上：每步光标卡 5 秒，点击无效，还报 ok](issues/ui-act-on-background-tab-stalls-and-click-has-no-effect.md) —
-  root cause located 2026-09-23，fix not started。agent 开出的弹窗 tab 从不激活，于是它在看不见的 view 上操作：
+  root cause confirmed 2026-09-23（先 activate_tab 再点就生效），fix not started。agent 开出的弹窗 tab 从不激活，于是它在看不见的 view 上操作：
   每个 `mouseMoved` 要约 5 秒才回（一次点击 145–181 秒），按下和松开也不生效，`ui_act` 却照样报 ok；没有看门狗。
   Paired with `micromeet-cowork`。
 
