@@ -134,6 +134,12 @@ export interface CoachXpcContract {
   summarizeSkill(params: { workflow?: string; records: IngestRecord[]; sharingScope?: SkillSharingScope }): Promise<SkillCreateResult>
   trainSkill(params: { skillId: string; guidance: string }): Promise<SkillCreateResult>
   listSkills(params?: { sessionId?: string }): Promise<SkillSummary[]>
+  /**
+   * 把一段文本写进剪贴板。**必须走 main** —— 打包后 renderer 跑在 `file://`,
+   * `navigator.clipboard` 在这个来源下不可靠(本仓所有剪贴板操作都在 main)。
+   */
+  copyText(params: { text: string }): Promise<{ ok: boolean; error?: string }>
+
   skillCatalog(params?: { sessionId?: string; checkUpdates?: boolean }): Promise<SkillCatalogSnapshot>
   setSkillEnabled(params: { reference: string; enabled: boolean; sessionId?: string }): Promise<void>
   manageSkillInstallation(params: SkillInstallationRequest): Promise<SkillInstallationResult>

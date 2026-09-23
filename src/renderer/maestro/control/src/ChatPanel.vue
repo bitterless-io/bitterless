@@ -21,6 +21,7 @@ import IconBtn from '../../../common/components/IconBtn/IconBtn.vue'
 import MessageList from './MessageList.vue'
 import ResponseStatus from './ResponseStatus.vue'
 import SlashMenu from './SlashMenu.vue'
+import FileLinkContextMenu from './FileLinkContextMenu.vue'
 import { ShortcutStore, skillShortcutRows, slashTokenAt, parseCompactCommand } from './store/shortcut.store'
 import { channelStore } from './store/channel.store'
 import { messageStore } from './store/message.store'
@@ -780,6 +781,7 @@ async function stopUsingWorkspace(): Promise<void> {
         </div>
       </div>
       <div class="chat-panel__input-wrap">
+        <FileLinkContextMenu />
         <SlashMenu :store="shortcutStore" @select="shortcutStore.activeIndex = $event" @commit="commitShortcut" />
         <textarea
           ref="composerRef"

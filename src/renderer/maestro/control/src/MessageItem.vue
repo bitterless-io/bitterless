@@ -3,6 +3,8 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import MarkdownRender from 'markstream-vue'
 import { Trigger } from '@arco-design/web-vue'
 import { createXpcRendererEmitter } from 'electron-xpc/renderer'
+import { localPathFromHref } from './fileLinkPath'
+import { fileLinkMenuStore } from './store/fileLinkMenu.store'
 import { IconActivity, IconArrowBackUp, IconDotsVertical, IconExternalLink, IconFolderOpen, IconSparkles } from '@tabler/icons-vue'
 import IconBtn from '../../../common/components/IconBtn/IconBtn.vue'
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
@@ -147,34 +149,6 @@ const openFile = async (path?: string): Promise<void> => {
   if (!result?.ok) markMissing(path)
 }
 
-// Absolute local links emitted by file tools reveal their target in Finder/Explorer. Network links
-// remain normal Markdown links; the chat renderer must never navigate itself to a local path.
-const RAW_LOCAL_PATH = /^(?:\/|[A-Za-z]:[\\/]|\\\\)/
-const localPathFromHref = (href: string): string | null => {
-  if (/^file:/i.test(href)) {
-    try {
-      const parsed = new URL(href)
-      if (parsed.protocol !== 'file:') return null
-      let path = decodeURIComponent(parsed.pathname)
-      if (parsed.hostname && parsed.hostname.toLowerCase() !== 'localhost') {
-        path = `//${parsed.hostname}${path}`
-      } else if (/^\/[A-Za-z]:[\\/]/.test(path)) {
-        // WHATWG file URLs keep a leading slash before a Windows drive letter.
-        path = path.slice(1)
-      }
-      return path || null
-    } catch {
-      return null
-    }
-  }
-  if (!RAW_LOCAL_PATH.test(href)) return null
-  try {
-    return decodeURIComponent(href)
-  } catch {
-    return null
-  }
-}
-
 const onMarkdownClick = (event: MouseEvent): void => {
   const anchor = (event.target as HTMLElement | null)?.closest?.('a')
   if (!anchor) return
@@ -202,6 +176,23 @@ const onMarkdownClick = (event: MouseEvent): void => {
  * 注意它和上面那条产出物链接的差别:那条**单击**是「在 Finder 里定位」,这条是「在预览里看内容」。
  * 两个动作不同,所以两个手势 —— 不是同一件事的两种触发方式。
  */
+/**
+ * 右击一个本地文件链接 → 我们自己的菜单(目前只有 Copy path)。
+ *
+ * **只接管本地文件那种 `<a>`。** 普通文字上的右击要留给默认菜单;http(s)、`file:line` 引用
+ * 一律放行 —— 一个把所有右击都吃掉的处理器,会让人以为是复制菜单坏了。
+ */
+const onMarkdownContextMenu = (event: MouseEvent): void => {
+  const anchor = (event.target as HTMLElement | null)?.closest?.('a')
+  if (!anchor) return
+  const href = anchor.getAttribute('href') || ''
+  if (parseOnlyPreviewReferenceHref(href)) return
+  const path = localPathFromHref(href)
+  if (!path || !fileLinkMenuStore.open(path, event.clientX, event.clientY)) return
+  event.preventDefault()
+  event.stopPropagation()
+}
+
 const onMarkdownDoubleClick = (event: MouseEvent): void => {
   const anchor = (event.target as HTMLElement | null)?.closest?.('a')
   if (!anchor) return
@@ -283,6 +274,7 @@ watch(artifactPathKey, () => void refreshFileStatuses(), { immediate: true })
             v-if="props.message.content"
             class="message-item__markdown"
             @click="onMarkdownClick"
+            @contextmenu="onMarkdownContextMenu"
             @dblclick="onMarkdownDoubleClick"
           >
             <MarkdownRender

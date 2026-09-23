@@ -1,0 +1,8 @@
+// 无边框:靠背景 + 圆角 + 阴影成形,选中态靠背景色。BEM 扁平,不用 & 嵌套。
+.file-link-menu__overlay { position: fixed; inset: 0; z-index: 3000; }
+.file-link-menu { position: absolute; min-width: 168px; max-width: min(420px, calc(100vw - 8px)); padding: 4px; border-radius: 8px; background: oklch(100% 0 0); box-shadow: 0 6px 20px oklch(20% 0.04 260 / 15%); }
+// 纯提示文字不给背景 —— 背景会读成"可点"。
+.file-link-menu__path { margin: 0; padding: 6px 10px 4px; color: oklch(70% 0.02 260); font-size: 11px; line-height: 1.4; word-break: break-all; }
+.file-link-menu__item { display: block; width: 100%; padding: 7px 10px; border: 0; border-radius: 5px; background: transparent; color: oklch(38% 0.02 260); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.file-link-menu__item:hover { background: oklch(96% 0.01 260); }
+.file-link-menu__item:focus { background: oklch(96% 0.01 260); outline: none; }

@@ -322,6 +322,10 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
     await maestroWindowHelper.abortDelegate(params)
   }
 
+  async copyText(params: { text: string }): Promise<{ ok: boolean; error?: string }> {
+    return await maestroWindowHelper.copyText(params)
+  }
+
   async summarizeSkill(params: { workflow?: string; records: IngestRecord[]; sharingScope?: SkillSharingScope }): Promise<SkillCreateResult> {
     return await maestroWindowHelper.summarizeSkill(params)
   }

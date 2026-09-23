@@ -1198,6 +1198,15 @@ class MaestroWindowController
     await this.agentService.abortDelegate(params)
   }
 
+  /** 见 `CoachXpcContract.copyText`:剪贴板只在 main 可靠。 */
+  async copyText(params: { text: string }): Promise<{ ok: boolean; error?: string }> {
+    const text = String(params?.text ?? '')
+    // 空串当失败报。静默"成功"会让人以为复制到了,然后粘出一片空白 —— 那比一条错误贵。
+    if (!text) return { ok: false, error: 'nothing to copy' }
+    clipboard.writeText(text)
+    return { ok: true }
+  }
+
   agentSessionKey(sessionId?: string): string {
     return this.agentService.agentSessionKey(sessionId)
   }
