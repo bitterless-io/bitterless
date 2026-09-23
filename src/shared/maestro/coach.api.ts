@@ -698,6 +698,15 @@ export interface LogInfo {
   dir: string
   file: string
   env: 'dev' | 'prod'
+  /**
+   * 这个 build 实际在用的 home 数据根(`~/.bitterless…`,随 runtime profile 的 appName 变)。
+   *
+   * 同一台机器上并存好几个(`-production` / `_debug_dev` / `_preview` …),而界面上此前看不出
+   * 当前是哪一个 —— 装/卸一个工作流的第一步就卡在这儿(Ral 2026-09-23)。
+   */
+  home: string
+  /** `<home>/workflows` —— 工作流包实际装的地方。目录可能还不存在,**照样显示**。 */
+  workflows: string
 }
 
 export interface SnapshotResult {

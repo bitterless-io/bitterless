@@ -41,6 +41,16 @@ const openDir = async (): Promise<void> => {
       <span class="workbench-log__label">env</span>
       <span class="workbench-log__value">{{ info?.env || '-' }}</span>
       <span></span>
+
+      <!-- 同一台机器上并存好几个 home 根,界面上此前看不出当前是哪一个。
+           目录可能还没建出来(惰性创建)—— **照样显示**,否则"还没有"与"我找错 build 了"分不开。 -->
+      <span class="workbench-log__label">home</span>
+      <span class="workbench-log__path">{{ info?.home || '-' }}</span>
+      <span></span>
+
+      <span class="workbench-log__label">workflows</span>
+      <span class="workbench-log__path">{{ info?.workflows || '-' }}</span>
+      <span></span>
     </div>
   </section>
 </template>
