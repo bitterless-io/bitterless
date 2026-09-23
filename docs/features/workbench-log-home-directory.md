@@ -71,3 +71,30 @@ cowork 现有 UI 已经这么做(`appDirectorySet` 的注释写着 "Some may not
 | bl 显示的随 runtime profile 变 | `Bitterless_DEBUG_DEV` ⇒ `~/.bitterless_debug_dev` |
 | 目录不存在时仍然显示 | 删掉 `<home>/skills` 后那一行还在 |
 | 路径不是手拼的 | 源码里新增的这几条不出现 `homedir()` |
+
+---
+
+## 5 · home 目录也要进提示词(2026-09-23 追加)
+
+Ral:「检查一下 home 目录是否进入了提示词,需要在 home 目录里标注不同目录的作用。」
+
+**查的结果:没进。** 模型只看得到 `- Active workspace: …` 那一行 —— 没选工作区时它恰好指向
+home 根底下的 `work/`,**但没说那是什么**,而 `workflows/`、`skills/` 从头到尾没出现过。
+于是"把这个工作流装到哪 / 从哪卸"只能靠猜 —— 2026-09-23 的会话就卡在这。
+
+**改法:**每个目录的用途从注释提成数据(`APP_DATA_DIR_PURPOSE`),会话级提示词里加一段:
+
+```
+App data root (this build's own): /Users/ral/.micromeet-cowork_test_debug
+  work/ — the shared default workspace — where file tools write when no project directory is bound
+  workflows/ — workflow packages, one directory each; install or remove a workflow here
+  skills/ — skills authored on this machine, outside any workspace or institution scope
+These are the app's own directories, not the user's project. …
+```
+
+两条纪律:
+
+1. **`Record<AppDataDir, string>`,不是可选表。** 新加一个目录却不写用途 ⇒ **编译不过**。
+   一份会漏项的清单比没有清单更糟 —— 它看起来是全的。
+2. **只报事实,不给权限。** 写入边界仍归工作区规则;这段只回答"东西在哪",
+   不改变"它能往哪写"。

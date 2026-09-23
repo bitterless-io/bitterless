@@ -1,3 +1,4 @@
+import { APP_DATA_DIRS, APP_DATA_DIR_PURPOSE, appDataRoot, type AppDataDir } from '@main/paths/appData';
 import { join } from 'node:path'
 import moment from 'moment'
 import { renderChainPathLine } from '@main/agent/userChainStore.service'
@@ -284,6 +285,27 @@ export const STATIC_TURN_GUIDANCE = [
  * 换工作区会 `setProjectRoot()` → cwd 变 → `reset()` → 新会话重新组装系统提示词,分支跟着刷新。
  * 路径**这条事实**仍归 D2(`- Active workspace: …`),规则归这里。与 cowork 成对。
  */
+/**
+ * app 自己的 home 数据根,以及底下每个目录是干什么的。
+ *
+ * **此前提示词里根本没有这回事。** 模型只看得到 `- Active workspace: …` 那一行 —— 没选工作区时
+ * 它恰好指向 home 根底下的 `work/`,但没说那是什么,而 `workflows/`、`skills/` 从头到尾没出现过。
+ * 于是"把这个工作流装到哪 / 从哪卸"只能靠猜(Ral 2026-09-23 实测,一个会话就卡在这)。
+ *
+ * 路径与说明都来自 `appData.ts` 的同一份清单 —— 这里不重抄目录名,也不重写用途:
+ * 抄一遍就会在下次加目录时分叉,而分叉的那一份看起来仍然是全的。
+ *
+ * ⚠️ **只报事实,不给权限。** 写入边界仍由工作区规则管:这段告诉模型"东西在哪",
+ * 不改变"它能往哪写"。
+ */
+const appDataRules = (): string => [
+  `App data root (this build's own): ${appDataRoot()}`,
+  ...(Object.keys(APP_DATA_DIRS) as AppDataDir[]).map(
+    name => `  ${APP_DATA_DIRS[name]}/ — ${APP_DATA_DIR_PURPOSE[name]}`
+  ),
+  "These are the app's own directories, not the user's project. Read them with the normal file tools; they may not exist yet until first use."
+].join('\n');
+
 const workspaceRules = (workspaceSelected: boolean): string => workspaceSelected
   ? [
       'Use workspace tools for project files: workspace_context, list_workspace_files, search_files, read_file, write_file, create_artifact, preview_file, open_workspace_folder, list_archive, extract_archive, create_archive.',
@@ -327,6 +349,8 @@ export const buildSessionSkillGuidance = (params: {
   return [
     'Workspace:',
     workspaceRules(Boolean(params.workspacePath)),
+    '',
+    appDataRules(),
     '',
     list,
     ...(params.skillAuthoring ? [

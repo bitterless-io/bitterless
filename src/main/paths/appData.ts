@@ -42,6 +42,21 @@ export const APP_DATA_DIRS = {
 } as const;
 export type AppDataDir = keyof typeof APP_DATA_DIRS;
 
+/**
+ * 每个目录**干什么用的** —— 给人看,也给模型看。
+ *
+ * 这些说明以前只存在于上面那几行注释里,于是提示词里根本没有 home 根这回事:模型被问到
+ * "把某个工作流装到哪 / 从哪卸",只能猜或者去读源码(Ral 2026-09-23,实测一个会话就卡在这)。
+ *
+ * **写成 `Record<AppDataDir, string>` 是故意的**:新加一个目录而不写用途,直接编译不过 ——
+ * 一份会漏项的清单,比没有清单更糟,因为它看起来是全的。
+ */
+export const APP_DATA_DIR_PURPOSE: Record<AppDataDir, string> = {
+  workspace: 'the shared default workspace — where file tools write when no project directory is bound',
+  workflows: 'workflow packages, one directory each; install or remove a workflow here',
+  skills: 'global skills authored on this machine, outside any workspace or institution scope'
+};
+
 export const appDataDir = (name: AppDataDir): string => homeDataIn(APP_DATA_DIRS[name]);
 
 /**
