@@ -39,6 +39,12 @@ export const CORE_EXCLUDED_DIRECTORY_NAMES = Object.freeze(new Set([
   'htmlcov',
   'vendor',
   'go-build',
+  // 草稿区(Ral 2026-09-23)。CLAUDE.md 明确让 agent 把 `tmp/` 当自由草稿区 —— 实验、解压、
+  // 测试夹具、随手建随手删 —— 而它同时被索引,两条规则一直在对撞:2026-09-23 一次
+  // `extract_archive` 解压进 `tmp/playground/`,就让两个打包版各自连跑数次全量重建,
+  // 最终 7.5 GB swap、整机卡死。草稿区按定义不需要被搜到。
+  'tmp',
+  'temp',
 ]));
 
 export const CORE_EXCLUDED_DIRECTORY_SUFFIXES = Object.freeze(['.egg-info', '.dist-info']);

@@ -27,6 +27,7 @@ import {
 import { clampSearchResultLimit, createOnlyPreviewSearchResult } from './search-contract.mjs';
 import { configureSearchDatabase, createBuildStateStore } from './sqlite-schema.mjs';
 import { OnlyPreviewSqliteSnapshotStore } from './sqlite-snapshot-store.mjs';
+import { ARCHIVE_EXTENSIONS, BINARY_EXTENSIONS } from './classification.mjs';
 import { SQLITE_SCOPE_SQL, createSqliteScopePlan } from './sqlite-search-scope.mjs';
 import { searchOnlyPreviewIndexedContents } from './sqlite-content-search.mjs';
 import { createBackgroundWorkSlicer } from './work-slicer.mjs';
@@ -37,7 +38,11 @@ export const SEARCH_ENGINE_IDENTITY =
     hiddenDirectories: true,
     directoryNames: [...CORE_EXCLUDED_DIRECTORY_NAMES].sort(),
     directorySuffixes: [...CORE_EXCLUDED_DIRECTORY_SUFFIXES].sort(),
-    directorySequences: CORE_EXCLUDED_DIRECTORY_SEQUENCES.map((parts) => parts.join('/')).sort()
+    directorySequences: CORE_EXCLUDED_DIRECTORY_SEQUENCES.map((parts) => parts.join('/')).sort(),
+    // 内容分类的表也必须进身份 —— 否则改了「哪些扩展名不读内容」,已建好的索引不会察觉,
+    // 旧的垃圾内容会一直留到下一次因为别的原因重建为止。
+    archiveExtensions: [...ARCHIVE_EXTENSIONS].sort(),
+    binaryExtensions: [...BINARY_EXTENSIONS].sort()
   });
 
 const ftsPhrase = (query) => `"${query.replaceAll('"', '""')}"`;

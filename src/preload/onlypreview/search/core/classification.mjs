@@ -115,6 +115,43 @@ const METADATA_ONLY_EXTENSIONS = new Set([
   '.flv'
 ]);
 
+/**
+ * 压缩包与二进制:只进元数据,内容一律不读。
+ *
+ * `classifySearchMediaType` 的兜底是 `return 'text'` —— 扩展名不认识就当文本读。那条兜底对
+ * **没列进 TEXT_EXTENSIONS 的源码扩展名**是对的(新语言不必改表就能被索引),对压缩包和二进制
+ * 却是灾难:一个 900 KB 的 `.rar` 会被整份读进来、按 UTF-8 解码成一串 U+FFFD、再切块送进
+ * trigram 与中日韩倒排。`decodeSearchText` 不做任何二进制嗅探,所以在这一步之前没有一层会拦住它。
+ *
+ * 唯一拦住过它们的是体积:`MAX_TEXT_BYTES`(1 MiB)。也就是说**大的二进制侥幸躲掉了,小的全进了
+ * 索引** —— 而小的恰恰是最多的那一类(`.pyc` / `.class` / `.o` / `.node` / 图标 / 字体)。
+ * Ral 2026-09-23:「所有的压缩包类型、二进制类型的文件后缀都应该被排除索引」。
+ *
+ * 只挡**确定**是二进制的扩展名。像 `.gltf`(JSON)、`.svg`(XML)这类看着像二进制、实际是文本的
+ * 一律不进这张表 —— 错杀一个文本扩展名,是让它从此搜不到。
+ */
+export const ARCHIVE_EXTENSIONS = new Set([
+  '.zip', '.rar', '.7z', '.gz', '.tgz', '.bz2', '.tbz', '.tbz2', '.xz', '.txz',
+  '.lz', '.lzma', '.zst', '.tzst', '.tar', '.z', '.cab', '.arj', '.lzh',
+  '.iso', '.dmg', '.pkg', '.msi', '.appx', '.deb', '.rpm',
+  '.jar', '.war', '.ear', '.apk', '.aab', '.ipa', '.crx', '.xpi', '.nupkg', '.whl', '.gem',
+  '.asar'
+]);
+
+export const BINARY_EXTENSIONS = new Set([
+  // 可执行、库与目标文件
+  '.exe', '.dll', '.so', '.dylib', '.a', '.lib', '.o', '.obj', '.bin', '.elf',
+  '.node', '.wasm', '.class', '.pyc', '.pyo', '.pyd', '.pdb', '.ilk', '.exp',
+  // 数据库与包索引
+  '.db', '.db3', '.sqlite', '.sqlite3', '.mdb', '.accdb', '.realm', '.idx', '.pack',
+  // 字体
+  '.ttf', '.otf', '.ttc', '.woff', '.woff2', '.eot',
+  // 设计稿与三维(`.gltf` 是 JSON,故意不在此)
+  '.psd', '.ai', '.sketch', '.fig', '.blend', '.fbx', '.glb',
+  // 磁盘映像、转储与其它大块二进制
+  '.dat', '.dump', '.img', '.vmdk', '.qcow2', '.swp', '.pak', '.bak'
+]);
+
 const extensionOf = (relativePath) => {
   const fileName = filenameFromPath(relativePath).toLocaleLowerCase('und');
   if (fileName === '.env' || fileName.startsWith('.env.')) return '.env';
@@ -138,6 +175,8 @@ export const classifySearchMediaType = (relativePath) => {
   if (AUDIO_EXTENSIONS.has(extension)) return 'audio';
   if (VIDEO_EXTENSIONS.has(extension)) return 'video';
   if (METADATA_ONLY_EXTENSIONS.has(extension)) return 'unknown';
+  // 兜底之前先挡确定的二进制 —— 兜底是 'text',会让它们被当文本读进索引。
+  if (ARCHIVE_EXTENSIONS.has(extension) || BINARY_EXTENSIONS.has(extension)) return 'unknown';
   return 'text';
 };
 

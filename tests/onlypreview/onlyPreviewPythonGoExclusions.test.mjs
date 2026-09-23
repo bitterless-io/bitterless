@@ -10,6 +10,11 @@ import {
   CORE_EXCLUDED_DIRECTORY_SUFFIXES,
   SEARCH_SCHEMA_VERSION
 } from '../../src/preload/onlypreview/search/core/constants.mjs';
+import {
+  ARCHIVE_EXTENSIONS,
+  BINARY_EXTENSIONS,
+  classifySearchMediaType
+} from '../../src/preload/onlypreview/search/core/classification.mjs';
 import { SEARCH_ENGINE_IDENTITY } from '../../src/preload/onlypreview/search/core/sqlite-index.mjs';
 import {
   countWorkspaceSearchEntries,
@@ -112,9 +117,65 @@ test('engine identity deterministically includes the hard policy without a schem
     hiddenDirectories: true,
     directoryNames: [...CORE_EXCLUDED_DIRECTORY_NAMES].sort(),
     directorySuffixes: [...CORE_EXCLUDED_DIRECTORY_SUFFIXES].sort(),
-    directorySequences: CORE_EXCLUDED_DIRECTORY_SEQUENCES.map((parts) => parts.join('/')).sort()
+    directorySequences: CORE_EXCLUDED_DIRECTORY_SEQUENCES.map((parts) => parts.join('/')).sort(),
+    // 内容分类的表也在身份里(Ral 2026-09-23:「所有的压缩包类型、二进制类型的文件后缀都应该被
+    // 排除索引」)。不放进来的话,改了「哪些扩展名不读内容」,已经建好的索引不会察觉 ——
+    // 旧的二进制垃圾会一直留到下一次因为别的原因重建为止。身份正是"不动 schema 版本也能让旧索引
+    // 失效"的那个机制,这类策略变更本来就该走它。
+    archiveExtensions: [...ARCHIVE_EXTENSIONS].sort(),
+    binaryExtensions: [...BINARY_EXTENSIONS].sort()
   });
   assert.equal(SEARCH_SCHEMA_VERSION, 8);
+});
+
+/**
+ * Ral 2026-09-23:「帮我检查一下 RAR 文件是否被排除索引。所有的压缩包类型、二进制类型的文件
+ * 后缀都应该被排除索引。」
+ *
+ * 检查的结果是:原来**没有**被排除。`classifySearchMediaType` 的兜底是 `return 'text'`,
+ * 而 `decodeSearchText` 不做二进制嗅探 —— 所以一个 1 MiB 以内的 .rar 会被整份读进来、解码成
+ * 一串 U+FFFD、再切块送进 trigram 与中日韩倒排。只有超过 MAX_TEXT_BYTES 的才因为体积躲掉。
+ */
+test('archives and binaries are metadata-only, while text-ish formats keep their content indexed', () => {
+  for (const name of [
+    'a.rar', 'a.zip', 'a.7z', 'a.tar', 'a.tgz', 'a.gz', 'a.xz', 'a.zst',
+    'a.jar', 'a.apk', 'a.dmg', 'a.iso', 'a.deb', 'a.whl', 'a.asar'
+  ]) {
+    assert.equal(classifySearchMediaType(name), 'unknown', `${name} 必须只进元数据`);
+  }
+  for (const name of [
+    'a.exe', 'a.dll', 'a.so', 'a.dylib', 'a.o', 'a.bin', 'a.node', 'a.wasm',
+    'a.class', 'a.pyc', 'a.sqlite', 'a.db', 'a.ttf', 'a.woff2', 'a.psd', 'a.img'
+  ]) {
+    assert.equal(classifySearchMediaType(name), 'unknown', `${name} 必须只进元数据`);
+  }
+  // 看着像二进制、其实是文本的,一个都不许误伤 —— 错杀一个文本扩展名就是让它从此搜不到。
+  assert.equal(classifySearchMediaType('scene.gltf'), 'text', '.gltf 是 JSON');
+  assert.equal(classifySearchMediaType('notes.md'), 'text');
+  assert.equal(classifySearchMediaType('main.rs'), 'text');
+  // 兜底仍然是 text:没列进表的源码扩展名不该因为这次改动而丢掉内容索引。
+  assert.equal(classifySearchMediaType('main.somenewlang'), 'text');
+});
+
+/**
+ * Ral 2026-09-23:「tmp/ Temp 需要排除被索引」。
+ *
+ * 原来只有 per-workspace 配置里的 `tmp/**` 挡着它 —— 也就是说**没有那份配置的工作区不受保护**。
+ * 现在进了硬策略,且按小写比对:`Temp` / `TMP` 与 `tmp` 是同一个目录意图,而 macOS 的卷默认
+ * 大小写不敏感,只认小写等于漏掉一半写法。
+ */
+test('tmp and Temp are excluded by the hard policy, in any casing', () => {
+  const policy = createTraversalPolicy({});
+  for (const path of [
+    'tmp/scratch.txt', 'Temp/scratch.txt', 'TMP/scratch.txt', 'tEmP/scratch.txt',
+    'nested/tmp/scratch.txt', 'nested/Temp/deep/scratch.txt'
+  ]) {
+    assert.equal(policy.isExcludedFilePath(path), true, `${path} 必须被硬策略排除`);
+  }
+  // 名字里含 tmp 但不是 tmp 目录的,不许误伤。
+  assert.equal(policy.isExcludedFilePath('tmpfile.txt'), false);
+  assert.equal(policy.isExcludedFilePath('src/tmpl/index.ts'), false);
+  assert.equal(policy.isExcludedFilePath('templates/index.ts'), false);
 });
 
 test('traversal and counting prune dependency bodies while retaining ordinary source and same-named files', async () => {

@@ -60,7 +60,9 @@ export const createTraversalPolicy = ({ rules = [] } = {}) => {
     searchDirectorySegments(relativePath, isDirectory).some(
       (segment, index, segments) =>
         segment.startsWith('.') ||
-        CORE_EXCLUDED_DIRECTORY_NAMES.has(segment) ||
+        // 名字表按小写比对:`Temp` / `TMP` / `Node_Modules` 和小写写法是同一个目录意图,
+        // 而 macOS 的卷默认就是大小写不敏感的 —— 只认小写等于漏掉一半写法(Ral 2026-09-23)。
+        CORE_EXCLUDED_DIRECTORY_NAMES.has(segment.toLocaleLowerCase('und')) ||
         CORE_EXCLUDED_DIRECTORY_SUFFIXES.some((suffix) => segment.endsWith(suffix)) ||
         CORE_EXCLUDED_DIRECTORY_SEQUENCES.some((sequence) =>
           sequence.every((part, offset) => segments[index + offset] === part)
