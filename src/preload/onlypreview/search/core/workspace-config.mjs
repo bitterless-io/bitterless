@@ -6,6 +6,15 @@ import { isAbsolute, join, relative, sep } from 'node:path';
 import { parse } from 'yaml';
 
 import { compileOrderedGlobRules } from './glob-config.mjs';
+import {
+  WORKSPACE_CONFIG_DIRECTORIES,
+  WORKSPACE_CONFIG_FILE_NAME,
+  WORKSPACE_CONFIG_RELATIVE_PATH
+} from './workspace-config-location.mjs';
+
+// 位置常量的唯一来源是 `workspace-config-location.mjs`(main 也 import 它);这里原样再导出,
+// 免得每个调用方都要知道它被拆到了哪个文件。
+export { WORKSPACE_CONFIG_DIRECTORIES, WORKSPACE_CONFIG_RELATIVE_PATH };
 
 /**
  * 放预览配置的目录名。**这两个值是本仓与 micromeet-cowork 之间唯一的差异**(其余代码逐字节相同)。
@@ -16,10 +25,6 @@ import { compileOrderedGlobRules } from './glob-config.mjs';
  *
  * 本模块**只读不写**,所以没有"写哪一个"的问题;人愿意的话可以自己把目录改名过去。
  */
-export const WORKSPACE_CONFIG_DIRECTORIES = ['.bitterless'];
-const WORKSPACE_CONFIG_FILE_NAME = 'preview-config.yml';
-/** 主名字下的相对路径 —— 对外仍然只暴露一个,给不关心回落的调用方。 */
-export const WORKSPACE_CONFIG_RELATIVE_PATH = `${WORKSPACE_CONFIG_DIRECTORIES[0]}/${WORKSPACE_CONFIG_FILE_NAME}`;
 const MAX_CONFIG_BYTES = 256 * 1024;
 
 /**

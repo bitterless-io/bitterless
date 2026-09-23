@@ -56,6 +56,7 @@ import { onlyPreviewBookmarksService } from '@main/miniapps/onlypreview/onlyPrev
 import { showOnlyPreviewBookmarkMenu } from '@main/miniapps/onlypreview/onlyPreviewBookmarkMenu.service';
 import { openOnlyPreviewRecent, navigateOnlyPreviewRecent, reloadOnlyPreview, openOnlyPreviewMarkdownLink } from '@main/miniapps/onlypreview/onlyPreviewRecentNavigation.service';
 import { presentOnlyPreviewRestoredSelection } from '@main/miniapps/onlypreview/onlyPreviewRestoreSelection.service';
+import { ensureOnlyPreviewWorkspaceConfig } from '@main/miniapps/onlypreview/onlyPreviewWorkspaceConfigScaffold.service';
 import * as projectIndex from '@main/miniapps/onlypreview/onlyPreviewProjectIndexState.service';
 import {
   onlyPreviewPreviewRegionService,
@@ -114,6 +115,10 @@ onlyPreviewRecentDirectoryService.configureTargetRuntime({
   inspectTarget: async (absoluteTarget) =>
     await fileSearchWindowService.inspectTarget(absoluteTarget),
   bindWorkspace: async (hostToken, workspace) => {
+    // 先把配置目录落到盘上,再绑定。顺序是刻意的:绑定之后索引就开始按配置走,而这一步
+    // 只在文件不存在时写一份空白配置 —— 早一步落盘,人第一次打开就能看到那个文件。
+    // 失败一律不影响打开(只读介质、没有写权限、同名普通文件都只是"这次没建成")。
+    await ensureOnlyPreviewWorkspaceConfig(workspace.displayPath);
     const binding = await fileSearchWindowService.bindProjectWorkspace({
       workspaceId: workspace.workspaceId,
       rootPath: workspace.displayPath
