@@ -733,6 +733,10 @@ export interface OnlyPreviewApi {
   showFileContextMenu(
     params: OnlyPreviewHostRequest &
       OnlyPreviewFileRef & {
+        // The clicked row's kind, so the template can be built without a round trip into the
+        // fileSearch runtime — the shell already knows it, and every menu item re-authorizes on
+        // click anyway. Anything but 'directory' is read as 'file', the smallest menu.
+        nodeKind?: 'file' | 'directory';
         // The tree selection, so Delete can act on all of it when the clicked row is part of it.
         // Only the shell knows which rows are selected, and Main re-validates every entry.
         selection?: { relativePath: string; nodeKind: 'file' | 'directory' }[];

@@ -2098,21 +2098,16 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     const nav = wc.navigationHistory
     const owner = this.ownerOfWebContents(wc)
     const historyLocked = owner?.kind !== 'browser'
-    const sections: MenuItemConstructorOptions[][] = [
-      [
-        { label: 'Back', enabled: !historyLocked && nav.canGoBack(), click: () => void this.goBack() },
-        { label: 'Forward', enabled: !historyLocked && nav.canGoForward(), click: () => void this.goForward() },
-        { label: 'Reload', click: () => wc.reload() }
-      ]
-    ]
+    // 先算「这一右击落在了什么目标上」。导航段要不要出现,由这里的结果决定,所以它必须先算完。
+    const targetSections: MenuItemConstructorOptions[][] = []
     if (params.linkURL) {
-      sections.push([
+      targetSections.push([
         { label: 'Open link in new tab', click: () => void this.openTabWithUrl(params.linkURL) },
         { label: 'Copy link address', click: () => clipboard.writeText(params.linkURL) }
       ])
     }
     if (params.mediaType === 'image' && params.srcURL) {
-      sections.push([
+      targetSections.push([
         { label: 'Open image in new tab', click: () => void this.openTabWithUrl(params.srcURL) },
         { label: 'Save image as…', click: () => wc.downloadURL(params.srcURL) },
         { label: 'Copy image', click: () => wc.copyImageAt(params.x, params.y) },
@@ -2121,15 +2116,42 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     }
     if (params.isEditable) {
       const flags = params.editFlags
-      sections.push([
+      targetSections.push([
         { label: 'Cut', enabled: flags.canCut, click: () => wc.cut() },
         { label: 'Copy', enabled: flags.canCopy, click: () => wc.copy() },
         { label: 'Paste', enabled: flags.canPaste, click: () => wc.paste() },
         { label: 'Select all', enabled: flags.canSelectAll, click: () => wc.selectAll() }
       ])
     } else if (params.selectionText) {
-      sections.push([{ label: 'Copy', click: () => wc.copy() }])
+      targetSections.push([{ label: 'Copy', click: () => wc.copy() }])
     }
+    /**
+     * 导航段只属于**页面**上下文 —— 这是 Chrome 的规矩,也是 Ral 2026-09-23 指的那条:
+     * 「可以 open in new tab 的时候不该显示 back 和 reload forward」。右击落在链接、图片、选区或
+     * 输入框上时,那是**那个目标**的菜单,Chrome 一项导航都不给。
+     *
+     * 判据取「我们有没有为这次右击给出目标段」,而不是逐个去问 `params` 的字段。两者在链接/图片/
+     * 选区上是同一件事,区别在**我们没有实现条目的那些目标**(video / audio / canvas):按字段判会
+     * 得到一个空菜单,按段判则退回页面菜单 —— 与今天的行为一致。补齐媒体条目是另一件事。
+     *
+     * **mini app 与网页在这里分开**(Ral 同一句:「但是要和 mini APP 做区分」):mini app 不是网页,
+     * 它没有可回退的浏览历史,Back / Forward 在它身上永远是灰的 —— 与其摆两个永远点不动的条目,
+     * 不如不给。重新加载对它仍然成立,所以留着。
+     */
+    const sections: MenuItemConstructorOptions[][] = []
+    if (!targetSections.length) {
+      const reload: MenuItemConstructorOptions = { label: 'Reload', click: () => wc.reload() }
+      sections.push(
+        historyLocked
+          ? [reload]
+          : [
+              { label: 'Back', enabled: nav.canGoBack(), click: () => void this.goBack() },
+              { label: 'Forward', enabled: nav.canGoForward(), click: () => void this.goForward() },
+              reload
+            ]
+      )
+    }
+    sections.push(...targetSections)
     if (is.dev && owner?.kind === 'browser') {
       sections.push([{ label: 'Inspect', click: () => wc.inspectElement(params.x, params.y) }])
     }

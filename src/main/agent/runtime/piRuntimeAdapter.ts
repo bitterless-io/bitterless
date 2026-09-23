@@ -9,6 +9,7 @@ import { applyPiSessionPolicy, PiRuntimeSession, type PiSession } from './piRunt
 import { resolveRuntimeToolPolicy } from './runtimeSessionPolicy'
 import { createInterruptibleBash } from './piInterruptibleBash'
 import { resolveRuntimeSystemPrompt } from './runtimeSystemPrompt'
+import { registerBitterlessProvider } from './bitterlessProvider'
 
 // pi is ESM-only; dynamic imports keep the Electron CJS main bundle loadable.
 /**
@@ -35,7 +36,14 @@ const createModelRuntime = async (
   authPath: string,
   modelsPath?: string,
   options?: { refreshOnCreate?: boolean }
-) => await pi.ModelRuntime.create({ authPath, modelsPath, ...options })
+) => {
+  const runtime = await pi.ModelRuntime.create({ authPath, modelsPath, ...options })
+  // `bitterless` provider 在这里注册,而不是在 `createSession` 里 —— `checkTarget()` 也建 runtime,
+  // 只在建会话时注册会让"这个 target 可用吗"对 Bitterless 永远答 false,UI 上表现为模型灰着
+  // 但点下去又能跑(或反过来)。baseUrl 与会话 token 都是运行时值,每次建 runtime 重注册一次。
+  await registerBitterlessProvider(runtime as unknown as Parameters<typeof registerBitterlessProvider>[0])
+  return runtime
+}
 
 export class PiRuntimeAdapter implements AgentRuntimeAdapter {
   async checkTarget(params: { providerId: string; modelId: string; authPath: string; modelsPath?: string }): Promise<boolean> {

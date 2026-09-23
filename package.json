@@ -1,6 +1,6 @@
 {
   "_name": "Bitterless",
-  "_version": "0.0.125",
+  "_version": "0.0.128",
   "anydoc_version": "0.2.4",
   "bun_version": "1.3.14",
   "fd_version": "10.5.0",
@@ -195,6 +195,13 @@
     "test:skill-script": "node --test tests/maestro/skillScriptInterpreter.test.mjs",
     "test:tool-approval": "node --test tests/maestro/toolApprovalHasAButton.test.mjs",
     "test:default-workspace": "node --test tests/maestro/defaultWorkspace.test.mjs",
+    "test:inactive-chrome-hover": "node --test tests/maestro/inactiveChromeHover.test.mjs",
+    "test:content-focus-restore": "node --test tests/maestro/contentFocusRestore.test.mjs",
+    "test:drag-region-ownership": "node --test tests/app/dragRegionOwnership.test.mjs",
+    "test:release-baseline": "node --test scripts/release/publishReleaseBaseline.test.mjs",
+    "test:page-context-menu": "node --test tests/maestro/pageContextMenuSections.test.mjs",
+    "test:steering-withdraw": "node --test tests/maestro/steeringWithdraw.test.mjs",
+    "test:message-class": "node --test tests/maestro/messageEntryClass.test.mjs",
     "typecheck:skill-scopes": "tsc --noEmit -p tests/skillScopes/tsconfig.node.json && vue-tsc --noEmit -p tests/skillScopes/tsconfig.web.json"
   },
   "dependencies": {
@@ -331,6 +338,6 @@
     "rig_dev/*"
   ],
   "name": "Bitterless_PREVIEW",
-  "version": "0.0.125",
-  "version_code": "260922143524"
+  "version": "0.0.128",
+  "version_code": "260923023635"
 }

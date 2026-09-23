@@ -1445,9 +1445,10 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         return { ok: false, text: 'The previous turn stopped or failed before this message could be added.', ts: Date.now(), error: 'steer-failed' }
       }
       const delivered = await turn.steeringInbox.enqueue({ text, messageId: params.messageId, turnId: params.turnId })
-      return delivered.outcome === 'delivered'
-        ? { ok: true, text: '', ts: Date.now(), mergedIntoTurn: true }
-        : { ok: false, text: delivered.error || 'The message was not delivered.', ts: Date.now(), error: 'steer-failed' }
+      if (delivered.outcome === 'delivered') return { ok: true, text: '', ts: Date.now(), mergedIntoTurn: true }
+      // 人自己把它取回去了 —— 既不是送达也不是失败。渲染端据此**不顺延、不留失败气泡**。
+      if (delivered.outcome === 'withdrawn') return { ok: false, text: '', ts: Date.now(), error: 'steer-withdrawn' }
+      return { ok: false, text: delivered.error || 'The message was not delivered.', ts: Date.now(), error: 'steer-failed' }
     }
 
     let reply: AgentReply
@@ -1629,6 +1630,18 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       .catch(() => undefined)
     this.finishAgentTurn(turn, 'stopped')
     return { ok: true }
+  }
+
+  /**
+   * 取回这个会话里**还没送到模型手上**的排队消息(pi 的 `app.message.dequeue` 在本宿主里的落点)。
+   *
+   * 返回被取回的 `messageId` —— 正文不回传:那几条消息此刻就在渲染端的时间线上,它自己有原文。
+   */
+  async withdrawSteering(params: { sessionId?: string; messageIds?: string[] }): Promise<{ messageIds: string[] }> {
+    const turn = this.activeAgentTurns.get(this.agentSessionKey(params.sessionId))
+    if (!turn) return { messageIds: [] }
+    const taken = await turn.steeringInbox.withdraw(params.messageIds)
+    return { messageIds: taken.map(message => message.messageId).filter((id): id is string => Boolean(id)) }
   }
 
   async abortDelegate(params?: { sessionId?: string }): Promise<void> {

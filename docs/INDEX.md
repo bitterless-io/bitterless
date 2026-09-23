@@ -1,5 +1,66 @@
 # Bitterless Documentation
 
+- [新增 `bitterless` provider —— Qwen 3.8 Max / Flash 走自家 relay](features/bitterless-model-provider.md) —
+  实现完成，未在应用里跑过真实一轮。凭据不是 pi 的 OAuth，而是用户**已经登录**的 Bitterless 账号
+  会话（`customerSessionService`），所以它刻意不进 `LLM_LOGIN_PROVIDERS` —— 那张表驱动的是
+  浏览器/设备码登录，给它挂按钮只会把人送进一条不存在的流程。注册点在 `createModelRuntime()`
+  而不是 `createSession()`：`checkTarget()` 也建 runtime，只在建会话时注册会让"这个 target 可用吗"
+  对它永远答 false。预设排在 Codex **之后**，因为 `normalizeLlmTarget()` 的最后兜底是
+  `LLM_PRESETS[0]` —— 排前面会把默认模型从 Astra 悄悄换成 Qwen Max。
+  服务端见 `bitterless-private` 的 `docs/features/bailian-qwen-relay.md`。
+
+- [技能云同步一失败，每一条聊天都发不出去](issues/skill-cloud-sync-failure-blocks-chat.md) —
+  fixed 2026-09-22；owner testing pending。在 micromeet-cowork 的生产环境被报上来，这边是同一类缺陷 ——
+  `ensureCatalog()` 只要首次云同步落在 `error` 就抛，而它的三个调用方全在聊天路径上
+  （`maestroAgent.service.ts:1162/2085/2107`），一次坏往返就把所有消息都杀了，不只是机构技能。
+  往返证明的是**新鲜度**：真正把机构技能摸掉的是 401/403 → `unauthorized` → `resetAuthorization`，
+  那条围栏原封不动；`error` 只意味着陈旧，陈旧就照盘上的答。Workbench 什么都没丢 ——
+  `skillCatalog()` 早就把 `cloudStatus` / `cloudError` 带在快照上。失败后不按每条消息重试，
+  回收交给 60 s 定时器、窗口获焦和 session/scope 变更。Paired with `micromeet-cowork`。
+
+- [右键菜单要等索引线程才弹,重命名保存要等一次全量重建](issues/onlypreview-context-menu-and-rename-wait-on-the-index-thread.md) —
+  fixed 2026-09-23;owner testing pending。索引引擎跑在隐藏 fileSearch 渲染进程的主线程上,而那条线程
+  同时应答 Main 的每一次授权 RPC:菜单弹出前的 `authorizeItem` 就排在它后面,清 8,000 行索引时那条线程
+  一口气停住 **6.4 秒**(实测,20ms 探针整段只落 11 次)。五条:菜单改成带 `nodeKind` 直接弹、
+  改名保存从 `refreshIndex()`(整库重建)换成只重列父目录、开编辑器前 Main 先把键盘焦点交给 shell 视图、
+  `PATH_NOT_FOUND` 给一条自己的文案、`forgetPathsIndexed` 的批处理循环让步(6,362 ms → 137 ms,
+  清理本身 +17%)。顺带发现删除收尾 `settleDeletedEntries()` 也在做全量重建,一并改掉。
+  菜单与 store 两处没有自动化守卫(要起 Electron),文档里写明了。Paired with `micromeet-cowork`。
+
+- [删一个文件要等十几秒 —— 它排在索引重建后面,而且每删一次还附赠一轮全量重建](issues/onlypreview-delete-waits-behind-index-rebuilds.md) —
+  fixed 2026-09-22(复核补丁同日);owner testing pending。删除真正的活是 14 ms,却要两次穿过
+  「每库并发 1」的索引写队列,而 macOS 上每个 `fs.watch` 事件都是 `rename`,于是"路径没了"一律升级成
+  整库重建 —— 每删一次附赠一轮(真机 10–13 s)。改:两跳标 `interactive`(队列早就支持插队,
+  此前只有 `initialize` 用)+ ENOENT 分支不再因 `renameHint` 升级。**独立复核当场复现了一个回归**:
+  排除 + 重新包含 的目录被移出工作区时,子孙的索引行会滞留(树里没了、还能搜到)——
+  判据已改成"名下还有没有索引行",守卫 `onlyPreviewVanishedPathEscalation.test.mjs`。
+  残留:150 s 上限没被关掉(队列不抢占,一次在途 fresh 重建 211 s)。
+  全过程与实测:`areas/agent-runtime/preview/deleting-process.html`。Paired with `micromeet-cowork`。
+
+- [去掉 `type: 'error'` —— 两仓的消息类型统一到 cowork](issues/error-card-type-removed-aligning-with-cowork.md) —
+  implemented 2026-09-22；owner testing pending。Ral:「type error 是没有必要的,以 cowork 为准」。
+  `ChatMessage.type` 从 7 个收成 6 个,失败改用 cowork 的 `type: 'text' + error: true`,正文自己说明失败;
+  `ChatErrorCard` / `errorCard` 落库字段 / 卡片与全文弹窗四个文件一并删除。**保留** `pushErrorCard()`
+  作为所有失败路径的唯一出口(2026-09-10 那条决定),`errorCard.service` 从"造卡"改成"拼正文"。
+  老库里的 `type: 'error'` 行在读回时归一,不迁移文件。分面 typecheck 与基线逐条一致。
+
+- [取回 —— 趁排队的话还没送到模型手上，把它拿回输入框](features/steering-take-back.md) —
+  implemented 2026-09-22；owner testing pending。auto-steer.html #7 三方对照里的「缺口 1」:pi 自己的 TUI
+  早就有(`app.message.dequeue`,默认 alt+up,「Restore queued messages」→ `clearQueue()` 整批回编辑器),
+  两仓都没有 —— 人反悔只能停整轮。现在状态条那一行右侧多一个无边框的 **取回**:把 pi 队列里还没投出去的
+  整批拿回来、时间线上那几条当场摘掉、正文按 pi 的顺序(取回的在前、正在打的在后)回到输入框。
+  **已经送到模型那里的不算取回** —— 那条留着等它自己的回执。回执是第三种结果 `withdrawn`,
+  既不是 delivered 也不是 failed(混进 failed 会让渲染端把它顺延成下一个回合,等于替人重发)。
+  守卫 `tests/maestro/steeringWithdraw.test.mjs`(`yarn test:steering-withdraw`)。
+  Paired with `micromeet-cowork`。
+
+- [steering 留痕在消息送达之后还挂着「已加入当前轮次」](issues/steering-label-outlives-the-delivery.md) —
+  fixed 2026-09-22；owner testing pending。送达之后那一行会一直挂到回合结束，而回合可以再跑几小时
+  （钻探），于是屏幕上长时间停着一个早就不成立的状态。改成**只在投递中**说话，送达的确认交给时间线上
+  那条不再 `promptExcluded` 的消息。姊妹仓那条缺陷的主因（`continueAfterTurn` 缺归属判断，路人会话被
+  灌进 `[继续钻探]`）**本仓不存在** —— `drillTools.host.ts` 早就有那道闸，已核实，未改。
+  Paired with `micromeet-cowork`。
+
 - [发消息之后最后一条被顶出视野 —— 状态条是在滚动**之后**才出现的](issues/status-bar-appearing-pushes-the-last-message-out-of-view.md) —
   fixed 2026-09-22；owner testing pending。与 `micromeet-cowork` 同形同修：状态条变高只缩小列表可视高度、
   且**不触发 `scroll` 事件**，于是 `stickToBottom` 不被重算、也没人补滚；修法是根元素挂 `ResizeObserver`，

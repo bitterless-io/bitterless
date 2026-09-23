@@ -74,8 +74,11 @@ const pump = (key, queue) => {
  * 任务抛错只影响它自己:每个任务持有自己的 resolve/reject,所以一次失败的重建不会让后面所有
  * 任务连锁失败 —— 那会让一次偶发错误变成索引永久不再更新。
  *
- * `interactive` 表示「有人正在等这件事做完」。目前只有 `initialize` 打开它:用户点开 workspace
- * 时盯着的就是它。后台的 reconcile、删除清理一律不打开。
+ * `interactive` 表示「有人正在等这件事做完」。打开它的只有两处:`initialize` —— 用户点开
+ * workspace 时盯着的就是它;以及删除的两跳 `begin-delete-task` / `finish-delete-task` ——
+ * 用户正盯着一个没有关闭按钮的进度条,而删除真正的活只有 14 毫秒,排在一轮重建后面就是十几秒
+ * (docs/issues/onlypreview-delete-waits-behind-index-rebuilds.md)。watcher 触发的 reconcile、
+ * 启动时补做的删除日志恢复一律不打开:那两件事背后没有人在等。
  */
 export const submitIndexTask = async (databasePath, name, operation, { interactive = false } = {}) => {
   const key = String(databasePath ?? '');

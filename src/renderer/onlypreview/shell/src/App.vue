@@ -11,7 +11,8 @@
       class="onlypreview-shell__menu-bar"
       :class="{
         'onlypreview-shell__menu-bar--mac': isMac && ownsWindow,
-        'onlypreview-shell__menu-bar--windows': isWindows && ownsWindow
+        'onlypreview-shell__menu-bar--windows': isWindows && ownsWindow,
+        'onlypreview-shell__menu-bar--embedded': !ownsWindow
       }"
       @dblclick="handleMenuBarDoubleClick"
     >
@@ -683,6 +684,10 @@ const reportPreviewBounds = (): void => {
 
 const handleMenuBarDoubleClick = (event: MouseEvent): void => {
   if ((event.target as HTMLElement).closest('.onlypreview-shell__menu-actions')) return;
+  // 装在别人的 tab 里时不碰宿主窗口 —— 与 `--embedded` 的 `no-drag` 同一条契约:嵌入的 chrome
+  // 不是那扇窗的标题栏,不拖它也不最大化它
+  // (docs/issues/a-hidden-view-keeps-its-drag-region-and-eats-clicks.md)。
+  if (!ownsWindow) return;
   void onlyPreviewShellStore.toggleMaximizeWindow();
 };
 

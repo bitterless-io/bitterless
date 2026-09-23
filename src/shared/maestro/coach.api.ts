@@ -117,6 +117,10 @@ export interface CoachXpcContract {
   // Stop the in-flight turn for a chat channel (the Stop button): aborts the live pi session so
   // the pending turn resolves. The agent session is then dropped so aborted output is not carried
   // into later model context.
+  // Take back the queued messages the model has not seen yet (pi's own TUI binds this to
+  // `app.message.dequeue`). Returns the message IDs that came back; the text stays with the
+  // renderer, which already holds it in the timeline.
+  withdrawSteering(params: { sessionId: string; messageIds?: string[] }): Promise<{ messageIds: string[] }>
   abortAgent(params: { sessionId: string; turnId: string }): Promise<{ ok: true }>
   abortDelegate(params?: { sessionId?: string }): Promise<void>
   listTasks(): Promise<MaestroTask[]>

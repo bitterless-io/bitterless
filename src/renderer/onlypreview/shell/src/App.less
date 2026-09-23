@@ -75,6 +75,19 @@ select {
   padding-left: 78px;
 }
 
+/**
+ * 装在 Cowork/Maestro 的一格 tab 里时,这条 chrome **不是**那扇窗的标题栏。
+ *
+ * 不只是「拖内容去移动宿主窗口不对」。Electron 把每一个挂进窗口的 `WebContentsView` 都注册成
+ * draggable-region provider,而 `NativeWindow::NonClientHitTest()` 会把它们**全部**问一遍 ——
+ * 不看可见性,也不看 z 序。所以这条 32px 的 drag 区在这一格被 `setVisible(false)` 之后仍然认领
+ * 操作区顶部那 32px:点不动,但拖得动,正是 Ral 2026-09-22 报的那条「透明 menu bar」。
+ * 见 docs/issues/a-hidden-view-keeps-its-drag-region-and-eats-clicks.md。
+ */
+.onlypreview-shell__menu-bar--embedded {
+  -webkit-app-region: no-drag;
+}
+
 .onlypreview-shell__identity,
 .onlypreview-shell__menu-actions {
   display: flex;

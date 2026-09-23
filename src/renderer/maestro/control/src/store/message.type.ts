@@ -26,17 +26,25 @@ export interface ChatFile {
 }
 
 /** 时间线上的错误卡。`detail` 是全文,只在弹窗里显示。 */
-export interface ChatErrorCard {
-  title: string
-  subtitle?: string
-  detail: string
+/** 队列里那一条:只有投递要用的三样。 */
+export interface PendingSteering {
+  /** 与 main 那边的 `messageId` 是同一个 —— 取回/送达都按它对上。 */
+  id: string
+  text: string
+  ts: number
 }
 
 export interface ChatMessage {
   id: string
   source: MessageSource
   role: MessageRole
-  type?: 'text' | 'files' | 'compact' | 'task' | 'confirm' | 'error' | 'decision'
+  type?: 'text' | 'files' | 'compact' | 'task' | 'confirm' | 'decision'
+  /**
+   * **这是哪一种非普通条目** —— 照 pi 的 `customType` 做(`core/session-manager.d.ts`)。
+   * 它回答「是什么业务条目」,而 `type` 回答「渲染成什么形态」。
+   * 判类的单一出口在 `messageClass.ts`(`entryClass()`)。
+   */
+  customType?: import('./messageClass').MessageCustomType
   /**
    * `type: 'error'` 那张卡的内容(Ral 2026-09-10)。
    *
@@ -45,7 +53,6 @@ export interface ChatMessage {
    * 卡片给出三样:一行标题(是什么坏了)、一行副标题(在哪一步)、以及全文按需展开 ——
    * 全文往往是几十行栈,直接铺在时间线上会把上下文顶掉。
    */
-  errorCard?: ChatErrorCard
   content: string
   files?: ChatFile[]
   skill?: SkillSummary
@@ -65,6 +72,13 @@ export interface ChatMessage {
   decision?: AgentDecisionRequest & { picked?: string[][]; cancelled?: boolean }
   compressed?: boolean
   promptExcluded?: boolean
+  /**
+   * 这条人类消息**排在队里、模型还没看见**(回合内 steering)。真值期间它气泡下面挂一个
+   * 「取回」按钮 —— 送达、失败、或被取回之后立刻清掉,按钮随之消失。
+   *
+   * 与 `promptExcluded` 分开:那个还会被失败、被停止、被压缩排除等好几条路径置位。
+   */
+  steeringPending?: boolean
   /** Renderer-only notice; exclude it from every session save. */
   localOnly?: boolean
   compactSummary?: string
@@ -115,6 +129,16 @@ export interface Turn {
     pending: boolean
     pendingCount?: number
   }
+  /**
+   * **最近一次「人插话」事件** —— 状态行拿它压过正在显示的那一档
+   * (Ral 2026-09-22:「反正就是触发显示什么状态都会覆盖之前的状态 …… 如果现在是 thinking
+   * 触发了 steering 就显示 steering,queueing 亦然」)。
+   *
+   * `queueing` = 排进去了、模型还没看见;`steering` = 已经并入当前回合。
+   * **下一条 agent 事件把它清掉**(活动行 / 流式增量 / thinking 翻面),所以它天然是
+   * 「最后触发的那个赢」。
+   */
+  steeringEvent?: { kind: 'queueing' | 'steering'; at: number }
 }
 
 export interface MessageSession {
@@ -128,6 +152,16 @@ export interface MessageSession {
   placeholder: string
   allowFiles: boolean
   messages: ChatMessage[]
+  /**
+   * **还没送到模型手上的那几条**(回合内 steering)。
+   *
+   * 照 pi 做(`overmind:areas/agent-runtime/chat/message-types.html` #3 建议 3):pi 里未投递的
+   * steering **根本不是 entry** —— 它在队列里,**投递那一刻**才成为条目。原来两仓是「当场建一条
+   * 消息 + 标 `promptExcluded`,送达后翻面」,于是"它算不算数"变成一个每条路径都要记得维护的状态。
+   *
+   * 界面不变:`messageStore.visibleMessages()` 把它投影在时间线末尾,取回按钮照挂。**不落库**。
+   */
+  pendingSteering?: PendingSteering[]
   detail: MaestroChatDetail
   contextUsage: ChatContextUsage
   turn?: Turn

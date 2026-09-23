@@ -3,7 +3,9 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import MarkdownRender from 'markstream-vue'
 import { Trigger } from '@arco-design/web-vue'
 import { createXpcRendererEmitter } from 'electron-xpc/renderer'
-import { IconActivity, IconDotsVertical, IconExternalLink, IconFolderOpen, IconSparkles } from '@tabler/icons-vue'
+import { IconActivity, IconArrowBackUp, IconDotsVertical, IconExternalLink, IconFolderOpen, IconSparkles } from '@tabler/icons-vue'
+import IconBtn from '../../../common/components/IconBtn/IconBtn.vue'
+import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
 import { messageStore } from './store/message.store'
 import type { AgentActivityStep, CoachXpcContract, FileStatusResult } from '@maestro-shared/coach.api'
 import {
@@ -13,13 +15,36 @@ import {
 import type { ChatFile, ChatMessage } from './store/message.type'
 import AttachmentCard from './AttachmentCard.vue'
 import ChatConfirm from './task/ChatConfirm.vue'
-import ChatErrorCard from './task/ChatErrorCard.vue'
 import TaskPart from './task/TaskPart.vue'
 import { dismissMarkdownLinkTooltip } from './markdownLinkTooltip.service'
 import './MessageItem.less'
 
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
 const props = defineProps<{ message: ChatMessage }>()
+
+/**
+ * **取回**(pi 的 `app.message.dequeue`,默认 alt+up:「Restore queued messages」)。
+ *
+ * 按钮挂在**这条消息自己的 footer** 上(Ral 2026-09-22:「人工发送的消息底部需要有个 footer,
+ * 对于可以 take back 的消息,footer 下要显示一个撤回的 iconbtn」)—— 一条一条地取。
+ * 判据只有 `steeringPending`,再加一个"回合还在"。
+ */
+const canWithdraw = computed(() => {
+  if (!props.message.steeringPending) return false
+  return Boolean(messageStore.getSession(messageStore.activeSessionId)?.turn)
+})
+const withdrawing = ref(false)
+const withdraw = async (): Promise<void> => {
+  if (withdrawing.value) return
+  withdrawing.value = true
+  try {
+    const sessionId = messageStore.activeSessionId
+    const texts = await messageStore.turnService.withdrawSteering(sessionId, [props.message.id])
+    if (texts.length) messageStore.composerRestore = { sessionId, text: texts.join('\n\n'), at: Date.now() }
+  } finally {
+    withdrawing.value = false
+  }
+}
 // 正文里的 `绝对路径[:行号]` 在这里被改写成引用链接(双击预览)。只关心**显示**,所以放在渲染前
 // 的最后一步;代码块、行内代码、已有链接由 `linkifyOnlyPreviewReferences` 自己避开。
 const displayContent = computed(() => linkifyOnlyPreviewReferences(props.message.content || ''))
@@ -63,7 +88,6 @@ const isTaskRow = computed(() => props.message.type === 'task')
 const isConfirmRow = computed(() => props.message.type === 'confirm')
 // 错误卡与 task/confirm 同级:它是一张**行卡**,不是气泡里的一段文字 ——
 // 混在气泡里就只是一行红字,那正是 Ral 2026-09-10 说的「没展示出来」。
-const isErrorRow = computed(() => props.message.type === 'error')
 // 「刚被跳到的是不是我」—— **读 store,不在本组件里存第二份**。存副本就要自己接一个
 // watch 去清它,而清晚一帧就是两行同时在闪:哪条在闪只能有一个真相。
 const isJumped = computed(() => messageStore.highlightMessageId === props.message.id)
@@ -75,7 +99,7 @@ const messageSkills = computed(() => {
 
 const showBubble = computed(() => {
   const m = props.message
-  if (isTaskRow.value || isConfirmRow.value || isErrorRow.value) return false
+  if (isTaskRow.value || isConfirmRow.value) return false
   if (m.role !== 'ai') return true
   return (
     Boolean(m.content) ||
@@ -214,14 +238,13 @@ watch(artifactPathKey, () => void refreshFileStatuses(), { immediate: true })
       class="message-item__content"
       :class="{
         'message-item__content--human': isMaestroHuman(props.message),
-        'message-item__content--timeline': isTaskRow || isConfirmRow || isErrorRow
+        'message-item__content--timeline': isTaskRow || isConfirmRow
       }"
     >
       <div v-if="isTaskRow" name="messageItem__tasks" class="message-item__tasks">
         <TaskPart v-for="part in taskParts" :key="part.taskId" :part="part" />
       </div>
       <ChatConfirm v-else-if="isConfirmRow" :message="props.message" />
-      <ChatErrorCard v-else-if="isErrorRow" :message="props.message" />
       <div
         v-else-if="showBubble"
         name="messageItem__bubble"
@@ -357,6 +380,15 @@ watch(artifactPathKey, () => void refreshFileStatuses(), { immediate: true })
           </div>
           <div v-else name="messageItem__text" class="message-item__text">{{ props.message.content }}</div>
         </template>
+      </div>
+      <!-- 消息自己的 footer。目前只有一件事:这条排队的话还没送到模型手上 → 可以取回。 -->
+      <div v-if="canWithdraw" name="messageItem__footer" class="message-item__footer">
+        <IconBtn
+          :title="i18nHelper.maestroControl.responseStatus.takeBack"
+          :aria-label="i18nHelper.maestroControl.responseStatus.takeBack"
+          :disabled="withdrawing"
+          @click="withdraw"
+        ><IconArrowBackUp :size="14" /></IconBtn>
       </div>
     </div>
   </div>

@@ -47,7 +47,10 @@ export interface BaseAgentPromptOptions {
  * - `delivered` —— 已把原话交给**当前**那个活会话,它是这个回合的一部分,没有自己的回复。
  * - `failed` —— 有活跃回合但投递失败;回合本身**没有被动过**。
  */
-export type BaseAgentSteerOutcome = 'idle' | 'delivered' | 'failed'
+// 'withdrawn' = 人自己把这条排队消息取回去了(TurnSteeringInbox.withdraw)。它既不是送达也不是
+// 失败,调用方要能分辨 —— 混进 'failed' 会让渲染端把一条被取回的消息顺延成下一个回合,等于替人
+// 重发了他刚拿回去的话。
+export type BaseAgentSteerOutcome = 'idle' | 'delivered' | 'failed' | 'withdrawn'
 
 export interface BaseAgentSteerResult {
   outcome: BaseAgentSteerOutcome

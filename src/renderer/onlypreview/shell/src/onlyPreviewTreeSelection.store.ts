@@ -202,6 +202,9 @@ export const showOnlyPreviewTreeContextMenu = async (entry: {
         hostToken,
         workspaceId,
         relativePath: entry.relativePath,
+        // Main used to ask the index runtime what this row was, and the menu waited on that answer.
+        // The row is drawn from this kind, so it travels with the request instead.
+        nodeKind: entry.nodeKind === 'directory' ? 'directory' : 'file',
         selection: onlyPreviewTreeSelection.entries()
       })
     );

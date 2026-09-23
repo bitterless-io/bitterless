@@ -25,6 +25,7 @@ import {
   type OnlyPreviewProjectAuthorityRef
 } from './onlyPreviewWorkspace.registry';
 import { onlyPreviewPreviewRegionService } from './views/onlyPreviewPreviewRegion.service';
+import { onlyPreviewWindowHelper } from '@main/windows/onlyPreviewWindow.helper';
 import {
   ONLY_PREVIEW_PROJECT_DELETE_EVENT,
   ONLY_PREVIEW_PROJECT_RENAME_EVENT,
@@ -44,6 +45,28 @@ const MAX_MENU_SELECTION = 1_000;
 
 const fillLabel = (template: string, values: Record<string, string>): string =>
   template.replace(/\{(\w+)\}/gu, (match, key: string) => values[key] ?? match);
+
+/**
+ * 保存失败的原因,分开说。
+ *
+ * `renameProjectEntry` 本来就把「目标已不存在」(`PATH_NOT_FOUND`)与「重名」(`NAME_EXISTS`)判成
+ * 两件事,只是前者一直落进兜底那条文案里 —— 于是一个已经被别处删掉的文件,报的是「可能已被移动或
+ * 修改」(Ral 2026-09-22)。选文案是纯函数,守卫直接测它。
+ */
+export const renameFailureMessage = (
+  labels: {
+    renameExistsMessage: string;
+    renameInvalidMessage: string;
+    renameMissingMessage: string;
+    renameFailureMessage: string;
+  },
+  code: string | null
+): string => {
+  if (code === 'NAME_EXISTS') return labels.renameExistsMessage;
+  if (code === 'NAME_INVALID') return labels.renameInvalidMessage;
+  if (code === 'PATH_NOT_FOUND') return labels.renameMissingMessage;
+  return labels.renameFailureMessage;
+};
 
 /**
  * What the menu's Delete acts on.
@@ -74,10 +97,21 @@ const resolveMenuSelection = (
   if (!entries.some((entry) => entry.relativePath === item.relativePath)) return [clicked];
   return entries;
 };
+
+/**
+ * 右击那一行的类型,由渲染进程带过来 —— 它画这一行时就有。
+ *
+ * 非法值按 `'file'` 处理,也就是最小的那份菜单:一个伪造的 `nodeKind` 最多让菜单多一项或少一项,
+ * 每一项点下去仍然要重新过一次授权。
+ */
+const resolveMenuNodeKind = (value: unknown): 'file' | 'directory' =>
+  value === 'directory' ? 'directory' : 'file';
+
 type ProjectItemRequestInput = {
   hostToken?: unknown;
   workspaceId?: unknown;
   relativePath?: unknown;
+  nodeKind?: unknown;
   selection?: unknown;
 };
 type ProjectRootRequest = { hostToken: string; workspaceId: string };
@@ -108,12 +142,18 @@ export class OnlyPreviewProjectNativeActionService {
       request.hostToken,
       request
     );
-    const item = await fileSearchWindowService.authorizeProjectItem({
-      workspaceId: authority.workspaceId,
-      workspaceGeneration: authority.workspaceGeneration,
-      relativePath: authority.relativePath
-    });
-    this.requireCurrentItem(authority);
+    // **菜单不再等索引。** 这里原来先打一次 `fileSearchWindowService.authorizeProjectItem()`,只为
+    // 拿 `nodeKind` 和名字 —— 而那条 RPC 要由跑着索引引擎的隐藏 fileSearch 渲染进程主线程应答,清一个
+    // 8,000 文件目录的索引时它一口气占住事件循环 6.4 秒,菜单就得等那么久才弹(Ral 2026-09-22)。
+    //
+    // 删掉它是安全的:模板只用到 `nodeKind` 和名字(名字 = 路径最后一段);每一个菜单项点下去时本来
+    // 就会重新授权一次 —— Preview / Open externally / Reveal / Copy / Rename / Delete / New Folder
+    // 无一例外;书签条的 `showBookmarkContextMenu` 一直就是这么做的,所以它从来不卡。
+    const item = {
+      relativePath: authority.relativePath,
+      name: authority.relativePath.split('/').at(-1) ?? authority.relativePath,
+      nodeKind: resolveMenuNodeKind(request.nodeKind)
+    };
     const currentRequest: ProjectItemRequest = {
       hostToken: authority.host.hostToken,
       workspaceId: authority.workspaceId,
@@ -177,7 +217,7 @@ export class OnlyPreviewProjectNativeActionService {
       // Rename edits one row's name; there is no meaning for several at once.
       enabled: menuSelection.length <= 1,
       click: () =>
-        this.requestRename(authority.host.hostId, currentRequest.workspaceId, item.relativePath)
+        this.requestRename(authority.host, currentRequest.workspaceId, item.relativePath)
     });
     template.push(
       { type: 'separator' },
@@ -237,11 +277,8 @@ export class OnlyPreviewProjectNativeActionService {
       request.hostToken,
       request.workspaceId
     );
-    await fileSearchWindowService.authorizeProjectRoot({
-      workspaceId: authority.workspaceId,
-      workspaceGeneration: authority.workspaceGeneration
-    });
-    this.requireCurrentRoot(authority);
+    // 同 `showFileContextMenu`:根目录这份模板一个字都不来自 authority,而每一项点下去都会自己再
+    // 授权一次。原来那次 `authorizeProjectRoot` 只是把菜单的出现时间绑在索引状态上。
     const labels = i18nHelper.getMessages().app.onlyPreviewFileMenu;
     const template: MenuItemConstructorOptions[] = [
       {
@@ -825,8 +862,20 @@ export class OnlyPreviewProjectNativeActionService {
     });
   }
 
-  private requestRename(hostId: string, workspaceId: string, relativePath: string): void {
-    xpcMain.broadcast(ONLY_PREVIEW_PROJECT_RENAME_EVENT, { hostId, workspaceId, relativePath });
+  private requestRename(
+    host: { hostId: string; hostToken: string },
+    workspaceId: string,
+    relativePath: string
+  ): void {
+    // 原生菜单刚刚释放焦点,shell 那个 WebContentsView 并没有拿到键盘焦点 —— 于是行内编辑器的选区
+    // 看得见、字打不进去,还得再点一下(Ral 2026-09-22)。非 standalone 挂载拿不到那个视图,这里
+    // 就什么都不做,渲染侧的 `focus()` + 选区保持原样。
+    onlyPreviewWindowHelper.focusShellView(host.hostToken);
+    xpcMain.broadcast(ONLY_PREVIEW_PROJECT_RENAME_EVENT, {
+      hostId: host.hostId,
+      workspaceId,
+      relativePath
+    });
   }
 
   private requireCurrentAuthority(expected: OnlyPreviewProjectAuthorityRef): void {
@@ -869,12 +918,7 @@ export class OnlyPreviewProjectNativeActionService {
     await dialog.showMessageBox(window, {
       type: 'error',
       title: labels.renameFailureTitle,
-      message:
-        code === 'NAME_EXISTS'
-          ? labels.renameExistsMessage
-          : code === 'NAME_INVALID'
-            ? labels.renameInvalidMessage
-            : labels.renameFailureMessage,
+      message: renameFailureMessage(labels, code),
       buttons: [labels.renameFailureOk],
       defaultId: 0,
       cancelId: 0,

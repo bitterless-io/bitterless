@@ -1,3 +1,4 @@
+import { isCustomEntry } from './messageClass'
 import { AGENT_DECISIONS_CHANGED, type AgentDecisionRequest } from '@shared/agentDecision.api';
 import { workflowCompletionId } from '@shared/workflowCompletion'
 import { workflowCompletionChatText } from '../workflow.presentation'
@@ -37,14 +38,24 @@ import type {
   ChatMessage,
   MessageIntent,
   MessageSession,
-  ChatErrorCard,
   MessageSessionSummary,
   MessageSource,
   SessionListItem
 } from './message.type'
 import { TurnService, type SendResult } from './turn.service'
 import { turnDiagnostics } from './turnDiagnostics.service'
-import { buildErrorCard } from './errorCard.service'
+import { formatChatError } from './errorCard.service'
+
+/**
+ * 老库里那张 `type: 'error'` 卡的三段,拼回正文(2026-09-22 两仓统一成 cowork 的形状之后,
+ * 卡没有了,但历史消息还在库里)。**只在正文为空时用** —— 新写进去的失败消息自己就有正文。
+ */
+const storedErrorText = (message: MaestroChatMessage): string => {
+  const card = (message as { errorCard?: { title: string; subtitle?: string; detail: string } }).errorCard
+  if (!card) return ''
+  const head = card.subtitle ? `${card.title}\n— ${card.subtitle}` : card.title
+  return card.detail?.trim() && card.detail.trim() !== card.title ? `${head}\n\n\`\`\`\n${card.detail.trim()}\n\`\`\`` : head
+}
 
 const workflowApi = createXpcRendererEmitter<WorkflowIpcApi>('WorkflowHandler')
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
@@ -141,7 +152,8 @@ const normalizeCompressionRemainingPercent = (value: number): number => {
 }
 
 const contentForTokenCount = (message: ChatMessage): string => {
-  if (message.promptExcluded) return ''
+  // 类是第一道闸(pi 的 CustomEntry 永不进上下文);`promptExcluded` 只剩 steering 那一小段。
+  if (isCustomEntry(message) || message.promptExcluded) return ''
   const files = message.files?.length ? `\nfiles: ${message.files.map((file) => file.name).join(', ')}` : ''
   return `${message.role}: ${message.content}${files}`
 }
@@ -188,7 +200,7 @@ const messageTextForPrompt = (message: ChatMessage): string => {
 }
 
 const isPromptContextMessage = (message: ChatMessage): boolean => {
-  if (message.promptExcluded || message.compressed || message.streaming || message.type === 'compact') return false
+  if (isCustomEntry(message) || message.promptExcluded || message.compressed || message.streaming || message.type === 'compact') return false
   if (message.id.startsWith('welcome-')) return false
   return Boolean(messageTextForPrompt(message).trim())
 }
@@ -332,6 +344,14 @@ export class MessageStoreState {
   // the user scrolls up past STICK_TO_BOTTOM_THRESHOLD_PX (see onListScroll), back on when they
   // return near the bottom or send a new message. This is the bool that gates the auto-scroll.
   stickToBottom = true
+
+  /**
+   * 「取回」拿回来的正文,交给输入框(ChatPanel 读完即清)。
+   *
+   * 按钮在状态条上(那里才是"有话正在排队"这件事的呈现),而输入框归 ChatPanel 管 ——
+   * 这个字段就是那一句话的传递方式。**不走 emit**:业务组件之间靠 store,不靠事件。
+   */
+  composerRestore?: { sessionId: string; text: string; at: number }
   /**
    * 刚跳过去的那条消息 —— `MessageItem` 只读它、自己不留副本
    * (留副本就会有两份状态,而"哪条在闪"只有一个真相)。
@@ -1130,6 +1150,7 @@ export class MessageStoreState {
         streaming: false,
         promptExcluded: true,
         localOnly: true,
+        customType: 'local-notice' as const,
         ts: Date.now()
       })
     )
@@ -1137,10 +1158,10 @@ export class MessageStoreState {
   }
 
   /**
-   * 往时间线插一张**错误卡** —— 所有失败路径的**唯一出口**
-   * （Ral 2026-09-10：「需要统一的返回 error 的函数封装」；构造在 `errorCard.service.ts`）。
+   * 往时间线插一条**失败消息** —— 所有失败路径的**唯一出口**
+   * （Ral 2026-09-10：「需要统一的返回 error 的函数封装」；排版在 `errorCard.service.ts`）。
    *
-   * `promptExcluded: true` 是关键:这张卡是给**人**看的诊断,不该占下一轮的提示词,
+   * `promptExcluded: true` 是关键:这条消息是给**人**看的诊断,不该占下一轮的提示词,
    * 更不该被 `/view_context` 导出成"模型看过的历史" —— 模型从没见过这段栈。
    */
   pushErrorCard(sessionId: string, err: unknown, options?: { subtitle?: string; title?: string }): void {
@@ -1152,9 +1173,9 @@ export class MessageStoreState {
         id: uid(),
         source: 'cowork',
         role: 'ai',
-        type: 'error',
-        content: '',
-        errorCard: buildErrorCard(err, options),
+        type: 'text',
+        customType: 'failure' as const,
+        content: formatChatError(err, options),
         error: true,
         streaming: false,
         promptExcluded: true,
@@ -1164,20 +1185,7 @@ export class MessageStoreState {
     this.scrollToBottom()
   }
 
-  /**
-   * 「看全文」弹窗当前展示的那一张。挂在 store 上而不是用 `emit` 往上冒:
-   * 卡片长在消息列表深处,而弹窗必须挂在**面板根**（遮罩只该盖住这一个面板，
-   * 且落点要与遮罩同一个定位上下文 —— 与 `ContextGraphModal` 同一条先例）。
-   */
-  errorDetail: ChatErrorCard | null = null
 
-  showErrorDetail(card: ChatErrorCard): void {
-    this.errorDetail = card
-  }
-
-  closeErrorDetail(): void {
-    this.errorDetail = null
-  }
 
   markUnread(sessionId: string): void {
     if (!sessionId || this.unreadSessionIds.includes(sessionId)) return
@@ -1348,7 +1356,7 @@ export class MessageStoreState {
       if (!session) continue;
       if (session.messages.some(message => message.decision?.decisionId === decision.decisionId)) continue;
       session.messages.push(this.withTokenCount({
-        id: uid(), source: 'cowork', role: 'ai', type: 'decision', content: '', streaming: false,
+        id: uid(), source: 'cowork', role: 'ai', type: 'decision', customType: 'decision' as const, content: '', streaming: false,
         promptExcluded: true, ts: Date.now(), decision: { ...decision }
       }));
     }
@@ -1384,7 +1392,7 @@ export class MessageStoreState {
         id: uid(),
         source: 'cowork',
         role: 'ai',
-        type: 'confirm',
+        type: 'confirm', customType: 'confirm' as const,
         content: '',
         streaming: false,
         promptExcluded: true,
@@ -1832,8 +1840,34 @@ export class MessageStoreState {
     }
   }
 
+  /**
+   * 列表要渲染的东西 = **已经落地的消息** + **还排在队里的那几条的投影**。
+   *
+   * 投影对象是临时的:不在 `session.messages` 里、不落库、不计 token,只带 `steeringPending`
+   * 给气泡下面那个取回按钮当判据。送达那一刻 `sendSteering` 建真正的消息并摘掉队列里这一条。
+   */
+  visibleMessages(session: MessageSession): ChatMessage[] {
+    const pending = session.pendingSteering
+    if (!pending?.length) return session.messages
+    return [
+      ...session.messages,
+      ...pending.map((item): ChatMessage => ({
+        id: item.id,
+        source: 'cowork',
+        role: 'human',
+        type: 'text',
+        content: item.text,
+        streaming: false,
+        steeringPending: true,
+        tokenCount: 0,
+        ts: item.ts
+      }))
+    ]
+  }
+
   withTokenCount<T extends ChatMessage>(message: T): T {
-    if (message.promptExcluded) {
+    // 同一道闸:永不进上下文的那几类不计 token。
+    if (isCustomEntry(message) || message.promptExcluded) {
       message.tokenCount = 0
       return message
     }
@@ -1911,9 +1945,6 @@ export class MessageStoreState {
       activity: plainActivity(message.activity),
       tasks: message.tasks?.length ? jsonSafe(message.tasks) : undefined,
       confirm: message.confirm ? jsonSafe(message.confirm) : undefined,
-      // 同 confirm:走 jsonSafe —— 它同样来自响应式状态,直接递会撞 structured clone
-      // (与本文件 workspace 那两处同一根因)。
-      errorCard: message.errorCard ? jsonSafe(message.errorCard) : undefined,
       compressed: message.compressed,
       promptExcluded: message.promptExcluded,
       compactSummary: message.compactSummary,
@@ -1944,8 +1975,11 @@ export class MessageStoreState {
           id: message.id,
           source: 'cowork',
           role: message.role,
-          type: message.type,
-          content: message.content,
+          // **老库里的 `type: 'error'` 读成普通失败消息**(2026-09-22 两仓统一成 cowork 的形状)。
+          // 不迁移的话那些历史消息读回来是一个渲染不出的类型 —— 一条空白气泡。
+          // 正文优先用原来那张卡的标题/副标题/全文拼回去,免得只剩一个红底空壳。
+          type: (message.type as string) === 'error' ? 'text' : message.type,
+          content: message.content || storedErrorText(message),
           files: message.files,
           skill: message.skill,
           skills: message.skills,
@@ -1961,7 +1995,6 @@ export class MessageStoreState {
           // 了结成 `expired` 而不是 `elsewhere`:没人回答过它,是进程没了。说成"别处答了"
           // 是在编造一件没发生的事(docs/issues/confirm-card-survives-restart.md)。
           confirm: message.confirm ? { ...message.confirm, answer: message.confirm.answer || 'expired' } : undefined,
-          errorCard: message.errorCard ? { ...message.errorCard } : undefined,
           compressed: message.compressed,
           promptExcluded: message.promptExcluded,
           compactSummary: message.compactSummary,

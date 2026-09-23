@@ -1,6 +1,6 @@
 import type { AgentRuntimePrompt, AgentRuntimeSession } from '../runtime/agentRuntime.types'
 
-export interface SteeringDelivery { outcome: 'delivered' | 'failed'; error?: string }
+export interface SteeringDelivery { outcome: 'delivered' | 'failed' | 'withdrawn'; error?: string }
 interface Entry {
   message: AgentRuntimePrompt
   state: 'waiting' | 'queued' | 'done'
@@ -27,6 +27,43 @@ export class TurnSteeringInbox {
     this.entries.set(message.messageId, { message: { ...message }, state: 'waiting', result, resolve })
     this.pump()
     return result
+  }
+
+  /**
+   * **取回** —— 把还没送到模型手上的排队消息整批拿回来。
+   *
+   * pi 自己的 TUI 就是这么做的:`app.message.dequeue`(默认 alt+up / Windows alt+q,说明文字
+   * 「Restore queued messages」)→ `restoreQueuedMessagesToEditor()` → `clearQueue()`,整批回到编辑器。
+   * pi 的 API **只能整批清**,所以这里也是整批 —— 不自造一个运行时兑现不了的语义。
+   *
+   * 三种下场:
+   *  · `waiting` —— 还没交给运行时,直接取回;
+   *  · `queued` 且 pi 把它还了回来 —— 还躺在 pi 的队列里,取回;
+   *  · `queued` 但 pi 没还 —— **已经送到模型那里了,取不回**,原样留着等它自己的回执。
+   *    谎报成"取回"等于让人以为那句话没发生过,而它已经在模型的上下文里。
+   */
+  async withdraw(messageIds?: string[]): Promise<AgentRuntimePrompt[]> {
+    const runtime = this.runtime
+    // 先让在飞的那一次 pump 落地,免得取完又被塞回 pi 的队列。
+    await Promise.race([this.pumping, this.cancelled])
+    // `takePendingSteering()` 是整批的(pi 的 `clearQueue()` 只能整批)—— 所以"取回其中一条"
+    // 等于**全部拿走、再把其余的按原顺序放回去**。
+    const pending = runtime?.takePendingSteering?.() || []
+    const wanted = messageIds?.length ? new Set(messageIds) : undefined
+    const returned = new Set(pending.map(message => message.messageId))
+    const taken: AgentRuntimePrompt[] = []
+    for (const entry of this.entries.values()) {
+      if (entry.state === 'done') continue
+      if (wanted && !wanted.has(entry.message.messageId!)) continue
+      if (entry.state === 'queued' && !returned.has(entry.message.messageId)) continue
+      entry.state = 'done'
+      entry.resolve({ outcome: 'withdrawn' })
+      taken.push(entry.message)
+    }
+    const takenIds = new Set(taken.map(message => message.messageId))
+    const keep = pending.filter(message => !takenIds.has(message.messageId))
+    if (keep.length) await runtime?.requeueSteering?.(keep)
+    return taken
   }
 
   consume(messageId: string): void {

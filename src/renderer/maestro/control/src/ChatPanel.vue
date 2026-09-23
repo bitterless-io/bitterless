@@ -18,7 +18,6 @@ import WorkflowTaskBar from './WorkflowTaskBar.vue'
 import { sessionActions } from './store/sessionActions.store'
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
 import IconBtn from '../../../common/components/IconBtn/IconBtn.vue'
-import ChatErrorModal from './task/ChatErrorModal.vue'
 import MessageList from './MessageList.vue'
 import ResponseStatus from './ResponseStatus.vue'
 import SlashMenu from './SlashMenu.vue'
@@ -131,6 +130,22 @@ function resetComposerHeight(): void {
   if (!el) return
   el.style.height = '44px'
 }
+
+/**
+ * 状态条上按了「取回」→ 正文回到输入框。
+ *
+ * 顺序照 pi:**取回的排在前面,正在打的排在后面**
+ * (`[queuedText, currentText].filter(Boolean).join('\n\n')`)。
+ */
+watch(() => messageStore.composerRestore, async (restore) => {
+  if (!restore || restore.sessionId !== props.session.id) return
+  messageStore.composerRestore = undefined
+  input.value = [restore.text, input.value].filter(text => text.trim()).join('\n\n')
+  await nextTick()
+  if (composerDisposed) return
+  resizeComposer()
+  composerRef.value?.focus()
+})
 
 async function send(): Promise<void> {
   if ((shortcutStore.pending && !props.session.compacting) || workflowCommandPending.value) return
@@ -403,10 +418,9 @@ async function stop(): Promise<void> {
 // 渲染出来的内容(`arco-tooltip-content`),不是传给 `<Trigger>` 就丢掉的 `class="arco-tooltip"`
 // ——Arco 的 `<Trigger>` 是 `inheritAttrs: false`,那个类从没落到真实 DOM 上过。同时把
 // `visibility==='hidden'` 单独判断扩成也认 `opacity==='0'`,盖住淡出过渡进行中的那几百毫秒。
-// `.chat-error-modal` 是 bl 独有的(cowork 没有 ChatErrorModal 的对应物)。
 const escapeStopBlockedByOverlay = (): boolean => {
   const overlays = document.querySelectorAll<HTMLElement>(
-    '.arco-modal, .arco-drawer, .arco-trigger-popup-wrapper, .context-graph, .chat-error-modal, [role="dialog"], [role="menu"], [role="listbox"]'
+    '.arco-modal, .arco-drawer, .arco-trigger-popup-wrapper, .context-graph, [role="dialog"], [role="menu"], [role="listbox"]'
   )
   for (const overlay of overlays) {
     if (!overlay.getClientRects().length) continue
@@ -728,7 +742,7 @@ async function stopUsingWorkspace(): Promise<void> {
         </Tooltip>
       </div>
     </div>
-    <MessageList :messages="session.messages">
+    <MessageList :messages="messageStore.visibleMessages(session)">
       <template #tail>
         <ResponseStatus :session="session" />
       </template>
@@ -907,12 +921,5 @@ async function stopUsingWorkspace(): Promise<void> {
          面板本身按会话 id 重挂(`ControlApp.vue` 的 `<ChatPanel :key="activeSession.id">`),
          换会话时这份图随组件一起消失,不需要额外的跨会话清理。 -->
     <ContextGraphModal v-if="contextGraph" :graph="contextGraph" @close="contextGraph = null" />
-    <!-- 错误全文弹窗。挂这里的理由与上面那个一字不差(遮罩只盖这一个面板 + 落点同定位上下文),
-         状态挂在 store 上 —— 卡片长在消息列表深处,emit 冒不上来。 -->
-    <ChatErrorModal
-      v-if="messageStore.errorDetail"
-      :card="messageStore.errorDetail"
-      @close="messageStore.closeErrorDetail()"
-    />
   </div>
 </template>

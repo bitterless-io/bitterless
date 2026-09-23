@@ -215,7 +215,10 @@ test('rename watch hints retain path context for authoritative engine classifica
   await controller.close();
 });
 
-test('rename hints update a stable file incrementally but reconcile an actual rename', async () => {
+// 改名的两端都走增量:消失的那一端在树里是普通文件,出现的那一端在盘上是普通文件。
+// 「带 rename 提示 + 路径已消失 ⇒ 整库重建」这条升级已经去掉,
+// 见 docs/issues/onlypreview-delete-waits-behind-index-rebuilds.md。
+test('a real rename is reconciled incrementally at both ends', async () => {
   await withTempDirectory(async (temp) => {
     const root = join(temp, 'workspace');
     const originalPath = join(root, 'original.txt');
@@ -256,8 +259,16 @@ test('rename hints update a stable file incrementally but reconcile an actual re
       paths: ['original.txt', 'renamed.txt'],
       renamePaths: ['original.txt', 'renamed.txt']
     });
-    assert.equal(commits.at(-1).full, true);
-    assert.equal((await search(engine, 'updated in place')).results[0].relativePath, 'renamed.txt');
+    assert.equal(commits.at(-1).full, false);
+    assert.equal(indexedPaths(engine).includes('original.txt'), false);
+    assert.equal(indexedPaths(engine).includes('renamed.txt'), true);
+    assert.equal(
+      engine.treeEntries.some(({ relativePath }) => relativePath === 'original.txt'),
+      false
+    );
+    const renamedResults = (await search(engine, 'updated in place')).results;
+    assert.equal(renamedResults.length, 1);
+    assert.equal(renamedResults[0].relativePath, 'renamed.txt');
     await engine.shutdown();
   });
 });

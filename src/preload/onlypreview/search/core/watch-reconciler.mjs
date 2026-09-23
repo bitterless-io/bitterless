@@ -56,6 +56,34 @@ const normalizedWatchRelativePath = (value) => {
  */
 export const REBUILD_REQUIRED = Symbol('onlypreview-watch-rebuild-required');
 
+/**
+ * 已索引路径的全部祖先目录。
+ *
+ * 用来回答一个问题:「这条已经不在盘上、树里也查不到的路径,名下还有没有索引行?」
+ * 树里查不到**不等于**名下没有行 —— `readTreeSnapshot` 对目录按 `isExcludedDirectoryPath` 过滤、
+ * 对文件按 `isExcludedFilePath` 过滤,两把尺子不同:一条「先排除 `artifacts/**`、再用
+ * `!artifacts/keep/**` 重新包含」的规则,会让 `artifacts` 不进树,而 `artifacts/keep/**` 照常进
+ * `files`。这样一个目录被整体移出工作区时,macOS 只送来它自己那一条 rename 事件(实测,子孙没有
+ * 事件),增量 `remove` 只删掉它自己那一行(目录本来就没有行),子孙的索引行会永久滞留 ——
+ * 树里没了、却仍然搜得到。那正是 `forgetPaths` 注释里警告的半删状态。
+ *
+ * 一次 `apply()` 最多建一次,而且只在真的遇到这种路径时才建:22k 条记录约几毫秒。
+ */
+const collectIndexedAncestorPaths = (index) => {
+  const ancestors = new Set();
+  for (const relativePath of index.filenameTier.records.keys()) {
+    let cursor = relativePath;
+    while (true) {
+      const separator = cursor.lastIndexOf('/');
+      if (separator <= 0) break;
+      cursor = cursor.slice(0, separator);
+      if (ancestors.has(cursor)) break;
+      ancestors.add(cursor);
+    }
+  }
+  return ancestors;
+};
+
 export const pathHasAncestorIn = (relativePath, ancestors) => {
   let candidate = relativePath;
   while (candidate) {
@@ -156,6 +184,9 @@ class OnlyPreviewSearchWatchReconciler {
     this.resolveContext = resolveContext;
   }
 
+  // `renamePaths` 在本文件里已经没有读者(ENOENT 分支不再看它),形参仍然保留:它是控制器派发
+  // 载荷的一部分,`onlyPreviewSearchEngineWatchBoundary` 逐字钉着那个形状。
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async apply({ full, paths, renamePaths = [] }, { deferRebuild = false } = {}) {
     const context = this.resolveContext();
     if (full) await context.configReconciler?.probe();
@@ -237,12 +268,12 @@ class OnlyPreviewSearchWatchReconciler {
       return;
     }
     const committedPaths = new Set();
-    const renamePathSet = new Set(renamePaths.map(normalizedWatchRelativePath).filter(Boolean));
     const mutations = [];
+    // 惰性建立:只有遇到「消失了、树里又查不到」的路径才需要它。
+    let indexedAncestorPaths;
     requiresFullReconcile = false;
     for (const relativePath of normalizedPaths) {
       committedPaths.add(relativePath);
-      const renameHint = renamePathSet.has(relativePath);
       const previousTreeEntry = treeByPath.get(relativePath);
       const replacesNonFile = previousTreeEntry?.nodeKind !== undefined &&
         previousTreeEntry.nodeKind !== 'file';
@@ -307,9 +338,32 @@ class OnlyPreviewSearchWatchReconciler {
         } else requiresFullReconcile = true;
       } catch (error) {
         if (error?.code === 'ENOENT') {
-          if (renameHint || replacesNonFile) {
+          // 消失的路径怎么处理,取决于它名下还有没有索引行 —— 只有「确实没有」才走增量 remove。
+          //
+          // · 树里是目录(`replacesNonFile`):整库重建。这一支其实在进入本循环之前就被
+          //   `normalizedPaths.some(entry.nodeKind !== 'file')` 那道闸拦下了,留着是因为它是这里
+          //   要守的不变量本身。
+          // · 树里是普通文件:增量 remove 就是完整的 —— 一个文件只有它自己那一行。
+          // · 树里根本没有:**不能想当然认为它名下没有行**。见 `collectIndexedAncestorPaths` 的
+          //   注释:排除 + 重新包含的规则会让一个目录不进树、而它的子孙照常进 `files`,这种目录
+          //   被整体移出工作区时增量 remove 会把子孙的索引行留下(已复现)。所以真去查一次,
+          //   有行就交回整库重建。
+          //
+          // 删除自己清过的路径落在最后一支且查不到行:`forgetPaths` 和本次 reconcile 排同一条
+          // 队列,轮到这里时清理必然已经落地,所以它不会再触发整库重建。
+          if (replacesNonFile) {
             requiresFullReconcile = true;
             break;
+          }
+          if (previousTreeEntry === undefined) {
+            indexedAncestorPaths ??= collectIndexedAncestorPaths(context.index);
+            if (
+              indexedAncestorPaths.has(relativePath) ||
+              context.index.filenameTier.records.has(relativePath)
+            ) {
+              requiresFullReconcile = true;
+              break;
+            }
           }
           const parent = context.searchPolicy.isPhysicallyExcludedPath(relativePath)
             ? { valid: true, entries: [] }

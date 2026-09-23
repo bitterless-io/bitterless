@@ -5,6 +5,8 @@ import { skillCloud } from '@maestro-main/skills/skillCloud.runtime'
 import { defaultWorkspaceRoot } from '@maestro-main/files/defaultWorkspace'
 import type { SkillSharingScope, SkillScopeContextInfo } from '@maestro-shared/coach.api'
 import { MaestroHistoryViewService } from './maestroHistoryView.service';
+import { attachInactiveChromeHover } from './inactiveChromeHover.service';
+import { attachContentFocusRestore } from './contentFocusRestore.service';
 import { applicationAuth } from '@main/auth/applicationAuth.service';
 import { showMaestroSessionMenu } from './maestroSessionMenu.service';
 import type { SessionMenuResult } from '@maestro-shared/coach.api';
@@ -629,6 +631,12 @@ class MaestroWindowController
 
     this.layout()
     win.on('resize', () => this.layout())
+    // 窗口失焦期间由主进程把 hover 补给 chrome —— Chromium 不给非 key 窗口送 mouse-moved,
+    // 详见 inactiveChromeHover.service.ts。chrome 的高度取渲染层量出来的操作区占位 y,
+    // 它才是权威;第一帧之前退回常量。
+    attachInactiveChromeHover(win, () => this.opBounds?.y ?? TOOLBAR_H)
+    // 切回窗口时焦点还给内容区 —— 否则 chrome 那份文档里停在地址栏的 activeElement 会被唤醒(contentFocusRestore.service.ts)。
+    attachContentFocusRestore(win, () => this.operationView?.webContents ?? null)
 
     const pinnedHomeStartedAt = diagnostics?.mark()
     const operationReady = this.traceOpenStage(
@@ -1175,6 +1183,11 @@ class MaestroWindowController
   // Stop a chat channel's in-flight turn (the Stop button): aborts the live pi session so the
   // pending turn resolves with any partial output, then BaseAgent drops that session so aborted
   // output is not carried into later model context. No-op when idle / not yet created.
+  /** 取回还没送到模型手上的排队消息 —— 见 `MaestroAgentService.withdrawSteering`。 */
+  async withdrawSteering(params: { sessionId: string; messageIds?: string[] }): Promise<{ messageIds: string[] }> {
+    return await this.agentService.withdrawSteering(params)
+  }
+
   async abortAgent(params: { sessionId: string; turnId: string }): Promise<{ ok: true }> {
     const active = this.agentService.getActiveAgentTurn().turns.find((turn) => turn.sessionId === params.sessionId && turn.turnId === params.turnId)
     if (active && this.drillTrio?.run.ownerSessionId === params.sessionId) this.drillTrio.run.stopByOperator(params.sessionId)

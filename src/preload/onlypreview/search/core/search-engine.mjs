@@ -5,6 +5,7 @@ import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { BACKGROUND_BUILD_TRANSACTION_FILES } from './constants.mjs';
 import { cloneDatabaseFile } from './database-clone.mjs';
 import { submitIndexTask } from './index-queue.mjs';
+import { createBackgroundWorkSlicer } from './work-slicer.mjs';
 import {
   advanceDeleteTaskToIndex,
   beginDeleteTask,
@@ -1187,12 +1188,17 @@ export class OnlyPreviewSearchEngine {
     if (!this.databasePath) throw new TypeError('Search index is not initialized');
     // 日志的读-改-写必须和别的索引写入排同一条队:两次删除同时在飞(多选删除、或者手快点两下)
     // 就是两段交叠的读-改-写,后写的会把先写的那条任务整个吞掉。它很快,不会占住队列。
-    const task = await this.runIndexTask('begin-delete-task', () =>
-      beginDeleteTask(this.databasePath, {
-        workspaceId,
-        rootPath: this.rootPath,
-        relativePaths
-      })
+    const task = await this.runIndexTask(
+      'begin-delete-task',
+      () =>
+        beginDeleteTask(this.databasePath, {
+          workspaceId,
+          rootPath: this.rootPath,
+          relativePaths
+        }),
+      this.databasePath,
+      // 用户正盯着一个没有关闭按钮的进度条,这一跳有人在等 —— 它要插到排队的后台 reconcile 前面。
+      { interactive: true }
     );
     return { taskId: task.taskId };
   }
@@ -1211,16 +1217,22 @@ export class OnlyPreviewSearchEngine {
     // 拆开会有两个后果。一是日志的读-改-写不再是临界区:两次删除同时在飞(多选删除,或者手快
     // 点了两下)就是两段交叠的 RMW,后写的把先写的那条任务整个吞掉。二是中间那步清索引会和别的
     // 引擎的构建并发 —— 正是队列本身要消灭的东西。
-    return await this.runIndexTask('finish-delete-task', async () => {
-      await advanceDeleteTaskToIndex(this.databasePath, { taskId, removedPaths });
-      const outcome = await this.forgetPathsIndexed({
-        workspaceId,
-        generation,
-        relativePaths: removedPaths
-      });
-      await clearDeleteTask(this.databasePath, taskId);
-      return outcome;
-    });
+    return await this.runIndexTask(
+      'finish-delete-task',
+      async () => {
+        await advanceDeleteTaskToIndex(this.databasePath, { taskId, removedPaths });
+        const outcome = await this.forgetPathsIndexed({
+          workspaceId,
+          generation,
+          relativePaths: removedPaths
+        });
+        await clearDeleteTask(this.databasePath, taskId);
+        return outcome;
+      },
+      this.databasePath,
+      // 和开任务那一跳同理:用户正盯着那个进度条,这一跳也有人在等。
+      { interactive: true }
+    );
   }
 
   /**
@@ -1319,6 +1331,19 @@ export class OnlyPreviewSearchEngine {
       }
       this.index.invalidateTreeSnapshot();
       const deletedIndexedPaths = [];
+      // **批与批之间要让出事件循环。**
+      //
+      // 引擎跑在隐藏 fileSearch 渲染进程的主线程上,而那条线程同时应答 Main 发来的每一次授权 RPC
+      // —— 右键菜单弹出前的 `authorizeItem`、改名、预览取字节都在上面。这个循环原先整段没有一个
+      // `await`,于是清 8,000 行索引 = 6.4 秒里事件循环一次都没跑(实测:20 毫秒一次的探针整段只
+      // 落了 11 次),右击一行菜单就真的不出现。见
+      // areas/agent-runtime/preview/menu-processes.html #4。
+      //
+      // 让步不影响可见性:这里在写闸内跑,读者本来就被 `acquireSearchSnapshotWriter` 挡着。
+      // `pauseMs: 0` 而不是默认的 4 —— 目的只是把控制权还给事件循环让待处理的 IPC 跑一轮,
+      // 不是给别人腾出连续时间;8 毫秒一让、每次约 1 毫秒,6.4 秒的清理只多付约一成,
+      // 而默认的 4 毫秒会让它多付五成,那是用户正盯着删除进度条的时间。
+      const workSlicer = createBackgroundWorkSlicer({ pauseMs: 0 });
       for (let offset = 0; offset < targets.length; offset += BACKGROUND_BUILD_TRANSACTION_FILES) {
         const batch = targets.slice(offset, offset + BACKGROUND_BUILD_TRANSACTION_FILES);
         this.index.runMutation(() => {
@@ -1328,6 +1353,7 @@ export class OnlyPreviewSearchEngine {
             }
           }
         });
+        await workSlicer.checkpoint();
       }
       this.index.applyFilenameTierMutations({ upsertPaths: [], deletePaths: deletedIndexedPaths });
       this.treeEntries = this.treeEntries.filter(({ relativePath }) => !owned(relativePath));

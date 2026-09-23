@@ -180,9 +180,33 @@ export class OnlyPreviewProjectAuthoringController {
     // click on it failed against a path that was gone
     // (docs/issues/onlypreview-delete-refreshes-the-wrong-index.md).
     this.dropDeletedRows(removed);
-    // Still reconciled afterwards — the search index has to learn about this too, and a refresh
-    // repairs the projection if the local removal was somehow wrong.
-    await this.host.refreshIndex();
+    // 校正一次,但**不再 `refreshIndex()`** —— 那是 `xpc:search.refresh` → 引擎 `refresh()`,
+    // 也就是整个工作区重新计数 + 重建索引(真机一轮 10–13 秒)。删除时索引已经由
+    // `finishDeleteTask` 精确清过(连子孙),所以这里只要把受影响的父目录重新列一次,
+    // 用权威的列表校正刚才那次就地摘除即可。
+    // 见 areas/agent-runtime/preview/menu-processes.html #5 与 deleting-process.html。
+    await this.reloadAffectedParents(removed);
+  }
+
+  /**
+   * 把受影响的父目录重新列一次 —— 树画的是 browse projection,这就是它的权威来源。
+   *
+   * 失败**不抛**:调用方都是"事情已经做完了"的收尾路径(删除已落盘、改名已落盘),
+   * 一次列目录失败不该把一次成功的操作报成失败;下一次 watcher 的浏览刷新会补上。
+   */
+  private async reloadAffectedParents(relativePaths: readonly string[]): Promise<void> {
+    const workspaceId = this.host.workspace?.workspaceId;
+    if (!workspaceId || !relativePaths.length) return;
+    try {
+      const result = await this.host.browseProjection.reloadParentListings(
+        relativePaths,
+        workspaceId,
+        this.host.expandedPaths
+      );
+      if (result.changed) this.host.index = result.index;
+    } catch {
+      // 见上:收尾路径不因列目录失败而失败。
+    }
   }
 
   /**
@@ -243,7 +267,7 @@ export class OnlyPreviewProjectAuthoringController {
     try {
       const renamed = await this.renameItem(editing.relativePath, decision.name);
       this.editing = null;
-      await this.settle(renamed);
+      await this.settle(renamed, editing.relativePath);
     } catch {
       // Main already showed the dialog for a duplicate or refused name; the row reverts.
       this.editing = null;
@@ -261,8 +285,22 @@ export class OnlyPreviewProjectAuthoringController {
     );
   }
 
-  private async settle(entry: { relativePath: string; name: string }): Promise<void> {
-    await this.host.refreshIndex();
+  /**
+   * 改名之后的收尾。
+   *
+   * 原来这里调的是 `refreshIndex()` —— 那是**整个工作区重新计数 + 重建索引**,真机一轮 10–13 秒,
+   * 于是"保存一个名字"看起来就是卡住了(Ral 2026-09-22:「保存文件名时也会卡住被阻塞」)。
+   * 树画的是 browse projection,重建搜索索引对它没有任何帮助 —— 删除那条路径早就记过这一课
+   * (docs/issues/onlypreview-delete-refreshes-the-wrong-index.md),改名这一支没跟上。
+   *
+   * 现在只重新列一次受影响的父目录(新旧两个路径同父,`reloadParentListings` 自己去重),
+   * 搜索索引交给 watcher 的增量 —— 它本来就会收到这两条 rename 事件。
+   */
+  private async settle(
+    entry: { relativePath: string; name: string },
+    previousRelativePath: string
+  ): Promise<void> {
+    await this.reloadAffectedParents([previousRelativePath, entry.relativePath]);
     this.host.selectedRelativePath = entry.relativePath;
     this.host.focusedRelativePath = entry.relativePath;
   }

@@ -754,6 +754,24 @@ export class OnlyPreviewWindowHelper {
     }
   }
 
+  /**
+   * Hand the keyboard to the shell view.
+   *
+   * The same move `focus-project` and `find-in-file` already make above, opened up as an entry point
+   * taken by hostToken. A native menu releases focus when it closes, so the inline rename editor the
+   * menu asks for comes up with a visible selection that swallows every keystroke until the row is
+   * clicked again (Ral 2026-09-22). Returns false — never throws — when there is no shell view to
+   * focus: a non-standalone mount simply keeps whatever focus it had.
+   */
+  focusShellView(hostToken: string): boolean {
+    const host = this.getStandaloneHost();
+    if (!host || host.kind !== 'standalone' || host.hostToken !== hostToken) return false;
+    const shellView = this.shellView;
+    if (!shellView || shellView.webContents.isDestroyed()) return false;
+    shellView.webContents.focus();
+    return true;
+  }
+
   minimizeWindow(hostToken: string): void {
     this.requireStandaloneWindow(hostToken).minimize();
   }

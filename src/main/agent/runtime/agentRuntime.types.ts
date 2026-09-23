@@ -151,6 +151,8 @@ export interface AgentRuntimeSession {
   /** Queue only; never start a concurrent ordinary prompt. */
   enqueueSteering?: (message: AgentRuntimePrompt) => Promise<void | boolean>
   /** Take only unconsumed messages after the native run settles or is stopped. */
+  /** 取回之后把**留下来**的那几条原样放回队列 —— 不重打断 bash(它们早就打断过一次了)。 */
+  requeueSteering?: (messages: AgentRuntimePrompt[]) => Promise<void>
   takePendingSteering?: () => AgentRuntimePrompt[]
   /** 上下文条目面。见 `AgentRuntimeContextSurface`。 */
   readonly context?: AgentRuntimeContextSurface

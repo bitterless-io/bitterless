@@ -4,7 +4,7 @@ import type { MaestroTaskConfirm, MaestroTaskPart } from './task.api'
 export type MaestroChatRole = 'human' | 'ai'
 // Persisted rows use the original source value; changing it requires a database migration.
 export type MaestroChatSource = 'cowork'
-export type MaestroChatMessageType = 'text' | 'files' | 'compact' | 'task' | 'confirm' | 'error' | 'decision'
+export type MaestroChatMessageType = 'text' | 'files' | 'compact' | 'task' | 'confirm' | 'decision'
 
 export interface MaestroChatConfirm {
   taskId: string
@@ -48,14 +48,10 @@ export interface MaestroChatMessage {
   activity?: AgentActivityStep[]
   tasks?: MaestroTaskPart[]
   confirm?: MaestroChatConfirm
-  /**
-   * `type: 'error'` 那张卡（Ral 2026-09-10）。**落库** —— 它是诊断证据,
-   * 重开会话还要能看到。这一串问题的教训正是"证据会消失"
-   * （错误气泡没持久化 ⇒ 切个会话就查不下去了）。
-   */
-  errorCard?: { title: string; subtitle?: string; detail: string }
   compressed?: boolean
   promptExcluded?: boolean
+  /** 哪一种非普通条目(pi 的 `customType`)。判类的单一出口在渲染端 `store/messageClass.ts`。 */
+  customType?: string
   compactSummary?: string
   compactUntilMessageId?: string
   tokenCount?: number

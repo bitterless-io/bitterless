@@ -99,6 +99,10 @@ function onNewTabClick(): void {
 }
 function armNewTabMenu(): void {
   cancelNewTabMenu()
+  // 窗口没焦点时不弹。后台窗口的 hover 是主进程补出来的(inactiveChromeHover.service.ts),
+  // 而 `Menu.popup()` 是**原生**菜单:它一出现就抢焦点,于是「鼠标扫过后台窗口的 + 」会莫名
+  // 把那扇窗叫到前台。Chrome 的 + 也没有 hover 菜单,这里按同一条收。
+  if (!document.hasFocus()) return
   newTabMenuTimer = window.setTimeout(() => {
     newTabMenuTimer = null
     const el = newTabWrap.value

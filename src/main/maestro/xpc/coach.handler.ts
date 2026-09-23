@@ -310,6 +310,10 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
   // 不执行 `forceStop`,于是回合永远不清 —— 一次成功的停止在界面上变成永久的「Stopping…」。
   // 这里曾经声明 `Promise<void>` 并把返回值扔掉,`tsc` 为此报了 TS2416
   // (见 docs/issues/chat-stop-never-confirms-and-the-ui-has-no-escape.md #3)。
+  async withdrawSteering(params: { sessionId: string; messageIds?: string[] }): Promise<{ messageIds: string[] }> {
+    return await maestroWindowHelper.withdrawSteering(params)
+  }
+
   async abortAgent(params: { sessionId: string; turnId: string }): Promise<{ ok: true }> {
     return await maestroWindowHelper.abortAgent(params)
   }

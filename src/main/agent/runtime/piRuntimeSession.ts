@@ -306,6 +306,20 @@ export class PiRuntimeSession implements AgentRuntimeSession {
     }
   }
 
+  /**
+   * 取回一条之后,把**留下来**的那几条原样放回。
+   *
+   * pi 的 `clearQueue()` 只能整批清,所以"取回其中一条"= 全部拿走 + 把其余的按原顺序放回去。
+   * **刻意不打断 bash**:那几条消息第一次入队时已经各自打断过一次。
+   */
+  async requeueSteering(messages: AgentRuntimePrompt[]): Promise<void> {
+    for (const message of messages) {
+      this.pendingSteering.push(message)
+      if (this.compacting || this.session.isCompacting) this.heldSteering.add(message)
+      else await this.session.steer?.(message.text)
+    }
+  }
+
   private releaseHeldSteering(): void {
     for (const message of this.heldSteering) {
       this.heldSteering.delete(message)

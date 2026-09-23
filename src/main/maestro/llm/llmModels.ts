@@ -44,11 +44,30 @@ const CODEX_EFFORTS: LlmEffortOption[] = [
 ]
 const CODEX_SOL_EFFORTS: LlmEffortOption[] = CODEX_EFFORTS.filter((item) => item.id !== 'low')
 
+/** Qwen 只有一档算力,给 picker 一个单元素列表而不是 Codex 那五档。 */
+const DEFAULT_EFFORTS: LlmEffortOption[] = [{ id: 'default', label: 'Default' }]
+
 export const LLM_PROVIDERS: LlmProviderDefinition[] = [
   {
     provider: 'openai-codex',
     label: 'Codex',
     authLabel: 'Coding agent subscription'
+  },
+  /**
+   * Bitterless 自家的 relay(上海 FC `bl-relay-sh`,`POST /v1/bailian/chat/completions`)。
+   *
+   * 与 Codex 的关键差别:**它不走 pi 的 OAuth**,凭据是用户在本应用里登录 Bitterless 拿到的
+   * Core 会话 token(`customerSessionService`)。所以它**不进 `LLM_LOGIN_PROVIDERS`** ——
+   * 那张表驱动的是 pi 的浏览器/设备码登录流程,给它挂一个按钮只会把人送进一条不存在的流程。
+   * 没登录时由 `registerBitterlessProvider()` 抛出指明"去登录 Bitterless"的错误。
+   *
+   * 对照 micromeet-cowork 的 `ai-crms` provider:形状相同(relay + 会话 token + Qwen),
+   * 区别只在后端是谁家的 relay,以及登录入口是宿主应用自己的。
+   */
+  {
+    provider: 'bitterless',
+    label: 'Bitterless',
+    authLabel: 'Bitterless account'
   },
   // Claude 退役(Ral 2026-09-11:「bl cowork 都不用 claude 的了」)。此前它是"隐藏但保留 preset
   // 以便随时开回来";现在连 preset 一起删了,所以重新启用需要重写那几条,不是取消注释就行。
@@ -119,13 +138,48 @@ export const LLM_PRESETS: LlmTarget[] = [
     contextLengthLabel: '266K',
     compressionRemainingPercent: DEFAULT_COMPRESSION_REMAINING_PERCENT,
     authLabel: 'Coding agent subscription'
+  },
+  /**
+   * Bitterless relay 的 Qwen。**排在 Codex 之后是刻意的** —— `normalizeLlmTarget()` 的最后一层
+   * 兜底是 `LLM_PRESETS[0]`,把它们排到最前面会把"存量/异常 target 落到哪"从 Astra 悄悄改成
+   * Qwen Max,而这次没人要求改默认模型。
+   *
+   * Ral 2026-09-23 指定先只开这两个;relay 端 `BAILIAN_ALLOWED_MODELS` 是真正的闸门,
+   * 这里多写一个模型也不会被放行。
+   */
+  {
+    provider: 'bitterless',
+    providerLabel: 'Bitterless',
+    model: 'qwen3.8-max',
+    label: 'Qwen 3.8 Max',
+    shortLabel: '3.8 Max',
+    effort: 'default',
+    efforts: DEFAULT_EFFORTS.slice(),
+    contextLengthK: 256,
+    contextLengthLabel: '256K',
+    compressionRemainingPercent: DEFAULT_COMPRESSION_REMAINING_PERCENT,
+    authLabel: 'Bitterless account'
+  },
+  {
+    provider: 'bitterless',
+    providerLabel: 'Bitterless',
+    model: 'qwen3.8-flash',
+    label: 'Qwen 3.8 Flash',
+    shortLabel: '3.8 Flash',
+    effort: 'default',
+    efforts: DEFAULT_EFFORTS.slice(),
+    contextLengthK: 256,
+    contextLengthLabel: '256K',
+    compressionRemainingPercent: DEFAULT_COMPRESSION_REMAINING_PERCENT,
+    authLabel: 'Bitterless account'
   }
 ]
 
 export const DEFAULT_PRESET_MODEL: Record<string, string> = {
   // 与 `BaseAgent.DEFAULT_MODEL_BY_PROVIDER` 保持一致 —— 两处此前分别指向 luna 与 astra,
   // 同一个"默认"指向两个模型(Ral 2026-09-11 定:统一到 astra)。
-  'openai-codex': 'gpt-6-astra'
+  'openai-codex': 'gpt-6-astra',
+  bitterless: 'qwen3.8-max'
 }
 
 export const LLM_LOGIN_PROVIDERS: LlmLoginProviderOption[] = [
@@ -307,14 +361,17 @@ export const describeLlmTarget = (
     providerLabel: preset?.providerLabel || providerLabel(provider),
     modelLabel: preset?.label || modelId,
     supplier:
-      provider === 'anthropic'
-        ? "the user's own Claude subscription, signed in through the in-app browser login"
-        : "the user's own ChatGPT/Codex subscription, signed in through the in-app browser login"
+      provider === 'bitterless'
+        ? 'supplied by Bitterless through the signed-in Bitterless account (not a personal model subscription)'
+        : provider === 'anthropic'
+          ? "the user's own Claude subscription, signed in through the in-app browser login"
+          : "the user's own ChatGPT/Codex subscription, signed in through the in-app browser login"
   }
 }
 
 export const providerLabel = (providerId: string): string => {
   if (providerId.startsWith('openai')) return 'OpenAI Codex (ChatGPT)'
   if (providerId === 'anthropic') return 'Claude'
+  if (providerId === 'bitterless') return 'Bitterless'
   return providerId
 }

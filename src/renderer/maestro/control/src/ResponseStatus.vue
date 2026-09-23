@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
 import {
-  IconCornerDownRight,
   IconPointFilled,
   IconSquares
 } from '@tabler/icons-vue'
@@ -113,6 +112,21 @@ const status = computed<StatusView | null>(() => {
   const retry = turn.value?.retry
   if (retry) return { tone: 'run', text: copy.retrying, meta: `${retry.attempt}/${retry.max}` }
   const active = turn.value
+  /**
+   * **人插话这一档 —— 最后触发的赢**(Ral 2026-09-22:「反正就是触发显示什么状态都会覆盖之前的
+   * 状态 …… 如果现在是 thinking 触发了 steering 就显示 steering,queueing 亦然」)。
+   *
+   * `steeringEvent` 由 `sendSteering` 置位,**下一条 agent 事件**(活动行 / 流式 / thinking)
+   * 把它清掉 —— 所以能走到这里就说明它是最新的那一个。原来它挂在状态条下面单独一行,已删。
+   */
+  const steeringEvent = active?.steeringEvent
+  if (steeringEvent) {
+    return {
+      tone: 'run',
+      text: steeringEvent.kind === 'queueing' ? copy.queueing : copy.steering,
+      meta: elapsed(active!.startedAt)
+    }
+  }
   if (active?.thinking) return { tone: 'run', text: copy.thinking, meta: elapsed(active.startedAt) }
   // 工具:**不再把命令字符串放进 status**。谁在跑、跑到哪一步,全在下面的 `action`。
   const runningTask = waiting.value || live.value[0]
@@ -193,17 +207,6 @@ const retriedLabel = computed(() => {
   const retry = props.session.retryable
   return retry ? retryProgress(retry.attempt, retry.max) : ''
 })
-const steeringLabel = computed(() => {
-  const steering = props.session.turn?.steering
-  if (!steering) return ''
-  return steering.pending
-    ? i18nHelper.maestroControl.responseStatus.addingToTurn
-    : i18nHelper.maestroControl.responseStatus.addedToTurn.replace(
-        '{count}',
-        String(steering.count)
-      )
-})
-
 const retryAgain = async (): Promise<void> => {
   const previous = props.session.retryable
   if (!previous) return
@@ -287,7 +290,7 @@ onUnmounted(() => {
 
 <template>
   <div
-    v-if="status || action || canRetry || steeringLabel || backgroundAgents"
+    v-if="status || action || canRetry || backgroundAgents"
     ref="rootEl"
     name="maestro__response_status"
     class="response-status"
@@ -310,11 +313,6 @@ onUnmounted(() => {
     >
       <IconSquares :size="13" stroke="1.9" />
       <span class="response-status__agents-text" :title="backgroundAgents.text">{{ backgroundAgents.text }}</span>
-    </div>
-
-    <div v-if="steeringLabel" class="response-status__steering">
-      <IconCornerDownRight :size="13" stroke="1.9" />
-      <span :title="steeringLabel">{{ steeringLabel }}</span>
     </div>
 
     <!-- **action —— agent 最新的动作**(Ral 2026-09-22)。工具调用的原文从 status 里搬出来,

@@ -48,7 +48,7 @@ test('no institution: a failing institution authorization does not block the cha
   const cloud = service(t, { session: signedIn, institution: null, authorize: rejects })
   await cloud.ensureCatalog()
   assert.equal(cloud.status, 'error', 'the failure is still recorded for diagnostics')
-  assert.ok(!cloud.initialized, 'and it is not pretended to be a completed sync')
+  assert.match(cloud.error, /authorization is unavailable/i, 'and the real reason is kept, not replaced by a generic one')
 })
 
 test('no institution and no session: the catalog gate resolves without reaching the network', async t => {
@@ -57,9 +57,14 @@ test('no institution and no session: the catalog gate resolves without reaching 
   assert.equal(cloud.status, 'unauthenticated')
 })
 
-test('an authorized institution still blocks on its own incomplete catalog', async t => {
-  // The completeness guarantee of docs/features/skills-three-sources.md #3 — an institution that IS
-  // authorized must not silently lose its skills. Degrading must not have weakened this.
+test('an authorized institution whose catalog is incomplete still answers the turn', async t => {
+  // This test used to assert the opposite, citing the completeness guarantee of
+  // docs/features/skills-three-sources.md #3. That reading was wrong, and it cost production Cowork
+  // every chat message: #3 is about not silently truncating a list, and #4 says outright
+  // 「全局、工作区和聊天不等待机构网络请求」. An authorized institution with a stale catalog keeps
+  // whatever is on disk; what actually removes its skills is the 401/403 fence, covered in
+  // cloudSyncFailure.test.mjs. Ral 2026-09-22; docs/issues/skill-cloud-sync-failure-blocks-chat.md.
   const cloud = service(t, { session: signedIn, institution: { accountScope: 'account', institutionId: '7', generation: 1 }, authorize: rejects })
-  await assert.rejects(cloud.ensureCatalog(), /not ready/)
+  await cloud.ensureCatalog()
+  assert.equal(cloud.status, 'error', 'reported, not thrown')
 })

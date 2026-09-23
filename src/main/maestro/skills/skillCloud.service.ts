@@ -32,7 +32,6 @@ const MAX_ZIP = 20 * 1024 * 1024
 const validHash = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
 
 export class SkillCloudService {
-  private initialized = false
   revision = 0
   status = 'idle'
   error = ''
@@ -46,11 +45,27 @@ export class SkillCloudService {
     this.timer = setInterval(() => { if (this.options.session()) void this.refresh() }, 60_000)
     this.timer.unref?.()
   }
-  reset(): void { this.epoch++; this.abort.abort(); this.abort = new AbortController(); this.pending = undefined; this.initialized = false; this.status = 'idle'; this.error = ''; this.options.changed() }
+  reset(): void { this.epoch++; this.abort.abort(); this.abort = new AbortController(); this.pending = undefined; this.status = 'idle'; this.error = ''; this.options.changed() }
   dispose(): void { if (this.timer) clearInterval(this.timer); this.timer = undefined; this.reset() }
+  /**
+   * Bring the cloud catalog up to date before a turn reads it — and **report**, never throw.
+   *
+   * Ral 2026-09-22:「cowork 聊天不依赖于技能同步成功，没同步应该也能跑」. This used to throw
+   * `The institution Skills catalog is not ready: …` whenever the first sync had errored, and all three
+   * callers are chat-side (maestroAgent.service.ts) — so one failed cloud round trip killed **every**
+   * message. A round trip proves freshness, not authorization: an authoritative 401/403 sets `unauthorized`
+   * and clears the host fence through `resetAuthorization`, which is what actually removes institution
+   * skills from the catalog. An `error` status means stale, and stale is answered from disk.
+   *
+   * Workbench keeps its diagnostic without the throw — `skillCatalog()` already returns `cloudStatus` and
+   * `cloudError` on the snapshot. Paired with micromeet-cowork; see
+   * docs/issues/skill-cloud-sync-failure-blocks-chat.md.
+   *
+   * A settled `error` status deliberately does not re-run here: retrying a broken server once per message
+   * would trade a dead chat for a slow one. The 60 s timer, focus and session/scope changes own recovery.
+   */
   async ensureCatalog(): Promise<void> {
     if (this.status === 'idle' || this.status === 'syncing') await this.refresh()
-    if (this.options.institution() && !this.initialized && this.status === 'error') throw new Error('The institution Skills catalog is not ready: ' + this.error)
   }
   async refresh(): Promise<void> {
     if (this.pending) return this.pending
@@ -108,7 +123,7 @@ export class SkillCloudService {
         }
         this.activate(root, next, fence)
       }
-      fence(); this.initialized = true; this.status = 'ready'
+      fence(); this.status = 'ready'
     } catch (error) {
       if (startedEpoch !== this.epoch) return
       this.status = error instanceof CloudHttpError && [401,403].includes(error.status) ? 'unauthorized' : 'error'

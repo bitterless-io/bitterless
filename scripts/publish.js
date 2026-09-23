@@ -254,6 +254,15 @@ const readPackageRelease = () => {
   return JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf-8'));
 };
 
+// package.json 的写法必须与 `scripts/patch.js` 逐字一致(2 空格缩进 + 结尾换行),否则每次发布都会
+// 在 diff 里多出一整份重排。
+const writePackageRelease = (packageJson) => {
+  fs.writeFileSync(
+    path.join(rootDir, 'package.json'),
+    `${JSON.stringify(packageJson, null, 2)}\n`,
+  );
+};
+
 const loadSigningEnv = () => {
   const localEnvPath = path.join(rootDir, 'local', 'signing.env');
   const envPath = fs.existsSync(localEnvPath)
@@ -590,17 +599,94 @@ const isMissingRemoteObject = (error) => {
   return error?.code === 'NoSuchKey' || error?.status === 404 || error?.statusCode === 404;
 };
 
-const assertNoRemoteDowngrade = async (client, objectPrefix, localRelease = readPackageRelease()) => {
-  let remoteInfo;
+// 这个频道上最后发布出去的那一版,没有就是 `null`(首发)。
+// 抽出来是因为现在有两个读者:起跳前的基线对齐,和起跳后的顺序守卫。
+const fetchRemoteRelease = async (client, objectPrefix) => {
   try {
     const result = await client.get(`${objectPrefix}/version_info.json`);
-    remoteInfo = JSON.parse(result.content.toString('utf-8'));
+    return JSON.parse(result.content.toString('utf-8'));
   } catch (error) {
-    if (isMissingRemoteObject(error)) {
-      console.log('[publish.js] No existing remote version manifest; first publish is allowed.');
-      return;
-    }
+    if (isMissingRemoteObject(error)) return null;
     throw error;
+  }
+};
+
+/**
+ * 起跳之前,本地的「已发布记录」该被改成什么。返回 `null` = 不用动。
+ *
+ * `patch.js` 只把本地 `_version` 的第三段 +1,它不知道这个频道上已经发过什么。本地那份记录一旦
+ * 落后(上一次发布改的是工作区的 package.json 而没提交、换一台机器发布、或者被人还原回 HEAD),
+ * 这一跳就正好落在一个**已经发布过**的语义版本上,而它的 version_code 必然与远端那一版不同 ——
+ * `assertReleaseOrder` 于是拒绝,人再手工去改 package.json 重发一遍
+ * (docs/issues/publish-bumps-from-a-stale-local-version.md)。
+ *
+ * 四格判据,只有前两格要动:
+ *   - 远端版本更高       → 整份采纳远端(本地那份记录是过期的)
+ *   - 同版本、code 不同  → 采纳远端的 code(这一版已经发过,本地丢了那条记录)
+ *   - 本地领先 / 完全一致 → 不动。领先通常是上一次发布中途失败留下的,回退它没有好处。
+ *
+ * **刻意不做**:远端领先时不拉代码、不碰任何源文件。版本守卫管的是「同一频道不要撞车、不要回退」,
+ * 「不要发布过期代码」是人的判断,所以采纳动作只大声打印出来。
+ */
+const resolveReleaseBaseline = (localPackage, remoteInfo) => {
+  if (!remoteInfo) return null;
+  const localVersion = String(localPackage.version ?? '');
+  const remoteVersion = String(remoteInfo.version ?? '');
+  const localVersionCode = releaseVersionCode(localPackage);
+  const remoteVersionCode = String(remoteInfo.versionCode ?? '');
+  if (!/^\d+$/.test(remoteVersionCode)) {
+    throw new Error(`Remote version_info.json has invalid versionCode: ${remoteVersionCode}`);
+  }
+  let versionOrder;
+  try {
+    versionOrder = compareVersions(localVersion, remoteVersion);
+  } catch {
+    throw new Error(
+      `Invalid release version comparison: local ${localVersion}, remote ${remoteVersion}`,
+    );
+  }
+  if (versionOrder < 0) {
+    return {
+      version: remoteVersion,
+      versionCode: remoteVersionCode,
+      reason: `local ${localVersion} (${localVersionCode}) is behind the published ${remoteVersion} (${remoteVersionCode})`,
+    };
+  }
+  if (versionOrder === 0 && localVersionCode !== remoteVersionCode) {
+    return {
+      version: remoteVersion,
+      versionCode: remoteVersionCode,
+      reason: `${remoteVersion} is already published as ${remoteVersionCode}; the local record says ${localVersionCode}`,
+    };
+  }
+  return null;
+};
+
+/** 基线对齐落盘。在 `patch.js` 之前跑;`--dry-run` 没有 client,不做对齐。 */
+const alignLocalReleaseBaseline = async (client, objectPrefix) => {
+  const remoteInfo = await fetchRemoteRelease(client, objectPrefix);
+  if (!remoteInfo) {
+    console.log('[publish.js] No existing remote version manifest; first publish is allowed.');
+    return;
+  }
+  const localPackage = readPackageRelease();
+  const baseline = resolveReleaseBaseline(localPackage, remoteInfo);
+  if (!baseline) return;
+  localPackage._version = baseline.version;
+  localPackage.version = baseline.version;
+  localPackage.version_code = baseline.versionCode;
+  delete localPackage.versionCode;
+  writePackageRelease(localPackage);
+  console.log(
+    `[publish.js] Release baseline realigned to the published ${baseline.version} (${baseline.versionCode}) — ${baseline.reason}.`,
+  );
+};
+
+const assertNoRemoteDowngrade = async (client, objectPrefix, localRelease = readPackageRelease()) => {
+  const remoteInfo = await fetchRemoteRelease(client, objectPrefix);
+  if (!remoteInfo) {
+    console.log('[publish.js] No existing remote version manifest; first publish is allowed.');
+    return;
   }
 
   assertReleaseOrder(localRelease, remoteInfo);
@@ -748,14 +834,13 @@ const main = async () => {
     return;
   }
 
-  if (options.bump) {
-    run('node', ['scripts/patch.js']);
-  }
-  run('yarn', ['audit:sqlite-migrations']);
-
+  // 顺序有两条理由,都不能再换回去:
+  //  ① 远端要在 `patch.js` **起跳之前**被问一次 —— 起跳点只看本地,本地一旦落后就必然撞上一个
+  //     已发布的语义版本(publish-bumps-from-a-stale-local-version.md)。
+  //  ② 两道远端闸排在 migration audit **之前** —— 真该被拒的那一发 2 秒内就被拒,
+  //     而不是等 40 秒的审计跑完才被拒。审计一步不少,只是排在闸之后。
   const publishConfig = createPublishConfig(options);
   const objectPrefix = `${options.prefix}/${options.env}/${options.platform}`;
-  const packageRelease = readPackageRelease();
   const targetDistDir = releaseChannelConfigs[options.env].distDir;
   const client = options.dryRun
     ? null
@@ -767,10 +852,20 @@ const main = async () => {
       retryMax: 3,
       timeout: OSS_REQUEST_TIMEOUT_MS,
     });
+
+  if (client) {
+    await alignLocalReleaseBaseline(client, objectPrefix);
+  }
+  if (options.bump) {
+    run('node', ['scripts/patch.js']);
+  }
+
+  const packageRelease = readPackageRelease();
   if (client) {
     await assertNoRemoteDowngrade(client, objectPrefix, packageRelease);
     await assertNoCrossChannelIdentityReuse(client, options, packageRelease);
   }
+  run('yarn', ['audit:sqlite-migrations']);
   if (options.preflightOnly) {
     console.log('[publish.js] Preflight complete; build, signing, and upload were skipped.');
     return;
@@ -830,6 +925,7 @@ module.exports = {
   assertNoCrossChannelIdentityReuse,
   assertNoRemoteDowngrade,
   assertReleaseOrder,
+  resolveReleaseBaseline,
   artifactNameMatchesVersion,
   createVersionInfoForUpload,
   findInstallerArtifact,
