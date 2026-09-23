@@ -142,6 +142,18 @@ const FOLDER_AUTH_HINT =
     ? ' macOS is protecting this folder — approve the permission prompt if it appears, or grant access under System Settings › Privacy & Security › Files and Folders (or Full Disk Access), then ask me to try again.'
     : ''
 
+/**
+ * 悬浮时显示的那串 —— **可读的完整路径**。
+ *
+ * 目标是逐段 `encodeURIComponent` 过的(`Trial%201%20NPG`),没人想读它;渲染器的 tooltip
+ * 优先取 `node.title`,所以 title 把路径按原样带回来(Ral 2026-09-23:「悬浮时,可以展示它
+ * 完整的路径」,并要求「以 cowork 交互为准」)。
+ *
+ * `"` 与 `\\` 必须转义:一个裸 `"` 会提前闭合 title,**整条链接连目标一起解析失败** ——
+ * 等于用一类断链换掉另一类。CommonMark 允许 title 里用反斜杠转义。
+ */
+const mdTitle = (absPath: string): string => absPath.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+
 export const mdDirLink = (absPath: string): string => {
   // Keep the encoded destination recognizable as an absolute local path so the renderer can
   // intercept it. Forward slashes are also valid for Windows filesystem APIs.
@@ -152,7 +164,7 @@ export const mdDirLink = (absPath: string): string => {
     .join('/')
     .replace(/^([A-Za-z])%3A\//, '$1:/')
   const label = basename(absPath).replace(/([\\[\]])/g, '\\$1')
-  return `[${label}](${target})`
+  return `[${label}](${target} "${mdTitle(absPath)}")`
 }
 
 export class WorkspaceArchiveService {

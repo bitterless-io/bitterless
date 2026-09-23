@@ -164,7 +164,11 @@ const onMarkdownClick = (event: MouseEvent): void => {
   if (!path) return
   event.preventDefault()
   event.stopPropagation()
-  void showFileInFolder(path)
+  // **进应用内 Preview,不是访达**(Ral 2026-09-23:「以 cowork 交互为准」)。
+  // cowork 2026-09-08 就改成这样了,本仓当时没跟上 —— `docs/INDEX.md` 里那条却写着
+  // 「synced to bitterless」,文档与代码对不上,见 `docs/issues/chat-file-link-opens-finder.md`。
+  // 属于 Project 还是外部文件由 OnlyPreview 自己判,这里不重算 —— 第二份判定只会漂移。
+  void previewLocalFile(path)
 }
 
 /**
@@ -201,6 +205,14 @@ const onMarkdownDoubleClick = (event: MouseEvent): void => {
   event.preventDefault()
   event.stopPropagation()
   void coach.openWorkspaceInPreview({ path: reference.path, line: reference.line }).catch(() => undefined)
+}
+
+// 打不开要**说出来** —— 静默 no-op 读起来就是"点了没反应"。沿用 showFileInFolder 的
+// `markMissing`,两条路径给人的反馈一致。
+const previewLocalFile = async (path?: string, line?: number): Promise<void> => {
+  if (!path) return
+  const result = await coach.openWorkspaceInPreview({ path, line }).catch(() => null)
+  if (!result?.ok) markMissing(path)
 }
 
 const showFileInFolder = async (path?: string): Promise<void> => {

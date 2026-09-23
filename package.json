@@ -72,6 +72,7 @@
     "test:lan-ip": "node --test tests/lanIp/*.test.mjs",
     "test:maestro-pi-agent-dir": "node --test scripts/maestro/piAgentDir.test.ts",
     "test:maestro-crms-residue": "node --test scripts/maestro/crmsResidueCleanup.test.ts",
+    "check:chat-file-link": "node scripts/maestro/check-chat-file-link.mjs",
     "check:chat-composer": "node scripts/maestro/check-chat-composer.mjs",
     "check:empty-turn-copy": "node scripts/maestro/check-empty-turn-copy.mjs",
     "check:turn-has-no-timeout": "node scripts/maestro/check-turn-has-no-timeout.mjs",
