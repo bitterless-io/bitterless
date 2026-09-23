@@ -19,7 +19,36 @@ open(local target) → Main workspace scope
   file outside   → IndiPreview window → shared Vue / Chromium Preview
 ```
 
-## 验证与交付
+## 冷启动文件预览修复（2026-09-23）
+
+### 根因与取舍
+
+Cowork 内置 `preview_file ~/Downloads/Invoice-0CSZ9QB2-0006.pdf` 在未打开 Workspace 时失败，原因是工具路由先调用 `inspectTarget`，而 Project authority 所在的隐藏读取进程原来只由 Workspace 启动。此时尚未进入 PDF 渲染，便返回 `Project authority runtime unavailable`。路径展开与 workspace 外文件权限不是这次失败的原因。
+
+IndiPreview 已复用 `OnlyPreviewPreviewRegionService`、Vue Preview factory 和 Chromium Preview；缺的是读取进程独立于 Workspace 的生命周期。因此保留共用渲染层，补齐共享运行时，不复制另一套 `onlypreview__previewRegion` 页面。
+
+### 本次改动
+
+1. 工具、MCP／OS 和直接文件入口在检查目标前取得短期运行时租约，等 authority、Office 和 Preview reader 就绪后再判断归属；结束或失败均释放。
+2. IndiPreview 自身持有长期租约，独立窗口关闭时释放。冷启动期间关闭窗口会归还晚到的租约，不再创建内容视图。
+3. Workspace 附着到已就绪的运行时，关闭时仅释放自己的使用权。仍有 IndiPreview 时保持读取能力；最后一个使用者退出后才销毁。并发启动复用一个隐藏进程和一个启动 Promise。
+4. 无 Workspace 的外部文件预览不绑定项目、不触发目录索引，也不创建 Workspace 窗口／Tab。启动失败会清理并允许后续调用重试。
+
+### 验证与人工验收
+
+- 本次 BL 路由／生命周期／运行时测试 74/74；Cowork 路由等相关测试 141/141，加独立运行时测试 13/13，均通过。
+- Cowork Main 类型检查通过；BL Main 检查仍有 64 项既有诊断，相比之前 70 项基线无新增。没有将其他并行修改减少的诊断归功于本修复。
+- Cowork 额外执行的 RestorePresentation 有一项既有源码形状断言失败：测试要求先 present 后 restore，HEAD 实际早已先 restore 后 present；未修改该无关断言。
+- 未启动 Electron／E2E，未打包安装或发布。上述是代码级验证，不能代替已安装应用的实际显示验收。
+
+重启包含本次 Main 改动的 Cowork／BL 构建后验收（仅 HMR 不够）：
+
+1. 不先打开 Workspace，在 Cowork Chat 调用 `preview_file ~/Downloads/Invoice-0CSZ9QB2-0006.pdf`，应直接进入独立 IndiPreview；BL 同测外部文件入口。
+2. 同一入口打开 workspace 内文件，应在 Workspace 预览；外部文件不增加浏览器 Tab。
+3. 保持外部 PDF／Markdown 窗口打开，关闭再打开 Workspace，验证独立窗口的内容读取、刷新及 Cmd+F 仍正常。
+4. 同时打开两个独立窗口，关闭其中一个，另一个应继续正常工作。
+
+## 初次实现的验证与交付
 
 2026-09-23 代码级交付完成；尚未打包安装、发布或人工验收。
 

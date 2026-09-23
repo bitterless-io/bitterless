@@ -76,6 +76,7 @@ env.preview = {
   }
 };
 env.files = {
+  acquirePreviewRuntime: async () => () => {},
   inspectTarget: async (path) => {
     env.calls.push({ method: 'inspect', path });
     await env.inspectHook?.(path);

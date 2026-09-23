@@ -28,6 +28,8 @@ const stubs = {
     'export const onlyPreviewPreviewRegionService = globalThis.__toggle.preview;' +
     'export const resolveOnlyPreviewPreviewRegion = () => globalThis.__toggle.preview;',
   'fileSearchWindow.service': 'export const fileSearchWindowService = globalThis.__toggle.files;',
+  'indiPreviewWindow.service':
+    'export const openIndiPreviewFile = async () => { throw new Error("Unexpected independent preview in host toggle test"); };',
   'onlyPreviewLog.runtime':
     'export const onlyPreviewLogService = { writeOperationFailure: failure => globalThis.__toggle.logs.push(failure) };',
   'onlyPreviewOpenDiagnostics.runtime':
@@ -147,6 +149,7 @@ env.preview = {
   }
 };
 env.files = {
+  acquirePreviewRuntime: async () => () => {},
   inspectTarget: async (path) => {
     env.calls.push(`inspect:${path}`);
     return inspect(path);

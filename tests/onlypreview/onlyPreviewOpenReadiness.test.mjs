@@ -53,6 +53,7 @@ const fixture = () => {
   const diagnostics = { nextTag: () => 'v', now: () => 0, elapsed: () => 0, emit: () => undefined };
   const Helper = runInNewContext(`${output}\nOnlyPreviewWindowHelper;`, {
     console: { warn: () => undefined },
+    shuttingDown: false,
     OnlyPreviewContractError: ContractError,
     onlyPreviewHostRegistry: registry,
     onlyPreviewOpenDiagnostics: {},
@@ -62,6 +63,7 @@ const fixture = () => {
     }),
     fileSearchWindowService: {
       stop: () => { stops += 1; },
+      releaseWorkspace: () => { stops += 1; },
       rebindHost: () => false,
       start: params => { const gate = deferred(); starts.push({ params, gate }); return gate.promise; }
     },

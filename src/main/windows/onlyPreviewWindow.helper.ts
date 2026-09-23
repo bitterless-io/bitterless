@@ -661,10 +661,14 @@ export class OnlyPreviewWindowHelper {
     }
   }
 
-  /** Stop the search runtime, unless a host transition asked to keep it. */
+  /** Release this Workspace while independent previews retain their shared read runtime. */
   private stopSearchRuntimeUnlessPreserved(): void {
+    if (shuttingDown) {
+      fileSearchWindowService.stop();
+      return;
+    }
     if (this.preserveSearchRuntime) return;
-    fileSearchWindowService.stop();
+    fileSearchWindowService.releaseWorkspace();
   }
 
   /**
@@ -1286,11 +1290,8 @@ export class OnlyPreviewWindowHelper {
       }
     };
 
-    // Adopt the live runtime when a transition preserved it — its index build keeps going.
-    const rebound =
-      this.preserveSearchRuntime &&
-      fileSearchWindowService.rebindHost({ host, bootstrapToken: searchBootstrap.searchToken });
-    if (!rebound) await startSearchRuntime(searchBootstrap.searchToken);
+    // Attach this Workspace to the ready shared runtime without restarting independent readers.
+    await startSearchRuntime(searchBootstrap.searchToken);
     openTrace.mark({ phase: 'runtime' });
     this.diagnostics.emit('visible-window', {
       tag: diagnostic.tag,

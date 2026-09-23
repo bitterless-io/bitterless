@@ -38,6 +38,7 @@ export class OnlyPreviewSingleFileSurface {
   private readonly region = new OnlyPreviewPreviewRegionService();
   private readonly chromeLease = acquireIndiPreviewChromePartition();
   private toolbar: WebContentsView | null = null;
+  private releaseReadRuntime: (() => void) | null = null;
   private disposed = false;
   private active = false;
   private readonly shortcutContents = new WeakSet<WebContents>();
@@ -58,6 +59,12 @@ export class OnlyPreviewSingleFileSurface {
 
   async open(): Promise<void> {
     try {
+      const releaseRuntime = await fileSearchWindowService.acquirePreviewRuntime();
+      if (!this.isLive()) {
+        releaseRuntime();
+        throw new Error('IndiPreview closed during startup.');
+      }
+      this.releaseReadRuntime = releaseRuntime;
       const inspected = await fileSearchWindowService.inspectTarget(this.owner.path);
       if (!this.isLive()) throw new Error('IndiPreview closed during startup.');
       const fileRef = onlyPreviewWorkspaceRegistry.registerExternalPreview(
@@ -152,6 +159,8 @@ export class OnlyPreviewSingleFileSurface {
     this.disposed = true;
     this.releaseFindDispatch();
     this.region.destroy();
+    this.releaseReadRuntime?.();
+    this.releaseReadRuntime = null;
     this.chromeLease.release(this.region.waitForChromeDisposal());
     onlyPreviewHostRegistry.revoke(this.host.hostToken);
     if (this.toolbar && !this.toolbar.webContents.isDestroyed()) this.toolbar.webContents.close();

@@ -12,6 +12,17 @@ const harness = () => {
   let opener;
   let scope = 'outside';
   let mount = 'tab';
+  const lifecycle = { ready: false, leases: 0, acquired: 0, released: 0, gate: null, fail: false };
+  const files = {
+    acquirePreviewRuntime: async () => {
+      await lifecycle.gate;
+      if (lifecycle.fail) throw new Error('runtime startup failed');
+      lifecycle.ready = true; lifecycle.leases++; lifecycle.acquired++;
+      let released = false;
+      return () => { if (!released) { released = true; lifecycle.leases--; lifecycle.released++; } };
+    },
+    inspectTarget: async () => { assert.ok(lifecycle.ready && lifecycle.leases > 0, 'authority needs a live ready lease'); return {}; }
+  };
   const stubs = {
     '@maestro-main/windows/main/previewOpener.registry': { registerMaestroPreviewOpener: value => { opener = value; } },
     '@main/miniapps/onlypreview/onlyPreviewWorkspace.registry': { onlyPreviewWorkspaceRegistry: {} },
@@ -24,17 +35,23 @@ const harness = () => {
     '@main/windows/onlyPreviewLocalPathTarget': { resolveLocalPathTarget() {} },
     '@main/miniapps/onlypreview/onlyPreviewHostMount.service': { peekOnlyPreviewHostMount: () => mount },
     '@main/miniapps/onlypreview/onlyPreviewExplicitTarget.registry': { openRegisteredOnlyPreviewExplicitTarget: async (path, options) => calls.push(['explicit', path, options]) },
-    '@main/fileSearch/fileSearchWindow.service': { fileSearchWindowService: { inspectTarget: async () => ({}) } },
+    '@main/fileSearch/fileSearchWindow.service': { fileSearchWindowService: files },
     '@main/miniapps/onlypreview/onlyPreviewWorkspaceScope.service': { resolveOnlyPreviewTargetScope: async () => ({ kind: scope }) },
     '@main/windows/indiPreviewWindow.service': { openIndiPreviewFile: async (path, options) => calls.push(['independent', path, options]) }
   };
+  const leaseModule = { exports: {} };
+  const leaseCode = ts.transpileModule(read('src/main/miniapps/onlypreview/onlyPreviewReadRuntime.service.ts'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+  }).outputText;
+  new Function('require', 'module', 'exports', leaseCode)(name => stubs[name], leaseModule, leaseModule.exports);
+  stubs['@main/miniapps/onlypreview/onlyPreviewReadRuntime.service'] = leaseModule.exports;
   const compiled = ts.transpileModule(read('src/main/windows/onlyPreviewMaestroOpener.ts'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
   }).outputText;
   const module = { exports: {} };
   new Function('require', 'module', 'exports', compiled)(name => name.startsWith('node:') ? nodeRequire(name) : stubs[name] ?? (() => { throw new Error(name); })(), module, module.exports);
   module.exports.registerOnlyPreviewMaestroOpener();
-  return { calls, opener, osOpen: module.exports.openOnlyPreviewOsTarget, setScope: value => { scope = value; }, setMount: value => { mount = value; } };
+  return { calls, opener, lifecycle, osOpen: module.exports.openOnlyPreviewOsTarget, setScope: value => { scope = value; }, setMount: value => { mount = value; } };
 };
 
 test('outside local files go directly to IndiPreview without constructing Workspace or browser tabs', async () => {
@@ -69,4 +86,24 @@ test('independent surface owns file authority and shared renderers, without Work
   assert.match(surface, /registerExternalPreview/);
   assert.doesNotMatch(surface, /recordOnlyPreviewRecentFile|openOnlyPreviewAbsoluteTarget|bindProject|openExplicitTarget/);
   assert.match(read('src/main/app.main.ts'), /new OnlyPreviewOpenQueue\(openOnlyPreviewOsTarget\)/);
+});
+
+for (const scope of ['inside', 'outside']) {
+  test('cold ' + scope + ' routing waits for authority readiness and releases its temporary lease', async () => {
+    const h = harness(); h.setScope(scope);
+    let ready; h.lifecycle.gate = new Promise(resolve => { ready = resolve; });
+    const opened = h.opener.open(scope === 'inside' ? '/work/result.md' : '/Downloads/Invoice-0CSZ9QB2-0006.pdf');
+    await Promise.resolve(); assert.deepEqual(h.calls, []);
+    ready(); await opened;
+    assert.equal(h.lifecycle.acquired, 1); assert.equal(h.lifecycle.released, 1);
+    assert.equal(h.lifecycle.leases, 0);
+    assert.equal(h.calls[0][0], scope === 'inside' ? 'workspace-tab' : 'independent');
+  });
+}
+test('a failed runtime startup opens no UI and a later call retries successfully', async () => {
+  const h = harness(); h.lifecycle.fail = true;
+  await assert.rejects(h.opener.open('/Downloads/report.pdf'), /runtime startup failed/);
+  assert.deepEqual(h.calls, []); assert.equal(h.lifecycle.leases, 0);
+  h.lifecycle.fail = false; await h.opener.open('/Downloads/report.pdf');
+  assert.equal(h.lifecycle.acquired, 1); assert.equal(h.lifecycle.released, 1);
 });

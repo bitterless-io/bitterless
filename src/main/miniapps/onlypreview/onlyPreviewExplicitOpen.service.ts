@@ -1,3 +1,4 @@
+import { withOnlyPreviewReadRuntime } from './onlyPreviewReadRuntime.service';
 import { openIndiPreviewFile } from '@main/windows/indiPreviewWindow.service';
 import { resolveOnlyPreviewTargetScope } from './onlyPreviewWorkspaceScope.service';
 import { xpcMain } from 'electron-xpc/main';
@@ -113,7 +114,7 @@ export const presentOnlyPreviewExplicitFile = async (
 const performOpenOnlyPreviewAbsoluteTarget = async (
   target: string,
   context: { trace: OnlyPreviewOpenTrace; preserveTreeSelection: boolean; line?: number; fragment?: string }
-): Promise<void> => {
+): Promise<void> => withOnlyPreviewReadRuntime(async () => {
   const { trace, preserveTreeSelection, line, fragment } = context;
   const initialRoot = onlyPreviewWorkspaceRegistry.currentProjectRoot();
   const inspected = await fileSearchWindowService.inspectTarget(target);
@@ -219,7 +220,7 @@ const performOpenOnlyPreviewAbsoluteTarget = async (
   } finally {
     onlyPreviewRecentDirectoryService.finishExplicitTarget(recentGeneration);
   }
-};
+});
 
 
 

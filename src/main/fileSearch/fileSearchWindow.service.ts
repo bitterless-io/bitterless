@@ -121,6 +121,14 @@ const rendererTarget = (): { filePath: string; url: string } => {
   return { filePath, url: pathToFileURL(filePath).href };
 };
 
+interface FileSearchWorkspaceOwner {
+  host: OnlyPreviewHostCapability;
+  bootstrapToken: string;
+  broadcast(eventName: string, value: unknown): void;
+  onUnexpectedExit(reason: string): void;
+  onOpenStage?(phase: 'runtime-search' | 'runtime-office' | 'runtime-authority' | 'runtime-preview-read'): void;
+}
+
 export class FileSearchWindowService {
   private window: BrowserWindow | null = null;
   private projectAuthorityCapability: string | null = null;
@@ -129,8 +137,8 @@ export class FileSearchWindowService {
   private readonly previewReader: FileSearchPreviewReadClientService;
   private runtimeInstanceId: string | null = null;
   // Kept so a host transition can RE-ATTACH this runtime instead of restarting it. The hidden
-  // search window is project-scoped, not window-scoped: tying its lifetime to one host is what made
-  // every toggle throw away an in-flight index build (copy-then-promote means everything since the
+  // search window serves Workspace and independent preview readers: tying its lifetime to one
+  // host made every toggle throw away an in-flight index build (copy-then-promote means everything since the
   // last promote is lost) and what let a dying host tear down the runtime its successor had just
   // built. See docs/issues/onlypreview-host-toggle-tears-down-the-new-runtime.md.
   private runtimeCapability: string | null = null;
@@ -145,6 +153,10 @@ export class FileSearchWindowService {
   private runtimeBroadcast: ((eventName: string, value: unknown) => void) | null = null;
   private privilegedRuntimeFatal: (() => void) | null = null;
   private lifecycleId = 0;
+  private workspaceOwner: FileSearchWorkspaceOwner | null = null;
+  private previewRuntimeLeases = 0;
+  private runtimeStarting: Promise<void> | null = null;
+  private resolveRuntimeStopped: (() => void) | null = null;
 
   constructor(
     private readonly diagnostics: OnlyPreviewSearchDiagnostics = createOnlyPreviewSearchDiagnostics()
@@ -159,14 +171,85 @@ export class FileSearchWindowService {
     });
   }
 
-  async start(params: {
-    host: OnlyPreviewHostCapability;
-    bootstrapToken: string;
-    broadcast(eventName: string, value: unknown): void;
-    onUnexpectedExit(reason: string): void;
-    onOpenStage?(phase: 'runtime-search' | 'runtime-office' | 'runtime-authority' | 'runtime-preview-read'): void;
-  }): Promise<void> {
-    this.stop();
+  /** Keep authority and readers alive without opening a Workspace or starting its index. */
+  async acquirePreviewRuntime(): Promise<() => void> {
+    this.previewRuntimeLeases += 1;
+    let released = false;
+    const release = (): void => {
+      if (released) return;
+      released = true;
+      this.previewRuntimeLeases -= 1;
+      this.stopIfUnowned();
+    };
+    try {
+      await this.ensureRuntimeReady();
+      if (!this.hasLiveRuntime()) throw new Error('File-search runtime startup was superseded.');
+      return release;
+    } catch (error) {
+      release();
+      throw error;
+    }
+  }
+
+  async start(params: FileSearchWorkspaceOwner): Promise<void> {
+    this.workspaceOwner = params;
+    this.runtimeBroadcast = params.broadcast;
+    this.runtimeFailed = params.onUnexpectedExit;
+    let fatalReported = false;
+    this.privilegedRuntimeFatal = () => {
+      if (fatalReported) return;
+      fatalReported = true;
+      params.onUnexpectedExit('File-search privileged runtime became unavailable.');
+    };
+    try {
+      await this.ensureRuntimeReady();
+      if (this.workspaceOwner !== params || !this.hasLiveRuntime()) {
+        throw new Error('File-search Workspace startup was superseded.');
+      }
+      this.rebindHost(params);
+    } catch (error) {
+      if (this.workspaceOwner === params) this.releaseWorkspace();
+      throw error;
+    }
+  }
+
+  releaseWorkspace(): void {
+    this.workspaceOwner = null;
+    this.runtimeBroadcast = null;
+    this.runtimeFailed = undefined;
+    this.privilegedRuntimeFatal = null;
+    fileSearchRuntimeRelayService.detach();
+    this.stopIfUnowned();
+  }
+
+  private stopIfUnowned(): void {
+    if (
+      !this.workspaceOwner &&
+      this.previewRuntimeLeases === 0 &&
+      (this.window || this.runtimeStarting)
+    ) {
+      this.stop();
+    }
+  }
+
+  private ensureRuntimeReady(): Promise<void> {
+    if (this.hasLiveRuntime()) return Promise.resolve();
+    if (this.runtimeStarting) return this.runtimeStarting;
+    const lifecycleId = this.lifecycleId + 1;
+    const startup = this.startRuntime()
+      .catch((error) => {
+        // Constructor/read-client setup may fail before startRuntime reaches its load try/catch.
+        if (this.lifecycleId === lifecycleId) this.stop();
+        throw error;
+      })
+      .finally(() => {
+        if (this.runtimeStarting === startup) this.runtimeStarting = null;
+      });
+    this.runtimeStarting = startup;
+    return startup;
+  }
+
+  private async startRuntime(): Promise<void> {
     const diagnostic = { tag: this.diagnostics.nextTag('w'), startedAt: this.diagnostics.now() };
     this.diagnostics.emit('runtime-window', {
       tag: diagnostic.tag,
@@ -214,22 +297,16 @@ export class FileSearchWindowService {
     this.projectAuthorityCapability = projectAuthorityCapability;
     this.projectAuthorityClient = projectAuthorityClient;
     this.runtimeInstanceId = instanceId;
-    let fatalReported = false;
-    this.privilegedRuntimeFatal = () => {
-      if (fatalReported) return;
-      fatalReported = true;
-      params.onUnexpectedExit('File-search privileged runtime became unavailable.');
-    };
-
     let resolveStopped = (): void => undefined;
     const stopped = new Promise<void>((resolve) => {
       resolveStopped = resolve;
     });
+    this.resolveRuntimeStopped = resolveStopped;
     const lifecycleFence = new FileSearchLifecycleFence(target.url, (message) => {
       if (this.window !== window || this.lifecycleId !== lifecycleId) return;
-      resolveStopped();
+      const reportFailure = this.runtimeFailed;
       this.stop();
-      params.onUnexpectedExit(message);
+      reportFailure?.(message);
     });
     const fenceNavigation = (event: Electron.Event, url: string): void => {
       if (lifecycleFence.acceptNavigation(url)) return;
@@ -291,9 +368,9 @@ export class FileSearchWindowService {
         instanceId,
         stopped
       });
-      params.onOpenStage?.('runtime-search');
+      this.workspaceOwner?.onOpenStage?.('runtime-search');
       await this.officeReader.waitUntilReady(stopped);
-      params.onOpenStage?.('runtime-office');
+      this.workspaceOwner?.onOpenStage?.('runtime-office');
       let projectReadyTimeout: ReturnType<typeof setTimeout> | undefined;
       const projectReady = await Promise.race([
         projectAuthorityClient.ready({
@@ -313,9 +390,9 @@ export class FileSearchWindowService {
         if (projectReadyTimeout) clearTimeout(projectReadyTimeout);
       });
       if (!projectReady.ok) throw new Error('Project authority runtime failed to initialize.');
-      params.onOpenStage?.('runtime-authority');
+      this.workspaceOwner?.onOpenStage?.('runtime-authority');
       await this.previewReader.waitUntilReady(stopped);
-      params.onOpenStage?.('runtime-preview-read');
+      this.workspaceOwner?.onOpenStage?.('runtime-preview-read');
       this.diagnostics.emit('runtime-window', {
         tag: diagnostic.tag,
         phase: 'preload-ready',
@@ -326,23 +403,6 @@ export class FileSearchWindowService {
       }
       this.runtimeCapability = capability;
       this.runtimeClient = runtimeClient;
-      this.runtimeBroadcast = params.broadcast;
-      this.runtimeFailed = params.onUnexpectedExit;
-      fileSearchRuntimeRelayService.attach({
-        hostToken: params.host.hostToken,
-        hostId: params.host.hostId,
-        bootstrapToken: params.bootstrapToken,
-        capability,
-        client: runtimeClient,
-        broadcast: params.broadcast,
-        onProtocolFailure: (rule) =>
-          this.runtimeFailed?.(`File-search runtime protocol failed (${rule}).`)
-      });
-      this.diagnostics.emit('runtime-window', {
-        tag: diagnostic.tag,
-        phase: 'relay-attached',
-        elapsedMs: this.diagnostics.elapsed(diagnostic.startedAt)
-      });
       this.diagnostics.emit('runtime-window-terminal', {
         tag: diagnostic.tag,
         outcome: 'success',
@@ -368,6 +428,11 @@ export class FileSearchWindowService {
         ` by=${new Error().stack?.split('\n')[2]?.trim().slice(0, 120) ?? 'unknown'}`
     );
     this.lifecycleId += 1;
+    this.resolveRuntimeStopped?.();
+    this.resolveRuntimeStopped = null;
+    this.runtimeStarting = null;
+    this.workspaceOwner = null;
+    this.runtimeFailed = undefined;
     const window = this.window;
     this.window = null;
     this.projectAuthorityClient = null;
@@ -422,6 +487,12 @@ export class FileSearchWindowService {
       // The index in that renderer never stopped, so its workspace binding must survive with it.
       preserveWorkspace: true
     });
+    this.workspaceOwner = {
+      ...this.workspaceOwner,
+      ...params,
+      broadcast,
+      onUnexpectedExit: this.runtimeFailed ?? (() => undefined)
+    };
     this.diagnostics.emit('runtime-window', {
       tag: this.diagnostics.nextTag('w'),
       phase: 'relay-attached',

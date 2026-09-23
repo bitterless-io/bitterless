@@ -36,6 +36,7 @@ const surfaceHarness = (t) => {
   const workspaces = new OnlyPreviewWorkspaceRegistry(hosts)
   const state = {
     hosts: [], registrations: [], revokedHosts: [], revokedWorkspaces: [], regions: [],
+    leases: 0, acquired: 0, released: 0, acquireGate: null,
     views: [], recentWrites: [], inspect: async (path) => fileTarget(path),
     load: async () => undefined, present: async () => undefined
   }
@@ -109,7 +110,14 @@ const surfaceHarness = (t) => {
       '@maestro-main/common/shortcutsHelper/shortcuts.helper': { enrollMaestroShortcutContents() {} },
       '@electron-toolkit/utils': { is: { dev: false } },
       '@main/fileSearch/fileSearchWindow.service': {
-        fileSearchWindowService: { inspectTarget: (path) => state.inspect(path) }
+        fileSearchWindowService: {
+          acquirePreviewRuntime: async () => {
+            await state.acquireGate; state.leases++; state.acquired++;
+            let released = false;
+            return () => { if (!released) { released = true; state.leases--; state.released++; } };
+          },
+          inspectTarget: (path) => { assert.ok(state.leases > 0); return state.inspect(path); }
+        }
       },
       '@main/miniapps/onlypreview/onlyPreviewHost.registry': { onlyPreviewHostRegistry: hosts },
       '@main/miniapps/onlypreview/onlyPreviewWorkspace.registry': { onlyPreviewWorkspaceRegistry: workspaces },
@@ -251,3 +259,23 @@ for (const phase of ['inspect', 'load', 'present']) {
     assert.deepEqual(h.state.recentWrites, [])
   })
 }
+
+test('closing IndiPreview while shared runtime starts returns the late lease without reading or mounting', async t => {
+  const h = surfaceHarness(t), gate = deferred(); h.state.acquireGate = gate.promise;
+  h.state.inspect = () => { throw new Error('closed host must not inspect'); };
+  const preview = h.makeSurface('/outside/invoice.pdf');
+  const opening = preview.surface.open(); preview.owner.close(); gate.resolve();
+  await assert.rejects(opening, /closed during startup/);
+  assert.equal(h.state.leases, 0); assert.equal(h.state.acquired, 1); assert.equal(h.state.released, 1);
+  assert.equal(h.state.views.length, 0);
+  preview.surface.dispose(); assert.equal(h.state.released, 1);
+});
+test('IndiPreview retains the read runtime until disposal and releases after failed inspection', async t => {
+  const h = surfaceHarness(t);
+  const preview = h.makeSurface('/outside/invoice.pdf'); await preview.surface.open();
+  assert.equal(h.state.leases, 1); preview.surface.dispose(); assert.equal(h.state.leases, 0);
+  h.state.inspect = () => { throw new Error('target missing'); };
+  const failed = h.makeSurface('/outside/missing.pdf');
+  await assert.rejects(failed.surface.open(), /target missing/);
+  assert.equal(h.state.leases, 0); assert.equal(h.state.released, 2);
+});

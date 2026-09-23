@@ -1,3 +1,4 @@
+import { withOnlyPreviewReadRuntime } from '@main/miniapps/onlypreview/onlyPreviewReadRuntime.service';
 import { realpath } from 'node:fs/promises';
 import { fileSearchWindowService } from '@main/fileSearch/fileSearchWindow.service';
 import { openIndiPreviewFile } from '@main/windows/indiPreviewWindow.service';
@@ -64,7 +65,7 @@ export const registerOnlyPreviewMaestroOpener = (): void => {
         host.hostToken, project.workspaceId
       ).workspace.rootRealPath;
     },
-    open: async (absolutePath: string, options?: { line?: number; fragment?: string }) => {
+    open: async (absolutePath: string, options?: { line?: number; fragment?: string }) => withOnlyPreviewReadRuntime(async () => {
       const inspected = await fileSearchWindowService.inspectTarget(absolutePath);
       const scope = await resolveOnlyPreviewTargetScope(inspected);
       if (scope.kind === 'outside') {
@@ -121,7 +122,7 @@ export const registerOnlyPreviewMaestroOpener = (): void => {
       // `maestroBrowserView.openCompositeTabTarget` 上,所以这里调它而不是自己拼一遍。
       const result = await maestroWindowHelper.openWorkspaceInPreview({ path: absolutePath, ...options });
       if (!result.ok) throw new Error(result.error || 'OnlyPreview could not open that path.');
-    },
+    }),
     /**
      * 会话不再用这个工作区时只解除匹配的 Project 绑定,保留当前 OnlyPreview tab/窗口。
      *
