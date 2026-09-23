@@ -63,3 +63,10 @@ export const HOST_APPROVAL_HISTORY_KEY = 'approval-history'
 // apidoc 摄取自己的 config 域(drill-001)。与 cowork 同名同值 —— 两边的库虽然各自独立,
 // 但域名对齐能让同一份文档/排查经验在两侧都成立。
 export const APIDOC_CONFIG_DOMAIN = 'apidoc'
+
+// Decision settings —— agent 回路里的结构化判断由谁来做。今天只有 Jev 这一行开关
+// (options = boolean;读不到 / 读失败一律当作关)。插入点见 overmind
+// `areas/agent-runtime/decision/browser-use.html` #1。
+// **域名与 key 与 cowork 完全一致** —— 两边库各自独立,但对齐后同一份排查经验两侧都成立。
+export const DECISION_CONFIG_DOMAIN = 'decision'
+export const DECISION_JEV_ENABLED_KEY = 'jev-enabled'

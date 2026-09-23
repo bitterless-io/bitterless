@@ -270,7 +270,7 @@ export class BaseAgent {
    * pi freezes cwd at session construction (`AgentSession._cwd`) and bakes it into the builtin tools,
    * so this is read when the session is created — which is safe because the session is created lazily
    * inside `prompt()`, after `setProjectRoot()` has already run for the turn. A workspace switch
-   * inside a LIVE chat therefore refreshes A6 but not cwd; changing it would require dropping the
+   * inside a live chat rebuilds the runtime with the same persisted session file, retaining the
    * conversation. See docs/features/agent-cwd-follows-workspace.md.
    */
   private resolveCwd(): string {
@@ -288,6 +288,7 @@ export class BaseAgent {
     // Recorded before the unchanged-instructions early return below: two projects can share identical
     // (or absent) AGENTS.md while still being different working directories.
     const previousCwd = this.cwdKey()
+    const previousProjectRoot = this.projectRoot
     this.projectRoot = projectRoot
     /**
      * **cwd 跟随工作区**(Ral 2026-09-21 在 PQ-CWD 上拍板 A;
@@ -321,8 +322,8 @@ export class BaseAgent {
        */
       this.reset()
     }
-    const instructions = await readProjectInstructions(projectRoot)
-    if (this.busy || instructions === this.projectInstructions) return
+    const instructions = await readProjectInstructions(this.resolveCwd())
+    if (this.busy || (instructions === this.projectInstructions && previousProjectRoot === projectRoot)) return
     const live = this.sessionPromise
     if (live) {
       const session = await live
@@ -508,7 +509,22 @@ export class BaseAgent {
       if (event.type === 'compaction_retry') this.opts.onCompaction?.({ active: true, retry: { attempt: event.attempt, maxAttempts: event.maxAttempts, delayMs: event.delayMs, error: event.error } })
       if (event.type === 'compaction_attempt' || event.type === 'compaction_retry_finished') this.opts.onCompaction?.({ active: true })
       if (event.type === 'compaction_start') this.opts.onCompaction?.({ active: true })
-      if (event.type === 'compaction_end') this.opts.onCompaction?.({ active: false, errorMessage: event.errorMessage, aborted: event.aborted })
+      if (event.type === 'compaction_end') {
+        this.opts.onCompaction?.({ active: false, errorMessage: event.errorMessage, aborted: event.aborted })
+        // 压缩边界记进 agent-io —— 与 pi 对它自己那份 jsonl 的做法同形(Ral 2026-09-23:「派在压缩的时候
+        // 如何处理 jsonl 的,BL 和 cowork 就该如何处理」):pi 只**追加**一条 compaction 条目、旧条目一条不删。
+        // 原来这份日志在压缩时一个字都不记,事后只看得到提示词突然变短,看不到为什么。
+        // 摘要正文不进这一行:它逐字在 pi 会话 jsonl 里,下一轮的 prompt 行也会把它原样带上。
+        // 失败 / 中止也记 —— "这一轮为什么撑爆了"往往就是一次没压成的压缩。
+        modelIoLog.append({
+          kind: 'note',
+          name: 'compaction',
+          subject: event.ok ? `ok ${event.beforeTokens ?? '?'}→${event.afterTokens ?? '?'} tok` : event.aborted ? 'aborted' : 'failed',
+          text: event.errorMessage || '',
+          turn: inputBudget.turnIndexNow,
+          detail: { reason: event.reason, ok: event.ok === true, beforeTokens: event.beforeTokens, afterTokens: event.afterTokens, aborted: event.aborted === true }
+        })
+      }
     })
     return session
   }

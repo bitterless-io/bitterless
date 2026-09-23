@@ -469,6 +469,25 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     return view
   }
 
+  async openAccountPassword(): Promise<void> {
+    let tab = this.tabs.find((item) => item.kind === 'home');
+    if (!tab) {
+      tab = this.buildPinnedLocalHomeTab();
+      tab.pinned = false;
+      this.tabs.push(tab);
+    }
+    await this.ensureWarm(tab);
+    const wc = tab.view?.webContents;
+    if (!wc || wc.isDestroyed()) throw new Error('Account page is unavailable.');
+    const entry = localHomeEntry();
+    tab.url = entry.url + '#/account/password';
+    tab.navigationStarted = true;
+    if (entry.file) await wc.loadFile(entry.file, { hash: '/account/password' });
+    else await wc.loadURL(tab.url);
+    await this.activateTab({ id: tab.id });
+    this.broadcastTabs();
+  }
+
   /**
    * 把固有槽位真正装起来。跟着 `createPinnedHomeTab()` 建出来的那个 tab 的 kind 走,所以两者
    * 不可能对「今天装谁」有两种看法。
@@ -574,14 +593,11 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     // 本机绝对路径 —— **判据与落法都问宿主的预览端口**,maestro 不认识 OnlyPreview
     // (`check:maestro` 的别名边界;`MaestroPreviewOpener.resolveLocalTarget` 上写了完整理由)。
     //
-    // `null` = 不是本机路径,按地址原路走。`preview` 交给预览应用;`chrome` 与 `missing` 都落下面
-    // 那一发加载 —— 一个是 Chromium 自己渲染这个文件,一个是 Chromium 自己的「文件不存在」页,
-    // 两张落地页都不是我们画的,这也是它们能共用一条代码路径的原因。
+    // Every existing local file uses the preview router; missing paths keep Chromium’s error page.
     const previewOpener = getMaestroPreviewOpener()
     const localTarget = previewOpener?.resolveLocalTarget(raw) ?? null
     if (localTarget?.kind === 'preview') {
-      if (!previewOpener?.openInTab) throw new Error('File preview tabs are unavailable.')
-      await previewOpener.openInTab(localTarget.path, { tabId: active.id })
+      await previewOpener!.open(localTarget.path)
       return
     }
     // 路径那一支**不能**过 `normalizeUrl` —— 它会把 `/Users/…` 补成 `https:///Users/…`,
@@ -883,6 +899,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     path: string
     /** 尽力而为的落点行;渲染不了行的预览器忽略它。 */
     line?: number
+    fragment?: string
   }): Promise<{ ok: boolean; error?: string }> {
     const target = String(params?.path || '').trim()
     if (!target) return { ok: false, error: 'A path is required.' }
@@ -893,7 +910,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       if (!spec?.openTarget) {
         return { ok: false, error: `'${params.id}' cannot open a path.` }
       }
-      await spec.openTarget(target, { line: params.line })
+      await spec.openTarget(target, { line: params.line, fragment: params.fragment })
       return { ok: true }
     } catch (error) {
       return { ok: false, error: (error as Error).message }
@@ -1523,7 +1540,7 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       } catch { /* Unconfirmed or expired presentation: describe the miniapp only. */ }
     }
     const appId = spec?.id ?? tab.kind
-    const miniapp = appId === 'onlypreview' || appId === 'file' ? 'only-preview' : appId
+    const miniapp = appId === 'onlypreview' ? 'only-preview' : appId
     return { tab_id: tab.id, kind: 'miniapp', title, miniapp }
   }
 
@@ -2256,23 +2273,6 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
     if (this.activeTabId) await this.closeTabByUser({ id: this.activeTabId })
   }
 
-  async openFilePreviewTab(params: { path: string; tabId?: string; line?: number }): Promise<void> {
-    const opener = getMaestroPreviewOpener()
-    if (!opener?.createFileTabSpec) throw new Error('File preview tabs are unavailable.')
-    await this._state.backgroundWorkbenchTab()
-    const spec = opener.createFileTabSpec(params.path, { line: params.line })
-    if (params.tabId) {
-      const tab = this.tabs.find((candidate) => candidate.id === params.tabId)
-      if (!tab || tab.pinned || tab.kind !== 'browser') {
-        throw new Error('The initiating browser tab is no longer available.')
-      }
-      await this.setTabKind({ id: tab.id, kind: spec.id as TabKind, spec })
-      if (this.compositeTabs.get(tab.id) !== spec) throw new Error('The file preview could not open.')
-      return
-    }
-    await this.openCompositeTab({ id: spec.id, spec })
-  }
-
   async openTab(params: { url: string; background?: boolean }): Promise<void> {
     const url = (params.url || '').trim()
     if (!url) {
@@ -2626,7 +2626,13 @@ export class MaestroBrowserViewService extends CommonService<MaestroBrowserViewS
       if (!wc || wc.isDestroyed()) throw new Error(`Tab ${tab.id}: WebContents is unavailable.`)
       await this.startTabNavigation(tab, { url })
       const ready = await this.requireAgentTab(tab.id)
-      if (show) await this.activateTab({ id: tab.id })
+      if (show) {
+        // 用户明确要看 → 先把 Workbench 退到后台再激活。`activateTab()` 不碰 Workbench(它是前台
+        // VIEW 不是 OperationTab),不退的话新 tab 开在它**底下**,人什么都看不到
+        // (docs/issues/agent-show-tab-hidden-behind-workbench.md)。与人点 tab chip 同一个顺序。
+        await this._state.backgroundWorkbenchTab()
+        await this.activateTab({ id: tab.id })
+      }
       return ready
     } catch (error) {
       if (!tab.browserError) tab.browserError = { status: 'load-failed', error: String(error) }

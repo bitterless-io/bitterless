@@ -410,7 +410,7 @@ test('raw Chrome sibling and window helper keep the hardened topology contract',
   // A per-selection in-memory partition is exactly what stopped Chromium's PDF viewer from creating
   // its document frame, and a per-selection `persist:` name would leak a Partitions directory each
   // time, so this partition must stay one constant persistent string.
-  assert.match(chromePreferences, /partition:\s*ONLY_PREVIEW_CHROME_PARTITION/);
+  assert.match(chromePreferences, /partition:\s*runtime\.chromePartition \?\? ONLY_PREVIEW_CHROME_PARTITION/);
   assert.match(viewService, /ONLY_PREVIEW_CHROME_PARTITION = 'persist:onlypreview-chrome'/);
   assert.doesNotMatch(chromePreferences, /partition:\s*`/);
   assert.match(chromePreferences, /sandbox:\s*true/);

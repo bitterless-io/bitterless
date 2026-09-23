@@ -117,7 +117,7 @@ export const buildWebFetchTools = (surface?: DeepFetchSurface, signal?: AbortSig
       CURRENT_SOURCE_GUIDANCE,
       '',
       'Boilerplate is stripped: you get the article body, not the nav bar, cookie banner and footer.',
-      'If the site serves markdown directly, you get that untouched.',
+      'JSON APIs return their source text without changing numeric precision; markdown and plain text are also read directly.',
       '',
       'WHEN THIS IS NOT ENOUGH — escalate to deep_fetch:',
       'this tool does NOT run JavaScript and carries NO session. So if what comes back is an app shell,',

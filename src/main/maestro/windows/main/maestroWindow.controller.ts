@@ -1,3 +1,5 @@
+import { showAccountMenu } from './accountMenu.service'
+import type { AccountMenuAction, AccountMenuParams } from '@shared/accountMenu'
 import { skillScopeContext } from '@maestro-main/skills/skillScope.context'
 import { buildSkillInstallTools } from '@main/agent/tools/skillInstallTools'
 import type { SkillInstallationRequest, SkillInstallationResult, SessionIoExportResult, SessionIoExportTarget } from '@maestro-shared/coach.api'
@@ -10,7 +12,7 @@ import { attachContentFocusRestore } from './contentFocusRestore.service';
 import { applicationAuth } from '@main/auth/applicationAuth.service';
 import { showMaestroSessionMenu } from './maestroSessionMenu.service';
 import type { SessionMenuResult } from '@maestro-shared/coach.api';
-import { BrowserWindow, WebContentsView, app, shell } from 'electron'
+import { BrowserWindow, WebContentsView, app, clipboard, dialog, shell } from 'electron'
 import { xpcMain } from 'electron-xpc/main'
 import { MAESTRO_ONLY_PREVIEW_TAB_ID } from '@maestro-shared/compositeTab.identity'
 import { join } from 'path'
@@ -22,8 +24,14 @@ import { i18nHelper } from '@main/i18n/i18n.helper'
 import { DebuggerCapture } from '@maestro-main/capture/debuggerCapture'
 import {
   CaptureService,
+  pageSnapshotCompareFailed,
+  pageSnapshotFailed,
   type CaptureServiceState
 } from '@maestro-main/capture/capture.service'
+import { createArchive } from '@maestro-main/files/archive.service'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { buildSnapshotDiagnosis } from '@maestro-main/capture/snapshotDiagnosis'
+import { tmpdir } from 'node:os'
 import type { CaptureRecordSource } from '@maestro-main/capture/captureRecordSource'
 import { clipText } from '@maestro-main/capture/traceTimeline'
 import {
@@ -108,6 +116,8 @@ import type {
   ContextGraphRequest,
   ContextGraphResult,
   SessionIoPathResult,
+  PageSnapshotCopyResult,
+  PageSnapshotCompareResult,
   AgentConversationContext,
   AgentBrowserSessionState,
   AgentActivityStep,
@@ -358,8 +368,10 @@ class MaestroWindowController
     try {
       if (!this.browserSessions.owns(params.sessionId, params.tabId)) throw new Error(`Tab ${params.tabId} is not in this chat's browser targets.`)
       await this.browserView.requireAgentTab(params.tabId)
-      await this.activateTab({ id: params.tabId })
-      if (this.activeTabId !== params.tabId) throw new Error(`Tab ${params.tabId} could not be shown.`)
+      await this.showTabToHuman(params.tabId)
+      // 自检要看**屏幕**,不只看 tab 模型:原来只比 `activeTabId`,Workbench 盖着的时候它照样相等,
+      // 于是被盖住的 tab 也报 `ok: true`。
+      if (!this.isShownToHuman(params.tabId)) throw new Error(`Tab ${params.tabId} could not be shown.`)
       return { ok: true }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
@@ -1018,6 +1030,27 @@ class MaestroWindowController
     return await fileThumbnail(params.path)
   }
 
+  /** Explicit selection, distinct from the effective default cwd. */
+  selectedWorkspaceForSession(sessionKey: string): string | undefined {
+    return this.workspaceFile.projectRootForSession(sessionKey)
+  }
+
+  currentWorkspaceSessionId(): string {
+    return this.skillService.currentViewSessionId()
+  }
+
+  async changePreviewWorkspace<T extends { displayPath: string } | null>(sessionId: string, change: () => Promise<T>): Promise<T> {
+    return this.agentService.runWorkspaceChange(sessionId, async () => {
+      const workspace = await change()
+      if (workspace) {
+        const result = await this.workspaceFile.setWorkspaceDirectory({ sessionId, path: workspace.displayPath })
+        if (!result.ok) throw new Error(result.error || 'Could not select workspace.')
+        await this.agentService.getExistingMaestroAgent(sessionId)?.setProjectRoot(workspace.displayPath)
+      }
+      return workspace
+    })
+  }
+
   projectRootForSession(sessionKey: string): string | undefined {
     return this.workspaceFile.projectRootForSession(sessionKey) || defaultWorkspaceRoot()
   }
@@ -1138,6 +1171,109 @@ class MaestroWindowController
 
   async copySessionIoPath(params: { sessionId: string }): Promise<SessionIoPathResult> {
     return await this.agentService.copySessionIoPath(params)
+  }
+
+  /**
+   * `/page_snapshot` —— 人正在看的那个 tab 的无障碍快照进剪贴板。
+   *
+   * 头部沿用 agent 工具那四行(`# tab:` / `# page:` / `# title:` / `# elements:`),
+   * 于是一份贴出去的快照自己说得清来自哪一页、哪个 tab。**但不套 `clipText`** ——
+   * 那个 200k 闸是给上下文窗口的,剪贴板没有上下文窗口,而一棵停在半路的树对"对照 agent
+   * 看到了什么"这件事恰恰是最没用的。
+   *
+   * 写剪贴板只在成功那一支:读失败时剪贴板保持原样,人不会拿着上一次的内容以为是这一次的。
+   */
+  async copyPageSnapshot(): Promise<PageSnapshotCopyResult> {
+    const snapshot = await this.captureService.pageSnapshotForOperator()
+    if (pageSnapshotFailed(snapshot)) return snapshot
+    const text = [
+      `# tab: ${snapshot.tabId}`,
+      `# page: ${snapshot.url}`,
+      `# title: ${snapshot.title}`,
+      `# elements: ${snapshot.nodeCount}`,
+      '',
+      snapshot.yaml
+    ].join('\n')
+    clipboard.writeText(text)
+    return {
+      ok: true,
+      tabId: snapshot.tabId,
+      url: snapshot.url,
+      title: snapshot.title,
+      nodeCount: snapshot.nodeCount,
+      chars: text.length
+    }
+  }
+
+  /**
+   * `/page_snapshot_compare` —— 树 + DOM 原文 + 诊断,打成一个 zip
+   * (契约 `docs/features/page-snapshot-compare.md`)。
+   *
+   * **先取数、再弹保存对话框**,与 `/export` 的两步顺序相反,这是故意的:人是看着当前这一屏
+   * 才敲的命令,而挑保存位置可能花掉十几秒 —— 那期间页面还在动。压缩包只有几百 KB,
+   * 不需要 `/export` 那种"先选位置再慢慢压"的拆分。
+   *
+   * 临时目录里放的是一个带时间戳的文件夹,`createArchive` 以它的父级为 cwd —— 解压出来是
+   * 一个文件夹,不是一摊散文件摊在解压处。写完即删,不在 temp 里留残渣。
+   */
+  async exportPageSnapshotCompare(): Promise<PageSnapshotCompareResult> {
+    const snapshot = await this.captureService.pageSnapshotCompareForOperator()
+    if (pageSnapshotCompareFailed(snapshot)) return snapshot
+
+    const stamp = new Date()
+      .toISOString()
+      .replace(/[-:]/g, '')
+      .replace('T', '-')
+      .slice(0, 15)
+    const folder = `page-snapshot-compare-${stamp}`
+    const chosen = await dialog.showSaveDialog({
+      title: 'Export page snapshot compare',
+      defaultPath: join(app.getPath('downloads'), `${folder}.zip`),
+      filters: [{ name: 'Zip archive', extensions: ['zip'] }]
+    })
+    if (chosen.canceled || !chosen.filePath) return { ok: false, cancelled: true }
+
+    let staging = ''
+    try {
+      staging = mkdtempSync(join(tmpdir(), 'bl-snapshot-compare-'))
+      const dir = join(staging, folder)
+      mkdirSync(dir)
+      const header = [
+        `# tab: ${snapshot.tabId}`,
+        `# page: ${snapshot.url}`,
+        `# title: ${snapshot.title}`,
+        `# elements: ${snapshot.nodeCount}`,
+        ''
+      ].join('\n')
+      writeFileSync(join(dir, 'snapshot.yml'), header + snapshot.yaml, 'utf8')
+      writeFileSync(join(dir, 'page.html'), snapshot.html, 'utf8')
+      writeFileSync(
+        join(dir, 'meta.json'),
+        JSON.stringify({ tabId: snapshot.tabId, nodeCount: snapshot.nodeCount, ...snapshot.meta }, null, 2),
+        'utf8'
+      )
+      writeFileSync(join(dir, 'diagnosis.md'), buildSnapshotDiagnosis(snapshot), 'utf8')
+      await createArchive(chosen.filePath, [folder], { cwd: staging })
+      return {
+        ok: true,
+        archive: chosen.filePath,
+        tabId: snapshot.tabId,
+        url: snapshot.url,
+        nodeCount: snapshot.nodeCount,
+        gaps: snapshot.gaps,
+        benign: snapshot.benign
+      }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    } finally {
+      if (staging) {
+        try {
+          rmSync(staging, { recursive: true, force: true })
+        } catch {
+          /* a leftover temp dir is not worth failing an otherwise good export */
+        }
+      }
+    }
   }
 
   async pickSessionIoExportTarget(params: { sessionId: string }): Promise<SessionIoExportTarget> {
@@ -1292,6 +1428,17 @@ class MaestroWindowController
 
   emitTrace(e: TraceEvent): void {
     this.emit(e)
+  }
+
+  async showAccountMenu(params: AccountMenuParams): Promise<AccountMenuAction | null> {
+    if (!this.browserWindow) return null
+    return await showAccountMenu(this.browserWindow, params)
+  }
+
+  async openAccountPassword(): Promise<void> {
+    await applicationAuth.requireReady()
+    this.workbenchView.backgroundTab()
+    await this.browserView.openAccountPassword()
   }
 
   async getLlmConfig(): Promise<LlmConfig> {
@@ -1626,9 +1773,10 @@ class MaestroWindowController
           'Pass tab_id to observe a SPECIFIC tab (e.g. a result/confirmation tab that just opened) WITHOUT switching the human foreground; omit it for this chat\'s selected operation tab. ' +
           'This is the observe step of the observe→act→observe loop.',
         params: [
-          { name: 'tab_id', required: false, description: 'Tab to observe (default: this chat\'s selected operation target). From a "new tab" note or list_tabs.' }
+          { name: 'tab_id', required: false, description: 'Tab to observe (default: this chat\'s selected operation target). From a "new tab" note or list_tabs.' },
+          { name: 'goal', required: false, description: 'What you are looking for on this page, in one short phrase (e.g. "the patient list filter", "the confirm payment button"). When given, a large snapshot may come back as ONE relevant page section with the full snapshot written to a file — the reply says so and gives the path. Omit it to always get the whole page.' }
         ],
-        execute: async (args) => this.toolPageSnapshot(args.tab_id ? String(args.tab_id) : undefined)
+        execute: async (args) => this.toolPageSnapshot(args.tab_id ? String(args.tab_id) : undefined, args.goal ? String(args.goal) : undefined)
       },
       {
         name: 'start_browser_use',
@@ -1665,7 +1813,7 @@ class MaestroWindowController
           return this.withAgentBrowserTarget(sessionKey, id, async () => {
             await this.browserView.requireAgentTab(id)
             this.browserSessions.enroll(sessionKey, id, true)
-            if (args.show === true || args.show === 'true') await this.activateTab({ id })
+            if (args.show === true || args.show === 'true') await this.showTabToHuman(id)
             return JSON.stringify({ tabs: await this.getTabs(), browserSession: this.agentBrowserSession(sessionKey) })
           })
         }
@@ -1700,7 +1848,8 @@ class MaestroWindowController
         name: 'ui_act',
         description:
           'ACT on the live page with UI actions YOU choose from the latest page_snapshot. actions_json is a JSON array, run in order, each: ' +
-          '{"action":"click"|"fill"|"select"|"check"|"submit","ref":"<eN from the snapshot>","value":"<for fill/select>","checked":true|false}. ' +
+          '{"action":"click"|"fill"|"select"|"check"|"submit","ref":"<eN from the snapshot>","value":"<for fill/select>","checked":true|false,"snapshot":"<the # snapshot: sN value from the snapshot you read>"}. ' +
+          'Pass `snapshot` — it is how the host can tell a live ref from a stale one. Refs are renumbered from e1 every time the page is observed, so a ref from an older snapshot usually still matches SOME element, just the wrong one. With `snapshot` the host returns an error instead of clicking the wrong thing. ' +
           'For select, pass the option [value="…"] when present, otherwise the visible option text; if the ref points directly to an option, value can be omitted. Native selects match both value and text; custom comboboxes try to open and click the matching visible option. ' +
           'Use the [ref=eN] of the element from the latest snapshot (a raw "selector":"<css>" also works). ' +
           'Execution STOPS at the first failing action so you can page_snapshot again and re-decide. Never guess a ref — use only refs the latest snapshot returned.',
@@ -1867,8 +2016,8 @@ class MaestroWindowController
     await this.requestExec.applyBrowserInterceptionRules()
   }
 
-  private async toolPageSnapshot(tabId?: string): Promise<string> {
-    return await this.requestExec.toolPageSnapshot(tabId)
+  private async toolPageSnapshot(tabId?: string, goal?: string): Promise<string> {
+    return await this.requestExec.toolPageSnapshot(tabId, goal)
   }
 
   private async toolUiAct(actionsJson: string): Promise<string> {
@@ -2008,28 +2157,59 @@ class MaestroWindowController
     await this.browserView.openTab(params)
   }
 
-  async openFilePreviewTab(params: { path: string; tabId?: string; line?: number }): Promise<void> {
-    if (!this.browserWindow || this.browserWindow.isDestroyed()) this.create()
-    await this.rendererReady
-    this.show()
-    await this.browserView.openFilePreviewTab(params)
-  }
-
+  /**
+   * 操作者开一个 app(Workbench Apps 页的「打开 OnlyPreview」、Zellij、Trench、OnlyPreview 窗口→tab)。
+   * **先退 Workbench** —— 这些入口全是操作者的点击,开出来的那一格必须看得见;不退的话它开在
+   * Workbench 底下,Workbench Apps 页那个按钮点了等于没点(`docs/issues/agent-show-tab-hidden-behind-workbench.md`)。
+   * 浏览层内部的恢复(`activate: false`)不经过这里,不受影响。
+   */
   async openCompositeTab(params: { id: string }): Promise<void> {
+    this.workbenchView.backgroundTab()
     await this.browserView.openCompositeTab(params)
   }
 
-  /** 工作区芯片:开 OnlyPreview 的 tab 并把这个目录设为项目根(mini-016 / Ral 2026-09-07)。 */
-  async openWorkspaceInPreview(params: { path: string; line?: number }): Promise<{ ok: boolean; error?: string }> {
+  /**
+   * 工作区芯片:开 OnlyPreview 的 tab 并把这个目录设为项目根(mini-016 / Ral 2026-09-07)。
+   *
+   * 它也是 OnlyPreview 以 tab 挂载时**所有**预览请求的落点(`onlyPreviewMaestroOpener`:MCP
+   * `preview_open`、聊天工作区芯片)—— 每一次都是「把这个给人看」,所以**先退 Workbench**。
+   * cowork 同一条路走 `newTab()`,那里本来就先退了;这里走 `openCompositeTabTarget`,原来漏了。
+   */
+  async openWorkspaceInPreview(params: { path: string; line?: number; fragment?: string }): Promise<{ ok: boolean; error?: string }> {
+    this.workbenchView.backgroundTab()
     return await this.browserView.openCompositeTabTarget({
       id: MAESTRO_ONLY_PREVIEW_TAB_ID,
       path: params?.path || '',
-      line: params?.line
+      line: params?.line,
+      fragment: params?.fragment
     })
   }
 
   async activateTab(params: { id: string }): Promise<void> {
     await this.browserView.activateTab(params)
+  }
+
+  /**
+   * **「让人看见这个 tab」的唯一入口** —— 先把 Workbench 退到后台,再激活。
+   *
+   * `activateTab()` 只切 OperationTab,**不碰 Workbench**:Workbench 是盖在操作区上的前台 VIEW
+   * (见 `maestroBrowserView.service.ts` 接口里 `backgroundWorkbenchTab()` 的注释)。所以
+   * Workbench 开着的时候直接 `activateTab`,tab 会在它**底下**被激活 —— tab 模型报 `active: true`,
+   * 屏幕上仍是 Workbench。人走的每条路都先退了(`MenuBar.onTabClick`、`newTab()`、mini-app 菜单),
+   * agent 的 `activate_tab {show}` 与聊天里的「查看这个 tab」却直接激活,于是**用户明说要看**的
+   * 那一刻恰好什么都看不到(Ral 2026-09-23,`docs/issues/agent-show-tab-hidden-behind-workbench.md`)。
+   *
+   * 不把这一步塞进 `activateTab()` 本身:drill、后台加载、回放也调它,那些路径不该把人从 Workbench
+   * 里拽出来。`backgroundTab()` 在 Workbench 不可见时直接返回,无条件调用是安全的。
+   */
+  private async showTabToHuman(id: string): Promise<void> {
+    this.workbenchView.backgroundTab()
+    await this.activateTab({ id })
+  }
+
+  /** 人此刻真的看得见这个 tab 吗 —— 激活了、而且没有被 Workbench 盖住。 */
+  private isShownToHuman(id: string): boolean {
+    return this.activeTabId === id && !this.workbenchView.isVisible()
   }
 
   async reorderTabs(params: { ids: string[] }): Promise<void> {

@@ -31,6 +31,18 @@
 
       <div name="onlypreview__menuActions" class="onlypreview-shell__menu-actions">
         <a-button
+          v-if="onlyPreviewShellStore.workspace?.isDefault"
+          name="onlypreview__chooseOwnWorkspace"
+          class="onlypreview-shell__workspace-reminder"
+          type="text"
+          size="mini"
+          :disabled="onlyPreviewShellStore.targetLoading"
+          :loading="onlyPreviewShellStore.targetLoading"
+          @click="onlyPreviewShellStore.chooseFolder()"
+        >
+          {{ onlyPreviewI18n.topbar.chooseOwnWorkspace }}
+        </a-button>
+        <a-button
           name="onlypreview__openFolder"
           class="onlypreview-shell__icon-command"
           type="text"

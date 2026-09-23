@@ -116,5 +116,5 @@ export interface MaestroCompositeTabSpec {
    * supplied. The host is also the only side that can order the two steps correctly — the tab must
    * exist before the target is handed over.
    */
-  openTarget?(absolutePath: string, options?: { line?: number }): Promise<void>
+  openTarget?(absolutePath: string, options?: { line?: number; fragment?: string }): Promise<void>
 }

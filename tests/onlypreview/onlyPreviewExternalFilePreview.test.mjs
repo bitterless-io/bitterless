@@ -162,7 +162,7 @@ test('external Preview wiring keeps Project state separate and revokes exact rea
   );
   assert.match(
     explicitOpenBody,
-    /registerExternalPreview[\s\S]*resolveOnlyPreviewPreviewRegion\(host\.hostToken\)\.present\(host\.hostToken, fileRef, trace\?\.tag[\s\S]*ONLY_PREVIEW_SELECTION_CHANGED_EVENT/
+    /registerExternalPreview[\s\S]*resolveOnlyPreviewPreviewRegion\(host\.hostToken\)\s*\.present\(host\.hostToken, fileRef, trace\?\.tag[\s\S]*ONLY_PREVIEW_SELECTION_CHANGED_EVENT/
   );
   // Now a cross-function ordering: the caller inspects, then hands the validated target to the
   // extracted presenter. Comparing indexes across two slices would compare unrelated offsets.

@@ -153,12 +153,11 @@ test('all explicit target sources use the serialized boundary and packaged switc
     handler,
     /export \{ openOnlyPreviewAbsoluteTarget \} from '@main\/miniapps\/onlypreview\/onlyPreviewExplicitOpen\.service';/
   );
-  assert.match(
-    explicitOpenBody,
-    /serializedOpenOnlyPreviewAbsoluteTarget = serializeOnlyPreviewOpenTarget\([\s\S]*performOpenOnlyPreviewAbsoluteTarget,[\s\S]*onlyPreviewTargetMutations[\s\S]*openOnlyPreviewAbsoluteTarget[\s\S]*onlyPreviewOpenDiagnostics\.trace[\s\S]*serializedOpenOnlyPreviewAbsoluteTarget\(target, \{[\s\S]*trace,[\s\S]*preserveTreeSelection[\s\S]*registerOnlyPreviewExplicitTarget\(openOnlyPreviewAbsoluteTarget\)/
-  );
+  assert.match(explicitOpenBody, /serializedOpenOnlyPreviewAbsoluteTarget = serializeOnlyPreviewOpenTarget\([\s\S]*performOpenOnlyPreviewAbsoluteTarget, onlyPreviewTargetMutations/);
+  assert.match(explicitOpenBody, /serializedOpenOnlyPreviewAbsoluteTarget\(target, openContext\(options\)\)/);
+  assert.match(explicitOpenBody, /registerOnlyPreviewExplicitTarget\(openOnlyPreviewAbsoluteTarget\)/);
   const chooseFolderBody = source('src/main/windows/onlyPreviewChooseFolder.service.ts');
-  assert.match(handler, /chooseOnlyPreviewFolder\(params\?\.hostToken\)/);
+  assert.match(handler, /chooseOnlyPreviewFolder\(params\?\.hostToken/);
   assert.ok(
     chooseFolderBody.indexOf('dialog.showOpenDialog') <
       chooseFolderBody.indexOf('onlyPreviewTargetMutations.run'),

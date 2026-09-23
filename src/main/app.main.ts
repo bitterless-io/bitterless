@@ -42,7 +42,9 @@ import { zellijWindowService } from '@main/zellij/zellijWindow.service';
 import { todoWindowHandler } from './xpc/todoWindow.handler';
 import { pluginTestHandler } from './xpc/pluginTest.handler';
 import { applicationLanguageService } from './i18n/applicationLanguage.service';
-import { MAESTRO_PARTITION } from '@maestro-main/data/maestroDataRoot';
+import { MAESTRO_PARTITION, maestroDataRoot } from '@maestro-main/data/maestroDataRoot';
+import { CoachSettingsService } from '@maestro-main/settings/coachSettings.service';
+import { configureDownloadManager, installDownloadManager } from '@main/net/downloadManager';
 import {
   MCP_BRIDGE_PATH_ARG,
   parseMcpBridgeEndpointArg,
@@ -284,7 +286,7 @@ if (!isHelperMode) {
   // tool works when no directory is bound (docs/features/maestro-default-workspace.md), so the owner
   // can open it before the agent has put anything there. After configureE2EUserData() — that call
   // redirects the home path under E2E.
-  // One call creates the home data root and every directory under it — default_workspace, workflows,
+  // One call creates the home data root and every directory under it — work, workflows,
   // skills — and moves anything still sitting in a pre-unification location. The owner opens that
   // root expecting to see what the app keeps there, so none of it may wait for its feature's first
   // write (Ral 2026-09-20:「首先这些目录都需要 ensure 的」).
@@ -392,6 +394,23 @@ const installE2ENetworkGuard = (): void => {
     session.defaultSession.protocol.handle(scheme, defaultHandler);
     session.fromPartition(MAESTRO_PARTITION).protocol.handle(scheme, maestroHandler);
   }
+};
+
+/**
+ * 网页下载的落点 + 台账(docs/features/browser-downloads.md)。
+ *
+ * 不装的话,本仓的下载**完全**交给 Electron 兜底:没人调 `setSavePath` 时它"usually prompts a save
+ * dialog",而且 agent 永远不知道文件落在哪。装在 `startGui()` 之前 —— session 在建 view 时解析,
+ * 晚一步装就漏掉首个窗口。两个 session 覆盖全部可浏览的网页:默认 session 与 Maestro 浏览器的
+ * `MAESTRO_PARTITION`。OnlyPreview 自己的 `persist:onlypreview-chrome` **刻意不装** —— 那里的下载
+ * 是被 `preventOnlyPreviewDownload` 拦掉的,预览面板不该往磁盘写东西。
+ */
+const installBrowserDownloads = (): void => {
+  const settings = new CoachSettingsService(maestroDataRoot());
+  // 每次下载那一刻读设置 —— 改完设置不用重启。
+  configureDownloadManager({ downloadDir: () => settings.read().downloadDir || '' });
+  installDownloadManager(session.defaultSession, 'default');
+  installDownloadManager(session.fromPartition(MAESTRO_PARTITION), MAESTRO_PARTITION);
 };
 
 let isQuitting = false;
@@ -698,6 +717,7 @@ if (isLegacyCodingAgentHookHelperMode) {
     // ...and make it the application Cowork's workspace tools show files in, instead of Finder.
     registerOnlyPreviewMaestroOpener();
     installApplicationFindMenu();
+    installBrowserDownloads();
     await startGui();
     onlyPreviewOpenQueue.markReady();
   }).catch((err: unknown) => {

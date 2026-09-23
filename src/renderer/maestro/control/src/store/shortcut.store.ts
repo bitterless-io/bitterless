@@ -124,6 +124,12 @@ export class ShortcutStore {
         case '/export':
           await context.exportSession()
           return { ok: true }
+        case '/page_snapshot':
+          await context.copyPageSnapshot()
+          return { ok: true }
+        case '/page_snapshot_compare':
+          await context.exportPageSnapshotCompare()
+          return { ok: true }
         case '/test_show_error':
           await context.testShowError()
           return { ok: true }

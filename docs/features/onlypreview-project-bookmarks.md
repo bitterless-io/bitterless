@@ -6,6 +6,25 @@ show bookmarks only after the current root listing is ready, including a success
 Status: implemented; owner testing pending, 2026-09-08. Supersedes the top bookmark bar and
 setting-store persistence in task 165; selection focus behavior is unchanged.
 
+## Expansion, type icons and drag order — 2026-09-23
+
+- The title action replaces the help button with expand/collapse chevrons. First use is expanded;
+  collapsing leaves only the title row. Save immediately in Shell localStorage under
+  `onlypreview.bookmarks-expanded.v1`; restore across renderer/window/app restarts. This is a
+  global UI preference, independent of Project changes and the per-Project bookmark contents.
+- Each row starts with a 14px folder icon or the same extension-based file icon used by Project
+  (Markdown, Office, PDF, ZIP, images and a generic file fallback). Keep pure white background,
+  8px left/right margins, filename ellipsis and independent scrolling up to 320px.
+- Drag a row before or after another row. The insertion line follows the target row's half;
+  dropping after the final row moves it to the end. The UI previews the new order immediately
+  and saves the full order to that Project's existing SQLite state. Reopening and A/B/A restore it.
+- Only the current list's local drag is accepted. Workspace changes or collapse cancel a drag;
+  a drag-generated click cannot open/remove a bookmark. Disable another drag while saving.
+- Main validates host/Project capability and the transaction validates exact membership. Duplicate,
+  unknown or missing paths are rejected rather than overwriting concurrent additions/deletions.
+  Unchanged order is a no-op. Failed saves restore/refresh committed state and show the existing
+  error area; a late response cannot change another Project. Bookmark targets are never moved.
+
 ## Layout and interactions
 
 ```text
@@ -22,7 +41,7 @@ project-root                                  ↑
 - Put `onlypreview__bookmarks` inside Project, above its root/tree scroll container.
   Switching to Recents hides this region. Tree scrolling never moves the bookmarks.
 - Vertical, full-width rows: left-aligned file/folder name, right-aligned Remove bookmark
-  IconBtn. No leading bookmark, file or folder SVG. Name ellipsis and full-path tooltip.
+  IconBtn, with a leading file-type/folder icon. Name ellipsis and full-path tooltip.
   Remove is a sibling button and never activates the bookmark or deletes its disk target.
 - Reuse the existing system font, 14px tree type, 22px rows, white/surface backgrounds,
   ink #25283a, divider #d9ddea and existing blue hover/focus tokens. No new theme or cards.
@@ -66,7 +85,7 @@ extra operations, not a measured breakdown of the owner's reported wall-clock de
 
 Code-level tests cover real SQLite persistence/restart, A/B separation, index DB separation,
 one-time migration including remove/restart, concurrent mutations and failure handling;
-renderer commit ordering and stale Project fencing; fixed Project-only placement, icon removal,
+renderer commit ordering and stale Project fencing; fixed Project-only placement, file-type/folder icons,
 right-side removal without activation, SFC/Less compilation and touched TypeScript contracts.
 Ral owns live acceptance. No Electron/E2E, independent review, app launch, packaging or Git sync.
 
@@ -83,3 +102,22 @@ TypeScript for six new core modules and scoped new-code/test lint pass.
 A disposable local sample of 20 open/commit/close mutations took 58.1ms total on the final run
 (approximately 2.9ms per operation). This is storage-only, not a live UI or indexing-load benchmark.
 No Electron/E2E, packaging, install, independent review or Git sync was run.
+
+## Code verification — 2026-09-23
+
+BL: Bookmarks 20 + reorder/storage 15 = 35 passing tests. Cowork: Bookmarks 19 +
+reorder/storage 16 = 35 passing tests. Covers expansion persistence/defaults/storage failures,
+drag insertion/no-op, optimistic save/rollback, concurrent membership changes, stale workspace
+responses, real SQLite restart/isolation/transactions and capability validation.
+Both scoped Preview web type checks, SFC/Less compilation and diff checks pass. Cowork Main
+typecheck passes. BL Main has the same 70 diagnostic signatures as the recorded pre-change
+baseline (zero additions, ignoring source line shifts). No Electron/E2E or release was run.
+
+Human acceptance in a restarted build containing the Main changes:
+
+1. Collapse Bookmarks, close/reopen the preview and restart the app; it stays collapsed. Expand
+   again and repeat; the list returns. Switching Project does not reset this UI preference.
+2. Check folder, Markdown, Office, PDF and image bookmark icons; names and remove buttons remain
+   usable. White background, side margins and the 32px Preview toolbar remain intact.
+3. Drag the last bookmark to the first position, then a middle item to the end. Reopen and
+   switch A/B/A: each Project keeps its saved order. Dragging must not open/remove a bookmark.

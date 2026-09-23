@@ -198,6 +198,26 @@ export class ReplayEngine {
     }
   }
 
+  /**
+   * 当前页面上的快照世代号(`<html data-coach-epoch>`)。'' = 这一页还没被走过树。
+   *
+   * ref 只在同一世代内有效:每次走树都会清掉全部 `data-coach-ref` 并从 e1 重排,
+   * 而旧编号通常在新树里依然存在、只是指向**另一个元素**。没有这个号,ui_act 无法
+   * 区分「ref 还有效」和「ref 已作废但恰好还能命中」。
+   */
+  async readEpoch(): Promise<string> {
+    try {
+      const r = (await this.wc.debugger.sendCommand('Runtime.evaluate', {
+        expression: `String(document.documentElement.getAttribute('data-coach-epoch') || '')`,
+        returnByValue: true
+      })) as { result?: { value?: string } }
+      return r.result?.value ?? ''
+    } catch {
+      // 读不到就当没有 —— 世代校验只在两边都拿得到号时才生效,它不该自己变成一道新故障。
+      return ''
+    }
+  }
+
   // Read an element's value/text (for branching in skill scripts). '' when absent.
   async readText(selector: string): Promise<string> {
     const expr = `(()=>{const e=document.querySelector(${JSON.stringify(selector)}); if(!e) return ''; const v=('value' in e)? e.value : null; return String(v!=null?v:(e.textContent||'')).trim()})()`
@@ -241,7 +261,7 @@ export class ReplayEngine {
     if (step.action === 'click') return this.clickStep(step)
     try {
       const response = (await this.wc.debugger.sendCommand('Runtime.evaluate', {
-        expression: `(${browserStepRunner})(${JSON.stringify(step)})`,
+        expression: `(${browserStepRunner})(${JSON.stringify(step)}, ${deepFindElement})`,
         awaitPromise: true,
         returnByValue: true
       })) as { result?: { value?: { ok: boolean; error?: string; desc?: { tag: string; id: string; name: string } } } }
@@ -261,7 +281,7 @@ export class ReplayEngine {
   ): Promise<{ ok: boolean; error?: string; desc?: { tag: string; id: string; name: string } }> {
     try {
       const located = (await this.wc.debugger.sendCommand('Runtime.evaluate', {
-        expression: `(${clickLocator})(${JSON.stringify(step)})`,
+        expression: `(${clickLocator})(${JSON.stringify(step)}, ${deepFindElement})`,
         awaitPromise: true,
         returnByValue: true
       })) as {
@@ -552,10 +572,48 @@ function rewritePrimitive(value: unknown, recipe: SkillRecipe, variables: Record
   return value
 }
 
+// Serialized into the page and PASSED IN to the step runners (they are self-contained,
+// so they cannot close over it). page_snapshot stamps [data-coach-ref] inside open
+// shadow roots and same-origin frames too, and document.querySelector reaches neither —
+// a ref the agent can see would otherwise fail to resolve. Also reports the frame chain,
+// which a coordinate click needs to translate the element's rect into TOP-LEVEL viewport
+// space. The expensive '*' scan only runs after the plain query misses.
+function deepFindElement(
+  root: Document | ShadowRoot,
+  selector: string,
+  frames: Element[]
+): { el: Element; frames: Element[] } | null {
+  try {
+    const hit = root.querySelector(selector)
+    if (hit) return { el: hit, frames }
+  } catch {
+    return null
+  }
+  for (const node of Array.from(root.querySelectorAll('*'))) {
+    const shadow = (node as HTMLElement).shadowRoot
+    if (shadow) {
+      const inShadow = deepFindElement(shadow, selector, frames)
+      if (inShadow) return inShadow
+    }
+    const tag = node.tagName.toLowerCase()
+    if (tag !== 'iframe' && tag !== 'frame') continue
+    let doc: Document | null = null
+    try {
+      doc = (node as HTMLIFrameElement).contentDocument
+    } catch {
+      doc = null
+    }
+    if (!doc) continue
+    const inFrame = deepFindElement(doc, selector, frames.concat(node))
+    if (inFrame) return inFrame
+  }
+  return null
+}
+
 // Serialized into the page (like browserStepRunner). Locates the click target and
 // returns its viewport-center coordinates, so the main process can dispatch a real
 // mouse click there via CDP Input.dispatchMouseEvent. Self-contained (no outer scope).
-function clickLocator(step: RecipeStep): Promise<{
+function clickLocator(step: RecipeStep, deepFind: typeof deepFindElement): Promise<{
   ok: boolean
   x?: number
   y?: number
@@ -566,36 +624,43 @@ function clickLocator(step: RecipeStep): Promise<{
   return (async () => {
     const selectors = step.target.selectors?.length ? step.target.selectors : [step.target.selector]
     const started = Date.now()
-    let el: Element | null = null
+    let hit: { el: Element; frames: Element[] } | null = null
     while (Date.now() - started < 6000) {
       for (const selector of selectors) {
-        try {
-          const found = document.querySelector(selector)
-          if (found) {
-            el = found
-            break
-          }
-        } catch {
-          /* try next selector */
-        }
+        hit = deepFind(document, selector, [])
+        if (hit) break
       }
-      if (el) break
+      if (hit) break
       await sleep(120)
     }
-    if (!el) return { ok: false, error: `Selector not found: ${step.target.selector}` }
+    if (!hit) return { ok: false, error: `Selector not found: ${step.target.selector}` }
+    const el = hit.el
     const desc = { tag: el.tagName.toLowerCase(), id: el.id || '', name: el.getAttribute('name') || '' }
+    // Bring every frame in the chain into view before the element itself: scrollIntoView
+    // inside a frame only moves that frame's own scroller.
+    for (const frame of hit.frames) (frame as HTMLElement).scrollIntoView({ block: 'center', inline: 'center' })
     ;(el as HTMLElement).scrollIntoView({ block: 'center', inline: 'center' })
     await sleep(80)
     const rect = el.getBoundingClientRect()
     if (rect.width === 0 && rect.height === 0) {
       return { ok: false, error: 'element has no box (0x0); cannot click by coordinate', desc }
     }
+    // The rect is relative to its own frame's viewport; CDP Input dispatches in the
+    // top-level one. Offsets are read AFTER the scrolls above, never before.
+    let offsetX = 0
+    let offsetY = 0
+    for (const frame of hit.frames) {
+      const box = frame.getBoundingClientRect()
+      const style = getComputedStyle(frame)
+      offsetX += box.left + (parseFloat(style.borderLeftWidth) || 0) + (parseFloat(style.paddingLeft) || 0)
+      offsetY += box.top + (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.paddingTop) || 0)
+    }
     // 宽高一起带出来:拟人轨迹要按**目标大小**算瞄准(Fitts's Law),而且落点是元素框里的一个
     // 随机点而不是死磕中心 —— 只给中心点的话每次都精确命中同一像素,那是最好认的自动化特征。
     return {
       ok: true,
-      x: rect.left + rect.width / 2,
-      y: rect.top + rect.height / 2,
+      x: offsetX + rect.left + rect.width / 2,
+      y: offsetY + rect.top + rect.height / 2,
       width: rect.width,
       height: rect.height,
       desc
@@ -604,19 +669,16 @@ function clickLocator(step: RecipeStep): Promise<{
 }
 
 function browserStepRunner(
-  step: RecipeStep
+  step: RecipeStep,
+  deepFind: typeof deepFindElement
 ): Promise<{ ok: boolean; error?: string; desc?: { tag: string; id: string; name: string } }> {
   const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
   const find = async (selectors: string[]): Promise<Element | null> => {
     const started = Date.now()
     while (Date.now() - started < 6000) {
       for (const selector of selectors) {
-        try {
-          const el = document.querySelector(selector)
-          if (el) return el
-        } catch {
-          /* try next selector */
-        }
+        const hit = deepFind(document, selector, [])
+        if (hit) return hit.el
       }
       await sleep(120)
     }

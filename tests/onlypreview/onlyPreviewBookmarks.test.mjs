@@ -21,6 +21,8 @@ const deferred = () => {
 };
 const compiled = await build({
   stdin: { contents: [
+    "export { reorderOnlyPreviewBookmarkPaths } from './" + shell + "components/Bookmarks/onlyPreviewBookmarkOrder.service.ts';",
+    "export { OnlyPreviewBookmarksPersistenceService } from './" + shell + "onlyPreviewBookmarksPersistence.service.ts';",
     "export { OnlyPreviewBookmarksService } from './" + base + "onlyPreviewBookmarks.service.ts';",
     "export { OnlyPreviewHostRegistry } from './" + base + "onlyPreviewHost.registry.ts';",
     "export { OnlyPreviewWorkspaceRegistry } from './" + base + "onlyPreviewWorkspace.registry.ts';"
@@ -36,7 +38,7 @@ const compiled = await build({
     }
   }]
 });
-const { OnlyPreviewBookmarksService, OnlyPreviewHostRegistry, OnlyPreviewWorkspaceRegistry } =
+const { OnlyPreviewBookmarksService, OnlyPreviewHostRegistry, OnlyPreviewWorkspaceRegistry, OnlyPreviewBookmarksPersistenceService, reorderOnlyPreviewBookmarkPaths } =
   await import('data:text/javascript;base64,' + Buffer.from(compiled.outputFiles[0].text).toString('base64'));
 
 class Storage {
@@ -178,6 +180,125 @@ const classText = (path, names) => {
 };
 const success = (value) => ({ ok: true, value });
 const unwrap = (value) => { if (!value.ok) throw new Error(value.error.message); return value.value; };
+test('bookmark expansion persists across new renderers and workspace resets without changing bookmarks', () => {
+  const values = new Map();
+  const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
+  const Store = evaluate(classText(shell + 'onlyPreviewBookmarks.store.ts'), {}).OnlyPreviewBookmarksStore;
+  const reopen = () => new Store({}, { hostToken: null, hostId: null, workspaceId: () => null },
+    new OnlyPreviewBookmarksPersistenceService(storage));
+  const first = reopen();
+  assert.equal(first.expanded, true);
+  first.entries = [{ relativePath: 'report.md', name: 'report.md', nodeKind: 'file' }];
+  first.toggleExpanded();
+  assert.equal(first.expanded, false);
+  assert.equal(first.entries.length, 1);
+  first.resetWorkspace();
+  assert.equal(first.expanded, false);
+  first.dispose();
+  const second = reopen();
+  assert.equal(second.expanded, false);
+  second.toggleExpanded();
+  assert.equal(second.expanded, true);
+  assert.equal(reopen().expanded, true);
+});
+
+test('bookmark expansion defaults safely for absent or corrupt preferences and remains usable on storage failures', () => {
+  for (const raw of [null, '', 'invalid', '0', 'true']) {
+    const persistence = new OnlyPreviewBookmarksPersistenceService({ getItem: () => raw, setItem: () => {} });
+    assert.equal(persistence.restore(), true);
+  }
+  assert.equal(new OnlyPreviewBookmarksPersistenceService(null).restore(), true);
+  const persistence = new OnlyPreviewBookmarksPersistenceService({
+    getItem: () => { throw new Error('unavailable'); },
+    setItem: () => { throw new Error('quota'); }
+  });
+  const Store = evaluate(classText(shell + 'onlyPreviewBookmarks.store.ts'), {}).OnlyPreviewBookmarksStore;
+  const store = new Store({}, {}, persistence);
+  assert.equal(store.expanded, true);
+  store.toggleExpanded();
+  assert.equal(store.expanded, false);
+  store.toggleExpanded();
+  assert.equal(store.expanded, true);
+});
+
+test('drag insertion handles upward/downward moves, ends and no-op drops without mutating the input', () => {
+  const paths = ['a.md', 'folder', 'c.pdf', 'd.xlsx'];
+  assert.deepEqual(reorderOnlyPreviewBookmarkPaths(paths, 'folder', 'd.xlsx', 'after'), ['a.md', 'c.pdf', 'd.xlsx', 'folder']);
+  assert.deepEqual(reorderOnlyPreviewBookmarkPaths(paths, 'd.xlsx', 'a.md', 'before'), ['d.xlsx', 'a.md', 'folder', 'c.pdf']);
+  assert.deepEqual(reorderOnlyPreviewBookmarkPaths(paths, 'folder', 'c.pdf', 'after'), ['a.md', 'c.pdf', 'folder', 'd.xlsx']);
+  assert.equal(reorderOnlyPreviewBookmarkPaths(paths, 'folder', 'c.pdf', 'before'), null);
+  assert.equal(reorderOnlyPreviewBookmarkPaths(paths, 'folder', 'folder', 'after'), null);
+  assert.equal(reorderOnlyPreviewBookmarkPaths(paths, 'external', 'folder', 'before'), null);
+  assert.equal(reorderOnlyPreviewBookmarkPaths(paths, 'folder', 'missing', 'after'), null);
+  assert.deepEqual(paths, ['a.md', 'folder', 'c.pdf', 'd.xlsx']);
+});
+
+test('renderer reorders immediately, serializes drag saves and restores the committed order on reopen', async () => {
+  const save = deferred(); let writes = 0;
+  const snapshot = (revision, paths, workspaceId = 'A') => ({ workspaceId, revision,
+    entries: paths.map(relativePath => ({ relativePath, name: relativePath, nodeKind: 'file' })) });
+  let persisted = snapshot(0, ['a.md', 'b.md', 'c.md']);
+  const Store = evaluate(classText(shell + 'onlyPreviewBookmarks.store.ts'), {
+    unwrapOnlyPreviewResult: unwrap, describeOnlyPreviewError: error => error.message,
+    xpcRenderer: { subscribe: () => {} }, ONLY_PREVIEW_BOOKMARK_ADD_EVENT: 'add',
+    ONLY_PREVIEW_BOOKMARKS_CHANGED_EVENT: 'change', ONLY_PREVIEW_PROJECT_DELETE_EVENT: 'delete'
+  }).OnlyPreviewBookmarksStore;
+  const client = {
+    getBookmarks: async () => success(persisted),
+    reorderBookmarks: async request => {
+      writes++; assert.equal(request.workspaceId, 'A');
+      await save.promise;
+      persisted = snapshot(1, request.relativePaths);
+      return success(persisted);
+    }
+  };
+  const create = () => new Store(client, { hostToken: 'host', hostId: 'id', workspaceId: () => 'A' },
+    new OnlyPreviewBookmarksPersistenceService(null));
+  const store = create(); store.initialize(); await tick();
+  const saving = store.reorder(['c.md', 'a.md', 'b.md']);
+  assert.deepEqual(store.entries.map(entry => entry.relativePath), ['c.md', 'a.md', 'b.md']);
+  assert.equal(store.reordering, true);
+  await store.reorder(['b.md', 'a.md', 'c.md']); assert.equal(writes, 1);
+  save.release(); await saving;
+  assert.equal(store.reordering, false);
+  await store.reorder(['c.md', 'a.md', 'b.md']); assert.equal(writes, 1);
+  await store.reorder(['a.md', 'a.md', 'b.md']); assert.equal(writes, 1);
+  const reopened = create(); reopened.initialize(); await tick();
+  assert.deepEqual(reopened.entries.map(entry => entry.relativePath), ['c.md', 'a.md', 'b.md']);
+});
+
+test('failed drag saves roll back and refresh; late completion cannot reorder a new workspace', async () => {
+  let project = 'A'; let save = deferred();
+  const snapshot = (revision, paths, workspaceId = project) => ({ workspaceId, revision,
+    entries: paths.map(relativePath => ({ relativePath, name: relativePath, nodeKind: 'file' })) });
+  let committed = snapshot(0, ['a', 'b']);
+  const Store = evaluate(classText(shell + 'onlyPreviewBookmarks.store.ts'), {
+    unwrapOnlyPreviewResult: unwrap, describeOnlyPreviewError: error => error.message,
+    xpcRenderer: { subscribe: () => {} }, ONLY_PREVIEW_BOOKMARK_ADD_EVENT: 'add',
+    ONLY_PREVIEW_BOOKMARKS_CHANGED_EVENT: 'change', ONLY_PREVIEW_PROJECT_DELETE_EVENT: 'delete'
+  }).OnlyPreviewBookmarksStore;
+  const client = { getBookmarks: async () => success(committed), reorderBookmarks: () => save.promise };
+  const store = new Store(client, { hostToken: 'host', hostId: 'id', workspaceId: () => project },
+    new OnlyPreviewBookmarksPersistenceService(null));
+  store.initialize(); await tick();
+  const failed = store.reorder(['b', 'a']);
+  save.release({ ok: false, error: { message: 'save failed' } }); await failed;
+  assert.deepEqual(store.entries.map(entry => entry.relativePath), ['a', 'b']);
+  assert.equal(store.errorMessage, 'save failed'); assert.equal(store.reordering, false);
+  save = deferred(); const stale = store.reorder(['b', 'a']);
+  project = 'B'; committed = snapshot(0, ['different']); store.resetWorkspace(); await tick();
+  save.release(success(snapshot(5, ['b', 'a'], 'A'))); await stale;
+  assert.deepEqual(store.entries.map(entry => entry.relativePath), ['different']);
+  assert.equal(store.errorMessage, ''); assert.equal(store.reordering, false);
+  project = 'A'; committed = snapshot(1, ['a', 'b']); store.resetWorkspace(); await tick();
+  save = deferred(); const raced = store.reorder(['b', 'a']);
+  committed = snapshot(2, ['a', 'b', 'new']);
+  store.receive({ hostId: 'id', ...committed });
+  save.release({ ok: false, error: { message: 'changed list' } }); await raced;
+  assert.deepEqual(store.entries.map(entry => entry.relativePath), ['a', 'b', 'new']);
+  assert.equal(store.errorMessage, 'changed list');
+});
+
 test('actual native-menu API cancels without storage reads and removal returns its committed snapshot', async () => {
   let remove = false, reads = 0, writes = 0;
   const committed = { workspaceId: 'A', revision: 2, entries: [] };
@@ -201,6 +322,7 @@ test('committed responses/events apply once without rereads; old reads, failures
   const first = deferred(), addGate = deferred();
   let project = 'A', loads = 0;
   const Store = evaluate(classText(shell + 'onlyPreviewBookmarks.store.ts'), {
+    onlyPreviewBookmarksPersistence: new OnlyPreviewBookmarksPersistenceService(null),
     unwrapOnlyPreviewResult: unwrap, describeOnlyPreviewError: e => e.message,
     xpcRenderer: { subscribe: () => {} }, ONLY_PREVIEW_BOOKMARK_ADD_EVENT: 'add', ONLY_PREVIEW_BOOKMARKS_CHANGED_EVENT: 'change', ONLY_PREVIEW_PROJECT_DELETE_EVENT: 'delete'
   }).OnlyPreviewBookmarksStore;
@@ -238,6 +360,7 @@ test('renderer ignores old Project responses/events and preserves full bookmark 
   const first = deferred();
   let project = 'A', loads = 0, additions = 0;
   const Store = evaluate(classText(shell + 'onlyPreviewBookmarks.store.ts'), {
+    onlyPreviewBookmarksPersistence: new OnlyPreviewBookmarksPersistenceService(null),
     unwrapOnlyPreviewResult: unwrap, describeOnlyPreviewError: (e) => e.message,
     xpcRenderer: { subscribe: () => {} }, ONLY_PREVIEW_BOOKMARK_ADD_EVENT: 'add', ONLY_PREVIEW_BOOKMARKS_CHANGED_EVENT: 'change', ONLY_PREVIEW_PROJECT_DELETE_EVENT: 'delete'
   }).OnlyPreviewBookmarksStore;
@@ -352,7 +475,6 @@ test('bar/Shell compile, native bounds remain measured, scoped highlights and na
   assert.match(bookmarksCss, /onlypreview-bookmarks__list\s*\{[^}]*min-height: 0/);
   assert.match(bookmarksCss, /overflow-y: auto/);
   const bar = read(shell + 'components/Bookmarks/BookmarkBar.vue');
-  assert.doesNotMatch(bar, /IconBookmark|IconFolder|IconFile/);
   assert.match(bar, /@click.stop="onlyPreviewBookmarksStore.remove\(entry.relativePath\)"/);
   const native = read(base + 'onlyPreviewProjectNativeAction.service.ts');
   assert.match(native.slice(0, native.indexOf('async showProjectRootContextMenu')), /onlypreview-add-bookmark/);
@@ -382,7 +504,6 @@ test('every OnlyPreview IconBtn is borderless in compiled CSS, not by inheritanc
   const buttons = [
     ['PreviewToolbar/PreviewToolbar', 'onlypreview-preview-toolbar__navigation-button'],
     ['FileActions/FileActions', 'onlypreview-file-actions__button'],
-    ['Bookmarks/BookmarkBar', 'onlypreview-bookmarks__hint'],
     ['Bookmarks/BookmarkBar', 'onlypreview-bookmarks__remove']
   ];
   // 登记表必须覆盖全 —— 漏登记一个,它就会带着 UA 默认边框发出去而没人知道。
@@ -421,6 +542,7 @@ test('deleting paths prunes their bookmarks, keeps prefix siblings, and costs no
   let project = 'A';
   const removed = [];
   const Store = evaluate(classText(shell + 'onlyPreviewBookmarks.store.ts'), {
+    onlyPreviewBookmarksPersistence: new OnlyPreviewBookmarksPersistenceService(null),
     unwrapOnlyPreviewResult: unwrap, describeOnlyPreviewError: e => e.message,
     xpcRenderer: { subscribe: () => {} }, ONLY_PREVIEW_BOOKMARK_ADD_EVENT: 'add',
     ONLY_PREVIEW_BOOKMARKS_CHANGED_EVENT: 'change', ONLY_PREVIEW_PROJECT_DELETE_EVENT: 'delete'

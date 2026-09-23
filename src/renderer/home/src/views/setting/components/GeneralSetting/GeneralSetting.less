@@ -82,3 +82,33 @@
   margin-right: 8px;
   white-space: nowrap;
 }
+
+/* Downloads (docs/features/browser-downloads.md). The copy column grows so a long path truncates
+   instead of pushing the buttons off the row. Borderless: the path is plain text, not a field. */
+.general-setting__downloads-copy {
+  flex: 1;
+}
+
+.general-setting__downloads-path {
+  overflow: hidden;
+  color: var(--color-text-1);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.general-setting__downloads-alert {
+  margin-top: 4px;
+  color: oklch(0.55 0.22 25);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.general-setting__downloads-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 12px;
+}

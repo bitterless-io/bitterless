@@ -10,12 +10,13 @@
   /* Ral 2026-09-09:「距离左侧 8px,补充上下边距 8px,并增加合适的圆角」。
      圆角取 8px:这棵树行级的圆角是 4px(全树 13 处),容器高一档到 8px,与他这一轮定的
      8px 间距节奏一致 —— 不用 14px 那个孤例。
-     圆角看得见是因为有色差:书签栏是 `--onlypreview-surface`(#fff),
+     圆角看得见是因为有色差:书签栏是纯白色(#fff),
      它坐在 `--onlypreview-project-surface`(#f9fafc)的侧栏上。
-     **右侧仍然是齐边的** —— 他只说了左侧,所以没自作主张加 `margin-right`。 */
+     左右外边距均为 8px,让书签栏两侧留白一致。 */
   margin-left: 8px;
+  margin-right: 8px;
   padding: 8px 6px;
-  background: var(--onlypreview-surface);
+  background: #fff;
   border-radius: 8px;
   -webkit-app-region: no-drag;
 }
@@ -36,20 +37,8 @@
   font-size: 12px;
   font-weight: 600;
 }
-/* 问号 —— **必须自己写全 `border: 0` ＋ `background: transparent`。**
- *
- * Ral 2026-09-09:「不要用这种设计,用 iconbtn 无边框的设计」。他截到的那个带框的 `?` 不是哪个
- * IconBtn 的样式,是**根本没有样式**:cowork 的 IconBtn 是一个 Tailwind `<button>`,而
- * `renderer/onlypreview/shell/src/main.ts` 只引 Arco、**不引 Tailwind 那份 css**,于是那些
- * `h-8 w-8 rounded-md …` 全是无意义的类名,按钮退回 Chromium 的 UA 默认样式 —— 灰底 ＋ 1px 边框。
- *
- * 所以本树里每一个 IconBtn 的外观都**只能**由这里的 Less 负责,不能指望底下那个组件。
- * `PreviewToolbar__navigation-button` 与 `FileActions__button` 早就是这么写的(那也是为什么那几个
- * 看起来是对的);守卫 `onlyPreviewBookmarks.test.mjs` 现在把这条要求钉住了。
- *
- * 两级选择器是为了赢过各自 IconBtn 的默认尺寸(cowork 32px 的 `h-8 w-8`、bitterless 的
- * `.icon-btn.arco-btn`),不用 `!important`。`margin-left: auto` 把它推到这一行右端。 */
-.onlypreview-bookmarks__header .onlypreview-bookmarks__hint {
+/* 保持原生按钮无边框,尺寸和焦点反馈与其它图标按钮一致。 */
+.onlypreview-bookmarks__header .onlypreview-bookmarks__toggle {
   flex: 0 0 20px;
   width: 20px;
   min-width: 20px;
@@ -66,15 +55,15 @@
   line-height: 1;
   cursor: pointer;
 }
-.onlypreview-bookmarks__header .onlypreview-bookmarks__hint:hover {
+.onlypreview-bookmarks__header .onlypreview-bookmarks__toggle:hover {
   color: var(--onlypreview-royal);
   background: var(--onlypreview-royal-soft);
 }
-.onlypreview-bookmarks__header .onlypreview-bookmarks__hint:focus-visible {
+.onlypreview-bookmarks__header .onlypreview-bookmarks__toggle:focus-visible {
   outline: 2px solid var(--onlypreview-focus);
   outline-offset: -2px;
 }
-.onlypreview-bookmarks__header .onlypreview-bookmarks__hint svg {
+.onlypreview-bookmarks__header .onlypreview-bookmarks__toggle svg {
   display: block;
 }
 
@@ -88,10 +77,32 @@
   scrollbar-width: thin;
 }
 .onlypreview-bookmarks__row {
+  position: relative;
   display: flex;
   align-items: center;
   flex: 0 0 22px;
   min-width: 0;
+}
+.onlypreview-bookmarks__row--dragging {
+  opacity: 0.5;
+}
+.onlypreview-bookmarks__row--drop-before::before,
+.onlypreview-bookmarks__row--drop-after::after {
+  position: absolute;
+  right: 0;
+  left: 0;
+  z-index: 1;
+  height: 2px;
+  background: var(--onlypreview-royal);
+  border-radius: 1px;
+  content: '';
+  pointer-events: none;
+}
+.onlypreview-bookmarks__row--drop-before::before {
+  top: 0;
+}
+.onlypreview-bookmarks__row--drop-after::after {
+  bottom: 0;
 }
 /* 用两级选择器提高优先级,而不是 `!important`。
  *
@@ -111,7 +122,7 @@
   align-items: center;
   justify-content: center;
   padding: 0;
-  /* 同 `__hint`:本树里 IconBtn 的外观只能由这里负责 —— 少了这两行,cowork 那边就是一个带边框的
+  /* 同 `__toggle`:本树里 IconBtn 的外观只能由这里负责 —— 少了这两行,cowork 那边就是一个带边框的
      UA 默认按钮(Ral 2026-09-09 截到的正是这个)。 */
   border: 0;
   border-radius: 4px;
@@ -134,6 +145,7 @@
 .onlypreview-bookmarks__item {
   display: inline-flex;
   align-items: center;
+  gap: 6px;
   flex: 1;
   min-width: 0;
   height: 22px;
@@ -154,7 +166,14 @@
   outline: 2px solid var(--onlypreview-focus);
   outline-offset: -2px;
 }
+.onlypreview-bookmarks__icon {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  color: var(--onlypreview-muted);
+}
 .onlypreview-bookmarks__name {
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;

@@ -180,6 +180,8 @@ export interface OnlyPreviewHostRequest {
 }
 
 export interface OnlyPreviewWorkspace {
+  /** Automatically opened shared work directory; an explicit choice of the same path is not default. */
+  isDefault?: true;
   workspaceId: string;
   rootName: string;
   displayPath: string;
@@ -649,6 +651,8 @@ export interface OnlyPreviewApi {
   addBookmark(params: import('./onlyPreviewBookmarks.type').OnlyPreviewBookmarkRequest):
     Promise<OnlyPreviewResult<import('./onlyPreviewBookmarks.type').OnlyPreviewBookmarksSnapshot>>;
   removeBookmark(params: import('./onlyPreviewBookmarks.type').OnlyPreviewBookmarkRequest):
+    Promise<OnlyPreviewResult<import('./onlyPreviewBookmarks.type').OnlyPreviewBookmarksSnapshot>>;
+  reorderBookmarks(params: import('./onlyPreviewBookmarks.type').OnlyPreviewBookmarksReorderRequest):
     Promise<OnlyPreviewResult<import('./onlyPreviewBookmarks.type').OnlyPreviewBookmarksSnapshot>>;
   showBookmarkContextMenu(params: import('./onlyPreviewBookmarks.type').OnlyPreviewBookmarkRequest):
     Promise<OnlyPreviewResult<import('./onlyPreviewBookmarks.type').OnlyPreviewBookmarksSnapshot | null>>;

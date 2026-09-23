@@ -787,16 +787,8 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
   /**
    * 在应用内把一个文件/目录摆到人面前。
    *
-   * **两条路线,按「在不在工作区里」分流**(Ral 2026-09-21:「preview file 即预览 workspace 内的
-   * 文件就在 onlypreview 中预览,如果不是就是 standalone tab 下进行预览」):
-   *
-   * - **工作区内** → `opener.open()`,也就是那个绑着 Project 的 OnlyPreview。文件落在项目树里,
-   *   有上下文、有历史,人能顺着看旁边的文件。
-   * - **工作区外** → `opener.openInTab()`,一个独立的文件 tab(`createFileTabSpec` 的注释:
-   *   「independent preview authority and no OnlyPreview history」)。外部文件不该污染项目树,
-   *   也不该把 Project 根挪走。
-   *
-   * 这正是端口早就分好的两个动作,所以这里只是**选路**,没有新机制。
+   * Main routes against the effective Workspace: local files inside open there; outside files use
+   * IndiPreview. The Chat session directory only resolves relative paths, never chooses the host.
    *
    * 和 `open_workspace_folder` 的区别:那个只认工作区内的路径(`resolveWorkspacePath` 对区外直接
    * 返回 `outside-workspace`),而这个用 `resolveReadPath` —— 和 `read_file` 同一套,够得到 `~`
@@ -828,20 +820,13 @@ export class WorkspaceFileService extends CommonService<WorkspaceFileServiceStat
       return `Revealed ${mdDirLink(target)} in the file manager.`
     }
     try {
-      // 目录永远走 Project 路线:一个目录就是一棵树,独立文件 tab 装不下它。
-      if (isDirectory || resolved.insideWorkspace) {
-        await preview.open(target, { line: isDirectory ? undefined : line })
-      } else if (preview.openInTab) {
-        await preview.openInTab(target, { line })
-      } else {
-        // 这个构建没有独立文件 tab —— 与其报错,不如退回 Project 路线把文件打开。
-        await preview.open(target, { line })
-      }
+      // Main's preview scope is the single routing authority, independent of the Chat session CWD.
+      await preview.open(target, { line: isDirectory ? undefined : line })
     } catch (err) {
       if (isPermissionError(err)) return `ERROR: no permission to open "${target}".${FOLDER_AUTH_HINT}`
       return `ERROR: could not preview "${target}": ${err instanceof Error ? err.message : String(err)}`
     }
-    const where = isDirectory || resolved.insideWorkspace ? preview.displayName : `a ${preview.displayName} tab`
+    const where = preview.displayName
     if (isDirectory) return `Opened ${mdDirLink(target)} in ${where} — the user can browse it in the app.`
     // 如实说「请求跳到第 N 行」而非「已跳到」:能不能跳取决于文件类型和实际行数,这里拿不到结果。
     return line

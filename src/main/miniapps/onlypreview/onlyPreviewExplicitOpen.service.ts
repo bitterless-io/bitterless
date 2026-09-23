@@ -1,3 +1,5 @@
+import { openIndiPreviewFile } from '@main/windows/indiPreviewWindow.service';
+import { resolveOnlyPreviewTargetScope } from './onlyPreviewWorkspaceScope.service';
 import { xpcMain } from 'electron-xpc/main';
 import { resolve } from 'node:path';
 import { OnlyPreviewContractError } from '@shared/onlypreview/onlyPreview.contract';
@@ -110,9 +112,21 @@ export const presentOnlyPreviewExplicitFile = async (
 
 const performOpenOnlyPreviewAbsoluteTarget = async (
   target: string,
-  context: { trace: OnlyPreviewOpenTrace; preserveTreeSelection: boolean; line?: number }
+  context: { trace: OnlyPreviewOpenTrace; preserveTreeSelection: boolean; line?: number; fragment?: string }
 ): Promise<void> => {
-  const { trace, preserveTreeSelection, line } = context;
+  const { trace, preserveTreeSelection, line, fragment } = context;
+  const initialRoot = onlyPreviewWorkspaceRegistry.currentProjectRoot();
+  const inspected = await fileSearchWindowService.inspectTarget(target);
+  const scope = await resolveOnlyPreviewTargetScope(inspected);
+  if (initialRoot && onlyPreviewWorkspaceRegistry.currentProjectRoot() !== initialRoot) {
+    throw new OnlyPreviewContractError('INVALID_INPUT', 'The active Project changed before opening this target.');
+  }
+  if (scope.kind === 'outside') {
+    await openIndiPreviewFile(target, { line, fragment });
+    trace.mark({ phase: 'accepted', authority: 'external' });
+    trace.end({ outcome: 'accepted' });
+    return;
+  }
   const recentGeneration = onlyPreviewRecentDirectoryService.beginExplicitTarget();
   try {
     trace.mark({ phase: 'fifo' });
@@ -120,7 +134,6 @@ const performOpenOnlyPreviewAbsoluteTarget = async (
     trace.mark({ phase: 'window' });
     onlyPreviewRecentDirectoryService.bindExplicitTarget(host.hostToken, recentGeneration);
     const projectId = onlyPreviewWorkspaceRegistry.restore(host.hostToken)?.workspaceId;
-    const inspected = await fileSearchWindowService.inspectTarget(target);
     onlyPreviewHostRegistry.require(host.hostToken, ['content']);
     if (onlyPreviewWorkspaceRegistry.restore(host.hostToken)?.workspaceId !== projectId) {
       throw new OnlyPreviewContractError(
@@ -184,19 +197,17 @@ const performOpenOnlyPreviewAbsoluteTarget = async (
     // 不是 `WORKSPACE_CHANGED` —— shell 再也不会问第二次,空状态就留在那里。
     // 详见 `docs/issues/onlypreview-external-file-open-drops-the-project.md`。
     onlyPreviewRecentDirectoryService.releaseProjectRestoreClaim(recentGeneration);
-    const accepted = await presentOnlyPreviewExplicitFile(
-      host, inspected, trace, undefined, preserveTreeSelection, line
-    );
-    // The file is already visible. Resolve the initial Project scope before recording history so
-    // a cold open cannot land in the unbound bucket just before Shell restores the Project.
+    // Establish the directory before recording a file selection; scope itself never waits for indexing.
     if (!onlyPreviewWorkspaceRegistry.restore(host.hostToken)) {
       const workspace = await onlyPreviewRecentDirectoryService
-        .restoreWorkspace(host.hostToken, { presentRestoredSelection: false })
-        .catch(() => null);
+        .restoreWorkspace(host.hostToken, { presentRestoredSelection: false });
       if (workspace && onlyPreviewHostRegistry.isLive(host.hostToken)) {
         xpcMain.broadcast(ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT, { hostId: host.hostId });
       }
     }
+    const accepted = await presentOnlyPreviewExplicitFile(
+      host, inspected, trace, fragment, preserveTreeSelection, line
+    );
     if (accepted && onlyPreviewHostRegistry.isLive(host.hostToken)) {
       await recordOnlyPreviewRecentFile(
         host.hostToken, resolve(inspected.rootRealPath, inspected.selectedRelativePath)
@@ -210,23 +221,25 @@ const performOpenOnlyPreviewAbsoluteTarget = async (
   }
 };
 
+
+
+type OpenOptions = { preserveTreeSelection?: boolean; line?: number; fragment?: string };
+const openContext = (options: OpenOptions) => ({
+  trace: onlyPreviewOpenDiagnostics.trace('target', { kind: 'unknown' }, 't'),
+  preserveTreeSelection: options.preserveTreeSelection === true,
+  line: normalizeOnlyPreviewLine(options.line),
+  fragment: options.fragment
+});
+
+/** Caller already owns the FIFO. Markdown/Recents must never recursively join that queue. */
+export const openOnlyPreviewAbsoluteTargetInMutation = (target: string, options: OpenOptions = {}): Promise<void> =>
+  performOpenOnlyPreviewAbsoluteTarget(target, openContext(options));
+
 const serializedOpenOnlyPreviewAbsoluteTarget = serializeOnlyPreviewOpenTarget(
-  performOpenOnlyPreviewAbsoluteTarget,
-  onlyPreviewTargetMutations
+  performOpenOnlyPreviewAbsoluteTarget, onlyPreviewTargetMutations
 );
 
-export const openOnlyPreviewAbsoluteTarget = (
-  target: string,
-  options: { preserveTreeSelection?: boolean; line?: number } = {}
-): Promise<void> => {
-  const trace = onlyPreviewOpenDiagnostics.trace('target', { kind: 'unknown' }, 't');
-  return serializedOpenOnlyPreviewAbsoluteTarget(target, {
-    trace,
-    preserveTreeSelection: options.preserveTreeSelection === true,
-    // 规范化只在这个入口做一次:往下每一层拿到的要么是一个正整数,要么什么都没有。
-    // 0 / 负数 / NaN / 小数一律当作没给 —— 行号不合法不该让文件打不开。
-    line: normalizeOnlyPreviewLine(options.line)
-  });
-};
+export const openOnlyPreviewAbsoluteTarget = (target: string, options: OpenOptions = {}): Promise<void> =>
+  serializedOpenOnlyPreviewAbsoluteTarget(target, openContext(options));
 
 registerOnlyPreviewExplicitTarget(openOnlyPreviewAbsoluteTarget);

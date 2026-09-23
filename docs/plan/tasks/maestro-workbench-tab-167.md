@@ -15,6 +15,13 @@ system font and IconBtn controls remain; a fixed 132px Workbench chip follows th
 - Gear opens/focuses one tab; clicking it again does not close it. No filled icon or aria-pressed.
 - Main owns open/visible separately. Clicking a web/mini-app tab backgrounds Workbench but leaves
   its chip; chip X, Workbench X and Cmd+W close it. User New tab backgrounds it too.
+- 2026-09-23 addendum (Cowork `workbench-tab.md` #5 exception): a display the user explicitly asked
+  for also backgrounds Workbench first — `activate_tab`/`open_tab` with `show: true`, the chat's
+  "view this tab" (`showAgentBrowserTab`), and in BL additionally every OnlyPreview open that lands
+  on the tab mount (`openWorkspaceInPreview`: MCP `preview_open` and the chat workspace chip) and
+  every operator app-open (`openCompositeTab`: Workbench Apps, Zellij, Trench, OnlyPreview
+  window→tab). `activateTab()` itself is unchanged, so drill and `show=false` activations still leave
+  Workbench alone. See `docs/issues/agent-show-tab-hidden-behind-workbench.md`.
 - The native Workbench renderer survives tab close, keeping recording state; only window teardown
   destroys it. Geometry still follows the operation rect. Agent tab activation stays independent.
 - Foreground address is bitterless://workbench. Address/back/forward/reload are disabled without

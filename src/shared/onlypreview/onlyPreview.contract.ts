@@ -26,6 +26,7 @@ import type {
   OnlyPreviewRenameProjectItemRequest,
   OnlyPreviewSettings
 } from './onlyPreview.types';
+import type { OnlyPreviewBookmarksReorderRequest } from './onlyPreviewBookmarks.type';
 import { validateOnlyPreviewEntryName } from './onlyPreviewEntryName.shared';
 import type { OnlyPreviewEntryNameResult } from './onlyPreviewEntryName.shared';
 
@@ -193,6 +194,29 @@ export const parseOnlyPreviewFileRef = (value: unknown): OnlyPreviewFileRef => {
   return {
     workspaceId: expectBoundedToken(record.workspaceId, 'Workspace capability'),
     relativePath: normalizeOnlyPreviewRelativePath(record.relativePath)
+  };
+};
+
+export const parseOnlyPreviewBookmarkOrder = (value: unknown): string[] => {
+  if (!Array.isArray(value) || value.length > 1000) {
+    throw new OnlyPreviewContractError('INVALID_INPUT', 'Bookmark order is invalid.');
+  }
+  const paths = Array.from(value, (path) => normalizeOnlyPreviewRelativePath(path));
+  if (new Set(paths).size !== paths.length) {
+    throw new OnlyPreviewContractError('INVALID_INPUT', 'Bookmark order contains duplicates.');
+  }
+  return paths;
+};
+
+export const parseOnlyPreviewBookmarksReorderRequest = (
+  value: unknown
+): OnlyPreviewBookmarksReorderRequest => {
+  const record = expectRecord(value, 'Bookmark reorder request');
+  expectExactKeys(record, ['hostToken', 'workspaceId', 'relativePaths']);
+  return {
+    hostToken: expectBoundedToken(record.hostToken, 'Host capability'),
+    workspaceId: expectBoundedToken(record.workspaceId, 'Workspace capability'),
+    relativePaths: parseOnlyPreviewBookmarkOrder(record.relativePaths)
   };
 };
 

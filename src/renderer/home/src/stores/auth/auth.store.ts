@@ -310,7 +310,9 @@ class AuthStore {
     this.loading = true;
     try {
       await changePasswordApi(token, { new_password: newPassword });
+      if (getCustomerToken() !== token) throw new Error('Session changed during password update');
       const current = await this.fetchMe();
+      if (getCustomerToken() !== token) throw new Error('Session changed during password update');
       if (current.status !== 'active' || customerNeedsPasswordSetup(current)) {
         this.clearLocalSession();
         throw new Error('账号尚未完成激活，请使用新密码重新登录');

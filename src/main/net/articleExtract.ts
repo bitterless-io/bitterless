@@ -70,6 +70,10 @@ export const extractArticle = (html: string, baseUrl: string, maxChars: number):
   } catch (err) {
     throw new ExtractError('parse-failed', `could not parse the page: ${(err as Error).message}`)
   }
+  if (!document?.documentElement) {
+    // linkedom 的 head/body getter 在没有根节点时会抛 TypeError。
+    throw new ExtractError('parse-failed', 'the page has no HTML document element')
+  }
 
   // Readability 靠 baseURI 解析相对链接;linkedom 不从 HTML 推断它,所以显式注入一个 <base>。
   // 少了这步,文章里的链接会变成无法回访的相对路径。

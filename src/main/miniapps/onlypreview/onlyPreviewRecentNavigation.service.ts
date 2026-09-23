@@ -13,9 +13,11 @@ import {
 } from './onlyPreviewRecents.runtime';
 import {
   onlyPreviewTargetMutations,
-  presentOnlyPreviewExplicitFile
+  presentOnlyPreviewExplicitFile,
+  openOnlyPreviewAbsoluteTargetInMutation
 } from './onlyPreviewExplicitOpen.service';
-import { onlyPreviewPreviewRegionService } from './views/onlyPreviewPreviewRegion.service';
+import { resolveOnlyPreviewPreviewRegion } from './views/onlyPreviewPreviewRegion.service';
+import { resolveOnlyPreviewTargetScope } from './onlyPreviewWorkspaceScope.service';
 import { resolveOnlyPreviewMarkdownLink } from './onlyPreviewMarkdownLink.service';
 
 type Params<T extends keyof OnlyPreviewApi> = Parameters<OnlyPreviewApi[T]>[0];
@@ -36,6 +38,11 @@ const openFile = async (
       'PATH_NOT_REGULAR_FILE',
       'Recent and Markdown targets must be files.'
     );
+  }
+  const scope = await resolveOnlyPreviewTargetScope(inspected);
+  if (scope.kind === 'outside' || !onlyPreviewWorkspaceRegistry.restore(hostToken)) {
+    await openOnlyPreviewAbsoluteTargetInMutation(path, { fragment });
+    return;
   }
   const accepted = await presentOnlyPreviewExplicitFile(host, inspected, undefined, fragment);
   if (accepted && promote) {
@@ -89,7 +96,7 @@ export const reloadOnlyPreview = async (params: Params<'reloadPreview'>): Promis
   const host = onlyPreviewHostRegistry.require(params?.hostToken, ['content']);
   await onlyPreviewTargetMutations.run(async () => {
     onlyPreviewHostRegistry.require(host.hostToken, ['content']);
-    await onlyPreviewPreviewRegionService.refresh(host.hostToken);
+    await resolveOnlyPreviewPreviewRegion(host.hostToken).refresh(host.hostToken);
   });
 };
 
@@ -98,7 +105,7 @@ export const openOnlyPreviewMarkdownLink = async (
 ): Promise<void> => {
   const request = parseOnlyPreviewPreviewRevisionRequest(params);
   const requireSource = (): string => {
-    const source = onlyPreviewPreviewRegionService.snapshotForVue(
+    const source = resolveOnlyPreviewPreviewRegion(request.hostToken).snapshotForVue(
       request.hostToken,
       request.previewRuntimeToken
     );
@@ -123,7 +130,7 @@ export const openOnlyPreviewMarkdownLink = async (
     const source = requireSource();
     const target = resolveOnlyPreviewMarkdownLink(source, params.href);
     if (target.path === source) {
-      onlyPreviewPreviewRegionService.navigateFragment(
+      resolveOnlyPreviewPreviewRegion(request.hostToken).navigateFragment(
         request.hostToken,
         request.previewRuntimeToken,
         request.selectionRevision,

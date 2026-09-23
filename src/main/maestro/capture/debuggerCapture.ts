@@ -475,28 +475,80 @@ export class DebuggerCapture {
    */
   async snapshot(
     opts: { shot?: boolean } = {}
-  ): Promise<{ ok: boolean; nodeCount: number; title?: string; yaml: string; shot?: string; error?: string }> {
+  ): Promise<{ ok: boolean; nodeCount: number; title?: string; epoch?: string; yaml: string; shot?: string; error?: string }> {
     if (!this.attached) return { ok: false, nodeCount: 0, yaml: '', error: 'capture not attached' }
     try {
       const response = (await this.wc.debugger.sendCommand('Runtime.evaluate', {
         expression: `(${snapshotWalker})()`,
         returnByValue: true
-      })) as { result?: { value?: { title?: string; count: number; truncated?: boolean; nodes: AriaNode[] } } }
+      })) as {
+        result?: {
+          value?: {
+            title?: string
+            epoch?: string
+            count: number
+            truncated?: boolean
+            deepened?: boolean
+            missingLines?: number
+            missingSample?: string[]
+            nodes: AriaNode[]
+          }
+        }
+      }
       const value = response.result?.value
       if (!value || !Array.isArray(value.nodes)) {
         return { ok: false, nodeCount: 0, yaml: '', error: 'no snapshot returned' }
       }
-      const nodes = collapseWrappers(value.nodes)
-      const body = nodes.length ? toAriaYaml(nodes) : '# (no elements found)'
-      const yaml = value.truncated
-        ? `# NOTE: page is unusually large; snapshot hit the node safety bound — some elements omitted\n${body}`
-        : body
+      const yaml = composeSnapshotYaml(value)
       // Only the manual Snapshot button asks for a thumbnail; the agent's observe loop
       // doesn't, so we don't pay for a screenshot on every observe.
       const shot = opts.shot ? await this.captureViewportShot() : undefined
-      return { ok: true, nodeCount: value.count, title: value.title, yaml, shot }
+      return { ok: true, nodeCount: value.count, title: value.title, epoch: value.epoch, yaml, shot }
     } catch (err) {
       return { ok: false, nodeCount: 0, yaml: '', error: (err as Error).message }
+    }
+  }
+
+  /**
+   * `/page_snapshot_compare` 的取数一步:树 + DOM 原文 + 诊断,**一次往返**。
+   *
+   * 分开两次取会让两份来自不同瞬间 —— 而这条命令要诊断的恰恰是"页面和树对不上"。
+   * 更硬的一条:诊断靠的是 walker 刚写上的 `[data-coach-ref]`,而每次快照开头都会先清掉
+   * 上一轮的标记,所以做差必须和走树在同一次 evaluate 里完成,没有第二种写法。
+   */
+  async snapshotCompare(): Promise<{
+    ok: boolean
+    nodeCount?: number
+    title?: string
+    yaml?: string
+    html?: string
+    gaps?: SnapshotGap[]
+    benign?: number
+    meta?: Record<string, unknown>
+    error?: string
+  }> {
+    if (!this.attached) return { ok: false, error: 'capture not attached' }
+    try {
+      const response = (await this.wc.debugger.sendCommand('Runtime.evaluate', {
+        expression: `(${comparePayload})(${snapshotWalker})`,
+        returnByValue: true
+      })) as { result?: { value?: ReturnType<typeof comparePayload> } }
+      const value = response.result?.value
+      if (!value || !value.snapshot || !Array.isArray(value.snapshot.nodes)) {
+        return { ok: false, error: 'no snapshot returned' }
+      }
+      return {
+        ok: true,
+        nodeCount: value.snapshot.count,
+        title: value.snapshot.title,
+        yaml: composeSnapshotYaml(value.snapshot),
+        html: value.html,
+        gaps: value.gaps,
+        benign: value.benign,
+        meta: value.meta
+      }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message }
     }
   }
 
@@ -1002,6 +1054,7 @@ interface AriaNode {
   nameAttr?: string
   idKind?: 'testid' | 'id'
   ident?: string
+  note?: string
   children?: AriaNode[]
 }
 
@@ -1010,14 +1063,28 @@ interface AriaNode {
 // aria snapshot: each kept node carries role + accessible name + ARIA state, and is
 // stamped with a stable [data-coach-ref] so ui_act can act on it by ref. Layout-only
 // wrappers collapse (their children promote); script/style/svg/hidden nodes are
-// skipped. Coverage is comprehensive — the only caps are high safety bounds against a
-// runaway DOM, never a content limit.
-const snapshotWalker = (): { title: string; count: number; truncated: boolean; nodes: AriaNode[] } => {
+// skipped. Coverage is NOT guaranteed: every gate here can drop a subtree, and a page
+// can render text this walk cannot reach (closed shadow roots, cross-origin frames,
+// canvas). So the walk ends by checking itself against innerText and reporting what it
+// missed — an unread subtree and an empty one look identical in the tree, and that
+// ambiguity is what once got a page of billing rows reported to a user as "no records".
+const snapshotWalker = (): {
+  title: string
+  /** 本次走树的世代号。ref 只在同一世代内有效 —— 见清戳记处的注释。 */
+  epoch: string
+  count: number
+  truncated: boolean
+  deepened: boolean
+  missingLines: number
+  missingSample: string[]
+  nodes: AriaNode[]
+} => {
   const MAX_NODES = 6000
   const MAX_DEPTH = 60
   let count = 0
   let refSeq = 0
   let truncated = false
+  let deepened = false
   const clean = (v: unknown, max = 200): string =>
     String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, max)
   const css = (v: unknown): string =>
@@ -1055,6 +1122,9 @@ const snapshotWalker = (): { title: string; count: number; truncated: boolean; n
     if (tag === 'th') return 'columnheader'
     if (tag === 'option') return 'option'
     if (tag === 'summary') return 'button'
+    // Kept even when we cannot read inside: the agent must at least learn that a region
+    // of the page is rendered by a frame, rather than see nothing there at all.
+    if (tag === 'iframe' || tag === 'frame') return 'iframe'
     return undefined
   }
   const idText = (ids: string): string =>
@@ -1116,6 +1186,30 @@ const snapshotWalker = (): { title: string; count: number; truncated: boolean; n
       return el.getClientRects().length === 0
     } catch {
       return false
+    }
+  }
+  // The ONE case where "no client rects" must not prune: `display: contents` makes an
+  // element generate no box of its own, so getClientRects() is empty — but its children
+  // still render. Pruning there loses a visible subtree (a ChatGPT billing list did
+  // exactly this). aria-hidden/[hidden] still win: those mean "not in the a11y tree",
+  // whatever the layout says. getComputedStyle only runs on the cold no-rects path.
+  const isBoxlessPassthrough = (el: Element): boolean => {
+    if (el.hasAttribute('hidden') || el.getAttribute('aria-hidden') === 'true') return false
+    try {
+      return window.getComputedStyle(el).display === 'contents'
+    } catch {
+      return false
+    }
+  }
+  // A same-origin frame can be walked through contentDocument; a cross-origin one is
+  // opaque to page script, so the gap is recorded on the iframe node itself.
+  const frameBody = (el: Element): Element | null => {
+    const tag = el.tagName.toLowerCase()
+    if (tag !== 'iframe' && tag !== 'frame') return null
+    try {
+      return (el as HTMLIFrameElement).contentDocument?.body || null
+    } catch {
+      return null
     }
   }
   const isMeaningful = (el: Element): boolean => {
@@ -1209,6 +1303,9 @@ const snapshotWalker = (): { title: string; count: number; truncated: boolean; n
       const v = clean((el as HTMLSelectElement).value, 200)
       if (v) node.value = v
     }
+    if (role === 'iframe' && !frameBody(el)) {
+      node.note = 'content not readable from this page (cross-origin frame)'
+    }
     if (role === 'link' && tag === 'a') {
       const href = clean(el.getAttribute('href'), 200)
       if (href) node.url = href
@@ -1228,29 +1325,54 @@ const snapshotWalker = (): { title: string; count: number; truncated: boolean; n
         if (opt.selected) node.selected = true
         return node
       })
-  const walk = (el: Element, depth: number): AriaNode[] => {
+  // What actually renders under this element. An OPEN shadow root replaces the host's
+  // light children as the rendered subtree — those are only reached through its <slot>s,
+  // so walking el.children as well would double-count them. A <slot> resolves to the
+  // nodes assigned to it, falling back to its own content when nothing is assigned.
+  // A closed root is unreachable from page script; it is reported as a gap, not silence.
+  const renderedChildren = (el: Element): Element[] => {
+    const shadow = (el as HTMLElement).shadowRoot
+    if (shadow) return Array.from(shadow.children)
+    const body = frameBody(el)
+    if (body) return Array.from(body.children)
+    if (el.tagName.toLowerCase() === 'slot') {
+      const assigned = (el as HTMLSlotElement).assignedElements()
+      if (assigned.length) return assigned
+    }
+    return Array.from(el.children)
+  }
+  const walk = (el: Element, depth: number, boxless = false): AriaNode[] => {
     if (count >= MAX_NODES) {
       truncated = true
       return []
     }
-    if (depth > MAX_DEPTH) return []
+    if (depth > MAX_DEPTH) {
+      deepened = true
+      return []
+    }
     let childNodes: AriaNode[]
     if (el.tagName.toLowerCase() === 'select') {
       childNodes = selectOptions(el as HTMLSelectElement)
     } else {
       childNodes = []
-      for (const child of Array.from(el.children)) {
+      for (const child of renderedChildren(el)) {
         if (count >= MAX_NODES) {
           truncated = true
           break
         }
         const tag = child.tagName.toLowerCase()
         if (tag === 'script' || tag === 'style' || tag === 'noscript' || tag === 'svg' || tag === 'path') continue
-        if (isHidden(child)) continue
+        if (isHidden(child)) {
+          if (!isBoxlessPassthrough(child)) continue
+          // Walk through it, but never keep it: clicks are dispatched at an element's
+          // viewport point, and a boxless node has none — a ref on it is unclickable.
+          childNodes.push(...walk(child, depth + 1, true))
+          continue
+        }
         childNodes.push(...walk(child, depth + 1))
       }
     }
-    if (isMeaningful(el)) {
+    if (!boxless && isMeaningful(el)) {
       count += 1
       const node = describe(el)
       if (childNodes.length) node.children = childNodes
@@ -1259,14 +1381,322 @@ const snapshotWalker = (): { title: string; count: number; truncated: boolean; n
     return childNodes
   }
   // Clear stamps from a previous snapshot so refs always match the latest tree.
+  //
+  // **同一处盖世代号。** 清戳记 + 从 e1 重排意味着上一份快照的 `eN` 全部作废,但作废是
+  // **静默**的:编号密集,旧的 e47 在新树里通常依然存在、只是指向另一个元素,而
+  // `deepFindElement` 取第一个命中就返回 —— ui_act 会点错东西且不报错。世代号让这件事
+  // 可判定:ui_act 带着它来,对不上就报错而不是照点。
+  let epoch = 's1'
   try {
+    const previous = Number(String(document.documentElement.getAttribute('data-coach-epoch') || '').slice(1))
+    epoch = 's' + (Number.isFinite(previous) && previous > 0 ? previous + 1 : 1)
     document.querySelectorAll('[data-coach-ref]').forEach((el) => el.removeAttribute('data-coach-ref'))
+    document.documentElement.setAttribute('data-coach-epoch', epoch)
   } catch {
     /* ignore */
   }
   const root = document.body || document.documentElement
   const nodes = root ? walk(root, 0) : []
-  return { title: clean(document.title, 200), count, truncated, nodes }
+  // Completeness self-check. Every gate above can drop a subtree, and a dropped subtree
+  // is indistinguishable from an empty one in the output — which is how a page full of
+  // transactions was reported as having none. So compare the tree against what the page
+  // ACTUALLY renders: innerText is the browser's own answer to "what text is visible".
+  // Lines it has that the tree does not are content the agent cannot see or act on.
+  // This is deliberately a detector, not a fix: it also fires for blind spots we have
+  // not found yet. Skipped when a bound already flagged the snapshot, or when the page
+  // is big enough that the scan would cost more than the signal is worth.
+  let missingLines = 0
+  let missingSample: string[] = []
+  try {
+    const rendered = root && 'innerText' in root ? String((root as HTMLElement).innerText || '') : ''
+    if (!truncated && rendered && rendered.length < 500000) {
+      let captured = ''
+      // innerText never renders form-control values, and a <label>'s text is in the tree only as
+      // its control's name, so a value right after that name splits a line innerText renders whole
+      // ("Search" + "ct" + "Go" vs "SearchGo"). Values are still compared — just after all names.
+      let values = ''
+      const soak = (list: AriaNode[]): void => {
+        for (const node of list) {
+          if (node.name) captured += ' ' + node.name
+          if (node.value) values += ' ' + node.value
+          if (node.children) soak(node.children)
+        }
+      }
+      soak(nodes)
+      captured += values
+      // Names are not enough: an element named by aria-label/title/alt reports THAT, while the
+      // page shows its own text (a chevron link labelled "Open invoice from …" renders ">"), so
+      // comparing names alone reports lines that are in fact covered. Every kept element carries
+      // a fresh [data-coach-ref], so add each one's DIRECT text — direct only, because a kept
+      // ancestor's textContent would also include the pruned subtree this check exists to find.
+      try {
+        for (const el of Array.from(document.querySelectorAll('[data-coach-ref]'))) {
+          // innerText skips the text of anything whose computed visibility is not `visible`, so do
+          // the same — otherwise a hidden element that the tree keeps sits between two neighbours
+          // that innerText has glued into one line, and that line never matches.
+          if (window.getComputedStyle(el).visibility !== 'visible') continue
+          for (const child of Array.from(el.childNodes)) {
+            if (child.nodeType === 3) captured += ' ' + (child.nodeValue || '')
+          }
+        }
+      } catch {
+        /* the self-check must never break the snapshot it is checking */
+      }
+      // innerText is RENDERED text, so CSS text-transform is already applied to it, while both
+      // capture paths read the source text (nameOf → textContent, directText → nodeValue) and
+      // never see that transform. Comparing them as-is makes every uppercased nav label read as
+      // a gap — our own demo site reported "DEMO CENTER" and "BOOKING" as missing while both
+      // were in the tree. So fold case for the COMPARISON, and keep the original line for the
+      // message: the sample tells the agent what to look for ON THE PAGE, and a lowercased copy
+      // of it is not on the page. toLowerCase, not toLocaleLowerCase — under a tr/az host locale
+      // the latter maps "I" to dotless "ı" while the untransformed "i" stays "i", which would
+      // invent a new false positive instead of removing one.
+      // Whitespace is dropped the same way, for the comparison only: innerText puts NO separator
+      // between adjacent inline elements with no whitespace between them in the DOM (typical JSX
+      // output): a nav renders "HomeAboutPricing" while the capture joins its pieces with spaces.
+      captured = captured.replace(/\s+/g, '').toLowerCase()
+      const seen: Record<string, true> = {}
+      const lines: { raw: string; key: string }[] = []
+      for (const raw of rendered.split('\n')) {
+        const line = raw.replace(/\s+/g, ' ').trim()
+        const key = line.replace(/\s+/g, '').toLowerCase()
+        if (line.length < 3 || seen[key]) continue
+        seen[key] = true
+        lines.push({ raw: line, key })
+        if (lines.length >= 500) break
+      }
+      const candidates: { raw: string; key: string }[] = []
+      for (const line of lines) {
+        if (captured.indexOf(line.key) < 0) candidates.push(line)
+      }
+      // innerText still reports text the page deliberately hides from assistive tech.
+      // Leaving it in would make almost every real page report a gap, and a warning that
+      // fires always is a warning the agent learns to skip — so drop those lines here.
+      let ariaHidden = ''
+      if (candidates.length) {
+        try {
+          for (const el of Array.from(document.querySelectorAll('[aria-hidden="true"],[hidden]'))) {
+            ariaHidden += ' ' + (el.textContent || '')
+          }
+          ariaHidden = ariaHidden.replace(/\s+/g, '').toLowerCase()
+        } catch {
+          ariaHidden = ''
+        }
+      }
+      for (const line of candidates) {
+        if (ariaHidden && ariaHidden.indexOf(line.key) >= 0) continue
+        missingLines += 1
+        if (missingSample.length < 5) missingSample.push(line.raw.slice(0, 60))
+      }
+    }
+  } catch {
+    /* the self-check must never break the snapshot it is checking */
+  }
+  return { title: clean(document.title, 200), epoch, count, truncated, deepened, missingLines, missingSample, nodes }
+}
+
+/** 一处剪枝点，连同它吞掉的可见文字。按剪枝点聚合，不是按叶子。 */
+export interface SnapshotGap {
+  culprit: string
+  outer: string
+  reason: string
+  display: string
+  rects: number
+  leaves: number
+  sample: string[]
+}
+
+// Serialized into the page and handed `snapshotWalker` (it is self-contained and cannot
+// close over it). Runs the walk, then — in the SAME evaluation, while the fresh
+// [data-coach-ref] stamps are still on the page — diffs the tree against the DOM and
+// serializes the document. One round trip is the contract: taken separately the tree and
+// the HTML can disagree, and "the page and the tree disagree" is the very thing this
+// exists to diagnose.
+const comparePayload = (
+  walk: typeof snapshotWalker
+): {
+  snapshot: ReturnType<typeof snapshotWalker>
+  html: string
+  scriptsStripped: number
+  gaps: SnapshotGap[]
+  benign: number
+  meta: Record<string, unknown>
+} => {
+  const snapshot = walk()
+  const tidy = (v: unknown, max = 200): string =>
+    String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, max)
+  const directText = (el: Element): string => {
+    let text = ''
+    for (const node of Array.from(el.childNodes)) if (node.nodeType === 3) text += node.nodeValue || ''
+    return tidy(text, 120)
+  }
+  const describeEl = (el: Element): string => {
+    const cls = typeof el.className === 'string' ? tidy(el.className, 60) : ''
+    return (
+      el.tagName.toLowerCase() +
+      (el.id ? '#' + tidy(el.id, 40) : '') +
+      (cls ? '.' + cls.split(' ').filter(Boolean).join('.') : '')
+    )
+  }
+  const SKIP = ['script', 'style', 'noscript', 'svg', 'path']
+
+  // Same reach as the walk: this document, open shadow roots, same-origin frames. A closed
+  // root or a cross-origin frame is invisible here too — the tree marks those instead.
+  const roots: Array<Document | ShadowRoot> = [document]
+  const collectRoots = (root: Document | ShadowRoot, depth: number): void => {
+    if (depth > 8) return
+    for (const el of Array.from(root.querySelectorAll('*'))) {
+      const shadow = (el as HTMLElement).shadowRoot
+      if (shadow) {
+        roots.push(shadow)
+        collectRoots(shadow, depth + 1)
+      }
+      const tag = el.tagName.toLowerCase()
+      if (tag !== 'iframe' && tag !== 'frame') continue
+      let doc: Document | null = null
+      try {
+        doc = (el as HTMLIFrameElement).contentDocument
+      } catch {
+        doc = null
+      }
+      if (doc) {
+        roots.push(doc)
+        collectRoots(doc, depth + 1)
+      }
+    }
+  }
+  try {
+    collectRoots(document, 0)
+  } catch {
+    /* best effort; a partial root list still diagnoses what it can reach */
+  }
+
+  const byCulprit: Record<string, SnapshotGap> = {}
+  let benign = 0
+  try {
+    for (const root of roots) {
+      for (const el of Array.from(root.querySelectorAll('*'))) {
+        const tag = el.tagName.toLowerCase()
+        // The walk's own text-leaf rule, verbatim. Anything else is not something it meant
+        // to keep, and counting it here would invent gaps that are not gaps.
+        if (SKIP.indexOf(tag) >= 0 || tag === 'label') continue
+        if (el.children.length !== 0) continue
+        const text = directText(el)
+        if (!text) continue
+        if (el.hasAttribute('data-coach-ref')) continue
+        if (!el.getClientRects().length) continue
+
+        let culprit: Element = el
+        let reason = 'unknown — the walk should have reached this text'
+        let defect = true
+        const host = (el.getRootNode() as ShadowRoot).host
+        if (el.ownerDocument !== document) {
+          reason = 'inside a frame document — el.children does not cross it'
+        } else if (host) {
+          culprit = host
+          reason = 'inside a shadow root — el.children does not cross it'
+        } else {
+          let depth = 0
+          let found = false
+          for (let node: Element | null = el; node; node = node.parentElement) {
+            depth += 1
+            if (node.hasAttribute('data-coach-ref')) break
+            if (node.hasAttribute('hidden') || node.getAttribute('aria-hidden') === 'true') {
+              culprit = node
+              reason = node.hasAttribute('hidden')
+                ? '[hidden] — kept out by design, not a defect'
+                : 'aria-hidden="true" — kept out by design, not a defect'
+              defect = false
+              found = true
+              break
+            }
+            if (!node.getClientRects().length) {
+              culprit = node
+              let display = ''
+              try {
+                display = window.getComputedStyle(node).display
+              } catch {
+                display = ''
+              }
+              if (display === 'contents') {
+                reason = 'display: contents — generates no box of its own, so the gate pruned its visible children'
+              } else {
+                reason = 'no client rects (display: ' + (display || 'unknown') + ') — genuinely not rendered, not a defect'
+                defect = false
+              }
+              found = true
+              break
+            }
+          }
+          if (!found && depth > 60) reason = 'deeper than the walk depth limit'
+        }
+        if (!defect) {
+          benign += 1
+          continue
+        }
+        const key = describeEl(culprit) + ' :: ' + reason
+        let display = ''
+        let rects = 0
+        try {
+          display = window.getComputedStyle(culprit).display
+          rects = culprit.getClientRects().length
+        } catch {
+          /* leave unknown */
+        }
+        const gap =
+          byCulprit[key] ||
+          (byCulprit[key] = {
+            culprit: describeEl(culprit),
+            outer: tidy(culprit.outerHTML, 200),
+            reason,
+            display,
+            rects,
+            leaves: 0,
+            sample: []
+          })
+        gap.leaves += 1
+        if (gap.sample.length < 5) gap.sample.push(text.slice(0, 60))
+      }
+    }
+  } catch {
+    /* the diagnosis must never break the export it is part of */
+  }
+
+  // The DOM copy carries the same [data-coach-ref] stamps the tree uses, so a ref in
+  // snapshot.yml can be grepped straight out of page.html. Script and style bodies are
+  // replaced: an accessibility tree never contains them, raw HTML does, and chatgpt.com's
+  // own page ships a live access token inside one. This archive exists to be handed to
+  // someone else, so stripping is the default, not an option.
+  let html = ''
+  let scriptsStripped = 0
+  try {
+    const clone = document.documentElement.cloneNode(true) as Element
+    for (const el of Array.from(clone.querySelectorAll('script, style'))) {
+      if (!el.textContent) continue
+      el.textContent = '/* stripped by page_snapshot_compare */'
+      scriptsStripped += 1
+    }
+    html = '<!doctype html>\n' + clone.outerHTML
+  } catch (err) {
+    html = '<!-- page.html unavailable: ' + String(err) + ' -->'
+  }
+
+  return {
+    snapshot,
+    html,
+    scriptsStripped,
+    gaps: Object.keys(byCulprit).map((key) => byCulprit[key]),
+    benign,
+    meta: {
+      url: location.href,
+      title: document.title,
+      capturedAt: new Date().toISOString(),
+      viewport: { width: window.innerWidth, height: window.innerHeight, dpr: window.devicePixelRatio },
+      userAgent: navigator.userAgent,
+      roots: roots.length,
+      scriptsStripped: true
+    }
+  }
 }
 
 // Render the aria tree as Playwright-`mode:'ai'`-style YAML:
@@ -1345,6 +1775,7 @@ const toAriaYaml = (nodes: AriaNode[], indent = ''): string => {
       if (n.nameAttr) line += ' [name=' + JSON.stringify(n.nameAttr) + ']'
       if (n.ident) line += ' [' + (n.idKind || 'id') + '=' + JSON.stringify(n.ident) + ']'
       if (n.ref) line += ' [ref=' + n.ref + ']'
+      if (n.note) line += ' -- ' + n.note
     }
     const kids = n.children && n.children.length ? n.children : []
     if (n.url || kids.length) {
@@ -1370,4 +1801,39 @@ const toStepYaml = (step: UiActionStep): string => {
   if (step.value != null) record.value = step.value
   if (step.checked != null) record.checked = step.checked
   return stringifyYaml([record], { lineWidth: 120 }).trimEnd()
+}
+
+/**
+ * 页头之下、树之上的那几行。每一处走树自己知道的缺口都写在**最前面** —— agent 先读到它,
+ * 再读树。缺失的元素和没读到的元素在树里同形,所以这里的沉默正是把盲区变成假阴性的那一步。
+ *
+ * `snapshot()` 与 `snapshotCompare()` 共用这一份:两条路出的 yml 必须逐字一致,
+ * 否则拿 compare 的导出去对照 agent 实际看到的那份就失去意义。
+ */
+const composeSnapshotYaml = (value: {
+  nodes: AriaNode[]
+  truncated?: boolean
+  deepened?: boolean
+  missingLines?: number
+  missingSample?: string[]
+}): string => {
+  const nodes = collapseWrappers(value.nodes)
+  const body = nodes.length ? toAriaYaml(nodes) : '# (no elements found)'
+  const notes: string[] = []
+  if (value.truncated) {
+    notes.push('# NOTE: page is unusually large; snapshot hit the node safety bound — some elements omitted')
+  }
+  if (value.deepened) {
+    notes.push('# NOTE: the DOM is deeper than the walk limit — elements below that depth are omitted')
+  }
+  if (value.missingLines) {
+    const sample = (value.missingSample || []).map((line) => JSON.stringify(line)).join(', ')
+    notes.push(
+      `# INCOMPLETE: ${value.missingLines} line(s) of text are rendered on this page but are NOT in the tree below` +
+        (sample ? ` (e.g. ${sample})` : '') +
+        '. Treat this snapshot as a partial view: do NOT conclude content is absent. Read it another way ' +
+        '(browser_exec / an API call), or act on it with ui_act {"selector":"<css>"} — a ref is not required.'
+    )
+  }
+  return notes.length ? `${notes.join('\n')}\n${body}` : body
 }

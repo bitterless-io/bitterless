@@ -7,7 +7,7 @@ Owner decision 2026-09-10 (Ral:「不要区分会话,实际工作的时候 n 个
 shared directory**:
 
 ```
-~/.bitterless_<edition>/default_workspace
+~/.bitterless_<edition>/work
 ```
 
 ## 目录名带环境,和 userData 同一条轴(2026-09-18)
@@ -20,30 +20,29 @@ profile 的 `appName` **就是** userData 的目录名,所以工作空间根直�
 
 | profile id | userData(`appName`) | default workspace |
 | --- | --- | --- |
-| `production` | `Bitterless` | `~/.bitterless/default_workspace` |
-| `production-preview` | `Bitterless_PREVIEW` | `~/.bitterless_preview/default_workspace` |
-| `production-debug` | `Bitterless_DEBUG_PROD` | `~/.bitterless_debug_prod/default_workspace` |
-| `test-debug` | `Bitterless_DEBUG_DEV` | `~/.bitterless_debug_dev/default_workspace` |
-| `test-release` | `Bitterless_DEV` | `~/.bitterless_dev/default_workspace` |
+| `production` | `Bitterless` | `~/.bitterless/work` |
+| `production-preview` | `Bitterless_PREVIEW` | `~/.bitterless_preview/work` |
+| `production-debug` | `Bitterless_DEBUG_PROD` | `~/.bitterless_debug_prod/work` |
+| `test-debug` | `Bitterless_DEBUG_DEV` | `~/.bitterless_debug_dev/work` |
+| `test-release` | `Bitterless_DEV` | `~/.bitterless_dev/work` |
 
 生产取裸名,其余版本一律带后缀 —— **Preview 因此不会写进 Production 的文件**,两者本来就持有
 不同的真实数据。从 `appName` 推导而不是从 `id` 推导是刻意的:要求是「和 userdata 类似」,
 而 `appName` 正是给 userData 命名的那个值;将来新增版本自动获得自己的目录,两张清单不可能对不上。
 
-目录名与文件名的写法保持 owner 给的形态:`default_workspace`(下划线)。
+2026-09-23：共享默认目录改名为 `work`，启动即 ensure。旧 `default_workspace` 在 work 尚不存在时整体重命名；二者共存时保留双方，不合并或覆盖。
 
 The root resolves through `app.getPath('home')`, not `os.homedir()`, because E2E redirects the home
 path (`BITTERLESS_E2E_HOME_DIR`) — a test run must not touch a real `~/.bitterless*`。
 **这条保留**:测试隔离是工程纪律,不是产品决定。
 
-## 进系统提示词(2026-09-18)
+## 当前工作区进入系统提示词(2026-09-23)
 
-Ral:「默认 workspace 要进系统提示词,且 onlypreview 和 chat 默认都不选中 default_workspace」。
+Ral 最新要求：未选择 workspace 时 OnlyPreview 默认打开 work，并在顶部显示 Choose your own workspace。显式选定后 reload 新目录、隐藏提醒，系统提示词只注入所选 workspace。
 
 - 提示词那一行原来只说「有一个默认工作空间在用」却**不说是哪个**,模型因此不知道自己写的文件落在哪。
   现在带上绝对路径:`- Active workspace: none selected — the shared default workspace is in use: <path>`。
-- **界面仍然显示「未选择」**:默认工作空间只出现在主进程的 cwd / 文件根回退里,从不写进任何
-  workspace ref —— 它是隐式回退,不是一次选择。`tests/maestro/defaultWorkspace.test.mjs` 有守卫:
+- **默认展示与显式选择分开**：主进程给 OnlyPreview 的 work 快照带 `isDefault`，不持久化成主动选择；Chat 仍没有显式 ref。用户主动选择同一 work 也会清除提醒。`tests/maestro/defaultWorkspace.test.mjs` 有守卫:
   渲染层一旦引用 `defaultWorkspaceRoot` / `ensureDefaultWorkspace` 就判红。
 
 验证:`yarn test:default-workspace`(3/3)—— 五个版本的目录逐个对照、ensure 幂等(已存在就复用,
@@ -101,4 +100,10 @@ Ral:「默认 workspace 要进系统提示词,且 onlypreview 和 chat 默认都
   `defaultWorkspaceRoot` / `ensureDefaultWorkspace` 就判红。
 
 验证:`yarn test:default-workspace`(3/3)—— 固定路径、ensure 幂等(已存在就复用,不重建)、
-以及上面那条渲染层守卫。micromeet-cowork 侧同一套规则,路径为 `~/.micromeet/default_workspace`。
+以及上面那条渲染层守卫。micromeet-cowork 侧同一套规则,路径为 `~/.micromeet/work`。
+
+## 2026-09-23 implementation
+
+OnlyPreview 的目录选择绑定当前显示的 Chat，等待该会话当前回合结束后切换。新的 workspace ID 使旧索引失效。BaseAgent 以同一会话文件重建 cwd 相关运行时，系统提示词包括当前绝对路径；主动选择同一路径也刷新提示词。停用选定目录后回到 work。单文件外部预览不改变 workspace。
+
+代码验证与两端人工验收清单位于 overmind `areas/agent-runtime/workspace/implementation.md`；未运行 Electron E2E。

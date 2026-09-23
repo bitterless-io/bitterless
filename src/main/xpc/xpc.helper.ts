@@ -23,6 +23,8 @@ import './zellijWindow.handler';
 import './omniWindow.handler';
 import './shell.handler';
 import './lanIp.handler';
+// 下载目录设置(docs/features/browser-downloads.md)。
+import './downloadSettings.handler';
 import './sqlitePassword.handler';
 import './mainWindow.handler';
 import './auth.handler';
@@ -39,6 +41,7 @@ import './diagnostics.handler';
 import './notification.handler';
 import './onlyPreview.handler';
 import './onlyPreviewAlert.handler';
+import './jev.handler';
 import { initMaestroXpc } from '@maestro-main/xpc/xpc.helper';
 
 export const initXpc = (): void => {

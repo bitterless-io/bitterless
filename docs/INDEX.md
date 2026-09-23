@@ -1,5 +1,79 @@
 # Bitterless Documentation
 
+- [`ui_act` 在后台 tab 上：每步光标卡 5 秒，点击无效，还报 ok](issues/ui-act-on-background-tab-stalls-and-click-has-no-effect.md) —
+  root cause located 2026-09-23，fix not started。agent 开出的弹窗 tab 从不激活，于是它在看不见的 view 上操作：
+  每个 `mouseMoved` 要约 5 秒才回（一次点击 145–181 秒），按下和松开也不生效，`ui_act` 却照样报 ok；没有看门狗。
+  Paired with `micromeet-cowork`。
+
+- [Capture toolbar without Drill](features/capture-toolbar-no-drill.md) — 2026-09-23 code complete; CoWork entry removed, Bitterless already compliant; human testing pending.
+
+- [Workspace 与 IndiPreview](features/indipreview-workspace-routing.md) — 2026-09-23 代码完成、待人工验收；默认 workspace、统一文件归属、共用预览内容层与独立外部文件窗口，弃用文件 Tab。两端同步。
+
+- [网页下载 —— 落到系统下载目录，并把落地结果交给 agent](features/browser-downloads.md) —
+  implemented 2026-09-23；真实会话验收待 Ral。起因是 Cowork 里导出 ChatGPT 账单的那次会话：agent 点了
+  "Download invoice"，文件落进了 `~/Downloads`，但 `ui_act` 的返回里一个字都没有，于是它开始猜路径
+  （`ls ~/Downloads`、按页面标题倒推文件名）。本仓的情况更糟：`src/main/net/` 下没有任何 `will-download`
+  监听，下载完全靠 Electron 兜底，而它的兜底是"usually prompts a save dialog"。现在每次下载都同步
+  `setSavePath`（默认系统下载目录，重名加 ` (1)`，配的目录不可用就回落）；落地结果挂在 `executeHostTool`
+  上 —— 每一个宿主工具的返回都经过它，成功与失败两条路都挂，所以 agent 下一步调什么都会看到
+  `NOTE: 1 file finished downloading: <绝对路径>`。设置 → General 可改目录。设置存 `coach-settings.json`
+  而不是 sqlite，因为 `will-download` 要同步读它。`downloadManager.ts` 与 cowork 字节相同，守卫钉着。
+  Paired with `micromeet-cowork`。
+
+- [ui_act selector-miss diagnosis: paired assessment](issues/ui-act-selector-miss-diagnosis.md) —
+  code verified 2026-09-23; P3-01 is absent here. Three regression cases confirm the existing neutral action result; no runtime source change.
+
+- [web_fetch JSON responses crash in HTML extraction](issues/web-fetch-json-document-root.md) —
+  code complete, human acceptance pending 2026-09-23; paired P1-01 repair. Preserve JSON source text and return typed errors for missing HTML roots.
+
+- [`/page_snapshot_compare` —— 把"看到了什么"和"页面上有什么"一起导出](features/page-snapshot-compare.md) —
+  规格已定，**等 `/page_snapshot` 提交后开工**（两者动同一批 7 个文件）。Ral 2026-09-23 提的需求。
+  存在的理由：`page_snapshot` 交出的是"walker 看见了什么"，树对的时候够用，树错的时候**恰恰不够** ——
+  账单事故里三份字节相同的快照信息量为零，因为"被剪掉"和"确实没有"在树里同形。要判断必须把
+  **同一时刻的 DOM 原文**摆在旁边。但它不只是导出：走完 walker，保留下来的元素身上都带着刚写的
+  `[data-coach-ref]`，于是"可见的文字叶子 + 没有 ref"就是漏网的，往上走到第一个 `isHidden` 判真的
+  祖先就是**剪枝点**，再按 `display`/`getRootNode`/`ownerDocument`/深度**确定性归因** ——
+  命令自己报根因，不用把 zip 发给谁看。对**还没发现的盲区**同样给得出剪枝点，这是它主要的价值。
+  三条硬约束：树和 HTML 同一次取（否则页面一变两份就对不上，而这类 bug 要诊断的正是这个）、
+  不截断、**默认剥 `<script>` 内容**（chatgpt.com 整页里带着当前有效的 accessToken JWT，
+  而这个 zip 的用途就是发给别人看）。Paired with `micromeet-cowork`。
+
+- [page_snapshot 静默丢掉屏幕上可见的整棵子树](issues/page-snapshot-drops-visible-subtrees.md) —
+  fixed 2026-09-23；真实站点验收待 Ral 登录态。一整页 ChatGPT 账单交易被 agent 读成"没有任何记录"：
+  `snapshotWalker` 的遍历闸 `if (isHidden(child)) continue` 是**破坏性**的，而 `isHidden` 用
+  `getClientRects().length === 0` 判可见 —— `display: contents` 的元素自身不生成盒子，rect 恒为空，
+  于是它**可见的孩子**被整棵剪掉。同一道闸早年剪掉过关闭态 `<select>` 的 `<option>`，当时用
+  `selectOptions()` 点对点绕过而没修判据，这是第二次发作。shadow DOM 与 iframe 是另一种死法：
+  `el.children` 到不了，且 `roleOf` 没有 iframe 条目，连 iframe 节点自己都不出现。
+  真正致命的是**剪枝不留痕** —— 全流程只有 `MAX_NODES` 一个完整性信号，"被跳过"和"确实没有"在
+  输出里同形，ref 编号又因为计数器只在保留时自增而天然连续，反推不出来。现在走完树会拿
+  `innerText` 做一次覆盖自检，缺口写在输出顶部（`aria-hidden` 的文字剔除，否则警报永远在响）。
+  修 shadow/iframe 时带出第五条：那些 ref `ui_act` 解析不了（`document.querySelector` 两个边界都不穿），
+  不修等于把"看不见"换成"点不着"，所以 `replayEngine` 也加了跨 shadow/frame 的解析和坐标换算。
+  台账：`areas/agent-runtime/browser-use/page-snapshot-closeout.md`。
+
+- [`# INCOMPLETE` 对 CSS `text-transform` 误报](issues/page-snapshot-incomplete-false-positive-on-text-transform.md) —
+  fixed 2026-09-23。上一条那道自检自己先犯了它要防的毛病：基准 `root.innerText` 是**渲染后**文字、
+  应用了 `text-transform`，而两条采集路径（`nameOf` → `textContent`、`directText` → `nodeValue`）
+  都是源文，于是凡用 CSS 做大写的导航/按钮/表头一律被判成盲区 —— 我们自己的 demo 站首屏就把
+  "DEMO CENTER" 和 "BOOKING" 报成缺失，两条都是假的。只动比对不动采集，两侧折叠大小写；
+  用 `toLowerCase()` 而非 `toLocaleLowerCase()`（tr/az 下 `I`→`ı` 会**新造**误报），
+  归一只用于比对、`missingSample` 回报原文（样例是给 agent 去页面上找的，小写副本页面上没有）。
+  守卫加了两条断言分别钉住这两点。Paired with `micromeet-cowork`。
+
+- [`# INCOMPLETE` 把 innerText 粘成一行的相邻行内元素报成缺口](issues/page-snapshot-incomplete-false-positive-on-glued-inline-text.md) —
+  root cause confirmed 2026-09-23，fix in progress。JSX 渲染的导航、按钮组标签之间没有空白，innerText
+  把它们粘成一行（`HomeAboutPricing`、`SaveCancel`），而采集侧每段之间补了空格，于是整行判成缺失；
+  两个按钮中间夹一个 `visibility:hidden` 的块也会粘行（innerText 连它的换行一起跳过），而 walker 照样把
+  隐藏文字放进树、夹在两侧中间。只动比对：两侧去掉全部空白，直接文本那一遍跳过不可见元素。
+  修复前的 walker 上 ISS-4 反事实照报 6 行。Paired with `micromeet-cowork`。
+
+- [page_snapshot 丢掉"既有子元素、又有自己文字"的容器里的文字](issues/page-snapshot-drops-mixed-content-text.md) —
+  root cause confirmed 2026-09-23，修法是采集改动，等 Ral 定（基线 PQ-3）。修完上一条之后在公开页面上跑，
+  `# INCOMPLETE` 仍在 react.dev 报 33 行、HN 63 行、github 仓库页 33 行：全部是 `<p>` 里夹链接的正文、链接之间的
+  `by` / `|` 这类挂在**也有子元素**的容器上的文字。`isMeaningful` 只因为文字保留叶子，这些字树里真没有，不是误报。
+  推荐方案 A：容器文字按文档顺序作为 `text` 节点进树（Playwright 同形），和基线 #6 的 P0 一起做。Paired with `micromeet-cowork`。
+
 - [新增 `bitterless` provider —— Qwen 3.8 Max / Flash 走自家 relay](features/bitterless-model-provider.md) —
   实现完成，未在应用里跑过真实一轮。凭据不是 pi 的 OAuth，而是用户**已经登录**的 Bitterless 账号
   会话（`customerSessionService`），所以它刻意不进 `LLM_LOGIN_PROVIDERS` —— 那张表驱动的是
@@ -43,6 +117,11 @@
   `ChatErrorCard` / `errorCard` 落库字段 / 卡片与全文弹窗四个文件一并删除。**保留** `pushErrorCard()`
   作为所有失败路径的唯一出口(2026-09-10 那条决定),`errorCard.service` 从"造卡"改成"拼正文"。
   老库里的 `type: 'error'` 行在读回时归一,不迁移文件。分面 typecheck 与基线逐条一致。
+
+- [agent-io 证据链改成单文件 —— 一个会话一份 jsonl](features/agent-io-single-jsonl.md) —
+  implemented 2026-09-23（工作树，未提交）；owner testing pending。Ral「jsonl 不要在分多个 part 了，就往一个
+  jsonl 总录制」:`agent-io/<时间戳>-<会话>/` 一个会话只建一次、只写一份 `session.jsonl`,不再换卷;旧 part 不迁移,
+  reader 两种都认。压缩照 pi 的做法只追加不删:pi 原生 `compaction_end` 时补一条 `note/compaction`。Paired with `micromeet-cowork`。
 
 - [取回 —— 趁排队的话还没送到模型手上，把它拿回输入框](features/steering-take-back.md) —
   implemented 2026-09-22；owner testing pending。auto-steer.html #7 三方对照里的「缺口 1」:pi 自己的 TUI

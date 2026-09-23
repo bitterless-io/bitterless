@@ -218,6 +218,17 @@ export const en = {
         stale: 'The network changed. Refresh to update the address.',
         ignored: 'Ignored virtual adapters'
       },
+      downloads: {
+        label: 'Downloads',
+        description: 'Files downloaded from web pages are saved here without asking.',
+        folder: 'Download folder',
+        systemFolder: 'System Downloads folder',
+        unavailable: '{path} is not available. Downloads go to the system Downloads folder until it is back.',
+        failed: 'Could not read the download settings.',
+        reveal: 'Open download folder',
+        reset: 'Use system Downloads folder',
+        change: 'Change folder…'
+      },
       save: 'Save',
       saveSuccess: 'Saved successfully',
       saveFailed: 'Save failed'
@@ -227,6 +238,16 @@ export const en = {
       sharedDescription: 'These settings apply to all Zellij tabs.'
     },
     account: {
+      signedOut: "Not signed in",
+      changePassword: "Change password",
+      openFailed: "Could not open the account page.",
+      passwordPolicy: "Use at least 8 characters.",
+      passwordMismatch: "The two passwords do not match.",
+      passwordFailed: "Could not change the password. Try again.",
+      passwordChanged: "Password updated.",
+      cancel: "Cancel",
+      save: "Save",
+      saving: "Saving…",
       tabTitle: 'Account',
       title: 'Account',
       email: 'Email',
@@ -279,6 +300,15 @@ export const en = {
       saveSuccess: 'Saved successfully',
       saveFailed: 'Save failed',
       hint: 'The system prompt will be sent to the AI at the beginning of each conversation to define its role and behavior.'
+    },
+    decision: {
+      tabTitle: 'Decision',
+      jevLabel: 'Use Jev for agent decisions',
+      jevHint:
+        "Jev decides the structured steps in the agent loop: which part of a snapshot matters, which element a step means, and whether an action can be undone. Off keeps today's loop unchanged.",
+      scope:
+        'Active at two points today: before a click or submit runs (you are asked first when it looks irreversible), and when the agent names what it is looking for, to show only the matching section of a page snapshot. The other decision points are not wired yet.',
+      failed: 'Could not read the decision settings.'
     },
     notification: {
       tabTitle: 'Notification',
@@ -539,7 +569,12 @@ export const en = {
         other: 'Something else',
         otherPlaceholder: 'Type your own answer',
         needsYourCall: 'Needs your call · {title}',
-        pickBelow: 'Pick one on the card below'
+        pickBelow: 'Pick one on the card below',
+        multi: 'Pick one or more',
+        waiting: 'Waiting on you',
+        answered: 'Answered',
+        notAnswered: 'Not answered',
+        declined: 'You saw this and chose not to answer it'
       },
       history: 'Sessions',
       noHistory: 'No sessions',
@@ -554,6 +589,11 @@ export const en = {
       slashExport: "export this session's model I/O logs as a zip",
       slashExported: 'Session logs exported: {path}',
       slashCompressing: 'Compressing session logs…',
+      slashPageSnapshot: 'Copy the current tab’s page snapshot (the one the agent sees)',
+      slashPageSnapshotCopied: 'Page snapshot copied · {elements} elements · {url}',
+      slashPageSnapshotCompare: "Export the current tab's snapshot, DOM and coverage diagnosis as a zip",
+      slashPageSnapshotCompareClean: 'Snapshot compare exported · {elements} elements · no blind spot found',
+      slashPageSnapshotCompareGaps: 'Snapshot compare exported · {leaves} visible line(s) missing from the tree',
       skillExplicitOnly: 'Explicit only',
       skillGlobal: 'Global',
       skillWorkspace: 'Workspace',

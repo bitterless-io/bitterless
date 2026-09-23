@@ -12,5 +12,9 @@ Returns `{ "opened": true }` when Bitterless accepts the request. The response d
 path or return file contents. The tool does not read contents, enumerate directories, mutate files,
 or create a separate Preview implementation.
 
+The app resolves the effective workspace and routes files inside it to Workspace; external files
+open in IndiPreview, an independent window using the shared preview components. Folder targets
+select a Workspace. This routing is owned by the app, not by the agent, and creates no file tab.
+
 Call it once for the explicit target. Do not use broad filesystem discovery to find a target, and
 do not interpret success as evidence about the target's contents.

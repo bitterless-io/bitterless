@@ -8,6 +8,9 @@ export interface OnlyPreviewBookmark {
 export interface OnlyPreviewBookmarksRequest extends OnlyPreviewHostRequest {
   workspaceId: string;
 }
+export interface OnlyPreviewBookmarksReorderRequest extends OnlyPreviewBookmarksRequest {
+  relativePaths: string[];
+}
 export type OnlyPreviewBookmarkRequest = OnlyPreviewHostRequest & OnlyPreviewFileRef;
 export interface OnlyPreviewBookmarksSnapshot {
   workspaceId: string;

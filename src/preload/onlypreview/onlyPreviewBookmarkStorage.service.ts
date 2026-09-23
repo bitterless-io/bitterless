@@ -2,9 +2,10 @@ import { createHash } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { OnlyPreviewContractError, normalizeOnlyPreviewRelativePath } from '@shared/onlypreview/onlyPreview.contract';
+import { OnlyPreviewContractError, normalizeOnlyPreviewRelativePath, parseOnlyPreviewBookmarkOrder } from '@shared/onlypreview/onlyPreview.contract';
 import type {
   OnlyPreviewBookmarkState,
+  OnlyPreviewBookmarkStorageResult,
   OnlyPreviewBookmarkStorageRequest,
   OnlyPreviewStoredBookmark
 } from '@shared/onlypreview/onlyPreviewBookmarkStorage.type';
@@ -30,18 +31,19 @@ export class OnlyPreviewBookmarkStorageService {
     private readonly readLegacy: (projectKey: string) => Promise<unknown>
   ) {}
 
-  execute(request: OnlyPreviewBookmarkStorageRequest): Promise<OnlyPreviewBookmarkState> {
+  execute(request: OnlyPreviewBookmarkStorageRequest): Promise<OnlyPreviewBookmarkStorageResult> {
     const task = this.queue.then(() => this.run(request));
     this.queue = task.catch(() => undefined);
     return task;
   }
 
-  private async run(request: OnlyPreviewBookmarkStorageRequest): Promise<OnlyPreviewBookmarkState> {
+  private async run(request: OnlyPreviewBookmarkStorageRequest): Promise<OnlyPreviewBookmarkStorageResult> {
     if (!request || typeof request.rootRealPath !== 'string' || !isAbsolute(request.rootRealPath)) return invalid();
-    if (!['snapshot', 'add', 'remove'].includes(request.action)) return invalid();
+    if (!['snapshot', 'add', 'remove', 'reorder'].includes(request.action)) return invalid();
     const add = request.action === 'add' ? entriesFrom([request.entry])[0] : null;
     const remove = request.action === 'remove'
       ? normalizeOnlyPreviewRelativePath(request.relativePath) : null;
+    const order = request.action === 'reorder' ? parseOnlyPreviewBookmarkOrder(request.relativePaths) : null;
     const projectKey = createHash('sha256').update(request.rootRealPath).digest('hex');
     const directory = join(this.userDataPath, 'onlypreview', 'project-state');
     await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -73,13 +75,21 @@ export class OnlyPreviewBookmarkStorageService {
         let entries = state.entries;
         if (add && !entries.some((entry) => entry.relativePath === add.relativePath)) entries = [...entries, add];
         if (remove) entries = entries.filter((entry) => entry.relativePath !== remove);
+        if (order) {
+          const byPath = new Map(entries.map((entry) => [entry.relativePath, entry]));
+          if (order.length !== entries.length || order.some((path) => !byPath.has(path))) {
+            throw new OnlyPreviewContractError('INVALID_INPUT', 'Bookmarks changed. Refresh and retry the reorder.');
+          }
+          entries = order.map((path) => byPath.get(path)!);
+        }
         if (entries.length > 1000) throw new OnlyPreviewContractError('OPERATION_FAILED', 'The Project bookmark limit was reached.');
-        if (JSON.stringify(entries) !== JSON.stringify(state.entries)) {
+        const changed = JSON.stringify(entries) !== JSON.stringify(state.entries);
+        if (changed) {
           state = { revision: state.revision + 1, entries };
           db.prepare('UPDATE bookmarks SET revision=?, entries=? WHERE id=1').run(state.revision, JSON.stringify(entries));
         }
         db.exec('COMMIT');
-        return state;
+        return request.action === 'reorder' ? { ...state, changed } : state;
       } catch (error) {
         db.exec('ROLLBACK');
         throw error;

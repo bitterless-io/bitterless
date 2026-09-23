@@ -51,7 +51,7 @@ test('the workspace directory carries the edition, the same way userData does', 
     ['Bitterless_DEV', '.bitterless_dev']
   ]) {
     profile.appName = appName
-    assert.equal(defaultWorkspaceRoot(), join(home, dir, 'default_workspace'), `${appName} → ${dir}`)
+    assert.equal(defaultWorkspaceRoot(), join(home, dir, 'work'), `${appName} → ${dir}`)
   }
 })
 

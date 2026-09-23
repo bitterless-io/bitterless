@@ -214,6 +214,17 @@ export const zh: typeof en = {
         stale: '网络已变化，请刷新以更新地址。',
         ignored: '已忽略的虚拟网卡'
       },
+      downloads: {
+        label: '下载',
+        description: '网页中下载的文件会直接保存到这里，不再询问。',
+        folder: '下载目录',
+        systemFolder: '系统下载目录',
+        unavailable: '{path} 当前不可用。在它恢复之前，下载会保存到系统下载目录。',
+        failed: '无法读取下载设置。',
+        reveal: '打开下载目录',
+        reset: '使用系统下载目录',
+        change: '更改目录…'
+      },
       save: '保存',
       saveSuccess: '保存成功',
       saveFailed: '保存失败'
@@ -223,6 +234,16 @@ export const zh: typeof en = {
       sharedDescription: '这些设置适用于所有 Zellij 标签页。'
     },
     account: {
+      signedOut: "未登录",
+      changePassword: "修改密码",
+      openFailed: "无法打开账号页面。",
+      passwordPolicy: "密码至少需要 8 个字符。",
+      passwordMismatch: "两次输入的密码不一致。",
+      passwordFailed: "无法修改密码，请重试。",
+      passwordChanged: "密码已更新。",
+      cancel: "取消",
+      save: "保存",
+      saving: "正在保存…",
       tabTitle: '账号',
       title: '账号',
       email: '邮箱',
@@ -275,6 +296,14 @@ export const zh: typeof en = {
       saveSuccess: '保存成功',
       saveFailed: '保存失败',
       hint: '系统提示词将在每次对话开始时发送给 AI，用于设定 AI 的角色和行为规范。'
+    },
+    decision: {
+      tabTitle: '决策',
+      jevLabel: '用 Jev 做 agent 决策',
+      jevHint:
+        '打开后，agent 回路里的结构化判断交给 Jev：快照的哪一段相关、一步指的是哪个元素、这一下能不能撤销。关闭则完全按现有流程走。',
+      scope: '目前生效于两处：点击或提交执行之前（看起来不可逆时先问你），以及 agent 说明了要找什么时，只给它页面快照里对应的那一段。其余判断点尚未接入。',
+      failed: '读取决策设置失败。'
     },
     notification: {
       tabTitle: '通知',
@@ -531,7 +560,12 @@ export const zh: typeof en = {
         other: '其他',
         otherPlaceholder: '输入你自己的决定',
         needsYourCall: '需要你拍板 · {title}',
-        pickBelow: '在下面的卡片上选一个'
+        pickBelow: '在下面的卡片上选一个',
+        multi: '可多选',
+        waiting: '等待你拍板',
+        answered: '已回答',
+        notAnswered: '未回答',
+        declined: '你看到了这个问题，选择不回答'
       },
       history: '会话',
       noHistory: '暂无会话',
@@ -546,6 +580,11 @@ export const zh: typeof en = {
       slashExport: '把这个会话的模型 I/O 日志导出为 zip',
       slashExported: '会话日志已导出：{path}',
       slashCompressing: '正在压缩会话日志…',
+      slashPageSnapshot: '复制当前 tab 的页面快照(agent 看到的那一份)',
+      slashPageSnapshotCopied: '页面快照已复制 · {elements} 个元素 · {url}',
+      slashPageSnapshotCompare: '导出当前 tab 的快照、DOM 原文与覆盖诊断（zip）',
+      slashPageSnapshotCompareClean: '快照对照已导出 · {elements} 个元素 · 未发现盲区',
+      slashPageSnapshotCompareGaps: '快照对照已导出 · 树里漏了 {leaves} 处页面上可见的文字',
       skillExplicitOnly: '仅显式调用',
       skillGlobal: '全局',
       skillWorkspace: '工作区',

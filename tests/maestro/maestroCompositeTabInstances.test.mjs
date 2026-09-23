@@ -561,53 +561,23 @@ test('a homepage mini app that refuses to open falls back to the built-in Home f
 });
 
 
-test('file previews create independent tabs without replacing OnlyPreview or entering app restoration', async (context) => {
-  const { service, backgrounded } = await fixture(context);
-  const project = await service.openCompositeTab({ id: 'onlypreview' });
-  const closed = [];
-  registerMaestroPreviewOpener({
-    createFileTabSpec: (path) => ({
-      id: 'file', title: path.split('/').at(-1), favicon: '', displayUrl: 'file://' + path,
-      open: async (host) => host.attach({ path }),
-      close: () => closed.push(path), setActive() {}, refresh() {}
-    })
-  });
-  await service.openFilePreviewTab({ path: '/outside/a.md' });
-  await service.openFilePreviewTab({ path: '/outside/b.docx' });
-  const files = service.tabs.filter((tab) => tab.kind === 'file');
-  assert.equal(files.length, 2);
-  assert.notEqual(files[0].instanceId, files[1].instanceId);
-  assert.equal(files[0].surface.path, '/outside/a.md');
-  assert.equal(files[1].surface.path, '/outside/b.docx');
-  assert.equal(service.tabs.includes(project), true);
-  assert.equal(service.activeTabId, files[1].id);
-  assert.equal(backgrounded.length, 2);
-  assert.equal(Boolean(latestStrip().find((tab) => tab.id === files[0].id).restorable), false);
-  await service.closeTab({ id: files[0].id });
-  assert.deepEqual(closed, ['/outside/a.md']);
-  assert.equal(service.tabs.includes(files[1]), true);
-  registerMaestroPreviewOpener(null);
-});
-
-test('address-bar component previews reuse the initiating New Tab slot and reject a closed slot', async (context) => {
+test('local address targets invoke the common preview port without creating or replacing a tab', async (context) => {
   const { service } = await fixture(context);
+  const opened = [];
   registerMaestroPreviewOpener({
-    createFileTabSpec: (path) => ({
-      id: 'file', title: path.split('/').at(-1), favicon: '', displayUrl: 'file://' + path,
-      open: async (host) => host.attach({ path }), close() {}, setActive() {}, refresh() {}
-    })
+    resolveLocalTarget: (path) => ({ kind: 'preview', path }),
+    open: async (path) => opened.push(path)
   });
   await service.newTab();
   const initiating = service.tabs.find((tab) => tab.id === service.activeTabId);
   const count = service.tabs.length;
+  for (const path of ['/outside/report.docx', '/outside/report.pdf', '/inside/code.ts']) {
+    await service.navigate({ url: path });
+  }
+  assert.deepEqual(opened, ['/outside/report.docx', '/outside/report.pdf', '/inside/code.ts']);
+  assert.equal(service.tabs.length, count);
   assert.equal(initiating.kind, 'browser');
-  await service.openFilePreviewTab({ path: '/outside/report.docx', tabId: initiating.id });
-  assert.equal(service.tabs.length, count);
-  assert.equal(service.activeTabId, initiating.id);
-  assert.equal(initiating.kind, 'file');
-  assert.equal(initiating.surface.path, '/outside/report.docx');
-  await assert.rejects(service.openFilePreviewTab({ path: '/outside/late.md', tabId: 'closed-tab' }), /no longer available/);
-  assert.equal(service.tabs.length, count);
+  assert.equal(service.openFilePreviewTab, undefined);
   registerMaestroPreviewOpener(null);
 });
 

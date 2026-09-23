@@ -17,6 +17,7 @@ import {
 import type { ChatFile, ChatMessage } from './store/message.type'
 import AttachmentCard from './AttachmentCard.vue'
 import ChatConfirm from './task/ChatConfirm.vue'
+import DecisionRecord from './task/DecisionRecord.vue'
 import TaskPart from './task/TaskPart.vue'
 import { dismissMarkdownLinkTooltip } from './markdownLinkTooltip.service'
 import './MessageItem.less'
@@ -88,6 +89,9 @@ const artifactFiles = computed(() => (props.message.role === 'ai' ? (props.messa
 const taskParts = computed(() => (props.message.role === 'ai' ? props.message.tasks || [] : []))
 const isTaskRow = computed(() => props.message.type === 'task')
 const isConfirmRow = computed(() => props.message.type === 'confirm')
+// `ask_user` 那次拍板的留档。**原来这一支不存在** —— 消息投影出来了、答案也写回去了,却没人画,
+// 于是答完屏幕上一点痕迹都不剩(`issues/ask-user-answer-leaves-no-trace.md`)。
+const isDecisionRow = computed(() => props.message.type === 'decision')
 // 错误卡与 task/confirm 同级:它是一张**行卡**,不是气泡里的一段文字 ——
 // 混在气泡里就只是一行红字,那正是 Ral 2026-09-10 说的「没展示出来」。
 // 「刚被跳到的是不是我」—— **读 store,不在本组件里存第二份**。存副本就要自己接一个
@@ -101,7 +105,7 @@ const messageSkills = computed(() => {
 
 const showBubble = computed(() => {
   const m = props.message
-  if (isTaskRow.value || isConfirmRow.value) return false
+  if (isTaskRow.value || isConfirmRow.value || isDecisionRow.value) return false
   if (m.role !== 'ai') return true
   return (
     Boolean(m.content) ||
@@ -241,13 +245,14 @@ watch(artifactPathKey, () => void refreshFileStatuses(), { immediate: true })
       class="message-item__content"
       :class="{
         'message-item__content--human': isMaestroHuman(props.message),
-        'message-item__content--timeline': isTaskRow || isConfirmRow
+        'message-item__content--timeline': isTaskRow || isConfirmRow || isDecisionRow
       }"
     >
       <div v-if="isTaskRow" name="messageItem__tasks" class="message-item__tasks">
         <TaskPart v-for="part in taskParts" :key="part.taskId" :part="part" />
       </div>
       <ChatConfirm v-else-if="isConfirmRow" :message="props.message" />
+      <DecisionRecord v-else-if="isDecisionRow" :message="props.message" />
       <div
         v-else-if="showBubble"
         name="messageItem__bubble"

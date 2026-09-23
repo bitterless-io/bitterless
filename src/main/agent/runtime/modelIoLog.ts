@@ -37,21 +37,40 @@ export const setModelIoRoot = (resolve: () => string): void => {
 }
 import { currentAgentSessionKey } from './agentSessionContext'
 
-/** 单个 part 的大小上限。到了就换下一个 —— 与录制的 PART_MAX_BYTES 同一思路,只是这里的行更大。 */
-const PART_MAX_BYTES = 8 * 1024 * 1024
+/**
+ * 一个会话的日志文件名。**一个会话一份,永不换卷**(Ral 2026-09-23:「jsonl 不要在分多个 part 了,
+ * 就往一个 jsonl 总录制」)。
+ *
+ * 取这个名字而不是 `<sessionId>.jsonl`:目录名里已经有 session id 了,再重复一遍没有信息量;
+ * 而固定名让它与旧的 `part-NNN.jsonl` 在字典序里天然分开,且 `part-001 < session.jsonl` ——
+ * 读的时候按名排序就是正确的时间序,老数据不用迁移也读得回来。
+ */
+const LOG_FILE_NAME = 'session.jsonl'
+/**
+ * 每累计写入这么多字节,顺手清一次。
+ *
+ * 原来这道清理挂在换卷上(「每写满 8MB 至多一次,成本有界」)。换卷没了,触发器就得自己长出来 ——
+ * **只在 openSession 清是不够的**:一轮两小时的钻探从头到尾就是一个会话,它自己涨到多少 MB
+ * 都碰不到那一次。数值沿用原来的 8MB,触发频率与成本一个字都没变。
+ */
+const PRUNE_INTERVAL_BYTES = 8 * 1024 * 1024
 /** 保留最近多少个会话目录。超出的从最旧的删 —— 无限堆盘不是"完整留存",是把磁盘当垃圾桶。 */
 const RETAIN_SESSIONS = 20
 /**
- * 总字节上限。**条数上限一个人挡不住** —— `PART_MAX_BYTES` 只管单个 part,一个会话的 part 数不限,
- * 于是 20 个会话也不限。而这份日志的立身之本是「原文不截断」:一轮两小时的钻探每回合把整个上下文
+ * 总字节上限。**条数上限一个人挡不住** —— 单个会话的体积不设上限(见下),于是 20 个会话也不设。
+ * 而这份日志的立身之本是「原文不截断」:一轮两小时的钻探每回合把整个上下文
  * 原样落盘,单会话上百 MB 是正常量级。盘上现在只有几百 KB,那是因为这些都是短会话,**不是因为有闸**。
+ *
+ * **单个会话的体积不靠换卷、也不靠截断控制,这一条与 pi 对它自己那份会话 jsonl 的做法一致**:
+ * pi 压缩时只 `appendCompaction()` 追加一条摘要条目、旧条目一条不删,文件永远只增。
+ * 真正把增速压下来的是压缩本身 —— 提示词短了,每回合落盘的量自己就降了。
  *
  * 取值与 `logRetention.MAX_TOTAL_BYTES` 一致(同一套策略形状:**条数或总量,谁先触发谁生效**)。
  * 刻意不把这棵树塞进 `logRetention` —— 那边是 `.log` + `webview/<domain>/` 两层目录的形状,
  * 教它认第三种结构只会让两边都变脆。
  *
- * ⚠ 这个数必须远高于 `check-behavior-model-io-log.mjs` 第 ③ 步造的 12MB(40×300KB 写进同一个会话),
- * 因为它第 ④ 步要断言那个目录还在 —— 「下一轮不许抹掉上一轮的失败证据」那条断言是对的。
+ * ⚠ 这个数必须远高于单个会话可能写到的量级 —— 「下一轮不许抹掉上一轮的失败证据」。
+ * `micromeet-cowork` 的 `check-behavior-model-io-log.mjs` 用 12MB(40×300KB 写进同一个会话)钉着这条。
  */
 const MAX_TOTAL_BYTES = 200 * 1024 * 1024
 
@@ -80,8 +99,8 @@ export interface ModelIoLine {
 /** 一个会话的落盘状态。**按会话分桶**,见 ModelIoLog 的类注释。 */
 interface IoHandle {
   dir: string | null
-  part: number
-  partBytes: number
+  /** 距上次 `prune()` 写了多少字节。到 `PRUNE_INTERVAL_BYTES` 清一次并归零。 */
+  sincePrune: number
   /** 串行化写:appendFile 并发时行会交错。**每桶一条队列**,不同会话互不排队。 */
   queue: Promise<void>
   opening: Promise<void> | null
@@ -130,33 +149,62 @@ class ModelIoLog {
   private handle(key: string): IoHandle {
     let h = this.handles.get(key)
     if (!h) {
-      h = { dir: null, part: 1, partBytes: 0, queue: Promise.resolve(), opening: null, failed: false }
+      h = { dir: null, sincePrune: 0, queue: Promise.resolve(), opening: null, failed: false }
       this.handles.set(key, h)
     }
     return h
   }
 
   /**
-   * 新会话(agent reset / 新钻探)。
+   * 一个会话的目录,**只认盘、不看内存**。
    *
-   * 目录名是 **`<时间戳>-<sessionId>`**,不是裸 uuid。Ral 要的是"文件名带 session id",而裸 uuid
-   * 会同时破掉 `prune()` 的两个依据:它按 `/^\d{17}$/` 过滤、并按**名字排序**当作时间序
-   * (见 prune 的注释)。前缀保留时间戳 ⇒ id 可 `ls`/grep 定位,时间序与保留策略一个字都不用改。
+   * 与 `dirForSession()` 的区别:那一个会先 `await` 写队列,所以**不能在 `openSession()` 里调**
+   * (`append()` 正是先把 `h.opening` 指向 `openSession()` 再排队,互等就死锁了)。这一个只做
+   * readdir + stat,谁都能调。
+   *
+   * 同一会话有多个历史轮次目录时取**最新的那个**(名字前缀是时间戳,所以字典序=时间序):
+   * 2026-09-23 之前每次 reset 都会新建一个目录,那些旧目录原样留着,新的行接着写进最新那份。
+   */
+  private async findSessionDir(key: string): Promise<string | null> {
+    const suffix = `-${safeSessionSegment(key)}`
+    try {
+      const root = this.root()
+      const names = (await readdir(root)).filter((n) => /^\d{17}-/.test(n) && n.slice(17) === suffix).sort().reverse()
+      for (const name of names) {
+        const dir = join(root, name)
+        if (await this.hasSavedLog(dir)) return dir
+      }
+      return null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * 新一轮(agent reset / 新钻探)。
+   *
+   * **目录一个会话只建一次**(Ral 2026-09-23:「不要在分多个 part 了,就往一个 jsonl 总录制」)。
+   * 原来这里每次都新建一个 `<时间戳>-<sessionId>`,于是一个聊天会话散成 N 个目录 × M 个 part;
+   * 现在先在盘上找这个会话已有的那一份,找到就接着写,只补一条 `session-open` 记号。
+   *
+   * 目录名仍是 **`<时间戳>-<sessionId>`**,不是裸 id。`prune()` 按 `/^\d{17}/` 过滤、并按**名字排序**
+   * 当作时间序(见 prune 的注释),而 session id 的字典序与时间无关 —— 去掉时间戳前缀就得改成按
+   * mtime 排,那是一条没必要引入的风险。
    */
   async openSession(label: string): Promise<string | null> {
     const key = this.key()
     const h = this.handle(key)
     try {
+      const existing = await this.findSessionDir(key)
       const d = new Date()
       const p = (n: number, w = 2): string => String(n).padStart(w, '0')
       const stamp =
         `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}` +
         `${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}${p(d.getMilliseconds(), 3)}`
-      const dir = join(this.root(), `${stamp}-${safeSessionSegment(key)}`)
+      const dir = existing ?? join(this.root(), `${stamp}-${safeSessionSegment(key)}`)
       await mkdir(dir, { recursive: true })
       h.dir = dir
-      h.part = 1
-      h.partBytes = 0
+      h.sincePrune = 0
       h.failed = false
       h.opening = null
       void this.prune()
@@ -180,26 +228,21 @@ class ModelIoLog {
    * 在盘上找最近的一个,这样重启后翻旧会话也拿得到。
    */
   async dirForSession(sessionId: string): Promise<string | null> {
-    try {
-      const handle = this.handles.get(sessionId)
-      // opening 完成时还会追加 session-open，必须在它之后读取写队列。
-      if (handle?.opening) await handle.opening
-      if (handle) await handle.queue
-      const live = handle?.dir
-      if (live && await this.hasSavedParts(live)) return live
-      const suffix = `-${safeSessionSegment(sessionId)}`
-      const names = (await readdir(this.root())).filter((n) => /^\d{17}-/.test(n) && n.slice(17) === suffix).sort()
-      for (const name of names.reverse()) {
-        const dir = join(this.root(), name)
-        if (dir !== live && await this.hasSavedParts(dir)) return dir
-      }
-      return null
-    } catch {
-      return null
-    }
+    const handle = this.handles.get(sessionId)
+    // Opening appends its own note, so read the queue only after opening has settled.
+    if (handle?.opening) await handle.opening
+    if (handle) await handle.queue
+    const live = handle?.dir
+    if (live && await this.hasSavedLog(live)) return live
+    return await this.findSessionDir(sessionId)
   }
 
-  /** All retained rotations of one chat, oldest first. Flush the active writer before indexing. */
+  /**
+   * All retained directories of one chat, oldest first. Flush the active writer before indexing.
+   *
+   * 2026-09-23 起一个会话只建一个目录,所以正常情况下这里只有一项。**方法保留**是因为盘上还有
+   * 那之前留下的多轮次目录 —— 审查工具要读得到它们。
+   */
   async dirsForSession(sessionId: string): Promise<string[]> {
     const handle = this.handles.get(sessionId)
     if (handle?.opening) await handle.opening
@@ -209,23 +252,27 @@ class ModelIoLog {
     const directories: string[] = []
     for (const name of names) {
       const directory = join(this.root(), name)
-      if (await this.hasSavedParts(directory)) directories.push(directory)
+      if (await this.hasSavedLog(directory)) directories.push(directory)
     }
-    if (handle?.dir && !directories.includes(handle.dir) && await this.hasSavedParts(handle.dir)) directories.push(handle.dir)
+    if (handle?.dir && !directories.includes(handle.dir) && await this.hasSavedLog(handle.dir)) directories.push(handle.dir)
     return directories
   }
 
-  /** mkdir 成功不代表写入成功；空目录不能作为已保存日志交给用户。 */
-  private async hasSavedParts(dir: string): Promise<boolean> {
+  /**
+   * 这个目录里有没有真的落下过日志。
+   *
+   * 认**所有** `*.jsonl`,不只是 `session.jsonl`:2026-09-23 之前落的是 `part-NNN.jsonl`,
+   * 那些是已经在盘上的证据,不迁移也不改名,所以判据必须同时认得它们。
+   * mkdir 成功不代表写入成功 —— 空目录不能作为已保存日志交给用户。
+   */
+  private async hasSavedLog(dir: string): Promise<boolean> {
     try {
       for (const name of await readdir(dir)) {
-        if (!/^part-\d{3,}\.jsonl$/.test(name)) continue
+        if (!name.endsWith('.jsonl')) continue
         const file = await stat(join(dir, name)).catch(() => null)
         if (file?.isFile() && file.size > 0) return true
       }
-    } catch {
-      // 日志被清理或读取失败时继续查其他已保存目录。
-    }
+    } catch { /* Missing or unreadable evidence is not a successful lookup. */ }
     return false
   }
 
@@ -262,15 +309,14 @@ class ModelIoLog {
         if (h.opening) await h.opening.catch(() => undefined)
         const dir = h.dir
         if (!dir) return // 开目录失败:诊断设施不许把回合拖死
-        if (h.partBytes + bytes > PART_MAX_BYTES && h.partBytes > 0) {
-          h.part += 1
-          h.partBytes = 0
-          // 换卷时顺手清一次。**只在 openSession 清是不够的** —— 一轮两小时的钻探就是一个会话,
-          // 它自己涨到多少 MB 都碰不到那次清理。挂在换卷上 = 每写满 8MB 至多一次,成本有界。
+        // **一个会话一份文件,永不换卷。** 清理改挂在累计写入量上 —— 只在 openSession 清是不够的:
+        // 一轮两小时的钻探就是一个会话,它自己涨到多少 MB 都碰不到那一次。
+        await appendFile(join(dir, LOG_FILE_NAME), payload, 'utf8')
+        h.sincePrune += bytes
+        if (h.sincePrune >= PRUNE_INTERVAL_BYTES) {
+          h.sincePrune = 0
           void this.prune()
         }
-        await appendFile(join(dir, `part-${String(h.part).padStart(3, '0')}.jsonl`), payload, 'utf8')
-        h.partBytes += bytes
         written = true
       })
       .catch((err) => {

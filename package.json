@@ -70,8 +70,11 @@
     "test:maestro-external-tools": "node --test scripts/maestro/externalTools.test.mjs",
     "test:zellij": "node --test tests/zellij/*.test.mjs",
     "test:lan-ip": "node --test tests/lanIp/*.test.mjs",
+    "test:downloads": "node --test tests/downloads/*.test.mjs",
+    "check:download-destination": "node scripts/maestro/check-download-destination.mjs",
     "test:maestro-pi-agent-dir": "node --test scripts/maestro/piAgentDir.test.ts",
     "test:maestro-crms-residue": "node --test scripts/maestro/crmsResidueCleanup.test.ts",
+    "check:snapshot-prune": "node scripts/maestro/check-snapshot-prune.mjs",
     "check:chat-file-link": "node scripts/maestro/check-chat-file-link.mjs",
     "check:chat-composer": "node scripts/maestro/check-chat-composer.mjs",
     "check:empty-turn-copy": "node scripts/maestro/check-empty-turn-copy.mjs",
@@ -338,7 +341,7 @@
     "rigs/*",
     "rig_dev/*"
   ],
-  "name": "Bitterless_PREVIEW",
+  "name": "Bitterless_DEBUG_DEV",
   "version": "0.0.128",
-  "version_code": "260923023635"
+  "version_code": "260923180338"
 }

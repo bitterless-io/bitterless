@@ -25,6 +25,8 @@ import {
   type SkillApiSafetyDecision
 } from '@maestro-main/drive/apiSafety'
 import { runSkillScript, validateSkillVars } from '@maestro-main/drive/skillScript'
+import { gateUiActions } from '@maestro-main/drive/uiActGate'
+import { segmentSnapshot } from '@maestro-main/drive/snapshotSegment'
 import { readApiProfile } from '@maestro-main/skills/apiProfile.service'
 import type { SkillRecipe } from '@maestro-main/skills/skillRecipe.types'
 import type { SkillRegistryService } from '@maestro-main/skills/skillRegistry.service'
@@ -315,7 +317,7 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     await target.capture.setInterceptionRules(this.browserInterceptionRules)
   }
 
-  async toolPageSnapshot(tabId?: string): Promise<string> {
+  async toolPageSnapshot(tabId?: string, goal?: string): Promise<string> {
     const tab = tabId ? this._state.tabs.find((item) => item.id === tabId) : undefined
     if (tabId && !tab) {
       return `ERROR: unknown tab_id "${tabId}". Call list_tabs to see open tabs.`
@@ -340,17 +342,23 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
       msg: `agent observed: ${snapshot.title || url} · ${snapshot.nodeCount} elements`,
       ts: Date.now()
     })
-    return clipText(
-      [
-        `# tab: ${tab?.id ?? this._state.activeTabId ?? ''}`,
-        `# page: ${url}`,
-        `# title: ${snapshot.title || ''}`,
-        `# elements: ${snapshot.nodeCount}`,
-        '',
-        snapshot.yaml
-      ].join('\n'),
-      SNAPSHOT_RESULT_LIMIT
-    )
+    const composed = [
+      `# tab: ${tab?.id ?? this._state.activeTabId ?? ''}`,
+      `# page: ${url}`,
+      `# title: ${snapshot.title || ''}`,
+      `# elements: ${snapshot.nodeCount}`,
+      // 世代号。ref 只在同一世代内有效;ui_act 带着它来,对不上就报错而不是照点错的元素。
+      `# snapshot: ${snapshot.epoch || ''}`,
+      '',
+      snapshot.yaml
+    ].join('\n')
+    // BJ1 —— 有目标才选段;没目标、判不准、块不够、写盘失败一律原样返回(fail-open)。
+    const segmented = await segmentSnapshot(composed, goal)
+    if (segmented.note !== 'no goal supplied — not segmented') {
+      this._state.emitTrace({ kind: 'info', msg: `page_snapshot: ${segmented.note}`, ts: Date.now() })
+    }
+    // 200k 那个闸是给运行失控的 DOM 兜底的,选段之后仍然保留 —— 两者管的不是同一件事。
+    return clipText(segmented.text, SNAPSHOT_RESULT_LIMIT)
   }
 
   async toolUiAct(actionsJson: string): Promise<string> {
@@ -365,6 +373,33 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     if (actions.length === 0) {
       return 'ERROR: no valid actions. Each needs {"action":"click|fill|select|check|submit","ref":"<eN from the snapshot>", ...} (or "selector":"<css>").'
     }
+    // 世代校验 —— 必须在 BJ3 之前:一批指向过期世代的动作连判都不该判,更不该执行。
+    //
+    // **只在模型明确带了世代号时才校验。** 不带 = 老用法,保持原样放行;带了却对不上 =
+    // 它拿的是上一份快照的 ref,而那些编号现在指向别的元素。这把一次静默点错换成一条
+    // 模型看得懂、且知道怎么恢复的错误。
+    const claimed = (() => {
+      const list = Array.isArray(parsed) ? parsed : [parsed]
+      for (const entry of list) {
+        const value = entry && typeof entry === 'object' ? (entry as Record<string, unknown>).snapshot : undefined
+        if (typeof value === 'string' && value.trim()) return value.trim()
+      }
+      return ''
+    })()
+    if (claimed) {
+      const live = await this.targetReplay.readEpoch()
+      if (live && live !== claimed) {
+        return `ERROR: these refs belong to snapshot ${claimed}, but the page is now at ${live} — every ref was renumbered from e1 when the page was re-observed. Call page_snapshot again and use the refs it returns.`
+      }
+    }
+    // BJ3 —— 这里是整条回路唯一「已校验的整批动作在手,而页面还没被碰过」的位置。
+    // 闸放进 replayEngine 就晚了:它逐条执行,第一条的副作用已经发生。
+    const gate = await gateUiActions(actions, {
+      readText: (selector) => this.targetReplay!.readText(selector),
+      sessionId: this.browserTarget.getStore()?.sessionId || 'ui-act',
+      pageUrl: this.targetUrl
+    })
+    if (gate.ok === false) return gate.error
     const run = await this.targetReplay.runUiActions(actions)
     for (const result of run.results) {
       const label = `${result.action} ${describeUiActionResult(result)}`

@@ -34,6 +34,7 @@ import {
 } from './captureRecordSource'
 import type { PiToolSpec } from '@main/agent/BaseAgent'
 import type { OperationTab } from '@maestro-main/windows/main/maestroBrowserView.service'
+import type { SnapshotGap } from '@maestro-main/capture/debuggerCapture'
 import type {
   AgentActivityStep,
   CaptureExportFormat,
@@ -49,6 +50,50 @@ import type {
 import type { CaptureRule } from '@maestro-shared/captureFilter.api'
 import type { CaptureMode, TraceEvent } from '@maestro-shared/trace.types'
 import type { ConfigApi } from '@maestro-shared/config.api'
+
+/**
+ * `pageSnapshotForOperator()` 的回包。失败带**理由**而不是 `null` —— 前台不是可读网页
+ * 与 CDP 读失败是两件事,合成一个 `null` 之后界面只能说一句"没有页面"。
+ */
+export type OperatorPageSnapshot =
+  | { ok: true; tabId: string; url: string; title: string; yaml: string; nodeCount: number }
+  | { ok: false; error: string }
+
+/**
+ * `pageSnapshotCompareForOperator()` 的回包 —— 在上面那份之上多带 DOM 原文与诊断。
+ * 三样必须来自**同一次**求值,理由见 `DebuggerCapture.snapshotCompare()`。
+ */
+export type OperatorPageSnapshotCompare =
+  | {
+      ok: true
+      tabId: string
+      url: string
+      title: string
+      yaml: string
+      nodeCount: number
+      html: string
+      gaps: SnapshotGap[]
+      benign: number
+      meta: Record<string, unknown>
+    }
+  | { ok: false; error: string }
+
+/** 与 `pageSnapshotFailed` 同因:BL 的 main surface 关着 strictNullChecks,布尔字面量判别式不收窄。 */
+export const pageSnapshotCompareFailed = (
+  snapshot: OperatorPageSnapshotCompare
+): snapshot is Extract<OperatorPageSnapshotCompare, { ok: false }> => !snapshot.ok
+
+/**
+ * 失败分支的**类型谓词**,而不是在调用处写 `if (!snapshot.ok)`。
+ *
+ * BL 的 main surface 关着 `strictNullChecks`,而**布尔字面量判别式的收窄需要它** —— 实测正反
+ * 两个方向都不收窄,于是 `if (!snapshot.ok) return snapshot` 会被判成「把整个联合当失败回包返回」
+ * (TS2322:`ok: true` 那支少了 `chars`)。用户定义的类型谓词不受这条限制。
+ * cowork 那侧的 main 开着 strict,直接 `if (!snapshot.ok)` 就够,所以只有这里需要它。
+ */
+export const pageSnapshotFailed = (
+  snapshot: OperatorPageSnapshot
+): snapshot is Extract<OperatorPageSnapshot, { ok: false }> => !snapshot.ok
 
 const MAX_MEMORY_EVENTS = 1200
 const CAPTURE_RECORD_CONFIG_DOMAIN = 'capture-records'
@@ -445,6 +490,67 @@ export class CaptureService extends CommonService<CaptureServiceState> {
     // bl 这份没有)。它在 dep 里本来就是可选字段,cowork 只拿它做漏斗分母的对账,
     // 而那个口径它自己标着"先量三个口径再换源",是临时的。少了它丢的是一个诊断量,不是能力。
     return { yaml: result.yaml, nodeCount: result.nodeCount }
+  }
+
+  /**
+   * 人这一侧的页面快照 —— `/page_snapshot` 的执行体
+   * (契约 `docs/features/maestro-slash-commands.md`)。
+   *
+   * 与上面那份的三处分别,每一处都是**故意**的:
+   *   ① 目标走 `currentCaptureTarget()`(激活 tab 优先)—— 这条命令问的就是"人正在看哪一页",
+   *      而那正是这个解析器的判据。不另写第三份"哪个 tab 在前台"。
+   *   ② **不 emit trace 记录** —— 上面那份 emit 是因为钻探的快照是它产物的一部分;人把页面
+   *      拷进剪贴板不是录制里的一步,写进去就是往人正在录的那份里塞一条幻觉观察。
+   *   ③ 失败**给理由**而不是 `null`:前台不是可读网页(mini-app / OnlyPreview / debugger 没附着)
+   *      与 CDP 读失败是两件事,合成一个 `null` 之后界面只能说一句"没有页面"。
+   *
+   * 不截断:`toolPageSnapshot` 那边的 200k 闸是给上下文窗口的,剪贴板没有上下文窗口。
+   */
+  async pageSnapshotForOperator(): Promise<OperatorPageSnapshot> {
+    const target = this.currentCaptureTarget()
+    // 类型谓词只收窄到 `OperationTab`,`capture` 仍是 `DebuggerCapture | null` —— 一并早退,
+    // 顺带给出理由,而不是让它在下一行变成一次运行时崩溃。
+    if (!this.isCapturableTab(target) || !target.capture) {
+      return { ok: false, error: 'No readable browser page is in front. Select a browser tab and try again.' }
+    }
+    const result = await target.capture.snapshot({ shot: false })
+    if (!result.ok) return { ok: false, error: result.error || 'The page could not be read.' }
+    return {
+      ok: true,
+      tabId: target.id,
+      url: target.url || this._state.currentUrl,
+      title: result.title || '',
+      yaml: result.yaml,
+      nodeCount: result.nodeCount
+    }
+  }
+
+  /**
+   * `/page_snapshot_compare` 的执行体(契约 `docs/features/page-snapshot-compare.md`)。
+   *
+   * 目标解析、只读口径、失败给理由 —— 全部沿用 `pageSnapshotForOperator()`,不另写第二套:
+   * 这条命令问的同样是"人正在看哪一页"。区别只在取回来的东西:多了 DOM 原文与诊断,
+   * 而且三样来自同一次求值。
+   */
+  async pageSnapshotCompareForOperator(): Promise<OperatorPageSnapshotCompare> {
+    const target = this.currentCaptureTarget()
+    if (!this.isCapturableTab(target) || !target.capture) {
+      return { ok: false, error: 'No readable browser page is in front. Select a browser tab and try again.' }
+    }
+    const result = await target.capture.snapshotCompare()
+    if (!result.ok) return { ok: false, error: result.error || 'The page could not be read.' }
+    return {
+      ok: true,
+      tabId: target.id,
+      url: target.url || this._state.currentUrl,
+      title: result.title || '',
+      yaml: result.yaml || '',
+      nodeCount: result.nodeCount || 0,
+      html: result.html || '',
+      gaps: result.gaps || [],
+      benign: result.benign || 0,
+      meta: result.meta || {}
+    }
   }
 
   /**

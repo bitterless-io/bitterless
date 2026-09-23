@@ -67,6 +67,14 @@ export type LogScope =
    */
   | 'health'
   /**
+   * 网页下载的落点与结果:开始下载、落在哪、多大、成没成
+   * (`docs/features/browser-downloads.md`)。
+   *
+   * 与 cowork 的 `capture` 「下载拦截」是**互斥**的两条:那条说的是录制期间被 `preventDefault`
+   * 掉、根本没落盘的下载(本仓没有那道闸);这条说的是真的落了盘的那些。
+   */
+  | 'download'
+  /**
    * Tab 别名表单的整条链:菜单点击 → 请求 → 覆盖层建/载/挂 → 渲染层答复 → 写回 tab。
    *
    * 每一步一行,**包括成功的步**。理由是一次真实失败:`promptTabAlias` 把 controller 的方法摘进

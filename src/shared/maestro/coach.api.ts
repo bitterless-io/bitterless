@@ -29,6 +29,8 @@ export interface HomeRendererReadyResult {
 // Handler methods intentionally accept at most one object parameter, matching
 // electron-xpc's handler/emitter pattern.
 export interface CoachXpcContract {
+  showAccountMenu(params: import('@shared/accountMenu').AccountMenuParams): Promise<import('@shared/accountMenu').AccountMenuAction | null>
+  openAccountPassword(): Promise<void>
   homeRendererReady(params: HomeRendererReadyParams): Promise<HomeRendererReadyResult>
   getSettings(): Promise<CoachSettings>
   saveSettings(params: Partial<CoachSettings>): Promise<CoachSettings>
@@ -106,6 +108,22 @@ export interface CoachXpcContract {
   pickSessionIoExportTarget(params: { sessionId: string; workspace?: WorkspaceRef }): Promise<SessionIoExportTarget>
   /** 第二步:压缩落盘。等待提示的存续区间就是这一次调用。 */
   writeSessionIoArchive(params: { sessionId: string; target: string; workspace?: WorkspaceRef }): Promise<SessionIoExportResult>
+  /**
+   * `/page_snapshot` —— 把**人正在看的那个 tab** 的无障碍快照写进剪贴板
+   * (契约 `docs/features/maestro-slash-commands.md`)。
+   *
+   * 不带 `sessionId`:当前 tab 是**窗口**这一级的事实,不是会话的。
+   * 回包只有量度,快照正文只进剪贴板 —— 与 `copyNextTurnContext` 同一口径。
+   */
+  copyPageSnapshot(): Promise<PageSnapshotCopyResult>
+  /**
+   * `/page_snapshot_compare` —— 把树、DOM 原文和覆盖诊断打成一个 zip
+   * (契约 `docs/features/page-snapshot-compare.md`)。
+   *
+   * 同样不带 `sessionId`:当前 tab 是**窗口**这一级的事实。
+   * 一次调用走完"取数 → 选位置 → 落盘",因为包只有几百 KB,不值得拆成两步。
+   */
+  exportPageSnapshotCompare(): Promise<PageSnapshotCompareResult>
   showSessionMenu(params: { sessionId: string }): Promise<SessionMenuResult>
   // Editable Cmd/Ctrl+Z reaches Chromium's undo stack in the fixed, focused Control view.
   editControlText(params: { action: 'undo' }): Promise<{ ok: boolean; error?: string }>;
@@ -567,6 +585,15 @@ export interface CoachSettings {
    * (docs/features/tab-alias.md G5)。空串 = 没别名,显示页面标题。
    */
   homeAlias?: string
+  /**
+   * 网页下载落在哪。**空 / 缺省 = 系统下载目录**(`app.getPath('downloads')`)
+   * (docs/features/browser-downloads.md #1.1)。
+   *
+   * 只存**用户明确选过**的那个目录,这样人换了系统下载目录之后这里不会把他钉死在旧路径上。
+   * 存在这份主进程 JSON 而不是 sqlite `setting` 表,是因为 `will-download` 要**同步**读它
+   * (那份文档 #2 写了为什么)。
+   */
+  downloadDir?: string
 }
 
 export type LlmProviderId = 'openai-codex' | 'anthropic' | string
@@ -958,6 +985,43 @@ export interface ContextExportRequest {
   draft: string
   context?: AgentConversationContext
 }
+
+/**
+ * `/page_snapshot` 的回包 —— **有界元数据**,不含 YAML 正文。
+ * `chars` 是写进剪贴板的字符数(未截断);失败时剪贴板一个字都没动。
+ */
+export type PageSnapshotCopyResult =
+  | { ok: true; tabId: string; url: string; title: string; nodeCount: number; chars: number }
+  | { ok: false; error: string }
+
+/** 一处剪枝点:哪个元素、为什么、吞掉了多少可见文字。页面里算完的结论,不是原始数据。 */
+export interface PageSnapshotGap {
+  culprit: string
+  outer: string
+  reason: string
+  display: string
+  rects: number
+  leaves: number
+  sample: string[]
+}
+
+/**
+ * `/page_snapshot_compare` 的回包 —— **有界元数据 + 诊断结论**,不含 yml 正文也不含 HTML。
+ * 正文只进压缩包,与 `copyPageSnapshot` 同一口径:跨 XPC 回来的东西必须是有界的。
+ * `gaps` 是例外中的有界例外:它已经是聚合后的结论(每个剪枝点一条、样本封顶 5 个),
+ * 而界面要靠它直接说出根因 —— 让人再去解压才知道结果,这条命令就白做了。
+ */
+export type PageSnapshotCompareResult =
+  | {
+      ok: true
+      archive: string
+      tabId: string
+      url: string
+      nodeCount: number
+      gaps: PageSnapshotGap[]
+      benign: number
+    }
+  | { ok: false; cancelled?: boolean; error?: string }
 
 /** 会话日志操作的回包。`path` 是已复制或已在系统文件管理器打开的绝对目录。 */
 export type SessionIoPathResult = { ok: true; path: string } | { ok: false; error: string }

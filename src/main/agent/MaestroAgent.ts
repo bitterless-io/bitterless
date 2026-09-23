@@ -17,13 +17,13 @@ export class MaestroAgent extends BaseAgent {
   /**
    * 表 2 = 恒定指引 + **会话级技能指引**(内置文本流程清单 / 安装与创作纪律)。
    *
-   * 后者原来也拼在每一条 user 消息上。它只在建会话时求值一次,所以会话中途换 workspace
-   * 不会刷新那个 package root,与 A6 / cwd 的既有边界一致。与 cowork 的 `CoworkAgent` 成对。
+   * 后者原来也拼在每一条 user 消息上。换 workspace 时随系统提示词和 cwd 更新，
+   * 原会话文件保留历史。与 cowork 的 `CoworkAgent` 成对。
    */
   protected systemPrompt(): string {
     // 根目录传这个 agent 自己绑定的那个 —— 与 cwd 同源。让回调按 sessionKey 再查一次会拿到
     // 未绑定时的默认工作区,把作者根目录和 cwd 指到两个地方(cowork 2026-09-22 实测)。
-    return [STATIC_TURN_GUIDANCE, this.opts.skillGuidance?.(this.projectRoot)]
+    return [STATIC_TURN_GUIDANCE, `Active workspace: ${this.projectRoot ?? this.opts.cwd}\n${this.projectRoot ? 'Use this user-selected workspace for all relative paths and generated files.' : 'No workspace selected. Use this shared work directory for all relative paths and generated files.'}`, this.opts.skillGuidance?.(this.projectRoot)]
       .filter(Boolean)
       .join('\n\n');
   }

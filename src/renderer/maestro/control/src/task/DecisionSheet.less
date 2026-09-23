@@ -1,0 +1,118 @@
+/**
+ * `ask_user` 拍板卡(底面)。
+ *
+ * **为什么这个文件是 2026-09-23 才补的**:这张卡是从 cowork 逐字移植过来的,而 cowork 的
+ * 渲染器装了 `@tailwindcss/vite`、这一支没有 —— 于是那一整套 `flex gap-3 rounded-xl bg-[#f8fafc]`
+ * 在 bitterless 里**一条都不生效**,卡片是裸 `div` + 裸 `button`(Chromium 给裸 button 的默认
+ * 样式正是灰底 + 1px 边框)。同一类坑在 `IconBtn` 上踩过一次,见 CLAUDE.md 的 Borderless UI:
+ * 「那个组件是无边框的」不可继承,必须在**真正加载这张皮的那个界面**里验。
+ *
+ * 无边框:层次靠背景 + 留白 + 圆角。
+ */
+.decision-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: 0;
+  border-radius: 12px;
+  background: rgb(var(--gray-1));
+  padding: 12px;
+}
+
+.decision-sheet__question { display: flex; flex-direction: column; gap: 8px; }
+.decision-sheet__prompt-row { display: flex; align-items: baseline; gap: 8px; }
+.decision-sheet__header {
+  flex-shrink: 0;
+  border-radius: 4px;
+  background: rgb(var(--gray-2));
+  padding: 1px 6px;
+  color: rgb(var(--gray-8));
+  font-size: 10px;
+  font-weight: 600;
+}
+.decision-sheet__prompt { min-width: 0; color: rgb(var(--gray-10)); font-size: 12px; font-weight: 500; line-height: 1.45; }
+
+/** 「可多选」—— 这一问能选几项,必须在卡上说出来,否则人只能靠点第二下试出来。 */
+.decision-sheet__multi {
+  flex-shrink: 0;
+  border-radius: 4px;
+  background: rgb(var(--primary-1));
+  padding: 1px 6px;
+  color: rgb(var(--primary-6));
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.decision-sheet__option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--color-bg-1);
+  padding: 8px 10px;
+  width: 100%;
+  color: rgb(var(--gray-10));
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.decision-sheet__option:hover { background: rgb(var(--gray-2)); }
+.decision-sheet__option--picked,
+.decision-sheet__option--picked:hover { background: rgb(var(--primary-6)); color: #fff; }
+.decision-sheet__option-label { display: flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; }
+.decision-sheet__option-desc { color: rgb(var(--gray-6)); font-size: 11px; line-height: 1.4; }
+.decision-sheet__option--picked .decision-sheet__option-desc { color: rgba(255, 255, 255, 0.82); }
+
+.decision-sheet__other {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-radius: 8px;
+  background: var(--color-bg-1);
+  padding: 8px 10px;
+}
+.decision-sheet__other--picked { background: rgb(var(--primary-6)); }
+.decision-sheet__other-trigger {
+  display: flex;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: rgb(var(--gray-10));
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+.decision-sheet__other--picked .decision-sheet__other-trigger { color: #fff; }
+.decision-sheet__other-input {
+  height: 28px;
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  background: var(--color-bg-1);
+  padding: 0 8px;
+  color: rgb(var(--gray-10));
+  font-size: 12px;
+  outline: none;
+}
+.decision-sheet__other-input:disabled { background: rgb(var(--gray-2)); color: rgb(var(--gray-5)); }
+
+.decision-sheet__actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.decision-sheet__button {
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.decision-sheet__button--cancel { background: rgb(var(--gray-2)); color: rgb(var(--gray-8)); }
+.decision-sheet__button--cancel:hover { background: rgb(var(--gray-3)); }
+.decision-sheet__button--submit { background: rgb(var(--primary-6)); color: #fff; }
+.decision-sheet__button--submit:hover { background: rgb(var(--primary-7)); }
+.decision-sheet__button:disabled { background: rgb(var(--gray-2)); color: rgb(var(--gray-5)); cursor: not-allowed; }

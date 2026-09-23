@@ -61,6 +61,71 @@
       </div>
     </div>
 
+    <div name="general-setting__downloads-section" class="general-setting__section">
+      <h4 class="general-setting__section-title">{{ i18nHelper.setting.general.downloads.label }}</h4>
+      <div name="general-setting__downloads" class="general-setting__control">
+        <div class="general-setting__control-copy general-setting__downloads-copy">
+          <div class="general-setting__control-description">{{ downloadSettingStore.folderLabel }}</div>
+          <div
+            name="general-setting__downloads-path"
+            class="general-setting__downloads-path"
+            :title="downloadSettingStore.snapshot?.effective"
+          >
+            {{ downloadSettingStore.snapshot?.effective || '—' }}
+          </div>
+          <div class="general-setting__control-description">
+            {{ i18nHelper.setting.general.downloads.description }}
+          </div>
+          <div
+            v-if="downloadSettingStore.unavailableMessage"
+            name="general-setting__downloads-unavailable"
+            class="general-setting__downloads-alert"
+            role="alert"
+          >
+            {{ downloadSettingStore.unavailableMessage }}
+          </div>
+          <div
+            v-if="downloadSettingStore.failed"
+            name="general-setting__downloads-failed"
+            class="general-setting__downloads-alert"
+            role="alert"
+          >
+            {{ i18nHelper.setting.general.downloads.failed }}
+          </div>
+        </div>
+        <div name="general-setting__downloads-actions" class="general-setting__downloads-actions">
+          <IconBtn
+            name="general-setting__downloads-reveal"
+            :title="i18nHelper.setting.general.downloads.reveal"
+            :aria-label="i18nHelper.setting.general.downloads.reveal"
+            :disabled="!downloadSettingStore.snapshot"
+            @click="downloadSettingStore.reveal()"
+          >
+            <IconFolderOpen :size="14" />
+          </IconBtn>
+          <a-button
+            v-if="downloadSettingStore.snapshot?.configured"
+            name="general-setting__downloads-reset"
+            size="mini"
+            type="text"
+            :disabled="downloadSettingStore.busy"
+            @click="downloadSettingStore.reset()"
+          >
+            {{ i18nHelper.setting.general.downloads.reset }}
+          </a-button>
+          <a-button
+            name="general-setting__downloads-change"
+            size="mini"
+            type="primary"
+            :loading="downloadSettingStore.busy"
+            @click="downloadSettingStore.choose()"
+          >
+            {{ i18nHelper.setting.general.downloads.change }}
+          </a-button>
+        </div>
+      </div>
+    </div>
+
     <div
       v-if="showChatMenuControl"
       name="general-setting__experimental"
@@ -89,11 +154,12 @@
 
 <script setup lang="ts">
 import { onMounted } from 'vue';
-import { IconRefresh } from '@tabler/icons-vue';
+import { IconFolderOpen, IconRefresh } from '@tabler/icons-vue';
 import IconBtn from '@renderer/common/components/IconBtn/IconBtn.vue';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
 import { generalSettingStore } from './generalSetting.store';
 import { lanAddressStore } from './lanAddress.store';
+import { downloadSettingStore } from './downloadSetting.store';
 
 withDefaults(defineProps<{
   showChatMenuControl?: boolean;
@@ -110,6 +176,12 @@ onMounted(async () => {
 // would make the LAN address silently fail to load in exactly the workbench this feature targets.
 onMounted(() => {
   void lanAddressStore.load();
+});
+
+// Third separate hook, same reason as the one above: this store talks only to a MAIN handler, so it
+// must not ride on `loadSettings()` and fail with it in the Maestro workbench.
+onMounted(() => {
+  void downloadSettingStore.load();
 });
 
 const onLanguageChange = async (): Promise<void> => {

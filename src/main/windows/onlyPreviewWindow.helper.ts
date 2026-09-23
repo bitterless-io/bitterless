@@ -1,3 +1,4 @@
+import { createOnlyPreviewVueView } from '@main/miniapps/onlypreview/views/onlyPreviewVueView.service';
 import {
   app,
   BaseWindow,
@@ -1508,12 +1509,14 @@ export class OnlyPreviewWindowHelper {
     openTag?: string
   ): WebContentsView {
     const target = getOnlyPreviewRendererTarget(mode, __dirname);
-    const view = new WebContentsView({
+    const view = mode === 'preview' ? createOnlyPreviewVueView({
+      host, baseDirectory: __dirname, runtimeToken: previewRuntimeToken,
+      officeCapability: officeBrokerCapability, readCapability: previewReadBrokerCapability,
+      openTag, mountKind: this.standaloneMount?.kind === 'cowork' ? 'cowork' : 'window',
+      hostArguments: this.standaloneMount?.maestroRendererArguments() ?? []
+    }) : new WebContentsView({
       webPreferences: {
-        preload: join(
-          __dirname,
-          mode === 'preview' ? '../preload/onlypreviewContent.js' : '../preload/onlypreview.js'
-        ),
+        preload: join(__dirname, '../preload/onlypreview.js'),
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,

@@ -59,7 +59,7 @@ export interface WebFetchResult {
   contentType: string
   bytes: number
   redirects: number
-  /** 直接拿到 markdown/纯文本时为 true —— 没经过 HTML 抽取。 */
+  /** 直接拿到 JSON/markdown/纯文本时为 true —— 没经过 HTML 抽取。 */
   servedAsText: boolean
   article: ExtractedArticle
 }
@@ -137,6 +137,8 @@ export const fetchWebPage = async (rawUrl: string, maxChars: number, signal?: Ab
     }
 
     const contentType = String(res.headers.get('content-type') || '').toLowerCase()
+    const mediaType = contentType.split(';')[0].trim()
+    const servedAsJson = /^application\/(?:json|[^\s/]+\+json)$/.test(mediaType)
     const { buf } = await readBounded(res)
     const body = buf.toString('utf8')
 
@@ -157,14 +159,14 @@ export const fetchWebPage = async (rawUrl: string, maxChars: number, signal?: Ab
     if (res.status >= 400) throw new WebFetchError('http', `HTTP ${res.status} from the page`)
 
     // 二进制一律不接:PDF/图片/压缩包应该走 read_file(下载后本地解析)那条路,不是这里。
-    if (/^(image|audio|video|font)\//.test(contentType) || /(pdf|zip|octet-stream|msword|excel|sheet)/.test(contentType)) {
+    if (!servedAsJson && (/^(image|audio|video|font)\//.test(contentType) || /(pdf|zip|octet-stream|msword|excel|sheet)/.test(contentType))) {
       throw new WebFetchError(
         'unsupported-type',
         `this is a ${contentType.split(';')[0] || 'binary'} file, not a web page — download it and use read_file instead`
       )
     }
 
-    const servedAsText = /text\/(markdown|x-markdown|plain)/.test(contentType)
+    const servedAsText = servedAsJson || /text\/(markdown|x-markdown|plain)/.test(contentType)
     const finalUrl = current.toString()
     /** 每次取页**恰好一条**成功行。失败由工具层统一记(见 webFetchTools),免得同一次失败记两遍。 */
     const logOk = (article: { text: string; fullLength: number; fallback: boolean }): void => {
@@ -185,7 +187,8 @@ export const fetchWebPage = async (rawUrl: string, maxChars: number, signal?: Ab
       })
     }
     if (servedAsText) {
-      const text = body.replace(/\r/g, '').trim()
+      // JSON 原文直出:parse/stringify 会改写大整数等数值字面量。
+      const text = servedAsJson ? body : body.replace(/\r/g, '').trim()
       const article = {
         title: '',
         byline: null,

@@ -21,6 +21,7 @@ export const buildDecisionTools = (sessionKey: string): AgentToolSpec[] => [
       'This call BLOCKS until the user answers, so you keep the turn and continue with their answer — do not end your reply to ask a question. ' +
       'Do NOT use it for things you can decide with a sensible default, for confirmation of an action (that has its own approval flow), or to ask the user to do your research. ' +
       'Each question needs a short header, the full question, and 2-4 options that each carry a label plus a description of what choosing it means. ' +
+      'Set multiSelect to true when several answers can hold at once — features to enable, files to include — and phrase that question accordingly ("which of these…"); leave it false when the choices are mutually exclusive. ' +
       'NEVER add an "other"/"something else" option yourself — the interface always appends a free-text one. ' +
       'Returns the chosen labels, or the user\'s own text when they typed their own answer, or a cancellation you must then handle yourself.',
     params: [
@@ -28,7 +29,8 @@ export const buildDecisionTools = (sessionKey: string): AgentToolSpec[] => [
         name: 'questions_json',
         required: true,
         description:
-          'JSON array of 1-4 questions. Each: {"header": "≤12 chars", "question": "full question?", "multiSelect": false, "options": [{"label": "1-5 words", "description": "what this choice means"}]}.'
+          'JSON array of 1-4 questions. Each: {"header": "≤12 chars", "question": "full question?", "multiSelect": true|false, "options": [{"label": "1-5 words", "description": "what this choice means"}]}. ' +
+          'multiSelect is optional and defaults to false (exactly one answer); true lets the user pick several options for that question.'
       }
     ],
     execute: async (args) => {

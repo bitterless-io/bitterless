@@ -110,7 +110,7 @@ test('a relative or empty root is refused without touching the filesystem', asyn
 
 test('the scaffold and the reader agree on where the config lives', async () => {
   const location = await import(
-    pathToFileURL(join(projectRoot, 'src/preload/onlypreview/search/core/workspace-config-location.mjs')).href
+    pathToFileURL(join(projectRoot, 'src/shared/onlypreview/onlyPreviewWorkspaceConfigLocation.mjs')).href
   );
   await withRoot(async (root) => {
     const { relativePath } = await ensureOnlyPreviewWorkspaceConfig(root);

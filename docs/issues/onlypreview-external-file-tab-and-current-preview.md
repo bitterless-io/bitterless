@@ -1,5 +1,9 @@
 # External file tabs and current-preview identity
 
+> 2026-09-23：下文文件 Tab／外部文件留在 OnlyPreview 的路由被
+> [Workspace 与 IndiPreview](../features/indipreview-workspace-routing.md) 取代；footer/current-preview
+> 同步修复继续有效。下文保留为历史实现记录。
+
 Status: implemented; owner testing pending, 2026-09-14.
 
 Ral reports stale footer paths, stale Recents/highlight, and OS Open With files replacing OnlyPreview instead of opening a new tab.

@@ -1,8 +1,7 @@
 import { realpath } from 'node:fs/promises';
-import { basename } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { fileSearchWindowService } from '@main/fileSearch/fileSearchWindow.service';
-import { OnlyPreviewFileTabSurface } from '@main/windows/onlyPreviewFileTab.service';
+import { openIndiPreviewFile } from '@main/windows/indiPreviewWindow.service';
+import { resolveOnlyPreviewTargetScope } from '@main/miniapps/onlypreview/onlyPreviewWorkspaceScope.service';
 
 import { registerMaestroPreviewOpener } from '@maestro-main/windows/main/previewOpener.registry';
 import { onlyPreviewWorkspaceRegistry } from '@main/miniapps/onlypreview/onlyPreviewWorkspace.registry';
@@ -56,47 +55,22 @@ export const registerOnlyPreviewMaestroOpener = (): void => {
     );
   });
   registerMaestroPreviewOpener({
-    displayName: 'OnlyPreview',
+    displayName: 'Preview',
     currentProjectDirectory: () => {
       const host = onlyPreviewWindowHelper.getStandaloneHost();
       const project = host && onlyPreviewWorkspaceRegistry.restore(host.hostToken);
-      if (!host || !project) return undefined;
+      if (!host || !project || project.isDefault) return undefined;
       return onlyPreviewWorkspaceRegistry.getProjectAuthorityRootRef(
         host.hostToken, project.workspaceId
       ).workspace.rootRealPath;
     },
-    openInTab: openOnlyPreviewOsTarget,
-    createFileTabSpec: (absolutePath, options) => {
-      let surface: OnlyPreviewFileTabSurface | null = null;
-      return {
-        id: 'file',
-        title: basename(absolutePath),
-        favicon: '',
-        displayUrl: pathToFileURL(absolutePath).href,
-        getDisplayedFile: () => surface?.displayedFilePath() ?? null,
-        open: async (host) => {
-          const window = host.window();
-          if (!window) throw new Error('The file preview window is unavailable.');
-          surface = new OnlyPreviewFileTabSurface({
-            window,
-            path: absolutePath,
-            line: options?.line,
-            isOpen: () => host.isOpen(),
-            bounds: () => {
-              const bounds = host.contentRect();
-              if (!bounds) throw new Error('The file preview tab has no content bounds.');
-              return bounds;
-            },
-            attach: (container) => host.attach(container)
-          });
-          await surface.open();
-        },
-        close: () => { surface?.dispose(); surface = null; },
-        setActive: (_host, active) => surface?.setActive(active),
-        refresh: () => surface?.refresh()
-      };
-    },
-    open: async (absolutePath: string, options?: { line?: number }) => {
+    open: async (absolutePath: string, options?: { line?: number; fragment?: string }) => {
+      const inspected = await fileSearchWindowService.inspectTarget(absolutePath);
+      const scope = await resolveOnlyPreviewTargetScope(inspected);
+      if (scope.kind === 'outside') {
+        await openIndiPreviewFile(absolutePath, options);
+        return;
+      }
       // **承载已经存在、只是它现在是一个窗口时,不要再建 tab。**
       //
       // OnlyPreview 被顶栏那个按钮切成独立窗口之后,那个 composite tab 就没了 —— 于是
@@ -123,11 +97,11 @@ export const registerOnlyPreviewMaestroOpener = (): void => {
         // 换成显式的:tab 就让**知道 tab id 的那一侧**去激活。少四层委派,也不再有能被 `?.` 吞掉的
         // 无操作。窗口那一支保持原样 —— 它本来就是对的。
         if (isMountedOnCoworkTab(mountedHost.hostToken)) {
-          const result = await maestroWindowHelper.openWorkspaceInPreview({ path: absolutePath, line: options?.line });
+          const result = await maestroWindowHelper.openWorkspaceInPreview({ path: absolutePath, ...options });
           if (!result.ok) throw new Error(result.error || 'OnlyPreview could not open that path.');
           return;
         }
-        await openRegisteredOnlyPreviewExplicitTarget(absolutePath, { line: options?.line });
+        await openRegisteredOnlyPreviewExplicitTarget(absolutePath, options);
         return;
       }
       // 没有承载 → **按上次那一种开**(Ral 2026-09-09:「上次 tab 下次也 tab,上次窗口下次也窗口」)。
@@ -140,12 +114,12 @@ export const registerOnlyPreviewMaestroOpener = (): void => {
       // `'onlypreview'` 键恢复上次的尺寸/位置/所在屏幕 —— 也就是他要的「复用上次的位置」。
       const mount = peekOnlyPreviewHostMount() ?? (await readOnlyPreviewHostMount());
       if (mount === 'window') {
-        await openRegisteredOnlyPreviewExplicitTarget(absolutePath, { line: options?.line });
+        await openRegisteredOnlyPreviewExplicitTarget(absolutePath, options);
         return;
       }
       // tab 那一支:开 tab 再交目标。**那个顺序是承重的**,理由写在
       // `maestroBrowserView.openCompositeTabTarget` 上,所以这里调它而不是自己拼一遍。
-      const result = await maestroWindowHelper.openWorkspaceInPreview({ path: absolutePath, line: options?.line });
+      const result = await maestroWindowHelper.openWorkspaceInPreview({ path: absolutePath, ...options });
       if (!result.ok) throw new Error(result.error || 'OnlyPreview could not open that path.');
     },
     /**
@@ -172,16 +146,10 @@ export const registerOnlyPreviewMaestroOpener = (): void => {
   });
 };
 
-/** OS regular files always receive a fresh tab; directories retain the existing Project route. */
+/** OS files use exactly the same workspace scope as every explicit local open. */
 export const openOnlyPreviewOsTarget = async (
   absolutePath: string,
-  options: { tabId?: string; line?: number } = {}
+  options: { line?: number; fragment?: string } = {}
 ): Promise<void> => {
-  const inspected = await fileSearchWindowService.inspectTarget(absolutePath);
-  if (!inspected.selectedRelativePath) {
-    // 目录没有「行」—— 传下去也会被忽略,但不传更诚实。
-    await openRegisteredOnlyPreviewExplicitTarget(absolutePath);
-    return;
-  }
-  await maestroWindowHelper.openFilePreviewTab({ path: absolutePath, ...options });
+  await openRegisteredOnlyPreviewExplicitTarget(absolutePath, options);
 };

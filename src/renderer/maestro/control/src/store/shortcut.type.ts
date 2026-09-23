@@ -2,7 +2,7 @@ export interface ShortcutCommandItem {
   kind: 'command'
   // 名字用下划线而不是空格:开菜单的 token 正则是 `\/([\w-]*)`,带空格的名字根本不会被识别成命令。
   // 与既有的 `/view_context` 同一个写法。
-  name: '/test_auto_compact' | '/compact' | '/clear' | '/view_context' | '/copy_session_path' | '/export' | '/test_show_error' | '/view_context_graph' | '/workflow'
+  name: '/test_auto_compact' | '/compact' | '/clear' | '/view_context' | '/copy_session_path' | '/export' | '/page_snapshot' | '/page_snapshot_compare' | '/test_show_error' | '/view_context_graph' | '/workflow'
   hint: string
 }
 
@@ -37,6 +37,16 @@ export interface ShortcutRunContext {
   copySessionPath: () => Promise<void>
   /** `/export` —— 打包会话的模型 I/O 目录,让人选保存位置。与上一条同源。 */
   exportSession: () => Promise<void>
+  /**
+   * `/page_snapshot` —— 把**人正在看的那个 tab** 的无障碍快照写进剪贴板。
+   * 与上面几条一样由 `ChatPanel` 注入,store 不碰 xpc。
+   */
+  copyPageSnapshot: () => Promise<void>
+  /**
+   * `/page_snapshot_compare` —— 树 + DOM 原文 + 诊断打成 zip。与上一条同源:
+   * 那条出给人贴,这条出给人查。同样由 `ChatPanel` 注入,store 不碰 xpc。
+   */
+  exportPageSnapshotCompare: () => Promise<void>
   testShowError: () => Promise<void>
   /**
    * `/view_context_graph`:读一次上下文结构 + 在面板里开弹窗。由 `ChatPanel` **注入**,

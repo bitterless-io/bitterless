@@ -13,10 +13,8 @@ const en = {
     label: 'Bookmarks',
     remove: 'Remove bookmark',
     empty: 'No bookmarks',
-    hint: 'Bookmark hint',
-    hintTitle: 'Hint',
-    hintMessage: 'Right-click a folder to add a bookmark.',
-    hintClose: 'Close',
+    expand: 'Expand bookmarks',
+    collapse: 'Collapse bookmarks',
     unavailable: 'This bookmarked folder is unavailable. You can remove its bookmark.'
   },
   /**
@@ -26,9 +24,10 @@ const en = {
    * 文案里写死一个品牌名,re-vendor 时就会把它带到另一个产品里去(Ral 2026-09-10 报的正是这个)。
    */
   appName: 'Bitterless',
-  productName: 'OnlyPreview',
+  productName: 'Workspace',
   bootstrapFailed: 'OnlyPreview could not start. Close and reopen it to retry.',
   topbar: {
+    chooseOwnWorkspace: 'Choose your own workspace',
     openFolder: 'Open folder',
     agentSkillGuide: 'Copy the skill to your agent',
     settings: 'OnlyPreview settings',
@@ -277,16 +276,15 @@ const zh: Localized<typeof en> = {
     label: '书签',
     remove: '移除书签',
     empty: '暂无书签',
-    hint: '书签提示',
-    hintTitle: '提示',
-    hintMessage: '右击文件夹可以添加书签。',
-    hintClose: '关闭',
+    expand: '展开书签',
+    collapse: '收起书签',
     unavailable: '此书签目录已不可用，可移除书签。'
   },
   appName: 'Bitterless',
-  productName: 'OnlyPreview',
+  productName: 'Workspace',
   bootstrapFailed: 'OnlyPreview 无法启动。请关闭后重新打开。',
   topbar: {
+    chooseOwnWorkspace: '选择自己的工作区',
     openFolder: '打开文件夹',
     agentSkillGuide: '将技能复制给你的 Agent',
     settings: 'OnlyPreview 设置',

@@ -234,6 +234,7 @@ export interface MaestroAgentServiceState {
   replaySkill(params: { skillId: string; variables: Record<string, string> }): Promise<ReplayResult>
   replayAgentSkill(sessionId: string, params: { skillId: string; variables: Record<string, string> }): Promise<ReplayResult>
   syncWorkspaceFromContext(sessionKey: string, workspace?: WorkspaceRef): void
+  selectedWorkspaceForSession(sessionKey: string): string | undefined
   projectRootForSession(sessionKey: string): string | undefined
   emitTrace(event: TraceEvent): void
 }
@@ -367,6 +368,23 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
    * Claim before workspace/attachment/compaction awaits. Each chat owns at most one root Turn;
    * other chats may run independently while this chat's additional messages remain steering.
    */
+  private readonly workspaceChanges = new Map<string, Promise<unknown>>()
+
+  /** Wait outside the Preview FIFO so tools in the finishing turn can still open previews. */
+  async runWorkspaceChange<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
+    const key = this.agentSessionKey(sessionId)
+    const previous = this.workspaceChanges.get(key)
+    const change = (async () => {
+      await previous?.catch(() => undefined)
+      await this.activeAgentTurns.get(key)?.finished
+      await this.manualCompactions.get(key)?.catch(() => undefined)
+      return await operation()
+    })()
+    this.workspaceChanges.set(key, change)
+    try { return await change }
+    finally { if (this.workspaceChanges.get(key) === change) this.workspaceChanges.delete(key) }
+  }
+
   private readonly activeAgentTurns = new Map<string, ActiveAgentTurn>()
   private agentTurnGeneration = 0
   /**
@@ -887,6 +905,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
   claimAgentTurn(params: AgentTurnClaimRequest): AgentTurnClaimResult {
     this.assertAgentRuntimeActive()
     const sessionId = this.agentSessionKey(params.sessionId)
+    if (this.workspaceChanges.has(sessionId)) throw new Error('Workspace is changing. Send your message after it finishes.')
     const turnId = params.turnId.trim()
     const rootText = params.rootText.trim()
     if (!turnId || !rootText) {
@@ -1059,7 +1078,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         const key = this.agentSessionKey(params.sessionId)
         const existing = key === 'default' ? this.pi : this.maestroAgents.get(key)
         const agent = existing || this.getMaestroAgent(key)
-        const workspace = params.workspace?.path || this._state.projectRootForSession(key)
+        const workspace = params.workspace?.path || this._state.selectedWorkspaceForSession(key)
         // A running agent owns its prompt; inspection must never mutate it.
         if (!existing) await agent.setProjectRoot(workspace)
         return { ...agent.sessionIoConfiguration(), workspace }
@@ -1164,7 +1183,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       assertContextTextSize(params.draft)
       const agent = (sessionKey === 'default' ? this.pi : this.maestroAgents.get(sessionKey)) || (existsSync(this.nativeSessionFile(sessionKey)) ? this.getMaestroAgent(sessionKey) : undefined)
       if (agent) {
-        await agent.setProjectRoot(this._state.projectRootForSession(sessionKey))
+        await agent.setProjectRoot(this._state.selectedWorkspaceForSession(sessionKey))
         if (await agent.hasConversation()) this.hydratedMaestroAgentSessions.add(sessionKey)
       }
       const context = params.context
@@ -1270,7 +1289,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       this._state.syncWorkspaceFromContext(sessionKey, params.context?.workspace)
       const agent = this.getExistingMaestroAgent(sessionKey) || (existsSync(this.nativeSessionFile(sessionKey)) ? this.getMaestroAgent(sessionKey) : undefined)
       if (agent) {
-        await agent.setProjectRoot(this._state.projectRootForSession(sessionKey))
+        await agent.setProjectRoot(this._state.selectedWorkspaceForSession(sessionKey))
         if (await agent.hasConversation()) this.hydratedMaestroAgentSessions.add(sessionKey)
       }
       const context = params.context
@@ -1501,7 +1520,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     const cancellation = new AbortController()
     this.manualCompactionCancels.set(key, () => cancellation.abort())
     const operation = (async () => {
-      await agent.setProjectRoot(this._state.projectRootForSession(key))
+      await agent.setProjectRoot(this._state.selectedWorkspaceForSession(key))
       const config = agent.sessionIoConfiguration()
       xpcMain.broadcast('coach/agent-compaction', { sessionId: key, active: true })
       try {
@@ -1532,8 +1551,10 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       const agent = this.getMaestroAgent(key)
       this.manualCompactionCancels.set(key, () => agent.abort())
       const operation = (async () => {
-        await agent.setProjectRoot(this._state.projectRootForSession(key))
-        return await agent.compact(params.instructions)
+        await agent.setProjectRoot(this._state.selectedWorkspaceForSession(key))
+        // 手动 /compact 不在任何回合里,ALS 取不到会话 ⇒ pi 在压缩期间发出的事件(含 agent-io 的压缩记号)
+        // 会落进 unattributed 桶。包一层,和回合入口(runInAgentSession(sessionKey, …))同一个理由。
+        return await runInAgentSession(key, () => agent.compact(params.instructions))
       })()
       this.manualCompactions.set(key, operation)
       let result: Awaited<ReturnType<BaseAgent['compact']>>
@@ -1966,7 +1987,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       const registry = this._state.existingSkillRegistry() || this._state.ensureServices().registry
       const selected = await registry.withWorkspace(this._state.projectRootForSession(sessionKey), () => selectedSkillPrompt(registry, context?.selectedSkillRef))
       const currentAgent = this.getMaestroAgent(sessionKey)
-      await currentAgent.setProjectRoot(this._state.projectRootForSession(sessionKey))
+      await currentAgent.setProjectRoot(this._state.selectedWorkspaceForSession(sessionKey))
       const includeConversationMemory = !this.hydratedMaestroAgentSessions.has(sessionKey) && !(await currentAgent.hasConversation())
       const mediaInput = await this.buildAgentMediaInput(sessionKey, context?.attachedPaths)
       if (isCancelled()) {
@@ -2045,7 +2066,8 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     const registry = this._state.existingSkillRegistry() || this._state.ensureServices().registry
     const recordings = registry.withWorkspace(this._state.projectRootForSession(sessionKey), () => registry.listSkills())
     return buildAgentTurnPrompt({
-      message, context, includeConversationMemory, nowLocal: sentAt,
+      message, context: { ...context, workspace: this._state.selectedWorkspaceForSession(sessionKey)
+        ? { path: this._state.selectedWorkspaceForSession(sessionKey)!, name: '', exists: true, updatedAt: 0 } : undefined }, includeConversationMemory, nowLocal: sentAt,
       activeTab: windowTabs.activeTab, openTabs: windowTabs.openTabs,
       userChainPath: chainFilePath(maestroUserChainDir(), sessionKey), currentUrl,
       catalog: registry.catalogPrompt(this._state.projectRootForSession(sessionKey)),
@@ -2121,7 +2143,9 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     const nowLocal = options?.messageSentAt || localNow()
     const buildTurnPrompt = (includeConversationMemory: boolean): string => buildAgentTurnPrompt({
       message,
-      context,
+      context: { ...context, workspace: this._state.selectedWorkspaceForSession(sessionKey)
+        ? { path: this._state.selectedWorkspaceForSession(sessionKey)!, name: '', exists: true, updatedAt: 0 } : undefined },
+      defaultWorkspacePath: ensureDefaultWorkspace(),
       includeConversationMemory,
       nowLocal,
       activeTab: windowTabs.activeTab,
@@ -2160,7 +2184,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         }
         const next = options?.steeringInbox?.next()
         if (!next) return replayReply
-        await agent.setProjectRoot(this._state.projectRootForSession(this.agentSessionKey(options?.sessionKey)))
+        await agent.setProjectRoot(this._state.selectedWorkspaceForSession(this.agentSessionKey(options?.sessionKey)))
         if (options?.isCancelled?.()) return cancelledReply()
         assertSkillContext(authorizedSkillContext)
         const follow = await agent.prompt(next.text, undefined, { steeringInbox: options?.steeringInbox, messageId: next.messageId, turnId: next.turnId })
@@ -2168,7 +2192,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       }
     }
 
-    await agent.setProjectRoot(this._state.projectRootForSession(this.agentSessionKey(options?.sessionKey)))
+    await agent.setProjectRoot(this._state.selectedWorkspaceForSession(this.agentSessionKey(options?.sessionKey)))
     if (options?.isCancelled?.()) return cancelledReply()
     this.lastAgentRun = {}
     this.lastAgentArtifacts = []

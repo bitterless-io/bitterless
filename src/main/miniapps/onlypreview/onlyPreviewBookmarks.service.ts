@@ -1,5 +1,5 @@
-import { OnlyPreviewContractError, parseOnlyPreviewFileRef } from '@shared/onlypreview/onlyPreview.contract';
-import type { OnlyPreviewBookmarkRequest, OnlyPreviewBookmarksRequest, OnlyPreviewBookmarksSnapshot } from '@shared/onlypreview/onlyPreviewBookmarks.type';
+import { OnlyPreviewContractError, parseOnlyPreviewFileRef, parseOnlyPreviewBookmarksReorderRequest } from '@shared/onlypreview/onlyPreview.contract';
+import type { OnlyPreviewBookmarkRequest, OnlyPreviewBookmarksReorderRequest, OnlyPreviewBookmarksRequest, OnlyPreviewBookmarksSnapshot } from '@shared/onlypreview/onlyPreviewBookmarks.type';
 import type { OnlyPreviewBookmarkStorage, OnlyPreviewBookmarkStorageRequest } from '@shared/onlypreview/onlyPreviewBookmarkStorage.type';
 import type { OnlyPreviewWorkspaceRegistry, OnlyPreviewProjectAuthorityRef } from './onlyPreviewWorkspace.registry';
 
@@ -55,6 +55,13 @@ export class OnlyPreviewBookmarksService {
     return this.run(scope, () => ({ rootRealPath: scope.workspace.rootRealPath, action: 'remove', relativePath }));
   }
 
+  async reorder(request: OnlyPreviewBookmarksReorderRequest): Promise<OnlyPreviewBookmarksSnapshot> {
+    const parsed = parseOnlyPreviewBookmarksReorderRequest(request);
+    const scope = this.scope(parsed);
+    return this.run(scope, () => ({ rootRealPath: scope.workspace.rootRealPath,
+      action: 'reorder', relativePaths: parsed.relativePaths }));
+  }
+
   private run(
     scope: Scope,
     operation: () => OnlyPreviewBookmarkStorageRequest | Promise<OnlyPreviewBookmarkStorageRequest>
@@ -68,7 +75,9 @@ export class OnlyPreviewBookmarksService {
       this.requireCurrent(scope);
       const snapshot = { workspaceId: scope.workspaceId, revision: state.revision,
         entries: state.entries.map((entry) => ({ ...entry, name: entry.relativePath.split('/').at(-1)! })) };
-      if (request.action !== 'snapshot') this.changed(scope.host.hostId, snapshot);
+      if (request.action !== 'snapshot' && (request.action !== 'reorder' || state.changed)) {
+        this.changed(scope.host.hostId, snapshot);
+      }
       return snapshot;
     });
     this.operations = task.catch(() => undefined);

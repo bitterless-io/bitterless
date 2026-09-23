@@ -1,5 +1,4 @@
-import { mkdirSync } from 'node:fs';
-import { appDataDir } from '@main/paths/appData';
+import { appDataDir, ensureWorkDirectory } from '@main/paths/appData';
 
 /**
  * The one shared default workspace — where every workspace tool works when no directory is bound
@@ -17,8 +16,4 @@ import { appDataDir } from '@main/paths/appData';
 export const defaultWorkspaceRoot = (): string => appDataDir('workspace');
 
 /** `mkdir -p` the default workspace and return it. Idempotent — called at boot and on every resolve. */
-export const ensureDefaultWorkspace = (): string => {
-  const root = defaultWorkspaceRoot();
-  mkdirSync(root, { recursive: true });
-  return root;
-};
+export const ensureDefaultWorkspace = (): string => ensureWorkDirectory();

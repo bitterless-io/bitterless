@@ -5,6 +5,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/', redirect: '/mini-app' },
   { path: '/mini-app', name: 'mini-app', component: MiniApp, props: { host: 'cowork' } },
   { path: '/sign-in', name: 'sign-in', component: () => import('./SignInGuide.vue') },
+  { path: '/account/password', name: 'account-password', component: () => import('./ChangePassword.vue') },
   {
     path: '/setting',
     name: 'setting',

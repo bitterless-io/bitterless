@@ -22,6 +22,7 @@ const MAX_WORKSPACES = 128;
 type OnlyPreviewWorkspaceKind = 'project' | 'external-preview';
 
 export interface OnlyPreviewWorkspaceRecord {
+  isDefault?: true;
   workspaceId: string;
   hostToken: string;
   kind: OnlyPreviewWorkspaceKind;
@@ -70,6 +71,7 @@ const joinDisplayPath = (displayPath: string, relativePath?: string): string => 
 };
 
 const toSnapshot = (workspace: OnlyPreviewWorkspaceRecord): OnlyPreviewWorkspace => ({
+  ...(workspace.isDefault ? { isDefault: true as const } : {}),
   workspaceId: workspace.workspaceId,
   rootName: workspace.rootName,
   displayPath: workspace.displayPath,
@@ -102,7 +104,8 @@ export class OnlyPreviewWorkspaceRegistry {
 
   registerValidatedTarget(
     hostToken: unknown,
-    target: OnlyPreviewValidatedTarget
+    target: OnlyPreviewValidatedTarget,
+    isDefault = false
   ): OnlyPreviewWorkspace {
     const host = this.hosts.require(hostToken, ['content']);
     const selectedRelativePath = this.validateTarget(target);
@@ -119,6 +122,7 @@ export class OnlyPreviewWorkspaceRegistry {
       workspaceId: randomUUID(),
       hostToken: host.hostToken,
       kind: 'project',
+      ...(isDefault ? { isDefault: true as const } : {}),
       rootRealPath: target.rootRealPath,
       rootName: target.rootName,
       displayPath: target.displayPath,
@@ -316,6 +320,17 @@ export class OnlyPreviewWorkspaceRegistry {
     return workspace?.kind === 'project' && !workspace.projectAuthorityPending
       ? toSnapshot(workspace)
       : null;
+  }
+
+  /** Main-only routing scope: authority/index startup does not change filesystem containment. */
+  currentProjectRoot(): string | null {
+    for (const workspaceId of [...this.projectWorkspaceByHost.values()].reverse()) {
+      const workspace = this.workspaces.get(workspaceId);
+      if (workspace?.kind === 'project' && this.hosts.isLive(workspace.hostToken)) {
+        return workspace.rootRealPath;
+      }
+    }
+    return null;
   }
 
   /**

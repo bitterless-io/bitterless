@@ -107,3 +107,52 @@ const control = readFileSync(join(APP_ROOT, 'src/renderer/maestro/control/src/Co
 test('挂在滚动容器之外,与 ChatConfirmSheet 并列', () => {
   assert.match(control, /<ChatConfirmSheet :session="activeSession" \/>\n(?:\s*<!--[\s\S]*?-->\n)?\s*<DecisionSheet :session="activeSession" \/>/)
 })
+
+/**
+ * ── 2026-09-23 补的三条(`docs/issues/ask-user-answer-leaves-no-trace.md`)──────────────────
+ *
+ * Ral 报的两件事:「JSON schema 支持多选」「答完之后答案没有渲染在 UI 上」。
+ * 两件事的共同点是 —— **能力早就接上了,只是从人这一侧够不着**:
+ * `multiSelect` 契约、normalize、toggle 三处都在,但卡上看不出来、说明里也没教模型开;
+ * decision 消息投影出来了、`picked` 也写回去了,但 `MessageItem` 没有这一支,没人画。
+ */
+
+const record = readFileSync(join(APP_ROOT, 'src/renderer/maestro/control/src/task/DecisionRecord.vue'), 'utf8')
+const item = readFileSync(join(APP_ROOT, 'src/renderer/maestro/control/src/MessageItem.vue'), 'utf8')
+
+test('答案有落点:时间线上有一个独立组件画它,而不是答完就消失', () => {
+  assert.match(item, /const isDecisionRow = computed\(\(\) => props\.message\.type === 'decision'\)/,
+    '`type: decision` 必须有自己的分支 —— 原来只有 task / confirm 两支');
+  assert.match(item, /<DecisionRecord v-else-if="isDecisionRow" :message="props\.message" \/>/);
+  assert.match(item, /isTaskRow\.value \|\| isConfirmRow\.value \|\| isDecisionRow\.value\) return false/,
+    '它是无气泡的时间线条目 —— 套气泡等于两层壳');
+  assert.match(record, /picked\.value\?\.\[q\] \|\| \[\]/, '画的是**答案**,不只是把问题重复一遍');
+  assert.match(record, /cancelled/, '第三态:人看见了、选择不回答');
+});
+
+test('留档只留档,不第二次提供操作入口', () => {
+  assert.doesNotMatch(record, /answerDecision|@click/, '两处都能点是有前车之鉴的,操作只在底面那张卡上');
+});
+
+test('多选:卡上说得出来,说明里也教了模型什么时候开', () => {
+  assert.match(sheet, /const isMulti = \(q: number\): boolean => decision\.value\?\.questions\[q\]\?\.multiSelect === true/);
+  assert.match(sheet, /v-if="isMulti\(q\)"/, '多选的那一问要显式标出来,不能和单选长得一模一样');
+  assert.match(sheet, /isMulti\(q\) && isPicked\(q, option\.label\)/, '选中记号要让人看出「还能再点一个」');
+  assert.match(tool, /Set multiSelect to true when several answers can hold at once/,
+    '说明里只出现一个写死的 `"multiSelect": false`,模型读到的是「这个值是 false」而不是「你可以开」');
+});
+
+/**
+ * **这一支没有 Tailwind。** `electron.vite.config.ts` 里没有 `@tailwindcss/vite`(cowork 那边才有),
+ * 所以从 cowork 逐字移植过来的 `flex gap-3 rounded-xl bg-[#f8fafc]` 在 bitterless 里一条都不生效 ——
+ * 卡片渲染成裸 div + 裸 button(Chromium 给裸 button 的默认样式正是灰底 + 1px 边框)。
+ * 同一类坑在 `IconBtn` 上踩过一次(CLAUDE.md 的 Borderless UI):
+ * 「那个组件是无边框的」不可继承,必须在**真正加载这张皮的界面**里验。
+ */
+test('这两个组件的样式落在真正会被加载的 .less 里,而不是无效的 utility class', () => {
+  for (const [name, source] of [['DecisionSheet', sheet], ['DecisionRecord', record]]) {
+    assert.match(source, new RegExp(`import '\\./${name}\\.less'`), `${name} 要引自己的 .less`);
+    assert.doesNotMatch(source, /class="[^"]*\b(flex|gap-\d|rounded-(?:lg|xl|md)|text-\[\d+px\]|bg-\[#)/,
+      `${name} 里不许留 Tailwind utility —— 这一支不编译它们,写了也是死字`);
+  }
+});

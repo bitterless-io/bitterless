@@ -14,7 +14,7 @@ import type { OnlyPreviewBounds } from '@shared/onlypreview/onlyPreview.types';
 export const ONLY_PREVIEW_MIN_SIDEBAR_WIDTH = 180;
 export const ONLY_PREVIEW_RESIZE_HANDLE_WIDTH = 5;
 export const ONLY_PREVIEW_MENU_BAR_HEIGHT = 32;
-export const ONLY_PREVIEW_PREVIEW_TOOLBAR_HEIGHT = 43;
+export const ONLY_PREVIEW_PREVIEW_TOOLBAR_HEIGHT = 32;
 export const ONLY_PREVIEW_STATUS_HEIGHT = 25;
 
 export interface OnlyPreviewSurfaceSize {

@@ -79,6 +79,9 @@ const shortcutStore = reactive(new ShortcutStore([
   { kind: 'command', name: '/copy_session_path', get hint() { return i18nHelper.maestroControl.chat.slashCopySessionPath } },
   // 与 `/copy_session_path` 同源:同一个会话目录,一个给路径、一个给压缩包。
   { kind: 'command', name: '/export', get hint() { return i18nHelper.maestroControl.chat.slashExport } },
+  { kind: 'command', name: '/page_snapshot', get hint() { return i18nHelper.maestroControl.chat.slashPageSnapshot } },
+  // 与上一条同源:那条出给人贴(剪贴板),这条出给人查(zip + 根因)。
+  { kind: 'command', name: '/page_snapshot_compare', get hint() { return i18nHelper.maestroControl.chat.slashPageSnapshotCompare } },
   { kind: 'command', name: '/test_show_error', get hint() { return i18nHelper.maestroControl.chat.slashTestShowError } },
   { kind: 'command', name: '/view_context_graph', get hint() { return i18nHelper.maestroControl.chat.slashViewContextGraph } },
   { kind: 'command', name: '/workflow', get hint() { return i18nHelper.workflow.commandHint } }
@@ -572,6 +575,40 @@ async function commitShortcut(): Promise<void> {
       if (composerDisposed || props.session.id !== sessionId) return
       messageStore.pushLocalNote(sessionId, reply.archive)
       Message.success(i18nHelper.maestroControl.chat.slashExported.replace('{path}', reply.archive))
+    },
+    // 只出 toast,不写时间线 —— 与 `/copy_session_path` 的分别在于"要留下的东西是什么":
+    // 那条留的是一句**路径**(要回翻、要选中、要拿去 audit);这条的产物在剪贴板里,
+    // 把整棵树贴进会话既占屏又会被当成对话内容。toast 里带 URL,是为了让人一眼确认读的是哪一页。
+    copyPageSnapshot: async () => {
+      const reply = await coach.copyPageSnapshot()
+      if (!reply.ok) throw new Error(reply.error)
+      if (composerDisposed || props.session.id !== sessionId) return
+      Message.success(
+        i18nHelper.maestroControl.chat.slashPageSnapshotCopied
+          .replace('{elements}', String(reply.nodeCount))
+          .replace('{url}', reply.url)
+      )
+    },
+    // 与 `/page_snapshot` 的分别在于"要留下的东西是什么":那条的产物在剪贴板里,一句 toast 就够;
+    // 这条的产物是**一个结论** —— 根因和压缩包路径都要回翻、要引用,所以除了 toast 还写进时间线。
+    // `promptExcluded: true` —— 它是给人看的留痕,不该占模型的上下文。
+    exportPageSnapshotCompare: async () => {
+      const reply = await coach.exportPageSnapshotCompare()
+      if (!reply.ok) {
+        if (reply.cancelled) return
+        throw new Error(reply.error || 'Export failed.')
+      }
+      if (composerDisposed || props.session.id !== sessionId) return
+      const leaves = reply.gaps.reduce((sum, gap) => sum + gap.leaves, 0)
+      const summary = leaves
+        ? i18nHelper.maestroControl.chat.slashPageSnapshotCompareGaps.replace('{leaves}', String(leaves))
+        : i18nHelper.maestroControl.chat.slashPageSnapshotCompareClean.replace('{elements}', String(reply.nodeCount))
+      const detail = reply.gaps
+        .map((gap) => `- ${gap.culprit} — ${gap.reason}（吞掉 ${gap.leaves} 处可见文字）`)
+        .join('\n')
+      messageStore.pushLocalNote(sessionId, [summary, reply.archive, detail].filter(Boolean).join('\n'))
+      if (leaves) Message.warning(summary)
+      else Message.success(summary)
     },
     copyContext: async () => {
       const context = messageStore.buildAgentContext(props.session, undefined, selectedFiles.value.map((file) => file.path))

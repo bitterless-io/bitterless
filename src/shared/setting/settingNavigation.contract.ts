@@ -7,6 +7,7 @@ export const SETTING_TABS = [
   'terminal',
   'llm',
   'systemPrompt',
+  'decision',
   'notification',
   'log',
   'about'

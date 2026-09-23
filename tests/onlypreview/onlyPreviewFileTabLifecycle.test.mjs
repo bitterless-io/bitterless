@@ -9,7 +9,7 @@ const { OnlyPreviewHostRegistry, OnlyPreviewWorkspaceRegistry } = runtime;
 const require = createRequire(import.meta.url);
 const loadMain = (_path, { stubs }) => {
   const module = { exports: {} };
-  const compiled = ts.transpileModule(source('src/main/windows/onlyPreviewFileTab.service.ts'), {
+  const compiled = ts.transpileModule(source('src/main/windows/onlyPreviewSingleFileSurface.service.ts'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
   }).outputText;
   new Function('require', 'module', 'exports', '__dirname', compiled)(
@@ -92,12 +92,14 @@ const surfaceHarness = (t) => {
     updateBounds(hostToken, bounds) { this.bounds = { hostToken, ...bounds } }
     focusActiveContent(hostToken) { this.focusedHost = hostToken }
     destroy() { this.destroyed++ }
+    waitForChromeDisposal() { return Promise.resolve() }
   }
   const recordRecent = async (...args) => { state.recentWrites.push(args) }
-  const { OnlyPreviewFileTabSurface } = loadMain(
-    '@main/miniapps/onlypreview/host/onlyPreviewFileTab.service',
+  const { OnlyPreviewSingleFileSurface } = loadMain(
+    '@main/miniapps/onlypreview/host/onlyPreviewSingleFileSurface.service',
     { stubs: freshStubs({
       electron: { View, WebContentsView },
+      './indiPreviewChromePartition.service': { acquireIndiPreviewChromePartition: () => ({ partition: `persist:indipreview-chrome-${++fixtureId}`, release() {} }) },
       '@main/menu/applicationFindMenu.service': {
         registerApplicationFindDispatch: () => () => {},
         isApplicationFindFocusWithin: () => true
@@ -111,6 +113,7 @@ const surfaceHarness = (t) => {
       },
       '@main/miniapps/onlypreview/onlyPreviewHost.registry': { onlyPreviewHostRegistry: hosts },
       '@main/miniapps/onlypreview/onlyPreviewWorkspace.registry': { onlyPreviewWorkspaceRegistry: workspaces },
+      '@main/miniapps/onlypreview/views/onlyPreviewVueView.service': { createOnlyPreviewVueView: (params) => new WebContentsView({ webPreferences: { partition: params.partition } }) },
       '@main/miniapps/onlypreview/views/onlyPreviewPreviewRegion.service': {
         OnlyPreviewPreviewRegionService: PreviewRegion
       },
@@ -136,20 +139,22 @@ const surfaceHarness = (t) => {
       },
       close() { this.open = false; surface.dispose() }
     }
-    const surface = new OnlyPreviewFileTabSurface(owner)
+    const surface = new OnlyPreviewSingleFileSurface(owner)
     t.after(() => surface.dispose())
     return { owner, surface }
   }
   return { state, hosts, workspaces, window, makeSurface }
 }
 
-test('file tabs keep independent hosts, previews and file authority without recording OnlyPreview recents', async (t) => {
+test('single-file surfaces keep independent hosts, previews and file authority without recording OnlyPreview recents', async (t) => {
   const h = surfaceHarness(t)
   const first = h.makeSurface('/outside/first.md')
   const second = h.makeSurface('/elsewhere/second.pdf')
   await Promise.all([first.surface.open(), second.surface.open()])
   const [a, b] = h.state.registrations
   assert.notEqual(a.hostToken, b.hostToken)
+  assert.notEqual(h.state.regions[0].options.chromePartition, h.state.regions[1].options.chromePartition)
+  assert.ok(h.state.regions.every(region => region.options.chromePartition.startsWith('persist:indipreview-chrome-')))
   assert.notEqual(a.fileRef.workspaceId, b.fileRef.workspaceId)
   assert.deepEqual(h.window.contentView.children, [first.surface.container, second.surface.container])
   assert.deepEqual(h.state.regions.map((region) => region.presentations), [[a], [b]])
@@ -174,11 +179,11 @@ test('file tabs keep independent hosts, previews and file authority without reco
   assert.equal(second.surface.container.visible, true)
   assert.equal(h.state.regions[1].focusedHost, b.hostToken)
   assert.deepEqual(h.state.regions[1].bounds, {
-    hostToken: b.hostToken, x: 0, y: 40, width: 800, height: 560
+    hostToken: b.hostToken, x: 0, y: 32, width: 800, height: 568
   })
 })
 
-test('closing one file tab revokes only its host and file authority; repeated disposal is harmless', async (t) => {
+test('closing one single-file surface revokes only its host and file authority; repeated disposal is harmless', async (t) => {
   const h = surfaceHarness(t)
   const first = h.makeSurface('/outside/first.md')
   const second = h.makeSurface('/outside/second.md')
@@ -233,7 +238,7 @@ test('closing while the toolbar loads prevents late preview presentation and rev
 })
 
 for (const phase of ['inspect', 'load', 'present']) {
-  test(`${phase} failure disposes the file tab and releases all authority`, async (t) => {
+  test(`${phase} failure disposes the single-file surface and releases all authority`, async (t) => {
     const h = surfaceHarness(t)
     h.state[phase] = async () => { throw new Error(`${phase} failed`) }
     const { surface } = h.makeSurface('/outside/failure.md')
@@ -246,4 +251,3 @@ for (const phase of ['inspect', 'load', 'present']) {
     assert.deepEqual(h.state.recentWrites, [])
   })
 }
-

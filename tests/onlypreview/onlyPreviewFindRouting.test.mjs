@@ -40,12 +40,12 @@ const compile = (source) => {
 };
 const menuCode = compile(menuSource);
 const helperCode = compile(`${predicates}\nclass OnlyPreviewWindowHelper {${methods}}`);
-const fileTabPath = existsSync(resolve(root, 'src/main/windows/onlyPreviewFileTab.service.ts'))
-  ? 'src/main/windows/onlyPreviewFileTab.service.ts'
-  : 'src/main/miniapps/onlypreview/host/onlyPreviewFileTab.service.ts';
+const fileTabPath = existsSync(resolve(root, 'src/main/windows/onlyPreviewSingleFileSurface.service.ts'))
+  ? 'src/main/windows/onlyPreviewSingleFileSurface.service.ts'
+  : 'src/main/miniapps/onlypreview/host/onlyPreviewSingleFileSurface.service.ts';
 const fileTabAst = ts.createSourceFile(fileTabPath, read(fileTabPath), ts.ScriptTarget.Latest, true);
 const fileTabClass = fileTabAst.statements.find((node) =>
-  ts.isClassDeclaration(node) && node.name?.text === 'OnlyPreviewFileTabSurface');
+  ts.isClassDeclaration(node) && node.name?.text === 'OnlyPreviewSingleFileSurface');
 assert.ok(fileTabClass);
 const fileTabCode = compile(fileTabClass.getText(fileTabAst).replace(/^export /u, ''));
 
@@ -282,9 +282,11 @@ const fileTabHarness = (platform = 'darwin') => {
     updateBounds() {}
     focusActiveContent() {}
     destroy() { lifecycle.destroys++; }
+    waitForChromeDisposal() { return Promise.resolve(); }
   }
-  const FileTabSurface = runInNewContext(`${fileTabCode}\nOnlyPreviewFileTabSurface`, {
+  const FileTabSurface = runInNewContext(`${fileTabCode}\nOnlyPreviewSingleFileSurface`, {
     View, OnlyPreviewPreviewRegionService: Region, process: { platform },
+    acquireIndiPreviewChromePartition: () => ({ partition: 'independent', release() {} }),
     onlyPreviewHostRegistry: {
       issue: () => fileHost,
       revoke: (token) => { assert.equal(token, fileHost.hostToken); lifecycle.revokes++; }
@@ -315,7 +317,7 @@ const fileTabHarness = (platform = 'darwin') => {
 test('actual file-tab constructor routes only its active focused surface, including PDF and chrome fallback', () => {
   const h = fileTabHarness();
   h.focus(h.content);
-  assert.equal(h.menu.dispatchApplicationFindCommand('find-in-file'), false, 'new file tabs start inactive');
+  assert.equal(h.menu.dispatchApplicationFindCommand('find-in-file'), false, 'new single-file surfaces start inactive');
   h.surface.setActive(true);
   for (const focused of [h.toolbar, h.content, h.contents(h.content), h.window.webContents, null]) {
     h.focus(focused);

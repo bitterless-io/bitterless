@@ -29,6 +29,7 @@ import { layoutStore } from '../../store/layout.store'
 import { captureStore } from '../../store/capture.store'
 import { workbenchStore } from '../../store/workbench.store'
 import './MenuBar.less'
+import UserAvatar from './UserAvatar.vue'
 
 // Shared style for the address-bar icon buttons: borderless,
 // transparent, highlight on hover, soft scale-down on press; muted + no hover when disabled.
@@ -474,16 +475,7 @@ function fixedTabClass(tab: TabInfo): string {
           <IconSparkles v-else :size="18" stroke="1.8" />
         </button>
 
-        <button
-          name="menubar__workbench__open"
-          :class="navBtn"
-          :title="i18nHelper.menuBar.maestro.showWorkbench"
-          :aria-label="i18nHelper.menuBar.maestro.showWorkbench"
-          type="button"
-          @click="workbenchStore.openTab()"
-        >
-          <IconSettings :size="18" stroke="1.8" />
-        </button>
+        <UserAvatar />
 
         <!-- Update button — at the address bar's trailing edge. The compact label names the state
              it is in (Downloading / Update); the title preserves the target-version detail. -->

@@ -35,6 +35,7 @@ export const clearOnlyPreviewWorkspace = async (
       await onlyPreviewRecentDirectoryService.clearWorkspace(hostToken);
       await Promise.all(revocations);
       if (revocationErrors.length) throw revocationErrors[0];
+      await onlyPreviewRecentDirectoryService.restoreWorkspace(hostToken);
     } finally {
       unsubscribe();
       if (onlyPreviewHostRegistry.isLive(hostToken)) {

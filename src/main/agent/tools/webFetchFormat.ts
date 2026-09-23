@@ -24,7 +24,7 @@ export interface FetchRenderInput {
   snapshotYaml?: string | null
   snapshotNodes?: number
   htmlTooLarge?: boolean
-  /** 站点直接给了 markdown/纯文本,没经过 HTML 抽取(web_fetch 才有) */
+  /** 站点直接给了 JSON/markdown/纯文本,没经过 HTML 抽取(web_fetch 才有) */
   servedAsText?: boolean
   via: 'web_fetch' | 'deep_fetch'
 }
@@ -43,7 +43,7 @@ export const formatFetchResult = (input: FetchRenderInput): string => {
   if (a.byline) out.push(`- author: ${a.byline}`)
   if (a.publishedTime) out.push(`- published: ${a.publishedTime}`)
   if (input.via === 'deep_fetch') out.push(`- rendered with JavaScript in a temporary browser surface using the browser session; this read does not leave a persistent action target`)
-  if (input.servedAsText) out.push(`- the site served plain text/markdown directly (no HTML extraction needed)`)
+  if (input.servedAsText) out.push(`- the site served text directly (no HTML extraction needed)`)
   out.push(
     `- extracted: ${a.text.length.toLocaleString()} of ${a.fullLength.toLocaleString()} chars${a.truncated ? ' (TRUNCATED)' : ''}`
   )

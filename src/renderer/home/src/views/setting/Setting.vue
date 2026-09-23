@@ -47,6 +47,14 @@
           {{ i18nHelper.setting.systemPrompt.tabTitle }}
         </div>
         <div
+          name="setting__nav-decision"
+          class="setting__nav-item"
+          :class="{ 'setting__nav-item--active': settingNavStore.activeTab === 'decision' }"
+          @click="onNavClick('decision')"
+        >
+          {{ i18nHelper.setting.decision.tabTitle }}
+        </div>
+        <div
           class="setting__nav-item"
           :class="{ 'setting__nav-item--active': settingNavStore.activeTab === 'notification' }"
           @click="onNavClick('notification')"
@@ -78,6 +86,7 @@
         <TerminalSetting v-if="settingNavStore.activeTab === 'terminal'" />
         <LLMSetting v-if="settingNavStore.activeTab === 'llm'" />
         <SystemPromptSetting v-if="settingNavStore.activeTab === 'systemPrompt'" />
+        <DecisionSetting v-if="settingNavStore.activeTab === 'decision'" />
         <NotificationSetting v-if="settingNavStore.activeTab === 'notification'" />
         <LogSetting v-if="settingNavStore.activeTab === 'log'" />
         <About v-if="settingNavStore.activeTab === 'about'" />
@@ -101,6 +110,9 @@ const TerminalSetting = defineAsyncComponent(() => import('./components/Terminal
 const LLMSetting = defineAsyncComponent(() => import('./components/LLMSetting/LLMSetting.vue'));
 const SystemPromptSetting = defineAsyncComponent(
   () => import('./components/SystemPromptSetting/SystemPromptSetting.vue')
+);
+const DecisionSetting = defineAsyncComponent(
+  () => import('./components/DecisionSetting/DecisionSetting.vue')
 );
 const NotificationSetting = defineAsyncComponent(
   () => import('./components/NotificationSetting/NotificationSetting.vue')

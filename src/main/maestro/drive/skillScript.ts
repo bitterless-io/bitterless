@@ -3,6 +3,8 @@ import { z } from 'zod'
 import type { ApiCall, ApiCallResult, AuthHint, ReplayEngine } from './replayEngine'
 import type { SkillRecipe } from '@maestro-main/skills/skillRecipe.types'
 import type { SkillApiSafetyDecision } from './apiSafety'
+import { isJevEnabled, jevJudge } from '@main/decision/jevDecision.service'
+import type { JevRequest, JevResult } from '@shared/decision/jev.api'
 
 // Build a zod schema from a skill's declarative input constraints and validate `vars` BEFORE
 // running. Unknown vars pass through (the script may use helpers). Returns coerced data or errors.
@@ -194,7 +196,26 @@ export async function runSkillScript(opts: {
     }
   })
 
-  const ctx = vm.createContext({ page, api, vars: vars ?? {}, console })
+  // 生成的技能够不到 xpc —— 这个沙箱里没有 require / import / process,拿不到 emitter。
+  // 所以 Jev 对它们的唯一入口是这里多出来的一个绑定,背后是**同一个**主进程服务
+  // (开关、凭证、失败方向都只有一份实现)。
+  //
+  // 它只回结构化答案,不回凭证:凭证留在主进程,而且技能入库前会过
+  // `sanitizeSkillScriptForStorage` —— 脚本里出现疑似密钥的字面量会让整段脚本被丢弃。
+  const jev = lock({
+    async judge(request: JevRequest): Promise<JevResult> {
+      ck()
+      const out = await jevJudge(request)
+      ck()
+      return out
+    },
+    async enabled(): Promise<boolean> {
+      ck()
+      return await isJevEnabled()
+    }
+  })
+
+  const ctx = vm.createContext({ page, api, jev, vars: vars ?? {}, console })
   try {
     // `timeout` here only bounds SYNCHRONOUS parse/exec — async waits are bounded by the
     // driver methods (waitFor) + the caller's AbortSignal watchdog.

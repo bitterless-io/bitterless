@@ -83,8 +83,20 @@ function normalizeSettings(value: Partial<CoachSettings>): CoachSettings {
     // 一起落、一起清,否则「还原默认主页」之后再设一个新主页,会捡到上一个主页的会话和别名 ——
     // 而那条会话此刻可能还活着,接回去就是两个 tab 抢一条 Zellij 会话。
     ...(homeCompositeId && homeInstanceId ? { homeInstanceId } : {}),
-    ...(homeCompositeId && homeAlias ? { homeAlias } : {})
+    ...(homeCompositeId && homeAlias ? { homeAlias } : {}),
+    // 只认一个**绝对路径**,其余一律当作没设过 → 系统下载目录。这里**不碰磁盘**:
+    // 目录在不在是下载那一刻才知道的事(盘可以拔),判据与回落在 `downloadManager.resolveDownloadDir()`。
+    ...(normalizeDownloadDir(value.downloadDir) ? { downloadDir: normalizeDownloadDir(value.downloadDir) } : {})
   }
+}
+
+/** 绝对路径才算数;其余(空串、相对路径、非字符串)一律 `undefined` = 用系统下载目录。 */
+export function normalizeDownloadDir(dir?: unknown): string | undefined {
+  if (typeof dir !== 'string') return undefined
+  const trimmed = dir.trim()
+  if (!trimmed) return undefined
+  const absolute = trimmed.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(trimmed)
+  return absolute ? trimmed : undefined
 }
 
 function normalizeStartUrl(url?: string): string {

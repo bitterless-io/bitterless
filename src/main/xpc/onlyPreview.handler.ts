@@ -1,3 +1,5 @@
+import { maestroWindowHelper } from '@maestro-main/windows/main/maestroWindow.controller';
+import { ensureDefaultWorkspace } from '@main/maestro/files/defaultWorkspace';
 import { app, clipboard, shell } from 'electron';
 import { resolve } from 'node:path';
 import { createXpcMainEmitter, XpcMainHandler, xpcMain } from 'electron-xpc/main';
@@ -112,6 +114,7 @@ const recentDirectoryStorage =
 onlyPreviewRecentDirectoryService.configureStorage(recentDirectoryStorage);
 onlyPreviewRecentsService.configureStorage(recentDirectoryStorage);
 onlyPreviewRecentDirectoryService.configureTargetRuntime({
+  defaultWorkspace: ensureDefaultWorkspace,
   inspectTarget: async (absoluteTarget) =>
     await fileSearchWindowService.inspectTarget(absoluteTarget),
   bindWorkspace: async (hostToken, workspace) => {
@@ -184,6 +187,10 @@ class OnlyPreviewHandler
 
   async removeBookmark(params: ApiParams<'removeBookmark'>): ReturnType<OnlyPreviewApi['removeBookmark']> {
     return await runOperation('removeBookmark', () => onlyPreviewBookmarksService.remove(params));
+  }
+
+  async reorderBookmarks(params: ApiParams<'reorderBookmarks'>): ReturnType<OnlyPreviewApi['reorderBookmarks']> {
+    return await runOperation('reorderBookmarks', () => onlyPreviewBookmarksService.reorder(params));
   }
 
   async showBookmarkContextMenu(
@@ -285,7 +292,13 @@ class OnlyPreviewHandler
   ): Promise<OnlyPreviewResult<OnlyPreviewWorkspace | null>> {
     return await runOperation(
       'chooseFolder',
-      async () => await chooseOnlyPreviewFolder(params?.hostToken)
+      async () => {
+        const controller = maestroWindowHelper;
+        const sessionId = controller?.currentWorkspaceSessionId();
+        return await chooseOnlyPreviewFolder(params?.hostToken, change =>
+          controller && sessionId ? controller.changePreviewWorkspace(sessionId, change) : change()
+        );
+      }
     );
   }
 
@@ -300,9 +313,9 @@ class OnlyPreviewHandler
         current.fileRef &&
         onlyPreviewWorkspaceRegistry.isExternalPreviewFileRef(host.hostToken, current.fileRef)
       );
-      const workspace = hasLiveExternalPresentation
-        ? onlyPreviewWorkspaceRegistry.restore(host.hostToken)
-        : await onlyPreviewRecentDirectoryService.restoreWorkspace(host.hostToken);
+      const workspace = await onlyPreviewRecentDirectoryService.restoreWorkspace(host.hostToken, {
+        presentRestoredSelection: !hasLiveExternalPresentation
+      });
       if (!onlyPreviewSelectionCoordinator.isCurrent(host.hostToken, generation)) return workspace;
       // **恢复之后重新取一次快照。**
       //

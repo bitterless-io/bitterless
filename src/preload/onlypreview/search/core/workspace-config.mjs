@@ -10,9 +10,10 @@ import {
   WORKSPACE_CONFIG_DIRECTORIES,
   WORKSPACE_CONFIG_FILE_NAME,
   WORKSPACE_CONFIG_RELATIVE_PATH
-} from './workspace-config-location.mjs';
+} from '../../../../shared/onlypreview/onlyPreviewWorkspaceConfigLocation.mjs';
 
-// 位置常量的唯一来源是 `workspace-config-location.mjs`(main 也 import 它);这里原样再导出,
+// 位置常量的唯一来源是 `shared/onlypreview/onlyPreviewWorkspaceConfigLocation.mjs`
+// (main 也 import 它,走 `@shared` 别名);这里原样再导出,
 // 免得每个调用方都要知道它被拆到了哪个文件。
 export { WORKSPACE_CONFIG_DIRECTORIES, WORKSPACE_CONFIG_RELATIVE_PATH };
 

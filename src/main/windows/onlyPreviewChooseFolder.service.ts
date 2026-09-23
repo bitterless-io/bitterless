@@ -12,7 +12,8 @@ import {
 import { onlyPreviewWindowHelper } from './onlyPreviewWindow.helper';
 
 export const chooseOnlyPreviewFolder = async (
-  hostToken: string
+  hostToken: string,
+  changeWorkspace: (change: () => Promise<OnlyPreviewWorkspace | null>) => Promise<OnlyPreviewWorkspace | null> = change => change()
 ): Promise<OnlyPreviewWorkspace | null> => {
   const host = onlyPreviewHostRegistry.require(hostToken, ['content']);
   const window = onlyPreviewWindowHelper.getStandaloneWindow(host.hostToken);
@@ -22,7 +23,7 @@ export const chooseOnlyPreviewFolder = async (
   });
   const target = result.canceled ? null : (result.filePaths[0] ?? null);
   if (!target) return null;
-  return await onlyPreviewTargetMutations.run(async () => {
+  return await changeWorkspace(() => onlyPreviewTargetMutations.run(async () => {
     // The dialog does not hold the FIFO. Its owner may have relocated while the dialog was open.
     onlyPreviewWindowHelper.getMountKind(host.hostToken);
     const generation = onlyPreviewRecentDirectoryService.beginExplicitTarget(host.hostToken);
@@ -35,11 +36,11 @@ export const chooseOnlyPreviewFolder = async (
       if (workspace) {
         onlyPreviewSelectionCoordinator.advance(host.hostToken);
         onlyPreviewPreviewRegionService.clearWorkspace(host.hostToken, workspace.workspaceId);
-        xpcMain.broadcast(ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT, { hostId: host.hostId });
       }
       return workspace;
     } finally {
       onlyPreviewRecentDirectoryService.finishExplicitTarget(generation);
+      xpcMain.broadcast(ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT, { hostId: host.hostId });
     }
-  });
+  }));
 };

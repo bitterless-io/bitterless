@@ -1,5 +1,3 @@
-import type { MaestroCompositeTabSpec } from './compositeTab.api'
-
 /**
  * The host's preview application, as Maestro is allowed to know it.
  *
@@ -10,37 +8,21 @@ import type { MaestroCompositeTabSpec } from './compositeTab.api'
  * When nothing is registered the caller falls back to the OS file manager, which is what these
  * tools did before a preview application existed.
  */
-/**
- * 地址栏里那一串,按宿主的预览应用看是什么、该怎么落。
- *
- * 这三个形状是**maestro 需要知道的全部** —— 它不需要知道有哪些格式、哪个 adapter、谁来渲染:
- *
- * - `chrome`  —— 普通 tab 的 WebContents 自己就能渲染好(pdf / 图片 / 音视频 / html):加载这个 URL。
- * - `preview` —— 需要预览应用才看得了(office / markdown / 代码 / 目录):调 `open(path)`。
- * - `missing` —— 这条路径不存在:同样加载那个 URL,由 Chromium 出它自己的「文件不存在」页。
- *
- * `chrome` 与 `missing` 刻意是两个名字而不是一个「加载这个 URL」—— 它们对 maestro 是同一个动作,
- * 但对宿主是两个不同的判断,合并会让宿主没法再区分「渲染得了」和「根本没有这个文件」。
- */
+/** Existing local targets use the preview router; missing paths retain Chromium's error page. */
 export type MaestroLocalPreviewTarget =
-  | { readonly kind: 'chrome'; readonly fileUrl: string }
   | { readonly kind: 'preview'; readonly path: string }
   | { readonly kind: 'missing'; readonly fileUrl: string }
 
 export interface MaestroPreviewOpener {
   /** Settled Project root only; an external single-file preview does not supply a workspace. */
   currentProjectDirectory?(): string | undefined
-  /** A per-file tab with independent preview authority and no OnlyPreview history. */
-  createFileTabSpec?(absolutePath: string, options?: { line?: number }): MaestroCompositeTabSpec
-  /** Address-bar targets use file tabs; directories keep the Project route. */
-  openInTab?(absolutePath: string, options?: { tabId?: string; line?: number }): Promise<void>
   /**
    * Open one absolute path — a directory or a file — in the host's preview application.
    *
    * `line` 是**尽力而为的建议**:只有能按行渲染的预览器会用它,其余(图片 / PDF / 媒体 / 目录)
    * 照常打开、不滚动。行号不合法或超出文件行数同样只是忽略 —— 它永远不是打不开的理由。
    */
-  open(absolutePath: string, options?: { line?: number }): Promise<void>
+  open(absolutePath: string, options?: { line?: number; fragment?: string }): Promise<void>
   /**
    * 这个会话不再用这个工作区了 —— 解除预览中匹配的 Project 绑定,保留 tab/窗口供再次选择。
    *

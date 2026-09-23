@@ -94,7 +94,8 @@ export class OnlyPreviewRecentDirectoryService {
     inspectTarget: ((absoluteTarget: string) => Promise<OnlyPreviewValidatedTarget>) | null = null,
     bindWorkspace:
       | ((hostToken: string, workspace: OnlyPreviewWorkspace) => Promise<void>)
-      | null = null
+      | null = null,
+    private defaultWorkspace: (() => string) | null = null
   ) {
     this.storage = storage;
     this.inspectTarget = inspectTarget;
@@ -113,6 +114,7 @@ export class OnlyPreviewRecentDirectoryService {
   }
 
   configureTargetRuntime(params: {
+    defaultWorkspace?: () => string;
     inspectTarget: (absoluteTarget: string) => Promise<OnlyPreviewValidatedTarget>;
     bindWorkspace: (hostToken: string, workspace: OnlyPreviewWorkspace) => Promise<void>;
     presentSelection?: (hostToken: string, workspace: OnlyPreviewWorkspace) => Promise<void>;
@@ -123,6 +125,7 @@ export class OnlyPreviewRecentDirectoryService {
     this.inspectTarget = params.inspectTarget;
     this.bindWorkspace = params.bindWorkspace;
     this.presentSelection = params.presentSelection ?? null;
+    this.defaultWorkspace = params.defaultWorkspace ?? null;
   }
 
   markStorageReady(): void {
@@ -144,6 +147,35 @@ export class OnlyPreviewRecentDirectoryService {
   async flushPendingWrites(): Promise<void> {
     // Relocation only waits for work already queued; storage startup is not a new dependency.
     await this.storageWriteChain;
+  }
+
+  /** Resolve scope without creating a host, binding an index, or changing persisted history. */
+  async resolveWorkspaceRoot(): Promise<string> {
+    if (!this.inspectTarget) throw new Error('OnlyPreview target runtime is unavailable.');
+    const current = this.workspaces.currentProjectRoot();
+    if (current) {
+      try {
+        const target = await this.inspectTarget(current);
+        if (!target.selectedRelativePath) return target.rootRealPath;
+      } catch { /* A removed active directory falls back to the saved/default selection. */ }
+    }
+    await this.storageLatch;
+    const stored = this.projectRestoreSuppressed ? null : await this.safeGetStored();
+    const selected = this.pendingDirectory?.directoryPath ??
+      (stored?.valid ? parseOnlyPreviewRecentDirectory(stored.value) : null);
+    const candidates = [this.projectRestoreSuppressed ? null : selected];
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      try {
+        const target = await this.inspectTarget(candidate);
+        if (!target.selectedRelativePath) return target.rootRealPath;
+      } catch { /* Deleted remembered directories fall back to the default workspace. */ }
+    }
+    const fallback = this.defaultWorkspace?.();
+    if (!fallback) throw new Error('The default workspace is unavailable.');
+    const target = await this.inspectTarget(fallback);
+    if (target.selectedRelativePath) throw new Error('The default workspace must be a directory.');
+    return target.rootRealPath;
   }
 
   beginExplicitTarget(hostToken?: string): number {
@@ -237,7 +269,7 @@ export class OnlyPreviewRecentDirectoryService {
     options: { presentRestoredSelection?: boolean } = {}
   ): Promise<OnlyPreviewWorkspace | null> {
     const host = this.hosts.require(hostToken, ['content']);
-    if (this.projectRestoreSuppressed) return null;
+    if (this.projectRestoreSuppressed && !this.defaultWorkspace) return null;
     const current = this.workspaces.restore(host.hostToken);
     if (current) return current;
     if (this.activeExplicitGeneration !== null) return null;
@@ -319,41 +351,43 @@ export class OnlyPreviewRecentDirectoryService {
     hostGeneration: number,
     presentRestoredSelection: boolean
   ): Promise<OnlyPreviewWorkspace | null> {
-    if (!(await this.storageLatch)) return null;
+    if (!(await this.storageLatch) && !this.defaultWorkspace) return null;
     if (!this.canRestore(hostToken, generation, hostGeneration)) return null;
     const current = this.workspaces.restore(hostToken);
     if (current) return current;
 
-    const stored = await this.safeGetStored();
-    if (!stored) return null;
+    const stored = this.projectRestoreSuppressed ? null : await this.safeGetStored();
     if (!this.canRestore(hostToken, generation, hostGeneration)) return null;
-    const candidate = stored.valid ? parseOnlyPreviewRecentDirectory(stored.value) : null;
-    if (!stored.exists) return null;
-    if (!candidate) {
-      void this.clearObservedValue(stored);
-      return null;
-    }
+    const selected = stored?.valid ? parseOnlyPreviewRecentDirectory(stored.value) : null;
+    if (stored?.exists && !selected) void this.clearObservedValue(stored);
+    const initialCandidate = selected ?? this.defaultWorkspace?.();
+    if (!initialCandidate) return null;
 
     return await this.runHostMutation(hostToken, async () => {
       if (!this.canRestore(hostToken, generation, hostGeneration)) return null;
       const existing = this.workspaces.restore(hostToken);
       if (existing) return existing;
 
+      let candidate = initialCandidate;
       let workspace: OnlyPreviewWorkspace;
       try {
-        workspace = await this.createWorkspaceForTarget(hostToken, candidate);
-      } catch {
-        if (this.canRestore(hostToken, generation, hostGeneration)) {
-          void this.clearObservedValue(stored);
+        workspace = await this.createWorkspaceForTarget(hostToken, candidate, !selected);
+      } catch (error) {
+        if (!this.canRestore(hostToken, generation, hostGeneration)) return null;
+        if (stored) void this.clearObservedValue(stored);
+        if (!selected || !this.defaultWorkspace) {
+          if (this.defaultWorkspace) throw error;
+          return null;
         }
-        return null;
+        candidate = this.defaultWorkspace();
+        workspace = await this.createWorkspaceForTarget(hostToken, candidate, true);
       }
 
       const isCanonicalDirectory =
-        !workspace.selectedRelativePath && workspace.displayPath === candidate;
+        !workspace.selectedRelativePath && (workspace.isDefault || workspace.displayPath === candidate);
       if (!isCanonicalDirectory) {
         this.revokeWorkspaceIfCurrent(hostToken, workspace.workspaceId);
-        void this.clearObservedValue(stored);
+        if (stored) void this.clearObservedValue(stored);
         return null;
       }
       if (!this.canRestore(hostToken, generation, hostGeneration)) {
@@ -403,7 +437,7 @@ export class OnlyPreviewRecentDirectoryService {
 
   private canRestore(hostToken: string, generation: number, hostGeneration: number): boolean {
     return (
-      !this.projectRestoreSuppressed &&
+      (!this.projectRestoreSuppressed || Boolean(this.defaultWorkspace)) &&
       this.activeExplicitGeneration === null &&
       this.mutationGeneration === generation &&
       (this.hostGeneration.get(hostToken) ?? 0) === hostGeneration &&
@@ -542,17 +576,27 @@ export class OnlyPreviewRecentDirectoryService {
 
   private async createWorkspaceForTarget(
     hostToken: string,
-    absoluteTarget: string
+    absoluteTarget: string,
+    isDefault = false
   ): Promise<OnlyPreviewWorkspace> {
     if (!this.inspectTarget || !this.bindWorkspace) {
       throw new Error('OnlyPreview target runtime is unavailable.');
     }
+    const previous = this.workspaces.restore(hostToken);
     const target = await this.inspectTarget(absoluteTarget);
-    const workspace = this.workspaces.registerValidatedTarget(hostToken, target);
+    const workspace = this.workspaces.registerValidatedTarget(hostToken, target, isDefault);
     try {
       await this.bindWorkspace(hostToken, workspace);
     } catch (error) {
       this.revokeWorkspaceIfCurrent(hostToken, workspace.workspaceId);
+      // A failed replacement must not discard the prior directory selection.
+      if (previous && this.hosts.isLive(hostToken)) {
+        const restored = this.workspaces.registerValidatedTarget(
+          hostToken, await this.inspectTarget(previous.displayPath), Boolean(previous.isDefault)
+        );
+        try { await this.bindWorkspace(hostToken, restored); }
+        catch { this.revokeWorkspaceIfCurrent(hostToken, restored.workspaceId); }
+      }
       throw error;
     }
     return workspace;

@@ -3,7 +3,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import {
   WORKSPACE_CONFIG_DIRECTORIES,
   WORKSPACE_CONFIG_FILE_NAME
-} from '@preload/onlypreview/search/core/workspace-config-location.mjs';
+} from '@shared/onlypreview/onlyPreviewWorkspaceConfigLocation.mjs';
 
 /**
  * 首次打开一个 workspace 时,把配置目录与一份空白配置落到盘上(Ral 2026-09-23:

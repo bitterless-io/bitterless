@@ -198,3 +198,92 @@ the same directory resolver, the cancel branch exists, the archive has one top-l
 indicator is raised after the pick and before the write**, and it is closed in a `finally`. 6/6 in each
 repo, red-checked — moving the indicator before the pick, or folding compression back into step 1,
 each turns one test red.
+
+## `/page_snapshot` — copy the current tab's accessibility snapshot (2026-09-23)
+
+Ral, 2026-09-23: 「AGENT BROWSER USE 增加一个指令 … `/page_snapshot` 将当前 tab 的 page snapshot
+放到剪贴板中」. Same family as `/view_context` and `/copy_session_path`: a **forensic** command that
+hands the operator, verbatim, one of the things the agent works from. The agent's `page_snapshot`
+tool already produces this YAML; until now the only way to read it was to ask the agent for it — and
+what came back was the agent's *retelling*. This copies the artifact itself.
+
+Paired change: micromeet-cowork ships the same command
+([#12](../../micromeet-cowork/docs/features/cowork-slash-commands.md)).
+
+### Which tab is "the current tab"
+
+The one the **person** is looking at. It resolves through `CaptureService.currentCaptureTarget()`
+— the existing *human-side* resolver (active tab → existing recording target → most recently active
+capturable tab), the same one that decides what the Snapshot button records.
+
+Deliberately **not** a second definition of "which tab is in front". BL has one such resolver and
+cowork has two (`currentCaptureTarget` for the person, `agentWorkTarget` for the agent, which skips
+the mini-app early-exit precisely because *"agent 没有'正在看哪一页'这回事"*). This command is the
+case where "正在看哪一页" **is** the criterion, so it takes the human one in both repos. Writing a
+third definition here is how the three drift apart.
+
+One consequence, accepted and stated rather than special-cased: **during a drill**
+`currentCaptureTarget()` returns the drill's capture target, so `/page_snapshot` reads that tab, not
+the foreground one. The result names the tab it read, so this is visible, never silent.
+
+### It copies the whole snapshot — the 200k clip is for the model, not for a person
+
+`requestExec.toolPageSnapshot` ends in `clipText(…, SNAPSHOT_RESULT_LIMIT)` because that text goes
+into a context window. A clipboard has no context window, and a tree that stops mid-page with
+`...[truncated N chars]` is worse than useless for the thing this command exists for — comparing
+what the agent saw against what is on screen. So this path **does not clip**, and no new budget gate
+is invented for it either: a page's accessibility tree is measured in KB, and a gate for a state
+that cannot occur is one more branch nobody will ever see fail.
+
+The clipboard text keeps the agent tool's own header (`# tab:` / `# page:` / `# title:` /
+`# elements:`) so a pasted snapshot says which page and which tab it came from.
+
+### It is a read
+
+No tab is activated or switched, no recording starts, no browser-use marker is set, no agent runtime
+is created or touched, and `{ shot: false }` — no CDP screenshot for a snapshot nobody is going to
+look at as an image.
+
+It also **does not emit a trace record**, which is the one place it diverges from
+`pageSnapshotForAgent()`. That method emits because a drill's snapshots are part of its product.
+An operator copying a page to the clipboard is not performing a step of the recording; writing one
+in would put a phantom observation into a capture the person is in the middle of.
+
+### Failure is explicit, and the clipboard is left alone
+
+`pageSnapshotForOperator()` returns a reason, not `null`: no browser tab in front (a mini-app, the
+OnlyPreview tab, a tab with no debugger attached) and a failed CDP read are different problems and
+say so. Nothing is written to the clipboard on either. Success returns **bounded metadata only**
+(`tabId`, `url`, `title`, `nodeCount`, `chars`) — the snapshot text goes to the clipboard the person
+asked for, never back across XPC into the renderer.
+
+### One BL-only wrinkle: the failure branch needs a type predicate
+
+BL's `main` surface type-checks with **`strictNullChecks` off**, and narrowing a boolean-literal
+discriminated union needs it — measured here, neither `if (!snapshot.ok)` nor `if (snapshot.ok)`
+narrows anything, so forwarding the failure branch reads as "returning the whole union as the failure
+reply" (TS2322: the `ok: true` member has no `chars`). So BL exports `pageSnapshotFailed()`, a
+user-defined type predicate, which narrows regardless. cowork's main surface is strict and needs
+none of this — the two repos differ here because their compilers do, not because the design does.
+
+### Verification
+
+`tests/maestro/pageSnapshotClipboard.test.mjs` (same shape in cowork's `tests/unit/`): the operator
+path uses the human-side resolver and not the agent's, it does not clip, it does not emit a trace
+record, it takes no screenshot, the clipboard write happens only on the success branch, the renderer
+contract returns metadata and not the YAML, and the command is dispatched by its own `case` rather
+than falling through to another command's handler.
+
+Every `doesNotMatch` assertion runs against the body **with comments stripped**. Writing the guard
+tripped over this once: a comment explaining why this path deliberately does *not* go through the
+agent resolver was read as going through it. The criterion is the code, not the prose.
+
+Red-checked four ways — swapping the resolver for the agent's, moving the clipboard write above the
+failure early-return, adding an `emit`, and turning `shot` on each turn exactly the matching
+assertion red. 6/6 in each repo.
+
+Also run: BL's `main` and `renderer/maestro` type surfaces (zero diagnostics in any file this change
+touches; both surfaces carry pre-existing errors elsewhere), and the neighbouring
+`exportSessionArchive` / `slashSkills` guards (18/18 together). cowork's full `yarn typecheck`
+(node + web) is clean. **No Electron, E2E, packaged run, build or Git sync** — Ral runs the loaded
+code himself.

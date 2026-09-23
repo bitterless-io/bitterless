@@ -34,7 +34,7 @@ export const appDataRoot = (): string => homeDataRoot();
  */
 export const APP_DATA_DIRS = {
   /** The shared default workspace — where every file tool works when no directory is bound. */
-  workspace: 'default_workspace',
+  workspace: 'work',
   /** Workflow packages, one directory each. */
   workflows: 'workflows',
   /** Global skills: the owner's own, outside any workspace or institution scope. */
@@ -81,31 +81,43 @@ export const ensureAppData = (): string => {
 };
 
 /**
- * Where each directory used to live, before they were unified. `workspace` and `workflows` are
- * absent because they were already under this root — only global skills move.
+ * Legacy locations. The old default workspace moves to work before that directory is created.
  */
-const legacyLocations = (): Partial<Record<AppDataDir, string>> => ({
-  skills: join(app.getPath('userData'), 'cowork', 'skills'),
+const legacyLocations = (): Partial<Record<AppDataDir, string[]>> => ({
+  workspace: [join(appDataRoot(), 'default_workspace')],
+  skills: [join(app.getPath('userData'), 'cowork', 'skills')],
 });
 
 /**
  * Move a pre-unification directory into the root, once.
  *
  * Only ever runs when the new location does **not** exist: an owner who has already used the new
- * directory must never have it replaced by an older copy. A failure is swallowed — a missed
- * migration leaves the old data where it is, which is recoverable; a crash at boot is not.
+ * directory must never have it replaced by an older copy. A workspace migration failure is
+ * surfaced so an empty work directory cannot hide the original files; skill adoption is best effort.
  */
 const adopt = (name: AppDataDir): void => {
-  const from = legacyLocations()[name];
   const to = appDataDir(name);
+  if (existsSync(to)) return;
+  const from = legacyLocations()[name]?.find(path => existsSync(path) && statSync(path).isDirectory());
   // Only ever a directory: renaming a stray *file* onto the target would make the directory a file,
   // and the create loop below would then fail on every boot.
-  if (!from || from === to || existsSync(to) || !existsSync(from) || !statSync(from).isDirectory()) return;
+  if (!from || from === to || !existsSync(from) || !statSync(from).isDirectory()) return;
   try {
     mkdirSync(join(to, '..'), { recursive: true });
     renameSync(from, to);
     console.info(`[appData] moved ${from} → ${to}`);
   } catch (error) {
+    // Never create an empty work directory over a failed migration. Keep the old data recoverable.
+    if (name === 'workspace') throw error
     console.warn(`[appData] could not move ${from} → ${to}; leaving it in place.`, error);
   }
+};
+
+/** Ensure the shared workspace at boot and on demand, including a one-time legacy migration. */
+export const ensureWorkDirectory = (): string => {
+  mkdirSync(appDataRoot(), { recursive: true });
+  adopt('workspace');
+  const root = appDataDir('workspace');
+  mkdirSync(root, { recursive: true });
+  return root;
 };

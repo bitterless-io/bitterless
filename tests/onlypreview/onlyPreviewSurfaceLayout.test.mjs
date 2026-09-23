@@ -32,13 +32,13 @@ const {
 
 after(() => rmSync(buildRoot, { recursive: true, force: true }));
 
-test('the composite chrome keeps the numbers the window helper used', () => {
+test('the composite chrome matches the Shell dimensions', () => {
   // Pinned because the Shell renders to them: the MenuBar strip, the preview toolbar, the status bar
-  // and the narrowest the project rail may become. They moved out of the window helper unchanged.
+  // and the narrowest the project rail may become.
   assert.equal(ONLY_PREVIEW_MIN_SIDEBAR_WIDTH, 180);
   assert.equal(ONLY_PREVIEW_RESIZE_HANDLE_WIDTH, 5);
   assert.equal(ONLY_PREVIEW_MENU_BAR_HEIGHT, 32);
-  assert.equal(ONLY_PREVIEW_PREVIEW_TOOLBAR_HEIGHT, 43);
+  assert.equal(ONLY_PREVIEW_PREVIEW_TOOLBAR_HEIGHT, 32);
   assert.equal(ONLY_PREVIEW_STATUS_HEIGHT, 25);
 });
 

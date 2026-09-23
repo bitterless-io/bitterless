@@ -6,18 +6,22 @@ import {
 } from '@shared/onlypreview/onlyPreviewBookmarks.type';
 import { ONLY_PREVIEW_PROJECT_DELETE_EVENT } from '@shared/onlypreview/onlyPreview.types';
 import { unwrapOnlyPreviewResult } from '@shared/onlypreview/onlyPreview.contract';
-import { onlyPreviewI18n } from '../../common/onlyPreviewI18n';
 import type { OnlyPreviewBookmark, OnlyPreviewBookmarksSnapshot } from '@shared/onlypreview/onlyPreviewBookmarks.type';
 import type {
   OnlyPreviewBookmarksClient,
-  OnlyPreviewBookmarksHost
+  OnlyPreviewBookmarksHost,
+  OnlyPreviewBookmarksPersistence
 } from './onlyPreviewBookmarks.type';
 import { onlyPreviewClient } from '../../common/onlyPreviewClient';
 import { onlyPreviewEnv } from '../../common/contextBridge/onlyPreviewEnv.bridge';
 import { describeOnlyPreviewError } from './onlyPreviewErrorDetail.store';
 import { onlyPreviewShellStore } from './onlyPreviewShell.store';
+import { onlyPreviewBookmarksPersistence } from './onlyPreviewBookmarksPersistence.service';
 
 export class OnlyPreviewBookmarksStore {
+  expanded: boolean;
+  reordering = false;
+  private reorderGeneration = 0;
   entries: OnlyPreviewBookmark[] = [];
   errorMessage = '';
   private generation = 0;
@@ -28,8 +32,16 @@ export class OnlyPreviewBookmarksStore {
   private subscribed = false;
   constructor(
     private readonly client: OnlyPreviewBookmarksClient,
-    private readonly host: OnlyPreviewBookmarksHost
-  ) {}
+    private readonly host: OnlyPreviewBookmarksHost,
+    private readonly persistence: OnlyPreviewBookmarksPersistence = onlyPreviewBookmarksPersistence
+  ) {
+    this.expanded = persistence.restore();
+  }
+
+  toggleExpanded(): void {
+    this.expanded = !this.expanded;
+    this.persistence.save(this.expanded);
+  }
 
   initialize(): void {
     this.active = true;
@@ -54,10 +66,14 @@ export class OnlyPreviewBookmarksStore {
   }
   dispose(): void {
     this.active = false;
+    this.reorderGeneration += 1;
+    this.reordering = false;
     this.generation += 1;
     this.actionGeneration += 1;
   }
   resetWorkspace(): void {
+    this.reorderGeneration += 1;
+    this.reordering = false;
     this.entries = [];
     this.errorMessage = '';
     this.generation += 1;
@@ -91,6 +107,38 @@ export class OnlyPreviewBookmarksStore {
       }
     }
   }
+  async reorder(relativePaths: string[]): Promise<void> {
+    const { hostToken } = this.host;
+    const workspaceId = this.host.workspaceId();
+    if (!this.active || this.reordering || !hostToken || !workspaceId) return;
+    const previous = this.entries;
+    const byPath = new Map(previous.map((entry) => [entry.relativePath, entry]));
+    if (relativePaths.length !== previous.length || new Set(relativePaths).size !== previous.length ||
+      relativePaths.some((path) => !byPath.has(path))) return;
+    if (relativePaths.every((path, index) => path === previous[index].relativePath)) return;
+    const generation = ++this.reorderGeneration;
+    const revision = this.revision;
+    const isCurrent = (): boolean => this.active && generation === this.reorderGeneration &&
+      workspaceId === this.host.workspaceId();
+    this.entries = relativePaths.map((path) => byPath.get(path)!);
+    this.reordering = true;
+    this.errorMessage = '';
+    try {
+      const snapshot = unwrapOnlyPreviewResult(
+        await this.client.reorderBookmarks({ hostToken, workspaceId, relativePaths })
+      );
+      if (isCurrent()) this.apply(snapshot);
+    } catch (error) {
+      if (isCurrent()) {
+        if (this.revision === revision) this.entries = previous;
+        await this.refresh();
+        if (isCurrent()) this.errorMessage = describeOnlyPreviewError(error);
+      }
+    } finally {
+      if (isCurrent()) this.reordering = false;
+    }
+  }
+
   async add(relativePath: string): Promise<void> {
     if (relativePath) await this.runAction('addBookmark', relativePath);
   }
@@ -136,31 +184,6 @@ export class OnlyPreviewBookmarksStore {
   async showMenu(relativePath: string): Promise<void> {
     if (this.entries.some((entry) => entry.relativePath === relativePath)) {
       await this.runAction('showBookmarkContextMenu', relativePath);
-    }
-  }
-  /**
-   * 弹一条纯提示,告诉用户怎么加书签。
-   *
-   * 复用 alert 面(`showNotice` → main 的 `showError(tone:'notice')`),所以
-   * 「回车 / esc / 点关闭都能关」与焦点管理都是那一层既有的行为 —— 这里不新写任何键盘处理。
-   * 文案从本渲染进程的 i18n 取:提示语属于这个界面,不属于 main。
-   *
-   * 失败**静默**:一条帮助提示弹不出来,不该在书签条上留一条错误 —— 那比没有提示更糟。
-   */
-  async showHint(): Promise<void> {
-    const { hostToken } = this.host;
-    if (!this.active || !hostToken) return;
-    try {
-      unwrapOnlyPreviewResult(
-        await onlyPreviewClient.showNotice({
-          hostToken,
-          title: onlyPreviewI18n.bookmarks.hintTitle,
-          message: onlyPreviewI18n.bookmarks.hintMessage,
-          confirmLabel: onlyPreviewI18n.bookmarks.hintClose
-        })
-      );
-    } catch {
-      // 见上:提示失败不留痕。
     }
   }
   receive(event: unknown, add = false): void {

@@ -743,8 +743,8 @@ test('the explicit FILE branch releases the claim and re-asks for the project', 
     /releaseProjectRestoreClaim\(recentGeneration\)/,
     '文件那支没有放开闸门 —— 新窗口里会是 No project open'
   );
-  // The preview is issued before restore; history waits for the resolved Project scope.
-  assert.ok(fileBranch.indexOf('const accepted = await presentOnlyPreviewExplicitFile') < fileBranch.indexOf('const workspace = await onlyPreviewRecentDirectoryService'));
+  // Workspace authority settles before selection; a restored file cannot replace the explicit target.
+  assert.ok(fileBranch.indexOf('const workspace = await onlyPreviewRecentDirectoryService') < fileBranch.indexOf('const accepted = await presentOnlyPreviewExplicitFile'));
   assert.ok(fileBranch.indexOf('.restoreWorkspace(') < fileBranch.indexOf('await recordOnlyPreviewRecentFile('));
   assert.match(fileBranch, /if \(workspace && onlyPreviewHostRegistry\.isLive\(host\.hostToken\)\) \{[\s\S]{0,120}broadcast\(ONLY_PREVIEW_WORKSPACE_CHANGED_EVENT/);
 });
@@ -1010,5 +1010,80 @@ test('failed clear persistence cannot revive history, and successful rebind reme
     const restored = await restarted.service.restoreWorkspace(nextHost.hostToken);
     assert.equal(restored.displayPath, second);
     assert.notEqual(restored.workspaceId, different.workspaceId);
+  });
+});
+
+test('unselected restores work without persisting a choice; choosing that same path removes default state', async () => {
+  await withTempDirectory('onlypreview-default-work-', async root => {
+    const work = realpathSync(root);
+    const storage = new MemorySettingStorage();
+    const { hosts, workspaces, service } = createService(storage);
+    service.defaultWorkspace = () => work;
+    service.markStorageReady();
+    const host = hosts.issue('standalone', 'content');
+    const initial = await service.restoreWorkspace(host.hostToken);
+    assert.equal(initial.displayPath, work);
+    assert.equal(initial.isDefault, true);
+    assert.equal(storage.value(), undefined, 'automatic fallback must not become an explicit choice');
+    const generation = service.beginExplicitTarget(host.hostToken);
+    const chosen = await service.openExplicitTarget(host.hostToken, work, generation);
+    service.finishExplicitTarget(generation);
+    await service.flushPendingWrites();
+    assert.equal(chosen.isDefault, undefined);
+    assert.notEqual(chosen.workspaceId, initial.workspaceId, 'new identity fences old indexes');
+    assert.equal(storage.value().directoryPath, work);
+    await service.clearWorkspace(host.hostToken);
+    const cleared = await service.restoreWorkspace(host.hostToken);
+    assert.equal(cleared.isDefault, true);
+    assert.equal(storage.value(), null);
+    assert.equal(workspaces.restore(host.hostToken).workspaceId, cleared.workspaceId);
+  });
+});
+
+test('remembered explicit workspace wins over work; missing remembered directory falls back to work', async () => {
+  await withTempDirectory('onlypreview-default-restore-', async root => {
+    const work = realpathSync(root);
+    for (const selected of [work, join(work, 'missing')]) {
+      const storage = new MemorySettingStorage({ version: 1, directoryPath: selected });
+      const { hosts, service } = createService(storage);
+      service.defaultWorkspace = () => work;
+      service.markStorageReady();
+      const host = hosts.issue('standalone', 'content');
+      const restored = await service.restoreWorkspace(host.hostToken);
+      assert.equal(restored.displayPath, work);
+      assert.equal(restored.isDefault, selected === work ? undefined : true);
+    }
+  });
+});
+
+test('a rejected new binding restores the previous default selection', async () => {
+  await withTempDirectory('onlypreview-default-failure-', async root => {
+    const work = realpathSync(root);
+    const other = join(work, 'other'); mkdirSync(other);
+    const { hosts, workspaces, service } = createService(new MemorySettingStorage());
+    service.defaultWorkspace = () => work;
+    service.markStorageReady();
+    const host = hosts.issue('standalone', 'content');
+    await service.restoreWorkspace(host.hostToken);
+    const bind = service.bindWorkspace;
+    service.bindWorkspace = (token, workspace) => workspace.displayPath === other
+      ? Promise.reject(new Error('cannot bind selected folder')) : bind(token, workspace);
+    const generation = service.beginExplicitTarget(host.hostToken);
+    await assert.rejects(service.openExplicitTarget(host.hostToken, other, generation), /cannot bind/);
+    service.finishExplicitTarget(generation);
+    assert.equal(workspaces.restore(host.hostToken).displayPath, work);
+    assert.equal(workspaces.restore(host.hostToken).isDefault, true);
+  });
+});
+
+test('storage unavailable still opens work without remembering it as a choice', async () => {
+  await withTempDirectory('onlypreview-work-storage-', async root => {
+    const { hosts, service } = createService(new MemorySettingStorage());
+    service.defaultWorkspace = () => realpathSync(root);
+    service.markStorageFailed();
+    const host = hosts.issue('standalone', 'content');
+    const workspace = await service.restoreWorkspace(host.hostToken);
+    assert.equal(workspace.isDefault, true);
+    assert.equal(workspace.displayPath, realpathSync(root));
   });
 });

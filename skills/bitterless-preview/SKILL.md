@@ -29,8 +29,13 @@ Use whichever one is configured; a machine may have only one of them installed.
 1. Resolve exactly one absolute path from the request or the artifact you just produced.
 2. Call `preview.open` once with `{ "path": "<absolute path>" }`.
 3. Treat `{ "opened": true }` only as confirmation that Bitterless accepted the open request.
-4. Tell the user briefly that Bitterless accepted the target for OnlyPreview. Do not claim that
+4. Tell the user briefly that Bitterless accepted the preview target. Do not claim that
    rendering is ready.
+
+Bitterless chooses the surface: folders select a Workspace, files inside the effective workspace
+open there, and files outside it open in an independent IndiPreview window. The two surfaces share
+the same Vue and Chromium preview components. Do not change the workspace merely to preview an
+external file, and do not create a browser file tab.
 
 Do not search the filesystem, enumerate a directory, guess a path, or broaden the target. Do not
 use Preview as evidence of file contents; read a file through the normal authorized workspace tools

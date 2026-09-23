@@ -156,7 +156,7 @@ export const promoteOnlyPreviewCoworkTab = async (): Promise<boolean> => {
 export const registerOnlyPreviewCoworkTab = (): void => {
   registerMaestroCompositeTab({
     id: ONLY_PREVIEW_COWORK_TAB_ID,
-    title: 'OnlyPreview',
+    title: 'Workspace',
     favicon: MAESTRO_ICON_ONLY_PREVIEW,
     displayUrl: MAESTRO_ONLY_PREVIEW_DISPLAY_URL,
     getDisplayedFile: () => {

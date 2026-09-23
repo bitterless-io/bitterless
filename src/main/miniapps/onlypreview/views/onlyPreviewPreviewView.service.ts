@@ -37,6 +37,8 @@ export interface OnlyPreviewPreviewRegionRuntime {
   ) => WebContentsView;
   loadVuePreviewView: (view: WebContentsView) => Promise<void>;
   bindChromeShortcuts: (webContents: Electron.WebContents) => void;
+  /** Independent window hosts use a separate persistent PDF-capable session. */
+  chromePartition?: string;
 }
 
 interface OnlyPreviewPreviewViewCallbacks {
@@ -265,6 +267,8 @@ export class OnlyPreviewPreviewViewService {
   private attachedView: WebContentsView | null = null;
   private chromeProtocolCleanup: (() => void) | null = null;
   private chromeSession: Session | null = null;
+  private readonly chromeTasks = new Set<Promise<unknown>>();
+  private chromeDisposalFailed = false;
   private pendingChromeMount: PendingChromeMount | null = null;
   private contentBounds: Rectangle | null = null;
   private vueViewGeneration = 0;
@@ -554,7 +558,28 @@ export class OnlyPreviewPreviewViewService {
     this.contentBounds = null;
   }
 
-  private async mountChromeSelection(
+  /** A partition lease may be reused only after late startup and session cleanup have drained. */
+  async waitForChromeDisposal(): Promise<void> {
+    while (this.chromeTasks.size) await Promise.allSettled([...this.chromeTasks]);
+    if (this.chromeDisposalFailed) throw new Error('The preview session could not be cleared.');
+  }
+
+  private trackChromeTask<T>(task: Promise<T>): Promise<T> {
+    this.chromeTasks.add(task);
+    void task.then(() => this.chromeTasks.delete(task), () => this.chromeTasks.delete(task));
+    return task;
+  }
+
+  private mountChromeSelection(
+    runtime: OnlyPreviewPreviewRegionRuntime,
+    revision: number,
+    navigationUrl: string,
+    requireDocumentFrame: boolean
+  ): Promise<void> {
+    return this.trackChromeTask(this.performMountChromeSelection(runtime, revision, navigationUrl, requireDocumentFrame));
+  }
+
+  private async performMountChromeSelection(
     runtime: OnlyPreviewPreviewRegionRuntime,
     revision: number,
     navigationUrl: string,
@@ -616,7 +641,7 @@ export class OnlyPreviewPreviewViewService {
   private createChromePreviewView(runtime: OnlyPreviewPreviewRegionRuntime): WebContentsView {
     const view = new WebContentsView({
       webPreferences: {
-        partition: ONLY_PREVIEW_CHROME_PARTITION,
+        partition: runtime.chromePartition ?? ONLY_PREVIEW_CHROME_PARTITION,
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
@@ -847,9 +872,14 @@ export class OnlyPreviewPreviewViewService {
     // The session is shared and stays hardened for its lifetime; only the data of the selection that
     // just ended is discarded, and only while no other Chrome view is mounted on it.
     if (targetSession && !this.chromePreviewView) {
-      void targetSession.closeAllConnections().catch(() => undefined);
-      void targetSession.clearStorageData().catch(() => undefined);
-      void targetSession.clearCache().catch(() => undefined);
+      try {
+        const cleanup = Promise.allSettled([
+          targetSession.closeAllConnections(), targetSession.clearStorageData(), targetSession.clearCache()
+        ]).then((results) => {
+          if (results.some((result) => result.status === 'rejected')) this.chromeDisposalFailed = true;
+        });
+        void this.trackChromeTask(cleanup);
+      } catch { this.chromeDisposalFailed = true; }
     }
   }
 }

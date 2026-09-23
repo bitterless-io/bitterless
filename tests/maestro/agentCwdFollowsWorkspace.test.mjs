@@ -93,3 +93,24 @@ test('尾斜杠不算变化', async () => {
   await agent.init()
   assert.deepEqual(created, ['/fixture/project-a'], '`/a` 与 `/a/` 是同一个目录')
 })
+
+test('explicitly selecting the same cwd refreshes the live system prompt without dropping history', async () => {
+  const updates = [];
+  const { agent, created } = agentWith('/fixture/work');
+  const source = readFileSync(resolve(import.meta.dirname, '../../src/main/agent/MaestroAgent.ts'), 'utf8');
+  const ast = ts.createSourceFile('agent.ts', source, ts.ScriptTarget.Latest, true);
+  const member = ast.statements.filter(ts.isClassDeclaration).flatMap(c => [...c.members]).find(m => m.name?.getText(ast) === 'systemPrompt');
+  const code = ts.transpileModule('class Subject { ' + member.getText(ast) + ' }', { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  agent.systemPrompt = new Function('STATIC_TURN_GUIDANCE', code + '; return Subject.prototype.systemPrompt')('static guidance');
+  await agent.init();
+  const session = await agent.sessionPromise;
+  session.setSystemPrompt = async prompt => updates.push(prompt);
+  await agent.setProjectRoot('/fixture/work');
+  assert.equal(created.length, 1);
+  assert.equal(updates.length, 1);
+  assert.match(updates[0], /selected/);
+  assert.doesNotMatch(updates[0], /No workspace selected|shared work directory/);
+  await agent.setProjectRoot('/fixture/chosen');
+  assert.match(agent.composedSystemPrompt(), /Active workspace: \/fixture\/chosen/);
+  assert.doesNotMatch(agent.composedSystemPrompt(), /\/fixture\/work/);
+});

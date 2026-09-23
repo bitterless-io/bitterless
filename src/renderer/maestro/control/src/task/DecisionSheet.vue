@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { IconCheck } from '@tabler/icons-vue'
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
 import { DECISION_OTHER_LABEL } from '@shared/agentDecision.api'
 import { messageStore, pendingDecisionMessages } from '../store/message.store'
 import type { MessageSession } from '../store/message.type'
+import './DecisionSheet.less'
 
 /**
  * `ask_user` 唤起的拍板卡。契约与取舍见 `docs/features/agent-decision-sheet.md`。
@@ -36,6 +38,15 @@ watch(decision, (next) => {
 }, { immediate: true })
 
 const isPicked = (q: number, label: string): boolean => chosen.value[q].includes(label)
+
+/**
+ * 这一问能不能多选 —— **必须在卡上说出来**(Ral 2026-09-23)。
+ *
+ * `multiSelect` 从一开始就接着(契约、normalize、下面的 `toggle` 都分了两条路),但两种模式
+ * **渲染得一模一样**:同一列按钮、同一种高亮。于是人没有任何线索知道自己还能点第二个;
+ * 点了之后发现第一个没被取消,只能靠试出来。能力从人这一侧够不着,等于没有。
+ */
+const isMulti = (q: number): boolean => decision.value?.questions[q]?.multiSelect === true
 
 const toggle = (q: number, label: string): void => {
   if (answered.value || busy.value) return
@@ -83,70 +94,65 @@ const cancel = async (): Promise<void> => {
 </script>
 
 <template>
-  <div v-if="decision && !answered" name="decision-sheet" class="decision-sheet flex flex-col gap-3 rounded-xl bg-[#f8fafc] p-3">
+  <div v-if="decision && !answered" name="decision-sheet" class="decision-sheet">
     <div
       v-for="(question, q) in decision!.questions"
       :key="q"
       name="decision-sheet__question"
-      class="decision-sheet__question flex flex-col gap-2"
+      class="decision-sheet__question"
     >
-      <div class="flex items-baseline gap-2">
-        <span class="decision-sheet__header shrink-0 rounded bg-black/5 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">
-          {{ question.header }}
+      <div class="decision-sheet__prompt-row">
+        <span class="decision-sheet__header">{{ question.header }}</span>
+        <span class="decision-sheet__prompt">{{ question.question }}</span>
+        <span v-if="isMulti(q)" name="decision-sheet__multi" class="decision-sheet__multi">
+          {{ i18nHelper.maestroControl.chat.decision.multi }}
         </span>
-        <span class="decision-sheet__prompt text-[12px] font-medium text-gray-800">{{ question.question }}</span>
       </div>
 
-      <template v-if="true">
-        <button
-          v-for="option in question.options"
-          :key="option.label"
-          name="decision-sheet__option"
-          type="button"
-          class="decision-sheet__option flex flex-col items-start gap-0.5 rounded-lg border-0 px-2.5 py-2 text-left transition"
-          :class="isPicked(q, option.label) ? 'bg-[#165dff] text-white' : 'bg-white text-gray-800 hover:bg-black/5'"
-          @click="toggle(q, option.label)"
-        >
-          <span class="text-[12px] font-medium">{{ option.label }}</span>
-          <span v-if="option.description" class="text-[11px] leading-4" :class="isPicked(q, option.label) ? 'text-white/80' : 'text-gray-500'">
-            {{ option.description }}
-          </span>
+      <button
+        v-for="option in question.options"
+        :key="option.label"
+        name="decision-sheet__option"
+        type="button"
+        class="decision-sheet__option"
+        :class="{ 'decision-sheet__option--picked': isPicked(q, option.label) }"
+        @click="toggle(q, option.label)"
+      >
+        <span class="decision-sheet__option-label">
+          <!-- 多选时给选中项一个可累加的记号 —— 光靠整块变蓝读起来像「单选已经切过去了」。 -->
+          <IconCheck v-if="isMulti(q) && isPicked(q, option.label)" :size="13" stroke="2.4" />
+          {{ option.label }}
+        </span>
+        <span v-if="option.description" class="decision-sheet__option-desc">{{ option.description }}</span>
+      </button>
+
+      <!-- 自由输入那一项:界面自动补,不来自调用方。 -->
+      <div
+        name="decision-sheet__other"
+        class="decision-sheet__other"
+        :class="{ 'decision-sheet__other--picked': isPicked(q, DECISION_OTHER_LABEL) }"
+      >
+        <button type="button" class="decision-sheet__other-trigger" @click="toggle(q, DECISION_OTHER_LABEL)">
+          {{ i18nHelper.maestroControl.chat.decision.other }}
         </button>
-
-        <!-- 自由输入那一项:界面自动补,不来自调用方。 -->
-        <div
-          name="decision-sheet__other"
-          class="decision-sheet__other flex flex-col gap-1.5 rounded-lg px-2.5 py-2"
-          :class="isPicked(q, DECISION_OTHER_LABEL) ? 'bg-[#165dff]' : 'bg-white'"
-        >
-          <button
-            type="button"
-            class="decision-sheet__option flex items-center border-0 bg-transparent p-0 text-left text-[12px] font-medium"
-            :class="isPicked(q, DECISION_OTHER_LABEL) ? 'text-white' : 'text-gray-800'"
-            @click="toggle(q, DECISION_OTHER_LABEL)"
-          >
-            {{ i18nHelper.maestroControl.chat.decision.other }}
-          </button>
-          <input
-            v-model="other[q]"
-            name="decision-sheet__other_input"
-            type="text"
-            :disabled="!isPicked(q, DECISION_OTHER_LABEL)"
-            :placeholder="i18nHelper.maestroControl.chat.decision.otherPlaceholder"
-            class="decision-sheet__other-input h-7 w-full rounded-md border-0 bg-white/95 px-2 text-[12px] text-gray-800 outline-none disabled:bg-black/5 disabled:text-gray-400"
-            @keydown.enter.prevent="submit"
-          />
-        </div>
-      </template>
-
+        <input
+          v-model="other[q]"
+          name="decision-sheet__other_input"
+          type="text"
+          :disabled="!isPicked(q, DECISION_OTHER_LABEL)"
+          :placeholder="i18nHelper.maestroControl.chat.decision.otherPlaceholder"
+          class="decision-sheet__other-input"
+          @keydown.enter.prevent="submit"
+        />
+      </div>
     </div>
 
-    <div name="decision-sheet__actions" class="decision-sheet__actions flex items-center justify-end gap-2">
+    <div name="decision-sheet__actions" class="decision-sheet__actions">
       <button
         name="decision-sheet__cancel"
         type="button"
         :disabled="busy"
-        class="h-7 rounded-md border-0 bg-black/5 px-3 text-[12px] font-medium text-gray-600 transition hover:bg-black/10 disabled:text-gray-400"
+        class="decision-sheet__button decision-sheet__button--cancel"
         @click="cancel"
       >
         {{ i18nHelper.maestroControl.chat.decision.cancel }}
@@ -155,7 +161,7 @@ const cancel = async (): Promise<void> => {
         name="decision-sheet__submit"
         type="button"
         :disabled="!submittable"
-        class="h-7 rounded-md border-0 bg-[#165dff] px-3 text-[12px] font-medium text-white transition hover:bg-[#0e4ad6] disabled:bg-gray-200 disabled:text-gray-400"
+        class="decision-sheet__button decision-sheet__button--submit"
         @click="submit"
       >
         {{ i18nHelper.maestroControl.chat.decision.submit }}

@@ -17,6 +17,8 @@ import type {
   ContextGraphRequest,
   ContextGraphResult,
   SessionIoPathResult,
+  PageSnapshotCopyResult,
+  PageSnapshotCompareResult,
   AgentCompactReply,
   AgentCompactRequest,
   AgentMessageRequest,
@@ -71,6 +73,11 @@ import type { SavedTab } from '@maestro-shared/tabs.api'
 import type { CaptureMode } from '@maestro-shared/trace.types'
 
 export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract {
+  async showAccountMenu(params: import('@shared/accountMenu').AccountMenuParams): Promise<import('@shared/accountMenu').AccountMenuAction | null> {
+    return await maestroWindowHelper.showAccountMenu(params)
+  }
+  async openAccountPassword(): Promise<void> { await maestroWindowHelper.openAccountPassword() }
+
   async requestLogin(): Promise<void> { maestroWindowHelper.requestLogin(); }
   async getAgentBrowserSession(params: { sessionId: string }): ReturnType<CoachXpcContract['getAgentBrowserSession']> {
     return maestroWindowHelper.getAgentBrowserSession(params)
@@ -280,6 +287,14 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
 
   async writeSessionIoArchive(params: { sessionId: string; target: string }): Promise<SessionIoExportResult> {
     return await maestroWindowHelper.writeSessionIoArchive(params);
+  }
+
+  async copyPageSnapshot(): Promise<PageSnapshotCopyResult> {
+    return await maestroWindowHelper.copyPageSnapshot()
+  }
+
+  async exportPageSnapshotCompare(): Promise<PageSnapshotCompareResult> {
+    return await maestroWindowHelper.exportPageSnapshotCompare()
   }
 
   async showSessionMenu(params: { sessionId: string }): ReturnType<CoachXpcContract['showSessionMenu']> {

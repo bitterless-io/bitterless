@@ -1,0 +1,65 @@
+/**
+ * `ask_user` 拍板在时间线里的留档。样式写在这里而不是内联 utility class ——
+ * **maestro/control 这一支没有 Tailwind**(`electron.vite.config.ts` 没装 `@tailwindcss/vite`,
+ * cowork 那边才有),内联 utility 在这里一条都不生效。与 `ChatConfirm.less` 同一条规矩。
+ *
+ * 无边框:层次靠背景 + 留白 + 左侧竖轨(见 CLAUDE.md 的 Borderless UI)。
+ */
+.decision-record {
+  display: flex;
+  width: 100%;
+  gap: 8px;
+  border: 0;
+  border-radius: 9px;
+  background: rgb(var(--gray-1));
+  padding: 8px 10px;
+}
+.decision-record__rail {
+  width: 3px;
+  flex-shrink: 0;
+  align-self: stretch;
+  border-radius: 999px;
+  background: rgb(var(--warning-5));
+}
+.decision-record--answered .decision-record__rail { background: rgb(var(--primary-6)); }
+.decision-record--declined .decision-record__rail { background: rgb(var(--gray-4)); }
+
+.decision-record__content { min-width: 0; flex: 1; }
+
+.decision-record__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: rgb(var(--warning-7));
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.decision-record--answered .decision-record__head { color: rgb(var(--primary-6)); }
+.decision-record--declined .decision-record__head { color: rgb(var(--gray-6)); }
+
+.decision-record__question { margin-top: 6px; }
+.decision-record__prompt-row { display: flex; align-items: baseline; gap: 8px; }
+.decision-record__header {
+  flex-shrink: 0;
+  border-radius: 4px;
+  background: rgb(var(--gray-2));
+  padding: 1px 6px;
+  color: rgb(var(--gray-8));
+  font-size: 10px;
+  font-weight: 600;
+}
+.decision-record__prompt { min-width: 0; color: rgb(var(--gray-10)); font-size: 12px; font-weight: 500; line-height: 1.45; }
+
+.decision-record__answers { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.decision-record__answer {
+  border-radius: 6px;
+  background: rgb(var(--primary-6));
+  padding: 1px 6px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.decision-record__declined { margin-top: 6px; color: rgb(var(--gray-6)); font-size: 11px; font-weight: 500; }

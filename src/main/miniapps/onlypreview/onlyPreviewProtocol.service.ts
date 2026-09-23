@@ -57,6 +57,22 @@ export const installOnlyPreviewProtocol = (): void => {
   handlerInstalled = true;
 };
 
+/** Vue content in an isolated host session uses the same capability-checked asset protocol. */
+export const installOnlyPreviewVueSessionProtocol = (targetSession: Session): (() => void) => {
+  if (targetSession.protocol.isProtocolHandled(ONLY_PREVIEW_SCHEME)) {
+    targetSession.protocol.unhandle(ONLY_PREVIEW_SCHEME);
+  }
+  const generation = (sessionProtocolGenerations.get(targetSession) ?? 0) + 1;
+  sessionProtocolGenerations.set(targetSession, generation);
+  targetSession.protocol.handle(ONLY_PREVIEW_SCHEME, respondToDefaultOnlyPreviewProtocol);
+  return () => {
+    if (sessionProtocolGenerations.get(targetSession) !== generation) return;
+    if (targetSession.protocol.isProtocolHandled(ONLY_PREVIEW_SCHEME)) {
+      targetSession.protocol.unhandle(ONLY_PREVIEW_SCHEME);
+    }
+  };
+};
+
 // A rejection raised here becomes a bare network error in the renderer, where it is reported as a
 // generic read failure with no cause. Naming it on this side is the only place the real reason —
 // a cancelled read, a changed source length, a revoked capability — still exists.

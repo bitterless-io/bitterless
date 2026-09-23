@@ -1,5 +1,11 @@
 # 会话的工作区和 OnlyPreview 绑在一起
 
+> **2026-09-23 标题文案**：BL 与 Cowork 的 OnlyPreview menu bar 标题和默认 Tab 标题统一为
+> `Workspace`（W 大写），所有界面语言一致。文件预览标题、用户自定义 Tab 别名及内部标识保持原有语义。
+> 验证：OnlyPreview 宿主切换及占位 Tab 单测 15/15。全局 renderer-i18n 与 tab-alias 检查
+> 分别停在 Maestro 初始化顺序、退出前 pinned Tab 两条既有断言，HEAD 同样不通过。
+> 未运行 Electron/E2E；需重启包含改动的构建，确认 menu bar 和 Tab 均显示 `Workspace`。
+
 > **2026-09-17 自动打开入口修复**：Chat 按钮与 Agent 请求的原生目录选择器都在 Main 的
 > `chooseWorkspaceDirectory` 成功绑定后，通过宿主适配器打开一次 Preview；不再等待 Chat 保存队列。
 > Preview 失败保留工作区，并提示点击工作区名称重试。`setWorkspaceDirectory`、恢复和发送前刷新

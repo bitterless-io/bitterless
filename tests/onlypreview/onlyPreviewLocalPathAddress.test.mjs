@@ -116,8 +116,8 @@ describe('resolveLocalPathTarget', () => {
 
   test('归一在存在性判断之前 —— `..` 与重复斜杠不该让一个真文件被判成不存在', () => {
     const exists = withExisting('/Users/ral/x.html');
-    assert.equal(resolveLocalPathTarget('/Users/ral/sub/../x.html', exists).kind, 'chrome');
-    assert.equal(resolveLocalPathTarget('/Users//ral///x.html', exists).kind, 'chrome');
+    assert.equal(resolveLocalPathTarget('/Users/ral/sub/../x.html', exists).kind, 'preview');
+    assert.equal(resolveLocalPathTarget('/Users//ral///x.html', exists).kind, 'preview');
   });
 
   test('mac 上的 Windows 路径落 missing,不落 preview', () => {
@@ -168,7 +168,7 @@ describe('maestro navigate 走预览端口', () => {
   test('本机路径的判据与落法都问端口,不自己判', () => {
     assert.match(navigate, /getMaestroPreviewOpener\(\)/);
     assert.match(navigate, /resolveLocalTarget\(raw\)/);
-    assert.match(navigate, /localTarget\?\.kind === 'preview'[\s\S]{0,220}\.openInTab\(localTarget\.path, \{ tabId: active\.id \}\)/);
+    assert.match(navigate, /localTarget\?\.kind === 'preview'[\s\S]{0,220}\.open\(localTarget\.path\)/);
   });
 
   test('路径那一支不过 normalizeUrl —— 否则被补成 https:///Users/…', () => {
@@ -180,7 +180,7 @@ describe('maestro navigate 走预览端口', () => {
     assert.doesNotMatch(code, /@main\/miniapps\/onlypreview\//);
     // 注释里提到那两个别名是**允许**的 —— 那是解释,不是 import。钉一下,免得下次有人把 code
     // 换回 source 来"简化"。
-    assert.match(source, /@shared\/onlypreview\//);
+
     assert.doesNotMatch(navigate, /\[A-Za-z\]:/, 'navigate 里出现盘符正则 = 判据被复制了一份');
   });
 });
@@ -205,21 +205,21 @@ describe('宿主那一侧实现端口', () => {
  * 判错两边都有代价:该进 tab 的进了 OnlyPreview = 他明确不要的行为;该进预览面的落到 `file://` =
  * docx 会被浏览器**下载**下来,markdown 会变成一坨没渲染的纯文本。
  */
-describe('普通 tab 能自己渲染的那一类', () => {
+describe('所有本机文件格式共用预览路由', () => {
   const exists = () => true;
 
-  test('Ral 的那个 PDF 落 chrome,在 tab 里加载,不进 OnlyPreview', () => {
+  test('PDF 交给统一预览路由', () => {
     const target = resolveLocalPathTarget(
       '/Users/ral/Downloads/NOTE_voice_scribe_regional_language_2026-09-08.pdf',
       exists
     );
-    assert.equal(target.kind, 'chrome');
-    assert.equal(new URL(target.fileUrl).protocol, 'file:');
+    assert.equal(target.kind, 'preview');
+    assert.ok(target.path.endsWith('.pdf'));
   });
 
-  test('pdf / 图片 / 音视频 / html 都落 chrome', () => {
+  test('pdf / 图片 / 音视频 / html 都落 preview', () => {
     for (const path of ['/x/a.pdf', '/x/a.png', '/x/a.jpg', '/x/a.mp3', '/x/a.mp4', '/x/a.html', '/x/a.htm']) {
-      assert.equal(resolveLocalPathTarget(path, exists).kind, 'chrome', path);
+      assert.equal(resolveLocalPathTarget(path, exists).kind, 'preview', path);
     }
   });
 

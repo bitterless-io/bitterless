@@ -220,10 +220,13 @@ test('closing the currently recorded drill branch leaves main recording alive', 
 
 test('show=true displays an explicitly opened page while default opens remain background', async () => {
   const browser = new Browser(), tab = surface('new'), focus = []
-  Object.assign(browser, { _state: {}, claimSpareTab: async () => tab, setTabControlled() {}, applyBounds() {},
+  Object.assign(browser, { _state: { backgroundWorkbenchTab: async () => { focus.push('workbench:background') } },
+    claimSpareTab: async () => tab, setTabControlled() {}, applyBounds() {},
     startTabNavigation: async () => {}, requireAgentTab: async () => tab, activateTab: async ({ id }) => focus.push(id) })
   await browser.openAgentTab(tab.url, () => {}, 'chat', true)
-  assert.deepEqual(focus, ['new'])
+  // 先退 Workbench、再激活。反过来(或者不退)新 tab 会开在 Workbench **底下**,tab 模型报 active,
+  // 人什么都看不到(docs/issues/agent-show-tab-hidden-behind-workbench.md)。
+  assert.deepEqual(focus, ['workbench:background', 'new'])
 })
 
 test('an explicitly opened external tab becomes the current drill branch without changing foreground', async () => {

@@ -16,7 +16,8 @@ const env = {
   host: null,
   presentation: null,
   inspectHook: null,
-  runtimeToken: 'a'.repeat(64)
+  runtimeToken: 'a'.repeat(64),
+  regions: new Map()
 };
 let runtime;
 const requireHost = (token) => runtime.onlyPreviewHostRegistry.require(token, ['content']);
@@ -106,13 +107,14 @@ after(() => {
   delete globalThis.__recentNavigation;
 });
 const stubs = {
+  'indiPreviewWindow.service': 'export const openIndiPreviewFile = async (path, options) => globalThis.__recentNavigation.calls.push({ method: \'independent\', path, options });',
   'onlyPreviewWindow.helper':
     'export const onlyPreviewWindowHelper = globalThis.__recentNavigation.window;',
   'onlyPreviewPreviewRegion.service':
     // 预览区**按 host 解析**(不再是进程级单例)。stub 里两者指向同一个假实例 —— 这个用例只有一个
     // host,它要验的是"谁被调用了什么",不是"哪一个实例"。
     'export const onlyPreviewPreviewRegionService = globalThis.__recentNavigation.preview;' +
-    'export const resolveOnlyPreviewPreviewRegion = () => globalThis.__recentNavigation.preview;',
+    'export const resolveOnlyPreviewPreviewRegion = token => globalThis.__recentNavigation.regions.get(token) ?? globalThis.__recentNavigation.preview;',
   'fileSearchWindow.service':
     'export const fileSearchWindowService = globalThis.__recentNavigation.files;',
   'onlyPreviewOpenDiagnostics.runtime':
@@ -187,6 +189,7 @@ runtime.onlyPreviewRecentsService.configureStorage(storage);
 runtime.onlyPreviewRecentsService.markStorageReady();
 runtime.onlyPreviewRecentDirectoryService.configureStorage(storage);
 runtime.onlyPreviewRecentDirectoryService.configureTargetRuntime({
+  defaultWorkspace: () => '/navigation-fixture/default',
   inspectTarget: async (path) => inspected(path),
   bindWorkspace: async (token, workspace) => {
     env.calls.push({ method: 'bind-project', workspaceId: workspace.workspaceId });
@@ -205,7 +208,10 @@ const reset = async (withProject = true) => {
   env.events.length = 0;
   env.deleted.clear();
   env.directories.clear();
+  env.directories.add('/navigation-fixture/default');
+  runtime.onlyPreviewRecentDirectoryService.clearTransientState();
   env.inspectHook = null;
+  env.regions.clear();
   env.host = runtime.onlyPreviewHostRegistry.issue('standalone', 'content');
   env.presentation = {
     hostId: env.host.hostId,
@@ -330,43 +336,22 @@ test('Back/Forward preserve order and writes, Reload refreshes only Preview, and
   assert.equal(recentWrites().length, writes + 1);
 });
 
-test('external explicit files retain Project selection and have only single-file authority, including no-Project opens', async () => {
-  const { host, project, projectPath } = await reset();
+test('external explicit files retain Project selection, presentation and history, including cold opens', async () => {
+  const { host, projectPath } = await reset();
   await runtime.openOnlyPreviewAbsoluteTarget(`${projectPath}/inside.md`);
   const before = runtime.onlyPreviewWorkspaceRegistry.restore(host.hostToken);
-  await runtime.openOnlyPreviewAbsoluteTarget('/navigation-fixture/sibling/outside.md');
+  const presentation = env.presentation;
+  const history = await recents();
+  await runtime.openOnlyPreviewAbsoluteTarget('/navigation-fixture/sibling/outside.md', { line: 9 });
   assert.deepEqual(runtime.onlyPreviewWorkspaceRegistry.restore(host.hostToken), before);
-  assert.equal(
-    runtime.onlyPreviewWorkspaceRegistry.isExternalPreviewFileRef(
-      host.hostToken,
-      env.presentation.fileRef
-    ),
-    true
-  );
-  assert.throws(
-    () =>
-      runtime.onlyPreviewWorkspaceRegistry.getPreviewAuthorityItemRef(host.hostToken, {
-        ...env.presentation.fileRef,
-        relativePath: 'other.md'
-      }),
-    (error) => error.code === 'WORKSPACE_ACCESS_DENIED'
-  );
-  assert.equal(env.calls.filter(({ method }) => method === 'bind-project').length, 0);
-  assert.equal(env.calls.filter(({ method }) => method === 'authorize').length, 1);
-  assert.equal((await recents()).canLocate, false);
-  await runtime.selectOnlyPreviewFile(host.hostToken, {
-    workspaceId: project.workspaceId,
-    relativePath: 'inside.md'
-  });
-  assert.equal((await recents()).canLocate, true);
+  assert.equal(env.presentation, presentation);
+  assert.deepEqual(await recents(), history);
+  assert.deepEqual(env.calls.at(-1), { method: 'independent', path: '/navigation-fixture/sibling/outside.md', options: { line: 9, fragment: undefined } });
   const unbound = await reset(false);
   await runtime.openOnlyPreviewAbsoluteTarget('/navigation-fixture/unbound/external.md');
   assert.equal(runtime.onlyPreviewWorkspaceRegistry.restore(unbound.host.hostToken), null);
-  assert.equal(
-    env.calls.some(({ method }) => method === 'bind-project' || method === 'authorize'),
-    false
-  );
-  assert.deepEqual(names(await recents()), ['external.md']);
+  assert.equal(env.calls.some(({ method }) => method === 'bind-project' || method === 'authorize' || method === 'present'), false);
+  assert.deepEqual(names(await recents()), []);
 });
 
 test('a missing Recent remains listed and reports failure without changing presentation or order', async () => {
@@ -449,9 +434,9 @@ test('a source-relative Markdown sibling open uses the explicit external lane an
     env.calls.filter(({ method }) => method === 'inspect').at(-1).path,
     '/navigation-fixture/sibling/target 中文.md'
   );
-  assert.equal(env.calls.filter(({ method }) => method === 'present').at(-1).fragment, 'intro');
-  assert.deepEqual(names(await recents()), ['target 中文.md', 'source.md']);
-  assert.equal((await recents()).canLocate, false);
+  assert.deepEqual(env.calls.filter(({ method }) => method === 'independent').at(-1), { method: 'independent', path: '/navigation-fixture/sibling/target 中文.md', options: { line: undefined, fragment: 'intro' } });
+  assert.deepEqual(names(await recents()), ['source.md']);
+  assert.equal((await recents()).canLocate, true);
 });
 
 test('Markdown source capability, runtime, selection and target-kind checks reject without unauthorized presentation', async () => {
@@ -718,53 +703,21 @@ test('quiet agent opens keep Project authority and persistence but emit no tree 
   );
 });
 
-test('quiet external and initially unbound files do not select, bind or index another Project', async () => {
+test('quiet external and initially unbound files only open IndiPreview', async () => {
   for (const withProject of [true, false]) {
     const { host, projectPath } = await reset(withProject);
     if (withProject) await runtime.openOnlyPreviewAbsoluteTarget(`${projectPath}/anchor.md`);
     const before = runtime.onlyPreviewWorkspaceRegistry.restore(host.hostToken);
+    const history = await recents();
+    const presentation = env.presentation;
     env.events.length = 0;
-    await runtime.openOnlyPreviewAbsoluteTarget('/navigation-fixture/agent/quiet-external.md', {
-      preserveTreeSelection: true
-    });
+    await runtime.openOnlyPreviewAbsoluteTarget('/navigation-fixture/agent/quiet-external.md', { preserveTreeSelection: true });
     assert.deepEqual(runtime.onlyPreviewWorkspaceRegistry.restore(host.hostToken), before);
-    assert.equal(
-      runtime.onlyPreviewWorkspaceRegistry.isExternalPreviewFileRef(
-        host.hostToken,
-        env.presentation.fileRef
-      ),
-      true
-    );
-    assert.throws(
-      () =>
-        runtime.onlyPreviewWorkspaceRegistry.getPreviewAuthorityItemRef(host.hostToken, {
-          ...env.presentation.fileRef,
-          relativePath: 'unauthorized-sibling.md'
-        }),
-      (error) => error.code === 'WORKSPACE_ACCESS_DENIED'
-    );
-    assert.equal(
-      env.events.some(({ event }) => event === 'onlypreview/selectionChanged'),
-      false
-    );
-    assert.equal(
-      env.calls.some(({ method }) => method === 'bind-project'),
-      false
-    );
-    assert.equal(
-      env.calls.filter(({ method }) => method === 'authorize').length,
-      withProject ? 1 : 0
-    );
-    const snapshot = await recents();
-    assert.equal(names(snapshot)[0], 'quiet-external.md');
-    assert.equal(snapshot.canLocate, false);
-    assert.equal(names(snapshot).includes('anchor.md'), withProject);
-    assert.ok(
-      env.events.some(
-        ({ event, payload }) =>
-          event === 'onlypreview/recentsChanged' && payload.hostId === host.hostId
-      )
-    );
+    assert.equal(env.presentation, presentation);
+    assert.deepEqual(await recents(), history);
+    assert.deepEqual(env.events, []);
+    assert.equal(env.calls.some(({ method }) => method === 'bind-project'), false);
+    assert.equal(env.calls.filter(({ method }) => method === 'independent').length, 1);
   }
 });
 
@@ -888,7 +841,7 @@ test('a quiet agent request inspected under A cannot update B after a Project sw
 
 test('MCP and OS file opening preserve tree selection without changing the public path-only schema', () => {
   const main = readFileSync(resolve(root, 'src/main/app.main.ts'), 'utf8');
-  assert.match(main, /new OnlyPreviewOpenQueue\(\(target\) =>\s*openOnlyPreviewAbsoluteTarget\(target, \{ preserveTreeSelection: true \}\)/);
+  assert.match(main, /new OnlyPreviewOpenQueue\(openOnlyPreviewOsTarget\)/);
   assert.match(
     main,
     /configurePreviewOpener\(\s*\(?\w+\)?\s*=>\s*openOnlyPreviewAbsoluteTarget\(\w+,\s*\{\s*preserveTreeSelection:\s*true\s*\}\)/
@@ -901,4 +854,28 @@ test('MCP and OS file opening preserve tree selection without changing the publi
     readFileSync(resolve(root, 'src/main/mcp/mcpStdio.helper.ts'), 'utf8'),
     /preserveTreeSelection/
   );
+});
+
+
+test('IndiPreview Markdown/reload resolve their own host and links inside the Workspace return there', async () => {
+  const { projectPath } = await reset();
+  await runtime.openOnlyPreviewAbsoluteTarget(`${projectPath}/current.md`);
+  const host = runtime.onlyPreviewHostRegistry.issue('standalone', 'content');
+  const fileRef = runtime.onlyPreviewWorkspaceRegistry.registerExternalPreview(host.hostToken, inspected('/outside/independent.md'));
+  const ownPresentation = { fileRef, adapterId: 'markdown-dom', selectionRevision: 31 };
+  const ownCalls = [];
+  env.regions.set(host.hostToken, {
+    snapshotForVue: () => ownPresentation,
+    navigateFragment: (...args) => ownCalls.push(['fragment', ...args]),
+    refresh: async token => ownCalls.push(['reload', token])
+  });
+  await runtime.reloadOnlyPreview({ hostToken: host.hostToken });
+  await runtime.openOnlyPreviewMarkdownLink({ hostToken: host.hostToken, previewRuntimeToken: env.runtimeToken,
+    selectionRevision: 31, href: '#section' });
+  assert.deepEqual(ownCalls, [['reload', host.hostToken], ['fragment', host.hostToken, env.runtimeToken, 31, 'section']]);
+  await runtime.openOnlyPreviewMarkdownLink({ hostToken: host.hostToken, previewRuntimeToken: env.runtimeToken,
+    selectionRevision: 31, href: `${projectPath}/inside.md#intro` });
+  assert.equal(env.presentation.fileRef.relativePath, 'inside.md');
+  assert.deepEqual(env.calls.filter(({ method }) => method === 'present').at(-1).fragment, { fragment: 'intro', line: undefined });
+  assert.equal(ownPresentation.fileRef, fileRef);
 });

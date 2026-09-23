@@ -548,6 +548,10 @@ export class OnlyPreviewPreviewRegionService {
     this.findService.reportContentResult(result);
   }
 
+  waitForChromeDisposal(): Promise<void> {
+    return this.viewService.waitForChromeDisposal();
+  }
+
   destroy(): void {
     const runtime = this.runtime;
     // 只注销**自己**那一条。`start()` 开头就调 `destroy()`,而那时新的 runtime 还没写进来 ——

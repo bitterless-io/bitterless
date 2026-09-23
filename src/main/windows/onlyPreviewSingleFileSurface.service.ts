@@ -1,3 +1,5 @@
+import { createOnlyPreviewVueView } from '@main/miniapps/onlypreview/views/onlyPreviewVueView.service';
+import { acquireIndiPreviewChromePartition } from './indiPreviewChromePartition.service';
 import { View, WebContentsView, type BaseWindow, type Rectangle, type WebContents } from 'electron';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -18,28 +20,30 @@ import {
   registerApplicationFindDispatch
 } from '@main/menu/applicationFindMenu.service';
 
-export interface OnlyPreviewFileTabHost {
+export interface OnlyPreviewSingleFileHost {
   window: BaseWindow;
   path: string;
   /** 打开时要滚到的行。尽力而为:渲染不了行的预览器忽略它,不是错误。 */
   line?: number;
+  fragment?: string;
   isOpen(): boolean;
   bounds(): Rectangle;
   attach(container: View): void;
 }
 
-/** A file tab owns one file authority and one region, independent of the OnlyPreview singleton. */
-export class OnlyPreviewFileTabSurface {
+/** A single-file host owns one file authority and one region, independent of the OnlyPreview singleton. */
+export class OnlyPreviewSingleFileSurface {
   readonly container = new View();
   private readonly host = onlyPreviewHostRegistry.issue('standalone', 'content');
   private readonly region = new OnlyPreviewPreviewRegionService();
+  private readonly chromeLease = acquireIndiPreviewChromePartition();
   private toolbar: WebContentsView | null = null;
   private disposed = false;
   private active = false;
   private readonly shortcutContents = new WeakSet<WebContents>();
   private readonly releaseFindDispatch: () => void;
 
-  constructor(private readonly owner: OnlyPreviewFileTabHost) {
+  constructor(private readonly owner: OnlyPreviewSingleFileHost) {
     this.container.setVisible(false);
     this.releaseFindDispatch = registerApplicationFindDispatch((command, window) => {
       if (command !== 'find-in-file' || !this.active || !this.isLive()) return false;
@@ -55,7 +59,7 @@ export class OnlyPreviewFileTabSurface {
   async open(): Promise<void> {
     try {
       const inspected = await fileSearchWindowService.inspectTarget(this.owner.path);
-      if (!this.isLive()) throw new Error('File preview tab closed during startup.');
+      if (!this.isLive()) throw new Error('IndiPreview closed during startup.');
       const fileRef = onlyPreviewWorkspaceRegistry.registerExternalPreview(
         this.host.hostToken,
         inspected
@@ -70,6 +74,7 @@ export class OnlyPreviewFileTabSurface {
       this.toolbar = new WebContentsView({
         webPreferences: {
           preload: join(__dirname, '../preload/onlypreview.js'),
+          partition: `indipreview-${this.host.hostId}`,
           sandbox: true,
           contextIsolation: true,
           nodeIntegration: false,
@@ -94,35 +99,23 @@ export class OnlyPreviewFileTabSurface {
         container: this.container,
         isHostLive: () => this.isLive(),
         createVuePreviewView: (runtimeToken, officeCapability, readCapability) => {
-          const view = new WebContentsView({
-            webPreferences: {
-              preload: join(__dirname, '../preload/onlypreviewContent.js'),
-              sandbox: true,
-              contextIsolation: true,
-              nodeIntegration: false,
-              webSecurity: true,
-              additionalArguments: getOnlyPreviewRendererArguments(
-                this.host,
-                'preview',
-                runtimeToken,
-                officeCapability,
-                readCapability,
-                undefined,
-                'cowork'
-              )
-            }
+          const view = createOnlyPreviewVueView({
+            host: this.host, baseDirectory: __dirname, runtimeToken,
+            officeCapability, readCapability,
+            partition: `indipreview-${this.host.hostId}`
           });
-          configureOnlyPreviewNavigationFence(view.webContents, previewTarget.url);
           this.bindShortcuts(view.webContents);
           return view;
         },
         loadVuePreviewView: (view) => view.webContents.loadURL(previewTarget.url),
+        // The Chrome protocol admits one file token per session; concurrent windows cannot share it.
+        chromePartition: this.chromeLease.partition,
         bindChromeShortcuts: (contents) => this.bindShortcuts(contents)
       });
       this.refresh();
       await this.toolbar.webContents.loadURL(toolbarUrl);
-      if (!this.isLive()) throw new Error('File preview tab closed during startup.');
-      await this.region.present(this.host.hostToken, fileRef, undefined, { line: this.owner.line });
+      if (!this.isLive()) throw new Error('IndiPreview closed during startup.');
+      await this.region.present(this.host.hostToken, fileRef, undefined, { line: this.owner.line, fragment: this.owner.fragment });
     } catch (error) {
       this.dispose();
       throw error;
@@ -139,15 +132,12 @@ export class OnlyPreviewFileTabSurface {
     }
   }
 
-  displayedFilePath(): string | null {
-    return this.isLive() ? this.region.displayedFilePath(this.host.hostToken) : null;
-  }
 
   refresh(): void {
     if (!this.isLive()) return;
     const bounds = this.owner.bounds();
     this.container.setBounds(bounds);
-    const toolbarHeight = Math.min(40, bounds.height);
+    const toolbarHeight = Math.min(32, bounds.height);
     this.toolbar?.setBounds({ x: 0, y: 0, width: bounds.width, height: toolbarHeight });
     this.region.updateBounds(this.host.hostToken, {
       x: 0,
@@ -162,6 +152,7 @@ export class OnlyPreviewFileTabSurface {
     this.disposed = true;
     this.releaseFindDispatch();
     this.region.destroy();
+    this.chromeLease.release(this.region.waitForChromeDisposal());
     onlyPreviewHostRegistry.revoke(this.host.hostToken);
     if (this.toolbar && !this.toolbar.webContents.isDestroyed()) this.toolbar.webContents.close();
     this.toolbar = null;
@@ -182,6 +173,9 @@ export class OnlyPreviewFileTabSurface {
       if (command && !input.alt && !input.shift && key === 'f') {
         event.preventDefault();
         if (!input.isAutoRepeat) this.openFind();
+      } else if (command && !input.alt && !input.shift && key === 'w') {
+        event.preventDefault();
+        this.owner.window.close();
       } else if (key === 'escape' && this.region.isFindOpen(this.host.hostToken)) {
         event.preventDefault();
         this.region.closeFind(this.host.hostToken);

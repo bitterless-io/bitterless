@@ -50,7 +50,7 @@ const extractConstFunction = (source, name, nextMarker) => {
 const stripTs = (source) =>
   source
     .replace(/interface AriaNode[\s\S]*?\n}\n\n/g, '')
-    .replace(/const snapshotWalker = \(\): \{ title: string; count: number; truncated: boolean; nodes: AriaNode\[] \} =>/, 'const snapshotWalker = () =>')
+    .replace(/const snapshotWalker = \(\): \{[\s\S]*?\n\} =>/, 'const snapshotWalker = () =>')
     .replace(/const clean = \(v: unknown, max = 200\): string =>/g, 'const clean = (v, max = 200) =>')
     .replace(/const css = \(v: unknown\): string =>/g, 'const css = (v) =>')
     .replace(/const directText = \(el: Element\): string =>/g, 'const directText = (el) =>')
@@ -58,20 +58,34 @@ const stripTs = (source) =>
     .replace(/const idText = \(ids: string\): string =>/g, 'const idText = (ids) =>')
     .replace(/const nameOf = \(el: Element, role: string\): string =>/g, 'const nameOf = (el, role) =>')
     .replace(/const isHidden = \(el: Element\): boolean =>/g, 'const isHidden = (el) =>')
+    .replace(/const isBoxlessPassthrough = \(el: Element\): boolean =>/g, 'const isBoxlessPassthrough = (el) =>')
+    .replace(/const frameBody = \(el: Element\): Element \| null =>/g, 'const frameBody = (el) =>')
+    .replace(/const renderedChildren = \(el: Element\): Element\[] =>/g, 'const renderedChildren = (el) =>')
+    .replace(/const soak = \(list: AriaNode\[]\): void =>/g, 'const soak = (list) =>')
     .replace(/const isMeaningful = \(el: Element\): boolean =>/g, 'const isMeaningful = (el) =>')
     .replace(/const stamp = \(el: Element\): string =>/g, 'const stamp = (el) =>')
     .replace(/const identOf = \(el: Element\): \{ kind: 'testid' \| 'id'; value: string \} \| null =>/g, 'const identOf = (el) =>')
     .replace(/const describe = \(el: Element\): AriaNode =>/g, 'const describe = (el) =>')
     .replace(/const node: AriaNode =/g, 'const node =')
     .replace(/const selectOptions = \(el: HTMLSelectElement\): AriaNode\[] =>/g, 'const selectOptions = (el) =>')
-    .replace(/const walk = \(el: Element, depth: number\): AriaNode\[] =>/g, 'const walk = (el, depth) =>')
+    .replace(/const walk = \(el: Element, depth: number, boxless = false\): AriaNode\[] =>/g, 'const walk = (el, depth, boxless = false) =>')
     .replace(/selectOptions\(el as HTMLSelectElement\)/g, 'selectOptions(el)')
+    .replace(/\(el as HTMLElement\)/g, 'el')
+    .replace(/\(el as HTMLIFrameElement\)/g, 'el')
+    .replace(/\(el as HTMLSlotElement\)/g, 'el')
+    .replace(/\(root as HTMLElement\)/g, 'root')
     .replace(/\(el as HTMLInputElement\)/g, 'el')
     .replace(/\(el as HTMLSelectElement\)/g, 'el')
     .replace(/\(el as HTMLOptionElement\)/g, 'el')
     .replace(/const collapseWrappers = \(nodes: AriaNode\[]\): AriaNode\[] =>/g, 'const collapseWrappers = (nodes) =>')
     .replace(/const toAriaYaml = \(nodes: AriaNode\[], indent = ''\): string =>/g, "const toAriaYaml = (nodes, indent = '') =>")
+    .replace(/const lines: \{ raw: string; key: string }\[] = \[]/g, 'const lines = []')
     .replace(/const lines: string\[] = \[]/g, 'const lines = []')
+    .replace(/let missingSample: string\[] = \[]/g, 'let missingSample = []')
+    .replace(/const candidates: \{ raw: string; key: string }\[] = \[]/g, 'const candidates = []')
+    .replace(/const candidates: string\[] = \[]/g, 'const candidates = []')
+    .replace(/const seen: Record<string, true> = \{}/g, 'const seen = {}')
+    .replace(/const notes: string\[] = \[]/g, 'const notes = []')
     .replace(/const out: AriaNode\[] = \[]/g, 'const out = []')
     .replace(/let line: string/g, 'let line')
     .replace(/let childNodes: AriaNode\[]/g, 'let childNodes')
@@ -174,8 +188,10 @@ const document = {
   querySelectorAll: (selector) => selector === '[data-coach-ref]' ? [] : []
 }
 const window = { CSS: { escape: (value) => String(value) } }
+// snapshotWalker 的收尾锚点跟着它后面那个声明走：`// Render the aria tree` 之间现在隔着
+// comparePayload（`/page_snapshot_compare` 的页内探针），照旧锚会把它一起抽进来。
 const source = stripTs([
-  extractConstFunction(debuggerCapture, 'snapshotWalker', '\n\n// Render the aria tree'),
+  extractConstFunction(debuggerCapture, 'snapshotWalker', '\n\n/** 一处剪枝点'),
   extractConstFunction(debuggerCapture, 'collapseWrappers', '\n\nconst toAriaYaml'),
   extractConstFunction(debuggerCapture, 'toAriaYaml', '\n\nconst toStepYaml'),
   'const raw = snapshotWalker();',
@@ -204,6 +220,230 @@ assert(result.yaml.includes('- option "Cardiology"') && result.yaml.includes('[s
 assert(result.yaml.includes('- option "Dental"') && result.yaml.includes('[value="dental"]'), 'behavior snapshot should render non-selected option child')
 assert(select.getAttribute('data-coach-ref'), 'snapshot should stamp the select with data-coach-ref for ui_act')
 assert(optCardio.getAttribute('data-coach-ref') && optDental.getAttribute('data-coach-ref'), 'snapshot should stamp option refs too')
+
+// ---------------------------------------------------------------------------------------
+// Blind spots: content that IS on screen but that the walk used to drop silently.
+// A ChatGPT billing page full of transactions was reported to the user as empty because
+// of exactly this (docs/issues/page-snapshot-drops-visible-subtrees.md). Each case below
+// is one gate that must let visible content through — and the two "secret" ones are the
+// reverse guard: genuinely hidden content must STILL be dropped.
+const boxless = new FakeElement('div', {}, [new FakeElement('span', {}, ['B-ROW'])])
+boxless.getClientRects = () => []
+boxless.__display = 'contents'
+
+const shadowHost = new FakeElement('div', { id: 'host' })
+shadowHost.shadowRoot = new FakeElement('div', {}, [new FakeElement('span', {}, ['C-ROW'])])
+
+const crossFrame = new FakeElement('iframe', { src: 'https://elsewhere.example/embed' })
+crossFrame.contentDocument = null
+
+const ariaHidden = new FakeElement('div', { 'aria-hidden': 'true' }, [new FakeElement('span', {}, ['G-SECRET'])])
+
+// Source text "Demo Center" under CSS text-transform: uppercase. The tree records the source
+// (nameOf → textContent, directText → nodeValue); innerText below records what RENDERS. The
+// self-check compares the two, so without case folding this reads as a gap that is not there —
+// which is what our own demo site did (docs/issues/page-snapshot-incomplete-false-positive-on-text-transform.md).
+const cased = new FakeElement('div', {}, ['Demo Center'])
+
+const blindBody = new FakeElement('body', {}, [boxless, shadowHost, crossFrame, ariaHidden, cased])
+// What the browser says is visible. The two unreachable lines stand in for blind spots we have
+// not found yet: they render, the tree never reaches them, and the self-check must say so.
+// "Unreachable Row 42" is deliberately mixed-case — it proves the samples are reported verbatim
+// and not in whatever form the comparison happened to normalise them to.
+blindBody.innerText = 'B-ROW\nC-ROW\nG-SECRET\nDEMO CENTER\nMISSING-LINE\nUnreachable Row 42'
+
+const blindDocument = {
+  title: 'Blind Spots',
+  body: blindBody,
+  documentElement: blindBody,
+  getElementById: () => null,
+  querySelector: () => null,
+  querySelectorAll: (selector) =>
+    selector === '[aria-hidden="true"],[hidden]' ? [ariaHidden] : []
+}
+const blindWindow = {
+  CSS: { escape: (value) => String(value) },
+  getComputedStyle: (el) => ({ display: el.__display || 'block' })
+}
+const blindSource = stripTs([
+  extractConstFunction(debuggerCapture, 'snapshotWalker', '\n\n/** 一处剪枝点'),
+  extractConstFunction(debuggerCapture, 'collapseWrappers', '\n\nconst toAriaYaml'),
+  extractConstFunction(debuggerCapture, 'toAriaYaml', '\n\nconst toStepYaml'),
+  'const raw = snapshotWalker();',
+  'const yaml = toAriaYaml(collapseWrappers(raw.nodes));',
+  '({ raw, yaml });'
+].join('\n\n'))
+const blind = vm.runInNewContext(blindSource, {
+  window: blindWindow,
+  document: blindDocument,
+  CSS: blindWindow.CSS,
+  Element: FakeElement,
+  HTMLInputElement: FakeElement,
+  HTMLSelectElement: FakeElement,
+  HTMLOptionElement: FakeElement,
+  HTMLTextAreaElement: FakeElement,
+  Array,
+  String,
+  JSON,
+  Number,
+  RegExp,
+  Object
+})
+
+assert(blind.yaml.includes('B-ROW'), 'display:contents generates no box of its own, but its children render — they must stay in the tree')
+assert(blind.yaml.includes('C-ROW'), 'an open shadow root is what actually renders under its host — its content must be walked')
+assert(blind.yaml.includes('- iframe'), 'an iframe must appear even when unreadable, or the agent cannot know that region exists')
+assert(blind.yaml.includes('cross-origin frame'), 'an unreadable frame must say so on the node instead of vanishing')
+assert(!blind.yaml.includes('G-SECRET'), 'aria-hidden content must still be dropped — this gate is not what broke')
+assert(blind.raw.missingLines === 2, `self-check should report exactly the two unreachable lines, got ${blind.raw.missingLines}`)
+assert(blind.raw.missingSample.includes('MISSING-LINE'), 'self-check should name the visible text the tree never reached')
+assert(!blind.raw.missingSample.includes('G-SECRET'), 'aria-hidden text must not be reported as a gap — a warning that always fires is ignored')
+assert(
+  !blind.raw.missingSample.some((line) => line.toLowerCase() === 'demo center'),
+  'text differing from the tree only by CSS text-transform is NOT a gap — reporting it turns the one blind-spot alarm into noise'
+)
+// The sample is what the agent is told to go look for on the page. Normalising for the
+// comparison is fine; leaking that normalisation into the message is not.
+for (const line of blind.raw.missingSample) {
+  assert(
+    blindBody.innerText.indexOf(line) >= 0,
+    `missingSample must quote the rendered line verbatim, got ${JSON.stringify(line)}`
+  )
+}
+
+// ---------------------------------------------------------------------------------------
+// Glued inline text (docs/issues/page-snapshot-incomplete-false-positive-on-glued-inline-text.md).
+// innerText puts NO separator between adjacent inline elements that have no whitespace between
+// them in the DOM (typical JSX), while the capture joins its pieces with spaces — so lines whose
+// every piece IS in the tree were reported as gaps. The direct-text pass reads the walk's stamps
+// back and asks for computed visibility, so this page models both: [data-coach-ref] comes back in
+// document order, and visibility inherits down the tree the way CSS does.
+const inDocumentOrder = (el) => [el, ...el.children.flatMap((child) => inDocumentOrder(child))]
+
+// Links with no whitespace between them: innerText renders ONE line, "HomeAboutPricing".
+const gluedNav = new FakeElement('nav', {}, [
+  new FakeElement('a', { href: '/' }, ['Home']),
+  new FakeElement('a', { href: '/about' }, ['About']),
+  new FakeElement('a', { href: '/pricing' }, ['Pricing'])
+])
+// The same with buttons: "SaveCancel".
+const gluedButtons = new FakeElement('div', {}, [
+  new FakeElement('button', {}, ['Save']),
+  new FakeElement('button', {}, ['Cancel'])
+])
+// innerText drops visibility:hidden text AND that block's line breaks, gluing the buttons either
+// side into one line — while the walk keeps the hidden link, so its text sits between them.
+const hiddenMenu = new FakeElement('ul', {}, [
+  new FakeElement('li', {}, [new FakeElement('a', { href: '/logout' }, ['Hidden menu: Log out'])])
+])
+hiddenMenu.__visibility = 'hidden'
+const underModal = new FakeElement('div', {}, [
+  new FakeElement('button', {}, ['Under modal button']),
+  hiddenMenu,
+  new FakeElement('button', {}, ['Invisible button'])
+])
+// A filled search box: innerText renders "SearchGo" (never the value), while the label reaches the
+// tree only as the textbox's name — so its value, right after that name, used to split the line.
+const searchLabel = new FakeElement('label', { for: 'q' }, ['Search'])
+const searchRow = new FakeElement('div', {}, [
+  searchLabel,
+  new FakeElement('input', { id: 'q', type: 'text', value: 'ct' }),
+  new FakeElement('button', {}, ['Go'])
+])
+// A REAL gap glued to text the tree does have: "UNREACHED-7" is nowhere in the tree, so dropping
+// whitespace must not let the covered half ("Home") carry the whole line.
+const gapRow = new FakeElement('div', {}, [new FakeElement('a', { href: '/home' }, ['Home'])])
+// aria-hidden text still renders, so innerText has it while the tree (correctly) does not; the
+// exclusion must compare with whitespace dropped too, or every multi-word hidden line is a gap.
+const hiddenApp = new FakeElement('div', { 'aria-hidden': 'true' }, [new FakeElement('p', {}, ['Order 1042 shipped'])])
+
+const gluedBody = new FakeElement('body', {}, [gluedNav, gluedButtons, underModal, searchRow, gapRow, hiddenApp])
+gluedBody.innerText = 'HomeAboutPricing\nSaveCancel\nUnder modal buttonInvisible button\nSearchGo\nHomeUNREACHED-7\nOrder 1042 shipped'
+
+const gluedDocument = {
+  title: 'Glued Inline Text',
+  body: gluedBody,
+  documentElement: gluedBody,
+  getElementById: () => null,
+  querySelector: (selector) => (selector === 'label[for="q"]' ? searchLabel : null),
+  querySelectorAll: (selector) => {
+    const all = inDocumentOrder(gluedBody)
+    if (selector === '[data-coach-ref]') return all.filter((el) => el.hasAttribute('data-coach-ref'))
+    if (selector === '[aria-hidden="true"],[hidden]') {
+      return all.filter((el) => el.getAttribute('aria-hidden') === 'true' || el.hasAttribute('hidden'))
+    }
+    return []
+  }
+}
+const gluedWindow = {
+  CSS: { escape: (value) => String(value) },
+  getComputedStyle: (el) => {
+    let from = el
+    while (from && !from.__visibility) from = from.parentElement
+    return { display: el.__display || 'block', visibility: from ? from.__visibility : 'visible' }
+  }
+}
+const glued = vm.runInNewContext(source, {
+  window: gluedWindow,
+  document: gluedDocument,
+  CSS: gluedWindow.CSS,
+  Element: FakeElement,
+  HTMLInputElement: FakeElement,
+  HTMLSelectElement: FakeElement,
+  HTMLOptionElement: FakeElement,
+  HTMLTextAreaElement: FakeElement,
+  Array,
+  String,
+  JSON,
+  Number,
+  RegExp,
+  Object
+})
+
+// Precondition for the visibility:hidden case: the walk does not read visibility, so the hidden
+// link IS in the tree. If that ever changes, that case stops testing anything — rework it then.
+assert(
+  glued.yaml.includes('Hidden menu: Log out'),
+  'glued page: the visibility:hidden link should still be in the tree — the visibility case below depends on it'
+)
+// Same for the search box: named by its label AND carrying its value, or the SearchGo case proves nothing.
+assert(
+  glued.yaml.includes('- textbox "Search" [value="ct"]'),
+  'glued page: the search box should be in the tree, named by its label and carrying its value — the SearchGo case below depends on it'
+)
+// The reverse for the aria-hidden paragraph: the walk must prune it, or the exclusion case proves nothing.
+assert(
+  !glued.yaml.includes('Order 1042 shipped'),
+  'glued page: the aria-hidden paragraph must NOT be in the tree — the exclusion case below depends on it'
+)
+assert(
+  !glued.raw.missingSample.includes('HomeAboutPricing'),
+  'links with no whitespace between them render as ONE innerText line; every piece is in the tree, so it is NOT a gap'
+)
+assert(
+  !glued.raw.missingSample.includes('SaveCancel'),
+  'buttons with no whitespace between them render as ONE innerText line; both are in the tree, so it is NOT a gap'
+)
+assert(
+  !glued.raw.missingSample.includes('Under modal buttonInvisible button'),
+  'innerText skips visibility:hidden text and glues its neighbours; the direct-text pass must skip it too, or the kept hidden text splits the line'
+)
+assert(
+  !glued.raw.missingSample.includes('SearchGo'),
+  'innerText never renders form-control values; a value placed right after its label-derived name splits "SearchGo" — values must not sit between names'
+)
+assert(
+  !glued.raw.missingSample.includes('Order 1042 shipped'),
+  'aria-hidden text is excluded from the gaps even when it spans several words — the exclusion must drop whitespace like the line key does'
+)
+assert(
+  glued.raw.missingSample.includes('HomeUNREACHED-7'),
+  'a line only PARTLY in the tree is still a gap — dropping whitespace must not let "Home" cover "HomeUNREACHED-7"'
+)
+assert(
+  glued.raw.missingLines === 1,
+  `glued page should report exactly the one real gap, got ${glued.raw.missingLines}: ${JSON.stringify(glued.raw.missingSample)}`
+)
 
 console.log('[check-snapshot-selects] ok')
 

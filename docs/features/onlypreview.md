@@ -1,5 +1,9 @@
 # OnlyPreview Sub-Application
 
+> 2026-09-23 routing update: [Workspace and IndiPreview](indipreview-workspace-routing.md) replaces
+> the external-file/file-tab policy below. Workspace opens the effective default directory; outside
+> files use an independent IndiPreview window with the same Vue/Chromium preview implementation.
+
 Status: Accepted; tasks 032–048, 072, 073, 076, 077, 078, and 098 implemented; owner verification
 pending
 
