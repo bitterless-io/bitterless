@@ -24,8 +24,12 @@ const RISK_CRITERIA: Record<Risk, string> = {
   irreversible: 'deletes data, submits a payment/order, or otherwise cannot be undone from this UI'
 };
 
-/** 不过这个线就当没判出来 —— 边界上概率模型最不稳,而这一格的错误不可逆。 */
-const CONFIDENCE_FLOOR = 0.7;
+/**
+ * **大于**这条线才采信 Jev 的分级;等于或低于就当没判出来,按不可逆处理(要人确认)。
+ * Ral 2026-09-23:「confidence 大于 0.5 都不需要人工去 confirm」—— 原来是 0.7,
+ * 把 `Cari`(0.65)这类只读操作也推给了人。判成 `irreversible` 的照样要问,与置信度无关。
+ */
+const CONFIDENCE_FLOOR = 0.5;
 
 /**
  * 确定性先行:填写 / 勾选 / 下拉选择只改本地表单状态,**提交的是后面那一下点击**。
@@ -105,7 +109,7 @@ export const gateUiActions = async (
     if (result.ok === false && result.reason === 'off') return { ok: true };
 
     const answer = result.ok ? (result.answers.risk as JevChoiceAnswer | undefined) : undefined;
-    const undecided = !answer || typeof answer.choice !== 'string' || (answer.confidence ?? 0) < CONFIDENCE_FLOOR;
+    const undecided = !answer || typeof answer.choice !== 'string' || (answer.confidence ?? 0) <= CONFIDENCE_FLOOR;
     const risk: Risk = undecided ? 'irreversible' : (answer.choice as Risk);
     if (risk !== 'irreversible') continue;
 
