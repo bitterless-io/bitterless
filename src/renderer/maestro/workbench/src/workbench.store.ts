@@ -43,6 +43,8 @@ import type { HeaderMap, NetworkTiming, TraceEvent } from '@maestro-shared/trace
 import type { NetResponseEvent, Row } from '@maestro-renderer/control/src/record/record.types'
 import { fmtHeaders } from '@maestro-renderer/control/src/record/record.format'
 import { captureConfig } from '@maestro-renderer/control/src/config/captureConfig.store'
+import { isWorkbenchPane } from '@maestro-shared/settingsNavigation'
+export { isWorkbenchPane, workbenchPanes } from '@maestro-shared/settingsNavigation'
 
 const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
 
@@ -132,23 +134,6 @@ const requestIdOf = (row: Row | undefined): string => {
   const event = row?.event
   return event && (event.kind === 'net.request' || event.kind === 'net.response') ? event.requestId : ''
 }
-
-export const workbenchPanes: WorkbenchPane[] = [
-  'recording',
-  'skills',
-  'workflows',
-  'injections',
-  'tools',
-  'models',
-  'apps',
-  'connectors',
-  'settings',
-  'about',
-  'log'
-]
-
-export const isWorkbenchPane = (value: string): value is WorkbenchPane =>
-  workbenchPanes.includes(value as WorkbenchPane)
 
 export const preferredWorkbenchPane = (): WorkbenchPane => {
   const pane = loadPrefs().activePane

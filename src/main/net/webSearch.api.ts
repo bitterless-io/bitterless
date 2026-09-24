@@ -1,5 +1,5 @@
 import { fetch } from 'undici'
-import { customerSessionService } from '@main/auth/customerSession.service'
+import { customerSessionService, revalidateRejectedCustomerSession } from '@main/auth/customerSession.service'
 
 /**
  * `web_search` 的 Core 客户端。
@@ -136,6 +136,7 @@ export const searchWebThroughCore = async (params: WebSearchApiParams): Promise<
   // 401 是**这台服务器不认这个 token**(过期/被吊销),与"搜索失败"完全不同 ——
   // 重试解决不了,得让用户重新登录。
   if (res.status === 401) {
+    await revalidateRejectedCustomerSession(session)
     throw new WebSearchError('not-signed-in', 'your Bitterless session has expired')
   }
   // 老版本 Core 没有这条路由 —— 必须与「搜索失败」区分开,否则模型会一直重试一个不存在的端点。

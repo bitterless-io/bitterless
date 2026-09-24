@@ -2,6 +2,18 @@ import type { HostToolCatalogEntry, HostToolCatalogResult, HostToolPolicyMap, Ho
 
 export const HOST_TOOL_CATALOG: HostToolCatalogEntry[] = [
   {
+    name: 'menu', scopes: ['cowork'], category: 'tab', risk: 'read',
+    summary: 'List or open a Bitterless Settings section for the user.',
+    useWhen: 'The user asks for /menu or wants to view a Settings tab.',
+    safety: 'Native Settings navigation only; does not change preferences or execute a skill.'
+  },
+  {
+    name: 'manual', scopes: ['cowork'], category: 'observe', risk: 'read',
+    summary: 'Read the bundled Bitterless / Maestro user manual.',
+    useWhen: 'The user asks for /manual, usage help, or a Settings section explanation.',
+    safety: 'Read-only product-local instructions; no network, account or customer data access.'
+  },
+  {
     name: 'workflow_list', scopes: ['cowork'], category: 'observe', risk: 'read',
     summary: 'List available TypeScript agent workflows.', useWhen: 'Before selecting a multi-agent workflow.',
     safety: 'Read-only; reports the supported workflow tool capabilities.'
@@ -19,6 +31,15 @@ export const HOST_TOOL_CATALOG: HostToolCatalogEntry[] = [
     summary: 'Read the current host tool catalog and safety boundaries.',
     useWhen: 'Use when unsure which built-in tool fits the task.',
     safety: 'Read-only; does not inspect page/customer data.'
+  },
+  {
+    name: 'wait',
+    scopes: ['cowork'],
+    category: 'observe',
+    risk: 'read',
+    summary: 'Pause this turn for a number of milliseconds (at most 60000), then continue.',
+    useWhen: 'A page, download or server-side job needs time before you look again; observe again afterwards. For workflow runs use workflow_wait.',
+    safety: 'Touches no tab, page, file or download; stopping the turn ends the wait immediately.'
   },
   {
     name: 'start_browser_use',

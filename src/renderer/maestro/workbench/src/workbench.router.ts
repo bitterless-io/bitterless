@@ -23,6 +23,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/connectors', name: 'connectors', component: WorkbenchConnectorsView },
   {
     path: '/settings',
+    alias: '/general',
     name: 'settings',
     component: () => import('./views/WorkbenchSettingsView.vue')
   },

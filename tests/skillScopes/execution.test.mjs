@@ -28,7 +28,7 @@ const fixture = () => {
   const listeners = new Set()
   const assetScope = { get current() { return current }, revalidate: async () => { checks++; return current }, subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener) } }
   const context = load('main/maestro/skills/skillScope.context.ts', { '@main/institution/assetScope.service': { assetScope } })
-  const { ReplayEngine } = load('main/maestro/drive/replayEngine.ts', { './humanMouse': { HumanMouse: class {} } })
+  const { ReplayEngine } = load('main/maestro/drive/replayEngine.ts', { './humanMouse': { HumanMouse: class {} }, '@shared/timerHelper/timer.helper': load('shared/timerHelper/timer.helper.ts') })
   class CommonService { setState(state) { this._state = { projectRootForSession: () => undefined, ...state } } }
   const { SkillService } = load('main/maestro/skills/skill.service.ts', {
     './skillDiagnostics': { diagnoseSkill: () => { throw Error('Diagnostics are tested separately') } },
@@ -42,6 +42,7 @@ const fixture = () => {
   const { RequestExecService } = load('main/maestro/drive/requestExec.service.ts', {
     '@maestro-main/skills/skillScope.context': context, './browserNavigation': {},
     '@maestro-main/capture/networkInterception': {}, '@maestro-main/capture/traceTimeline': { clipText: value => value },
+    '@maestro-main/capture/debuggerCapture': { captureElementShot: async () => undefined },
     inversify: { injectable: () => value => value }, '@maestro-main/drive/apiSafety': {},
     '@maestro-main/drive/skillScript': load('main/maestro/drive/skillScript.ts'),
     '@maestro-main/skills/apiProfile.service': { readApiProfile: () => [] },

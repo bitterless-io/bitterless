@@ -1,12 +1,13 @@
 import { createXpcMainEmitter } from 'electron-xpc/main';
 import type { ConfigApi } from '@maestro-shared/config.api';
 import { DECISION_CONFIG_DOMAIN, DECISION_JEV_ENABLED_KEY } from '@maestro-shared/config.api';
-import { customerSessionService } from '@main/auth/customerSession.service';
+import { customerSessionService, revalidateRejectedCustomerSession } from '@main/auth/customerSession.service';
 import type { JevRequest, JevResult } from '@shared/decision/jev.api';
 
 /**
- * Jev 判定的**唯一**主进程实现。xpc handler、技能沙箱里的 `jev` 绑定、ui_act 的闸
- * 全部走这一个模块 —— 凭证与开关的判定只有一份,不会出现「某条路忘了看开关」。
+ * Jev 判定的**唯一**主进程实现:开关、凭证、HTTP。**只由 `decisionHelper.ts` 调用** —— ui_act 的闸、快照选段、
+ * 技能沙箱的 `decision` 绑定、xpc 门面都经 helper 走到这里,凭证与开关的判定只有一份,不会出现「某条路忘了看开关」。
+ * 阈值不在这一层(docs/features/decision-helper.md #3)。
  *
  * 走的是自家 relay 的透传口 `POST /v1/systemone`(`bitterless-private` 的
  * `apps/relay/src/modules/jev/jev.service.ts`),不是直连 api.typesafe.ai:
@@ -54,6 +55,20 @@ export const isJevEnabled = async (): Promise<boolean> => {
 const isAnswers = (value: unknown): value is Record<string, never> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
+type JevFailure = Extract<JevResult, { ok: false }>;
+
+/**
+ * relay 这一侧的失败(非 2xx 的原始错误体、网络错误、回包形状不对)**原文只进日志**(main 的 console
+ * 已接到日志文件,`log.setup.ts`)。给人看的原因只写失败类型和 HTTP 状态 —— 上游的报错里可能带着 jev
+ * 字样(docs/features/decision-maker-naming-and-approval-card.md #2,审查 F6)。`message` 仍留在结果里给程序用。
+ */
+const logRelayFailure = (failure: JevFailure): JevFailure => {
+  console.warn(
+    `decision maker relay call failed (${failure.reason}${failure.status ? ` ${failure.status}` : ''}): ${failure.message}`
+  );
+  return failure;
+};
+
 /**
  * 一次判定。**永不抛** —— 失败方向由调用方按自己那一格决定(见 jev.api.ts 的 `JevResult`)。
  */
@@ -61,18 +76,27 @@ export const jevJudge = async (request: JevRequest): Promise<JevResult> => {
   const startedAt = Date.now();
   const elapsed = (): number => Date.now() - startedAt;
 
+  // 失败原因会被调用方转给人或模型(比如技能脚本里的 `jev` 绑定)—— 会话里一律叫 decision maker,
+  // 不出现 Jev(docs/features/decision-maker-naming-and-approval-card.md #1 #2)。ui_act 的闸只把失败类型拼进卡片。
   if (!(await isJevEnabled())) {
-    return { ok: false, reason: 'off', message: 'Jev is switched off in Settings → Decision.', durationMs: elapsed() };
+    return {
+      ok: false,
+      reason: 'off',
+      message: 'The decision maker is switched off in Settings → Decision.',
+      durationMs: elapsed()
+    };
   }
 
   // 桌面端没有客户 SK,用的是本应用登录 Bitterless 拿到的 Core 会话 token(只在内存里)。
   // relay 的 `validateCaller` 认这条通道 —— SK 先试,不像 SK 的再当登录 token 验签 + 回查会话。
-  const token = customerSessionService.current?.token;
+  const session = customerSessionService.current;
+  const token = session?.token;
   if (!token) {
     return {
       ok: false,
       reason: 'unauthenticated',
-      message: 'Not signed in to Bitterless; sign in so Maestro can reuse that session for Jev.',
+      message:
+        'Not signed in to Bitterless; sign in so Maestro can reuse that session for the decision maker.',
       durationMs: elapsed()
     };
   }
@@ -91,6 +115,7 @@ export const jevJudge = async (request: JevRequest): Promise<JevResult> => {
       signal: controller.signal
     });
     const text = await response.text();
+    if (response.status === 401 && session) await revalidateRejectedCustomerSession(session);
     if (!response.ok) {
       // relay 把上游的错误体原样透传,形状是 TypeSafe 的 `{detail:{error_type,message}}`。
       let message = text.slice(0, 300);
@@ -100,11 +125,22 @@ export const jevJudge = async (request: JevRequest): Promise<JevResult> => {
       } catch {
         // 非 JSON 的错误体照原样截断带走,比吞掉有用。
       }
-      return { ok: false, reason: 'http', message, status: response.status, durationMs: elapsed() };
+      return logRelayFailure({
+        ok: false,
+        reason: 'http',
+        message,
+        status: response.status,
+        durationMs: elapsed()
+      });
     }
     const parsed = JSON.parse(text) as { model?: unknown; answers?: unknown };
     if (!isAnswers(parsed?.answers)) {
-      return { ok: false, reason: 'invalid', message: 'relay returned no answers object', durationMs: elapsed() };
+      return logRelayFailure({
+        ok: false,
+        reason: 'invalid',
+        message: 'relay returned no answers object',
+        durationMs: elapsed()
+      });
     }
     return {
       ok: true,
@@ -113,8 +149,11 @@ export const jevJudge = async (request: JevRequest): Promise<JevResult> => {
       durationMs: elapsed()
     };
   } catch (error) {
-    const message = (error as Error)?.name === 'AbortError' ? 'jev request timed out' : String((error as Error)?.message || error);
-    return { ok: false, reason: 'network', message, durationMs: elapsed() };
+    const message =
+      (error as Error)?.name === 'AbortError'
+        ? 'decision maker request timed out'
+        : String((error as Error)?.message || error);
+    return logRelayFailure({ ok: false, reason: 'network', message, durationMs: elapsed() });
   } finally {
     clearTimeout(timer);
   }

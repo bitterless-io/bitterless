@@ -109,6 +109,16 @@ const cancel = async (): Promise<void> => {
         </span>
       </div>
 
+      <!-- 被操作元素的截图(`ui_act` 的不可逆闸才带,docs/features/decision-maker-naming-and-approval-card.md #4.1):
+           「click this element」是哪一个,由它说明。 -->
+      <img
+        v-if="question.image"
+        name="decision-sheet__image"
+        class="decision-sheet__image"
+        :src="question.image"
+        alt=""
+      />
+
       <button
         v-for="option in question.options"
         :key="option.label"

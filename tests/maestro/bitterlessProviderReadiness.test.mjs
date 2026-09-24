@@ -71,7 +71,7 @@ const ZERO_LEDGER = {
   costUsd: 0
 };
 const BITTERLESS_TARGET = { provider: 'bitterless', model: 'qwen3.8-max', effort: 'default' };
-const SESSION = { token: 'core-token', baseUrl: 'https://core.example.invalid' };
+const SESSION = { sessionId: 'session-a', token: 'core-token', baseUrl: 'https://core.example.invalid' };
 
 const main = {
   broadcasts: [],
@@ -122,7 +122,7 @@ const mainStubs = {
   electron: 'export const shell = { openExternal: async () => undefined };',
   'electron-xpc/main': `const f = () => globalThis.__bitterlessReadiness;
     export const createXpcMainEmitter = () => ({ get: async () => ({ options: f().target }), upsert: async () => undefined });
-    export const xpcMain = { broadcast: (channel, params) => f().broadcasts.push({ channel, params }) };
+    export const xpcMain = { subscribe: () => () => {}, broadcast: (channel, params) => f().broadcasts.push({ channel, params }) };
     export class XpcMainHandler {}`,
   inversify: 'export const injectable = () => (target) => target;',
   '@maestro-shared/iocHelper/ioc.helper':

@@ -155,6 +155,14 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
     return await maestroWindowHelper.openWorkbenchTab()
   }
 
+  async openWorkbenchPane(params: Parameters<CoachXpcContract['openWorkbenchPane']>[0]): ReturnType<CoachXpcContract['openWorkbenchPane']> {
+    return await maestroWindowHelper.openWorkbenchPane(params)
+  }
+
+  async consumeWorkbenchPaneRequest(): ReturnType<CoachXpcContract['consumeWorkbenchPaneRequest']> {
+    return await maestroWindowHelper.consumeWorkbenchPaneRequest()
+  }
+
   async backgroundWorkbenchTab(): ReturnType<CoachXpcContract['backgroundWorkbenchTab']> {
     return await maestroWindowHelper.backgroundWorkbenchTab()
   }
@@ -248,8 +256,9 @@ export class CoachXpcHandler extends XpcMainHandler implements CoachXpcContract 
   }
 
   async claimAgentTurn(params: AgentTurnClaimRequest): Promise<AgentTurnClaimResult> {
-    await applicationAuth.requireReady();
+    const authGeneration = await applicationAuth.requireReady();
     await maestroWindowHelper.resumeAuthenticatedSession();
+    applicationAuth.assertGeneration(authGeneration);
     return maestroWindowHelper.claimAgentTurn(params)
   }
 

@@ -19,7 +19,8 @@
   padding: 8px;
 }
 
-.message-list__scroll > * + * {
+/* 条目间距挂在内容元素上 —— 条目现在是它的直接子元素(它存在是为了让 ResizeObserver 量内容高度)。 */
+.message-list__content > * + * {
   margin-top: 12px;
 }
 

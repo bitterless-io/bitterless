@@ -9,7 +9,12 @@ import { applyPiSessionPolicy, PiRuntimeSession, type PiSession } from './piRunt
 import { resolveRuntimeToolPolicy } from './runtimeSessionPolicy'
 import { createInterruptibleBash } from './piInterruptibleBash'
 import { resolveRuntimeSystemPrompt } from './runtimeSystemPrompt'
-import { registerBitterlessProvider } from './bitterlessProvider'
+import { isBitterlessProvider, registerBitterlessProvider } from './bitterlessProvider'
+import { customerSessionService, revalidateRejectedCustomerSession } from '@main/auth/customerSession.service'
+import { installBuiltinToolResultHook, type BuiltinToolResult } from './builtinToolResultHook'
+import { inputBudget, subjectOf } from './inputBudget'
+import { modelIoLog } from './modelIoLog'
+import { drainDownloadNote } from '@main/net/downloadManager'
 
 // pi is ESM-only; dynamic imports keep the Electron CJS main bundle loadable.
 /**
@@ -47,6 +52,17 @@ const createModelRuntime = async (
   // baseUrl 与会话 token 都是运行时值,每次建 runtime 重注册一次。
   await registerBitterlessProvider(runtime as unknown as Parameters<typeof registerBitterlessProvider>[0])
   return runtime
+}
+
+/**
+ * pi 自带工具结果的记录(`builtinToolResultHook.ts` 的 `record`)。口径照 `HostToolRegistry.measuredTool`:
+ * `inputBudget` 记字节数 + 短标签,agent-io 记模型最终看到的原文(含 NOTE),报错的记成 `<name> (threw)`。
+ * 会话归属不用传:prompt 跑在 `runInAgentSession` 里,`modelIoLog` 从 ALS 取。导出仅为可测。
+ */
+export const recordBuiltinToolResult = ({ name, args, text, isError }: BuiltinToolResult): void => {
+  const subject = subjectOf(args)
+  inputBudget.record(name, Buffer.byteLength(text, 'utf8'), subject)
+  modelIoLog.append({ kind: 'tool_result', name: isError ? name + ' (threw)' : name, subject, text, turn: inputBudget.turnIndexNow })
 }
 
 export class PiRuntimeAdapter implements AgentRuntimeAdapter {
@@ -112,6 +128,7 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
   }
 
   async createSession(options: AgentRuntimeSessionOptions): Promise<AgentRuntimeSession> {
+    const customerSession = isBitterlessProvider(options.target.providerId) ? customerSessionService.current : null
     const prompt = resolveRuntimeSystemPrompt(options)
     const pi: PiModule = await import('@earendil-works/pi-coding-agent')
     const { Type } = (await import('typebox')) as { Type: TypeBoxFactory }
@@ -214,8 +231,18 @@ export class PiRuntimeAdapter implements AgentRuntimeAdapter {
         return current
       }
     }
+    // pi 自带工具(含上面那个 bash 替身)不经 `executeHostTool`:下载 NOTE 与 agent-io 记录由这个钩子补上。
+    // host 工具 = `customTools`(不含 bashTool),它们那条路已经做过,钩子原样放过
+    // (docs/issues/builtin-tools-skip-host-result-hooks.md)。
+    const hostToolNames = new Set(customTools.map((tool) => tool.name))
+    installBuiltinToolResultHook(session, {
+      isHostTool: (name) => hostToolNames.has(name),
+      drainNote: drainDownloadNote,
+      record: recordBuiltinToolResult
+    })
     applyPiSessionPolicy(session as PiSession, debug, options.autoCompaction !== false)
-    return new PiRuntimeSession(session as PiSession, debug, promptSource, compactionState, interruptibleBash)
+    return new PiRuntimeSession(session as PiSession, debug, promptSource, compactionState, interruptibleBash,
+      customerSession ? () => { void revalidateRejectedCustomerSession(customerSession) } : undefined)
   }
 }
 

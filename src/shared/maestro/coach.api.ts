@@ -47,6 +47,8 @@ export interface CoachXpcContract {
   openDemo(): Promise<{ url: string }>
   getWorkbenchTab(): Promise<WorkbenchTabState>
   openWorkbenchTab(): Promise<WorkbenchTabState>
+  openWorkbenchPane(params: { pane: WorkbenchPane }): Promise<WorkbenchTabState>
+  consumeWorkbenchPaneRequest(): Promise<WorkbenchPane | null>
   backgroundWorkbenchTab(): Promise<WorkbenchTabState>
   closeWorkbenchTab(): Promise<WorkbenchTabState>
   // App identity for Workbench ▸ About — picked from the bundled package.json (see

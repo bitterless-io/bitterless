@@ -128,9 +128,9 @@ export const zh: typeof en = {
       hidePanel: '隐藏面板',
       resizePanel: '拖动调整宽度',
       providerUnavailable: '当前提供商已不再用于 Maestro Control，请手动选择其他提供商后继续。',
-      showWorkbench: '显示工作台',
-      workbenchTab: '工作台',
-      hideWorkbench: '隐藏工作台',
+      showWorkbench: '显示设置',
+      workbenchTab: '设置',
+      hideWorkbench: '隐藏设置',
       update: '更新',
       updating: '正在更新',
       downloadingVersion: '正在下载 {version}'
@@ -415,7 +415,7 @@ export const zh: typeof en = {
     },
     maestro: {
       name: 'Maestro',
-      subtitle: '浏览器自动化、智能体、操作录制与工作台'
+      subtitle: '浏览器自动化、智能体、操作录制与设置'
     },
     coin: {
       name: 'trench',
@@ -537,8 +537,8 @@ export const zh: typeof en = {
     }
 },
   maestroWorkbench: {
-    title: 'Maestro 工作台',
-    close: '关闭工作台',
+    title: '设置',
+    close: '关闭设置',
     panes: {
       recording: '录制',
       skills: '技能',
@@ -547,7 +547,7 @@ export const zh: typeof en = {
       models: '模型',
       apps: '小程序',
       connectors: '连接器',
-      settings: '设置',
+      settings: '通用',
       about: '关于',
       log: '日志'
     }
@@ -604,6 +604,7 @@ export const zh: typeof en = {
       runningSessions: '{count} 个会话仍在进行',
       awaitingConfirmSessions: '{count} 个会话在等你确认',
       awaitingConfirmSession: '等你确认',
+      awaitingConfirmTag: '待确认',
       browserTabs: {
         operating: 'Agent 正在操作 {count} 个标签页',
         associated: '会话标签页 {count}',
@@ -1074,7 +1075,7 @@ export const zh: typeof en = {
     stepPlaceholder: 'enter 保存',
     domainDescriptionPlaceholder: '添加分组描述...',
     emptyDomain: '可将其他列表的任务拖拽到此处',
-    todoLimitReached: '单个分组最多创建 77 个未完成任务',
+    todoLimitReached: '该分组已达到 200 个未完成任务上限，请先完成或移出部分任务后再添加',
     domainLimitReached: '最多可以创建 17 个分组',
     runtimeUnavailable: 'Todo 暂不可用，本地数据运行时未能打开。',
     sessionRequired: 'Todo 需要在本应用中登录 Bitterless 账号，请打开主窗口登录。',

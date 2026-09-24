@@ -270,6 +270,56 @@ const STEALTH = `
 })();
 `
 
+/** Recording thumbnails: clip cap in CSS px, so a click on a huge container can't produce a giant image. */
+const ELEMENT_SHOT_MAX_W = 640
+const ELEMENT_SHOT_MAX_H = 480
+
+/**
+ * 元素截图的**唯一**裁剪实现 —— 录制点击的缩略图(`onMessage` 里 `__coachRecord` 那一支)和 `ui_act`
+ * 审批卡片上的元素截图(`RequestExecService.toolUiAct` 的 `shootTarget`)共用这一份
+ * (docs/features/decision-maker-naming-and-approval-card.md #4.1:「抽成共用函数,不另写一套」)。
+ *
+ * `rect` 是**文档**坐标里的 CSS 像素(两种 `captureBeyondViewport` 下都是)。尺寸两种策略:
+ * · 不给 `maxEdge`(录制):裁剪框封顶 640×480、按 1:1 截 —— 与抽出来之前逐字节相同。
+ * · 给了 `maxEdge`(审批卡片):整个元素等比缩到**输出图**最长边不超过它。输出像素 =
+ *   CSS 像素 × 设备像素比 × `clip.scale`,所以要带上页面的 `devicePixelRatio`,否则 Retina 上大一倍。
+ *
+ * `beyondViewport` 默认 `true`(录制那条路不变:它截的是已经发生过的点击)。审批闸传 `false`:
+ * `true` 会把视口临时缩到 1×1 再恢复 —— 两次 `resize`、悬停丢失、响应式断点来回翻、随 resize 关闭的
+ * 弹层被关掉(审查 F2 实测;构造函数上 `shouldShoot` 的注释也写着 "forces a surface reflow"),而闸截图
+ * 就发生在批准的点击之前、同一页面上。`false` 只截可视区域,所以裁剪框必须落在视口里 —— 由调用方保证。
+ *
+ * 尽力而为:没有框(0×0)、坐标不是有限数、CDP 抛错 → 一律 undefined,调用方照常走,只是没有图。
+ */
+export const captureElementShot = async (
+  wc: Pick<WebContents, 'debugger'>,
+  shot: { rect: unknown; maxEdge?: number; devicePixelRatio?: number; beyondViewport?: boolean }
+): Promise<string | undefined> => {
+  const r = (shot.rect ?? {}) as Record<string, unknown>
+  const x = Number(r.x)
+  const y = Number(r.y)
+  const width = Number(r.width)
+  const height = Number(r.height)
+  if (!(width > 0 && height > 0) || !Number.isFinite(x) || !Number.isFinite(y)) return undefined
+  const ratio = shot.devicePixelRatio && shot.devicePixelRatio > 0 ? shot.devicePixelRatio : 1
+  const clip = shot.maxEdge
+    ? { x, y, width, height, scale: Math.min(1, shot.maxEdge / (Math.max(width, height) * ratio)) }
+    : { x, y, width: Math.min(width, ELEMENT_SHOT_MAX_W), height: Math.min(height, ELEMENT_SHOT_MAX_H), scale: 1 }
+  try {
+    const res = (await wc.debugger.sendCommand('Page.captureScreenshot', {
+      format: 'jpeg',
+      quality: 60,
+      clip,
+      captureBeyondViewport: shot.beyondViewport !== false,
+      fromSurface: true
+    })) as { data?: string }
+    return res.data ? `data:image/jpeg;base64,${res.data}` : undefined
+  } catch {
+    // teardown race / detached target / clip out of bounds — skip the thumb silently.
+    return undefined
+  }
+}
+
 /**
  * In-process CDP capture over a WebContentsView's webContents.debugger.
  * No remote debugging port, no external CDP client.
@@ -567,36 +617,6 @@ export class DebuggerCapture {
   }
 
   /**
-   * Grab a clipped JPEG screenshot of a clicked element and return it as a base64
-   * data URL. The rect is in document (page) CSS pixels, matching captureBeyondViewport.
-   * Capped so a click on a huge container can't produce a giant image. Best-effort:
-   * returns undefined (action still recorded, just without a thumb) on any failure.
-   */
-  private async captureElementShot(rect: unknown): Promise<string | undefined> {
-    const r = (rect ?? {}) as Record<string, unknown>
-    const x = Number(r.x)
-    const y = Number(r.y)
-    const width = Number(r.width)
-    const height = Number(r.height)
-    if (!(width > 0 && height > 0) || !Number.isFinite(x) || !Number.isFinite(y)) return undefined
-    const MAX_W = 640
-    const MAX_H = 480
-    try {
-      const res = (await this.wc.debugger.sendCommand('Page.captureScreenshot', {
-        format: 'jpeg',
-        quality: 60,
-        clip: { x, y, width: Math.min(width, MAX_W), height: Math.min(height, MAX_H), scale: 1 },
-        captureBeyondViewport: true,
-        fromSurface: true
-      })) as { data?: string }
-      return res.data ? `data:image/jpeg;base64,${res.data}` : undefined
-    } catch {
-      // teardown race / detached target / clip out of bounds — skip the thumb silently.
-      return undefined
-    }
-  }
-
-  /**
    * **接管文件选择器**（Ral 2026-08-16：「上传或下载文件时可能都会选择目录,这需要被拦截,
    * 并且 Agent 要能感知到」；本次随录制状态一起从 cowork 移植）。
    *
@@ -777,7 +797,7 @@ export class DebuggerCapture {
           // Clicks get a thumbnail of the clicked element. Display-only — stripped before
           // the trace is persisted / ingested (CaptureService.emit).
           if (event.kind === 'action' && event.type === 'click' && payload.rect && this.shouldShoot()) {
-            const shot = await this.captureElementShot(payload.rect)
+            const shot = await captureElementShot(this.wc, { rect: payload.rect })
             if (shot) event.shot = shot
           }
           this.onEvent(event)

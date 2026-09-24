@@ -1,3 +1,12 @@
+/*
+ * 两仓共用同一份(`docs/features/iconbtn-unified-with-bl.md`)。
+ *
+ * **这个文件必须自己带齐外观,不能依赖 Arco 的样式表。** micromeet-cowork 的 zellij 与
+ * historySuggestions 两个渲染面不加载 Arco:在那里 `.arco-btn-text` 不存在、`--color-*` 变量也
+ * 不存在,只靠 Arco 去掉边框和底色的按钮会渲染成浏览器默认的灰底 + 1px 边框(工作区《Borderless UI》
+ * 记下的那一类)。所以 `border` / `background` 显式写出来,每个变量都带回退值(Arco 默认主题的值)。
+ * 在加载了 Arco 的面上,这些声明与 Arco 自己给的一致,视觉无变化。
+ */
 .icon-btn.arco-btn {
   display: inline-flex;
   width: 32px;
@@ -7,9 +16,12 @@
   align-items: center;
   justify-content: center;
   padding: 0 !important;
-  color: var(--color-text-2);
+  border: 0;
+  background: transparent;
+  color: var(--color-text-2, rgb(78, 89, 105));
   line-height: 1;
   border-radius: 6px;
+  cursor: pointer;
   -webkit-app-region: no-drag;
   transition:
     color 0.16s ease,
@@ -19,17 +31,18 @@
 }
 
 .icon-btn.arco-btn:hover {
-  color: var(--color-text-1);
-  background: var(--color-fill-2);
+  color: var(--color-text-1, rgb(29, 33, 41));
+  background: var(--color-fill-2, rgb(242, 243, 245));
 }
 
 .icon-btn.arco-btn:active {
-  background: var(--color-fill-3);
+  background: var(--color-fill-3, rgb(229, 230, 235));
   transform: scale(0.95);
 }
 
 .icon-btn.arco-btn:focus-visible {
-  box-shadow: 0 0 0 2px rgba(var(--primary-6), 0.2);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(var(--primary-6, 22, 93, 255), 0.2);
 }
 
 .icon-btn.arco-btn .arco-btn-icon {
@@ -43,7 +56,7 @@
 .icon-btn.arco-btn[disabled],
 .icon-btn.arco-btn[disabled]:hover,
 .icon-btn.arco-btn[disabled]:active {
-  color: var(--color-text-4);
+  color: var(--color-text-4, rgb(201, 205, 212));
   background: transparent;
   cursor: not-allowed;
   transform: none;

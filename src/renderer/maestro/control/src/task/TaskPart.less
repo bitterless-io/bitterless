@@ -25,7 +25,10 @@
 .task-part--error .task-part__progress-bar { background: rgb(var(--danger-5)); }
 .task-part--stalled .task-part__progress-bar { background: rgb(var(--warning-5)); }
 .task-part--completed .task-part__progress-bar { background: rgb(var(--success-5)); }
-.task-part__confirm-hint,
+/* 「等你决定」的提示与审批卡片同一个主题蓝、无边框(Ral 2026-09-24,decision-maker-naming-and-approval-card.md #3):
+   没有了边框,底色要比卡片的 #f8f9fc 深一档才看得出是一块 —— 所以用 primary-2 而不是 primary-1。
+   卡住(stalled)是另一回事:任务可能挂了,不是在等人,仍用警示色。 */
+.task-part__confirm-hint { margin-top: 5px; border-radius: 5px; background: rgb(var(--primary-2)); padding: 4px 6px; color: rgb(var(--primary-7)); font-size: 10.5px; line-height: 1.4; }
 .task-part__stall { margin-top: 5px; border: 1px solid rgb(var(--warning-3)); border-radius: 5px; background: rgb(var(--warning-1)); padding: 4px 6px; color: rgb(var(--warning-8)); font-size: 10.5px; line-height: 1.4; }
 .task-part__detail { margin-top: 5px; }
 .task-part__dropped { margin-bottom: 3px; color: var(--color-text-4); font-size: 10px; }

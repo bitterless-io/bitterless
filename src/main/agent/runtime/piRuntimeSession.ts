@@ -88,7 +88,8 @@ export class PiRuntimeSession implements AgentRuntimeSession {
      * 可被打断的 bash(`piInterruptibleBash.ts`)。没有内置 bash 的会话上是 `undefined` ——
      * 那种会话本来也没有「一条命令卡住整个回合」这个问题。
      */
-    private readonly bash?: InterruptibleBash
+    private readonly bash?: InterruptibleBash,
+    private readonly onProviderError?: () => void
   ) {
     this.appliedResourceRevision = promptSource?.resourceRevision?.()
     if (compactionState) compactionState.onEvent = event => { if (this.compacting && !this.aborting) this.emit(event) }
@@ -263,6 +264,7 @@ export class PiRuntimeSession implements AgentRuntimeSession {
         }
         for (const normalized of normalizePiEvent(event.type === 'compaction_end' && this.compactionState?.error ? { ...event, errorMessage: this.compactionState.error, aborted: false } as PiSessionEvent : event)) {
           if ((normalized.type === 'compaction_retry' || normalized.type === 'compaction_attempt' || normalized.type === 'compaction_retry_finished') && !this.compacting) continue
+          if ('errorMessage' in normalized && normalized.errorMessage) this.onProviderError?.()
           this.emit(normalized)
         }
       }) || undefined
@@ -400,6 +402,13 @@ export class PiRuntimeSession implements AgentRuntimeSession {
   async abort(): Promise<void> {
     this.aborting = true
     try {
+      // **先清队列,再中止** —— pi 自己按 Esc 就是这个顺序(0.85.1 `interactive-mode.js`
+      // `restoreQueuedMessagesToEditor({ abort: true })`:第一句 `clearAllQueues()`,最后才 `agent.abort()`)。
+      // 不先清,pi 的循环在中止之后会把排队的 steering 取出来**再跑一轮**,并把「人的话 + 模型的回复」写进会话文件;
+      // 而界面早已把它判成没投出去、顺延成下一个回合 —— 模型会收到两次,上下文里还夹着一段人从没看见的回复
+      // (docs/issues/abort-lets-pi-run-queued-steering.md)。`takePendingSteering()` 同时清掉压缩期间扣住的
+      // `heldSteering`(否则压缩一结束它们会被 steer 进一个已经中止的会话),并留 `steering-dropped` 痕。
+      this.takePendingSteering()
       this.session.abortCompaction?.()
       await this.session.abort()
     } finally {

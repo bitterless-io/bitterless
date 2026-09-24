@@ -12,11 +12,10 @@
 import type { WebContents } from 'electron'
 import { humanPath, randomPointInBox } from '@maestro-main/drive/algorithm/humanPath.helper'
 import type { Box, Vector } from '@maestro-main/drive/algorithm/algorithm.type'
+import { timerHelper } from '@shared/timerHelper/timer.helper'
 // bl 走 `String(fn)` 注入(与 snapshotWalker 同形),不是 cowork 的 vite 虚拟模块 ——
 // 理由写在被引的那个文件头部(keepNames 那一段)。
 import { MOUSE_OVERLAY } from './inject/mouseOverlay.inject'
-
-const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)))
 
 /**
  * 绑在一个 WebContents 上的指针。**持有当前坐标** —— 下一次移动从上一次的落点出发,
@@ -46,7 +45,7 @@ export class HumanMouse {
         .sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y, buttons: 0 })
         .catch(() => undefined)
       this.pos = point
-      await wait(path.delays[i - 1])
+      await timerHelper.delay(path.delays[i - 1])
     }
     return this.position
   }
@@ -55,7 +54,7 @@ export class HumanMouse {
   async click(box: Box): Promise<Vector> {
     const point = await this.moveTo(box)
     // 人按下去之前有个极短的停顿(瞄准到按下)。
-    await wait(40 + Math.random() * 90)
+    await timerHelper.delay(40 + Math.random() * 90)
     await this.wc.debugger.sendCommand('Input.dispatchMouseEvent', {
       type: 'mousePressed',
       x: point.x,
@@ -65,7 +64,7 @@ export class HumanMouse {
       clickCount: 1
     })
     void this.ripple(point)
-    await wait(45 + Math.random() * 70)
+    await timerHelper.delay(45 + Math.random() * 70)
     await this.wc.debugger.sendCommand('Input.dispatchMouseEvent', {
       type: 'mouseReleased',
       x: point.x,

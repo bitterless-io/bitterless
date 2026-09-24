@@ -37,8 +37,7 @@ class WorkbenchStore {
   }
 
   async openPane(pane: WorkbenchPane): Promise<void> {
-    await this.openTab()
-    xpcRenderer.broadcast('coach/workbench-pane', { pane })
+    this.apply(await coach.openWorkbenchPane({ pane }))
   }
 
   private apply(state: WorkbenchTabState): void {

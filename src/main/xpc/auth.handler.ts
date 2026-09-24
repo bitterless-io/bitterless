@@ -6,6 +6,7 @@ import type {
   CustomerSessionPayload,
 } from '@shared/auth/auth.type';
 import { customerSessionService } from '@main/auth/customerSession.service';
+import { applicationAuth } from '@main/auth/applicationAuth.service';
 import { mainWindowHelper } from '@main/windows/mainWindow.helper';
 import { sqliteWindowHelper } from '@main/windows/sqliteWindow.helper';
 import { todoWindowHandler } from './todoWindow.handler';
@@ -111,7 +112,9 @@ class AuthHandler extends XpcMainHandler implements AuthSessionApi {
     await this._showMaestroPrimaryWindow();
   }
 
-  async deactivateSession(): Promise<void> {
+  async deactivateSession(params?: { sessionId: string }): Promise<void> {
+    const current = customerSessionService.current;
+    if (params && current && current.sessionId !== params.sessionId) return;
     // Revoke protected capabilities immediately; browsing and Control remain alive.
     void maestroWindowHelper.prepareForAuthShutdown();
     this.sessionShouldBeActive = false;
@@ -138,8 +141,11 @@ class AuthHandler extends XpcMainHandler implements AuthSessionApi {
       status: params.status || 401,
     };
 
-    // 登录已失效 —— 主进程手里的 token 也立刻作废,不等渲染层广播回来再清。
-    customerSessionService.clear();
+    // Only the exact current identity can revoke main-process work; Home also fences the broadcast.
+    if (eventPayload.sessionId && customerSessionService.current?.sessionId === eventPayload.sessionId) {
+      customerSessionService.clear();
+      applicationAuth.invalidate();
+    }
     console.warn('[AuthHandler] Session invalidation requested:', {
       source: eventPayload.source,
       status: eventPayload.status,
@@ -155,7 +161,8 @@ class AuthHandler extends XpcMainHandler implements AuthSessionApi {
     customerSessionService.set(params);
   }
 
-  async clearCustomerSession(): Promise<void> {
+  async clearCustomerSession(params?: { sessionId: string }): Promise<void> {
+    if (params && customerSessionService.current?.sessionId !== params.sessionId) return;
     customerSessionService.clear();
   }
 

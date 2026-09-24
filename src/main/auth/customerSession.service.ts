@@ -1,4 +1,5 @@
 import type { CustomerSessionPayload } from '@shared/auth/auth.type';
+import { applicationAuth } from './applicationAuth.service';
 
 /**
  * 主进程持有的 Core 登录态。
@@ -19,8 +20,9 @@ class CustomerSessionService {
     const token = String(payload?.token || '').trim();
     const baseUrl = String(payload?.baseUrl || '').trim().replace(/\/+$/, '');
     // 半个会话比没有会话更难排查:缺任一件都当作未登录。
-    const next = token && baseUrl ? { token, baseUrl } : null;
-    const changed = next?.token !== this.session?.token || next?.baseUrl !== this.session?.baseUrl;
+    const sessionId = String(payload?.sessionId || '').trim();
+    const next = token && baseUrl && sessionId ? { token, baseUrl, sessionId } : null;
+    const changed = next?.token !== this.session?.token || next?.baseUrl !== this.session?.baseUrl || next?.sessionId !== this.session?.sessionId;
     this.session = next;
     if (changed) for (const listener of this.listeners) listener();
   }
@@ -41,3 +43,11 @@ class CustomerSessionService {
 }
 
 export const customerSessionService = new CustomerSessionService();
+
+// Relay 401s can originate from an upstream provider, so confirm with the account authority.
+// The captured identity prevents an old runtime's failure from touching a replacement account.
+export const revalidateRejectedCustomerSession = async (session: CustomerSessionPayload): Promise<void> => {
+  const current = customerSessionService.current;
+  if (current?.sessionId !== session.sessionId || current.token !== session.token) return;
+  await applicationAuth.requireReady().catch(() => undefined);
+};

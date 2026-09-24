@@ -418,13 +418,13 @@ export class WorkflowHostIntegration implements WorkflowApi {
       },
       {
         name: 'workflow_wait',
-        description: 'Declare that this chat is waiting for named background runs to finish. Returns IMMEDIATELY — it does not block and must not be polled. The status bar shows the user that this chat is waiting. End your turn right after calling it. The receipt says whether this host resumes the conversation by itself once they settle; do not promise more than it says. A new user message cancels the wait and is answered first.',
+        description: 'Declare that this chat is waiting for named background runs to finish. Returns IMMEDIATELY — it does not block and must not be polled. The status bar shows the user that this chat is waiting. End your turn right after calling it. The receipt says whether this host resumes the conversation by itself once they settle; do not promise more than it says. A new user message cancels the wait and is answered first. For a short pause inside this turn (a page still loading, a file still generating), call wait instead — it pauses and then continues this same turn.',
         params: [{ name: 'runIds', description: 'Comma-separated exact run IDs from workflow_tasks. Omit to wait for every running workflow in this chat.' }],
         execute: async args => {
           const requested = String(args.runIds ?? '').split(',').map(value => value.trim()).filter(Boolean)
           const snapshot = await this.supervisor.list()
           const outcome = this.waits.declare(sessionId, requested, snapshot.runs, Date.now())
-          if (!outcome.ok) throw new Error(workflowWaitRejectionMessage(outcome))
+          if (outcome.ok === false) throw new Error(workflowWaitRejectionMessage(outcome))
           this.republishActivity()
           return workflowWaitReceipt(outcome.intent, snapshot.runs, Boolean(this.options.onWaitSatisfied))
         }

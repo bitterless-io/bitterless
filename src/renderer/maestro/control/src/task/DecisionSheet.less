@@ -32,6 +32,20 @@
 }
 .decision-sheet__prompt { min-width: 0; color: rgb(var(--gray-10)); font-size: 12px; font-weight: 500; line-height: 1.45; }
 
+/**
+ * 被操作元素的截图(#4.1)。等比完整显示在 120×120 以内,小图不放大 —— 只给上限、不给固定宽高。
+ * `align-self` 必须写:这一问是纵向 flex,默认的 stretch 会把图的宽拉满到上限,小图就被放大了。
+ */
+.decision-sheet__image {
+  display: block;
+  align-self: flex-start;
+  width: auto;
+  height: auto;
+  max-width: 120px;
+  max-height: 120px;
+  border-radius: 4px;
+}
+
 /** 「可多选」—— 这一问能选几项,必须在卡上说出来,否则人只能靠点第二下试出来。 */
 .decision-sheet__multi {
   flex-shrink: 0;

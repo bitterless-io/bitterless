@@ -1,5 +1,51 @@
 # Bitterless Documentation
 
+- [agent-io 的工具结果记录：几处口径问题(两仓相同)](issues/agent-io-tool-result-recording-gaps.md) —
+  已登记 2026-09-24(审查 agent-io-tool-results-205-1 F5 等);抛错时改记模型看到的脱敏版本已定，其余待定;排在 Decision Helper 之后。Paired with `micromeet-cowork`。
+
+- [`page_snapshot` 不说「页面还在加载」，agent 把没加载完的弹窗当成打不开](issues/page-snapshot-silent-while-loading.md) —
+  fixed 2026-09-24（Cowork 会话审核 P2-01，本仓同源；task snapshot-loading-203 done，review pass），真实会话验收待 Ral。
+  被快照 tab 的 `loading` 为 true 时加一行 `# LOADING:`，5 行头部不动；不在工具里等。Paired with `micromeet-cowork`。
+
+- [pi 自带工具（`bash` / `read` / …）绕过宿主的结果处理：下载 NOTE 挂不上](issues/builtin-tools-skip-host-result-hooks.md) —
+  fixed 2026-09-24：下载 NOTE（task builtin-tool-results-204，钩子文件与 Cowork 逐字节相同）；agent-io 补记工具结果（PQ-1，task agent-io-tool-results-205 / -206）。真实会话验收待 Ral。Paired with `micromeet-cowork`。
+
+- [应用会话过期后聊天仍沿用已登录快照](issues/application-session-expiry-chat-gate.md) — code-verified 2026-09-24；发送前及每 60 秒验证账号，确认失效切回登录，保留匿名浏览。Paired with Cowork；待人工验收。
+
+- [Settings、General 与内置 menu/manual](features/settings-menu-manual.md) — implemented 2026-09-24；定向代码验证通过，完整检查限制见文档；BL + Cowork 配套，manual 按产品分别配置，待人工界面验收。
+
+- [Tab 拖拽让位动画](features/tab-reorder-animation.md) — code-verified 2026-09-24，待人工验收；
+  Vue TransitionGroup 提供 180ms 位移动画，支持减少动态效果。Paired with `micromeet-cowork`。
+
+- [`ui_act` 拿着别的 tab 的 ref 点了当前 tab，还报成功](issues/ui-act-refs-not-bound-to-tab.md) —
+  root cause confirmed 2026-09-24（会话审核 P1-01），修法已定（task ref-tab-binding-200，排在 Decision Helper 之后）。世代号改由主进程全局分配并记住所属 tab；
+  ref 来自别的 tab 时点名正确的 `tab_id`；过期报错不再印当前号；成功结果写明落在哪个 tab / 页面。Paired with `micromeet-cowork`。
+
+- [Decision Helper：一个通用的判定入口，阈值可传](features/decision-helper.md) —
+  specced 2026-09-24，已实现（task decision-helper-199，审查 2 通过；Ral review / 测试待做）。主进程唯一实现，全局默认阈值 0.5、调用时可传；
+  BJ3 / BJ1 / 技能沙箱 / 渲染门面全部迁到它上面；preload 与子进程不另配（经 xpc / IPC 调主进程）。Paired with `micromeet-cowork`。
+
+- [会话里统一叫 decision maker；审批卡片改主题蓝](features/decision-maker-naming-and-approval-card.md) —
+  specced 2026-09-24，已实现（decision-maker-card-198 审查通过；-202 进行中；人工目检待 Ral）。Ral：会话中不展示 Jev（设置页开关除外），统一叫 decision maker；审批卡片不用黄 / 橙，改主题蓝，并去掉边框。
+  顺带修审批卡片上的动作显示成选择器（[issue](issues/approval-card-shows-selector-instead-of-button-text.md)，按钮文字读成空串）。Paired with `micromeet-cowork`。
+
+- [`controlLoginPreviewWorkspace.test.mjs` 跑完不退出](issues/unit-tests-hang-after-fixture-drift.md) —
+  root cause confirmed 2026-09-24，修法已定（Ral：按建议修；任务 unit-test-hang-*，排在 Decision Helper 之后）。缺 `subscribeControlChannel` 绑定使 `init` 失败，第 239 行无上限轮询无限转圈。Paired with `micromeet-cowork`。
+
+- [通用的内置 `wait` 工具（毫秒）](features/builtin-wait-tool.md) —
+  specced 2026-09-24，实现未开始（task builtin-wait-197，排在 uiact-wait-193 之后）。Ral：「uiact 也不需要 wait 了，我们需要单独的 wait 内置技能，这样任何场景都能用了」。
+  `wait {ms}`，上限 60000 ms（Ral 确认），超过就按上限等并返回 `timedOut: true`；可中止；不绑 tab；不吃下载 NOTE 的 15 秒等待（`downloadSettleMs: 0`）。
+  做成常驻的内置工具（同 `reload_skills`），`waitTool.ts` 两仓逐字节相同。与 `workflow_wait`（等 workflow 跑完、本轮结束）分工写进两边说明。Paired with `micromeet-cowork`。
+
+- [网页下载 #6 —— 下载记录与 `download_history`](features/browser-downloads.md) —
+  specced 2026-09-24，实现中（task download-history-196）。Ral：「下载感知能力要实现下」；10:51 当面改定：布尔 `complete`、通用的内置 `wait` 工具（毫秒）、完整 URL。
+  每次下载开始 / 结束各写一次 `download-history/downloads.jsonl`（经 pathHelper 取目录，原子重写，保留 1000 条）；只读工具 `download_history` 立刻返回，按 20 条分页、由近到远；
+  等待用独立的通用 `wait`（见上一条）。`downloadHistory.ts` / `downloadManager.ts` 两仓逐字节相同。Paired with `micromeet-cowork`。
+
+- [`ui_act`:hover + 动作后就绪判断(BJ4)+ Jev 默认开启](features/ui-act-wait-hover-jev.md) —
+  specced 2026-09-24，实现中（tasks uiact-wait-193…195）。`ui_act` 只新增 hover(`wait` / `wait_for` 同日先后撤掉：定时等待是通用的内置 `wait` 工具，见 browser-downloads #6;`wait_for` 推迟)。click/submit 后由 Jev 判页面是否就绪并写 NOTE(fail-open)。
+  Jev 默认开(没存过就写入 true，手动关的保持关，配置库读失败仍按关);未登录时 BJ3 放行。新增 `shared/timerHelper`。Paired with `micromeet-cowork`。
+
 - [Control 自己的登录表单 —— 与 Cowork 的 `ControlLogin` 对齐，不再借用 Home 的登录页](features/control-login-form.md) —
   in progress 2026-09-24。Ral：「home 页面的登录页面不再使用了，转而直接使用 CTRL 里面的登录……未登录的状态下，直接显示这个登录页面」。
   原生控件 + Less 逐项照 Cowork 的尺寸，状态全部由隐藏 Home 权威的快照驱动，en/zh，垂直居中用渲染实测验收。Paired with `micromeet-cowork`。

@@ -12,14 +12,15 @@ export interface AuthInvalidationPayload {
 export interface CustomerSessionPayload {
   token: string;
   baseUrl: string;
+  sessionId: string;
 }
 
 export interface AuthSessionApi {
   activateSession(): Promise<void>;
   showHomeWindow(): Promise<void>;
   showPrimaryWindow(): Promise<void>;
-  deactivateSession(): Promise<void>;
+  deactivateSession(params?: { sessionId: string }): Promise<void>;
   invalidateSession(params?: AuthInvalidationPayload): Promise<void>;
   setCustomerSession(params: CustomerSessionPayload): Promise<void>;
-  clearCustomerSession(): Promise<void>;
+  clearCustomerSession(params?: { sessionId: string }): Promise<void>;
 }

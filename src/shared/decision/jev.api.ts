@@ -1,11 +1,8 @@
 /**
- * Jev(TypeSafe System One)判定的宿主契约。
+ * Jev(TypeSafe System One)判定的宿主契约:请求、答案与失败原因的形状。
  *
- * 一个 main 侧服务,三个门面 —— 因为三类调用方能拿到的东西完全不同:
- *   ① 渲染进程 / 未来的界面  → 本文件的 `JevApi`,经 `xpc:JevHandler/*`
- *   ② 生成的技能脚本        → `skillScript.ts` 的 vm 上下文里多一个 `jev` 绑定
- *                             (那个沙箱里没有 require / xpc,够不到本契约)
- *   ③ 内置工具(ui_act 等)  → 直接 import 那个服务
+ * 调用方不直接用这一层:主进程、技能沙箱、渲染进程都经 decision helper(`decision.api.ts`),
+ * 它在这些类型之上加了阈值;`main/decision/jevDecision.service.ts` 只由 helper 调用。
  *
  * 凭证**只存在于主进程**:技能脚本入库前会过 `sanitizeSkillScriptForStorage`,
  * 脚本里出现疑似密钥的字面量会让整段脚本被丢弃。所以任何门面都不接受、也不回传凭证。
@@ -82,12 +79,3 @@ export type JevResult =
       status?: number;
       durationMs: number;
     };
-
-/** 类名即通道名(`xpc:JevHandler/*`),改名会静默断掉所有调用方。 */
-export const JEV_XPC_HANDLER = 'JevHandler' as const;
-
-export interface JevApi {
-  /** 设置里的开关当前是不是开着 —— 界面用它决定要不要显示 Jev 相关的状态。 */
-  enabled(): Promise<boolean>;
-  judge(request: JevRequest): Promise<JevResult>;
-}

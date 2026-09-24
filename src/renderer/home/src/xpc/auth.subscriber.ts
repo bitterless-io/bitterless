@@ -24,7 +24,7 @@ const applyInvalidation = async (params: AuthInvalidationPayload): Promise<void>
     })
     .catch(() => undefined);
 
-  void authEmitter.deactivateSession().catch((err) => {
+  void authEmitter.deactivateSession({ sessionId: params.sessionId! }).catch((err) => {
     console.warn('[auth.subscriber] Failed to deactivate invalidated session:', err);
   });
 };

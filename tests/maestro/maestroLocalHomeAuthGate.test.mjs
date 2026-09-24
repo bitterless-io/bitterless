@@ -19,6 +19,7 @@ const source = (relativePath) => readFileSync(join(projectRoot, relativePath), '
 const signedOutSnapshot = {
   authorityEpoch: 100,
   revision: 1,
+  sessionId: null,
   phase: 'signed-out',
   email: null,
   loading: false,

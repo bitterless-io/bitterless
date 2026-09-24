@@ -72,7 +72,7 @@ const ControlAppFailed: Component = {
             },
             'Reload the panel'
           ),
-          '\n\nSee the Workbench ▸ Log tab for the trace.'
+          '\n\nSee the Settings ▸ Log tab for the trace.'
         ]
       )
 };

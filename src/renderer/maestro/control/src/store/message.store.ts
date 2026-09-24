@@ -344,6 +344,8 @@ export class MessageStoreState {
   // the user scrolls up past STICK_TO_BOTTOM_THRESHOLD_PX (see onListScroll), back on when they
   // return near the bottom or send a new message. This is the bool that gates the auto-scroll.
   stickToBottom = true
+  /** 上一次 scroll 事件时的 `scrollTop` —— `onListScroll` 靠它判断「是不是往上滚了」。 */
+  private lastListScrollTop = 0
 
   /**
    * 「取回」拿回来的正文,交给输入框(ChatPanel 读完即清)。
@@ -780,6 +782,7 @@ export class MessageStoreState {
 
   setListEl(el: HTMLElement | null): void {
     this.listEl = el ? markRaw(el) : null
+    this.lastListScrollTop = 0
     if (this.listEl) {
       this.stickToBottom = true
       this.scrollToBottom(true)
@@ -788,11 +791,43 @@ export class MessageStoreState {
 
   // Bound to the list's scroll event. Sticky while the user is within the threshold of the bottom;
   // scrolling up past it turns auto-scroll off. Guarded write so it only reacts on transitions.
+  /**
+   * 列表的 scroll 事件。离底在阈值内 → 黏住;**只有往上滚才解除**。
+   *
+   * 原来只算离底距离,不看方向。程序钉底产生的 scroll 事件是**异步**到的:钉完之后、事件到达之前
+   * 内容只要长高超过阈值(AI 第一段回复、一张拍板卡),这次事件就算出「离底很远」,把黏底解除 ——
+   * 人一下没往上滚,之后所有不带 force 的补滚却全部失效
+   * (`docs/issues/scroll-to-bottom-falls-short-after-send.md`)。
+   *
+   * 内容增长和程序钉底都不会让 `scrollTop` 变小,所以都解除不了;内容缩短被浏览器夹回底部时
+   * 离底为 0,走第一条,照样黏住。
+   */
   onListScroll(): void {
     const el = this.listEl
     if (!el) return
-    const next = el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_TO_BOTTOM_THRESHOLD_PX
+    const top = el.scrollTop
+    const scrolledUp = top < this.lastListScrollTop
+    this.lastListScrollTop = top
+    const near = el.scrollHeight - top - el.clientHeight <= STICK_TO_BOTTOM_THRESHOLD_PX
+    const next = near ? true : scrolledUp ? false : this.stickToBottom
     if (next !== this.stickToBottom) this.stickToBottom = next
+  }
+
+  /**
+   * 列表或其内容**尺寸变了**时由 `MessageList` 的 `ResizeObserver` 调 —— 黏着就当场钉到底。
+   *
+   * `scrollToBottom()` 只在被叫到的那一刻钉一次(nextTick + 一帧)。那之后的高度变化 —— AI 回复的
+   * markdown 分批渲染、状态条换文案、`ChatConfirmSheet` / `DecisionSheet` 在滚动容器外面冒出来把
+   * 可视区压矮 —— 既不触发 scroll 事件,也没有定时器能猜准它们什么时候来。**高度真的变了才补**,
+   * 是唯一不靠猜的触发条件(Ral 2026-09-24:「setTimeout 尽量能不用就别用」)。
+   *
+   * **同步写,不走 nextTick / rAF**:`ResizeObserver` 在布局之后、绘制之前回调,这里写就落在同一帧;
+   * 推到下一帧反而会先画出一帧「停在半截」。
+   */
+  followBottom(): void {
+    if (!this.stickToBottom) return
+    const el = this.listEl
+    if (el) el.scrollTop = el.scrollHeight
   }
 
   async compactAllIfNeeded(): Promise<void> {
@@ -1244,7 +1279,7 @@ export class MessageStoreState {
 
   /** 有未读结论的会话数 —— Sessions 图标上的蓝色角标。 */
   /**
-   * Sessions with a confirm still waiting for an answer — the amber count on the Sessions entry
+   * Sessions with a confirm still waiting for an answer — the theme-blue count on the Sessions entry (amber until 2026-09-24)
    * (Ral 2026-09-18:「chat header 操作栏如果需要 confirm 这里应该显示一个黄点+数字，点开的
    * session 列表应该也有黄点，点进去操作 confirm 或拒绝后更新黄点的展示」).
    */

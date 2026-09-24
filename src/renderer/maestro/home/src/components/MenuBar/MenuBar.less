@@ -34,6 +34,10 @@
   overflow: hidden;
 }
 
+.maestro-menu-bar__tab-move {
+  transition: transform 180ms ease-out;
+}
+
 .maestro-menu-bar__tab {
   position: relative;
   display: flex;
@@ -221,6 +225,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .maestro-menu-bar__tab-move { transition: none; }
   .maestro-menu-bar__update::after { animation: none; opacity: 0; }
   .maestro-menu-bar__loading-icon,
   .maestro-menu-bar__snapshot--busy,

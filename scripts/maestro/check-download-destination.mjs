@@ -60,9 +60,12 @@ ok(!/onlypreview/i.test(codeOnly(install)), 'OnlyPreview 的 session 不装 —�
 ok(inOrder(appMain, 'installBrowserDownloads();', 'await startGui();'), '要在 startGui() 之前装 —— session 在建 view 时解析')
 
 // ④ 工具汇合点:本仓的签名(signal 直接传)+ 成功与失败两条路
-ok(/tool\.execute\(params \|\| \{\}, signal\)\) \+ \(await drainDownloadNote\(\)\)/.test(exec),
+ok(/tool\.execute\(params \|\| \{\}, signal\)\) \+ \(await drainDownloadNote\(tool\.downloadSettleMs\)\)/.test(exec),
    '成功路径要带下载消息,且保持本仓的 execute(params, signal) 签名')
-ok(/throw new Error\(error \+ \(await drainDownloadNote\(\)\)\)/.test(exec), '失败路径也要带')
+ok(/throw new Error\(error \+ \(await drainDownloadNote\(tool\.downloadSettleMs\)\)\)/.test(exec), '失败路径也要带')
+ok(/installBuiltinToolResultHook\(session, \{[\s\S]*?drainNote: drainDownloadNote\b/.test(codeOnly(read('src/main/agent/runtime/piRuntimeAdapter.ts'))) &&
+   /const note = await options\.drainNote\(\)/.test(codeOnly(read('src/main/agent/runtime/builtinToolResultHook.ts'))),
+   '自带工具(bash / read / …)不经 executeHostTool,那条路也要 drain —— 否则文件落地后 bash ls 看得见它,结果里却没有 NOTE')
 
 // ⑤ 设置与界面
 ok(/normalizeDownloadDir\(value\.downloadDir\)/.test(settings), 'normalizeSettings 逐字段重建 —— 漏了这一行 downloadDir 每次 save 都被丢掉')

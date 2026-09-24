@@ -34,6 +34,13 @@ export interface AgentDecisionQuestion {
   question: string
   multiSelect?: boolean
   options: AgentDecisionOption[]
+  /**
+   * 这一问要操作的那个元素的截图(`data:image/jpeg;base64,…`,最长边 ≤ 240 px)。只有 `ui_act` 的
+   * 不可逆闸会带,问人之前截的(docs/features/decision-maker-naming-and-approval-card.md #4.1);
+   * 截不到就没有,卡片照常只显示文字。**只给人看**:不发给 decision maker,也不进模型上下文 ——
+   * `ask_user` 的问题经 `normalizeDecisionQuestions` 逐字段重建,模型带不进来。
+   */
+  image?: string
 }
 
 /** 一次待回答的拍板。`sessionId` 决定它出现在哪个会话的时间线里。 */

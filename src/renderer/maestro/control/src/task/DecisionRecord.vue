@@ -60,6 +60,15 @@ const answersFor = (q: number): string[] => picked.value?.[q] || []
           <span class="decision-record__header">{{ question.header }}</span>
           <span class="decision-record__prompt">{{ question.question }}</span>
         </div>
+        <!-- 被操作元素的截图(`ui_act` 的不可逆闸才带,docs/features/decision-maker-naming-and-approval-card.md #4.1)。
+             答完之后也留着 —— 回看时「当时点的是哪一个」只有它说得清。只展示,不可点。 -->
+        <img
+          v-if="question.image"
+          name="maestro__decision_record__image"
+          class="decision-record__image"
+          :src="question.image"
+          alt=""
+        />
         <!-- 答案:选「其他」时这里已经是人打的原文,哨兵在提交那一刻就换掉了。 -->
         <div v-if="answersFor(q).length" class="decision-record__answers">
           <span v-for="answer in answersFor(q)" :key="answer" class="decision-record__answer">{{ answer }}</span>

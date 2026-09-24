@@ -24,7 +24,7 @@ import type {
   TodoistSyncSubTodoResource,
   TodoistSyncTodoResource,
 } from '@shared/todoistSync/todoistSync.type';
-import { TODOIST_SYNC_MAX_FUTURE_MS } from '@shared/todoistSync/todoistSync.contract';
+import { TODOIST_SYNC_MAX_FUTURE_MS, TODO_MAX_INCOMPLETE_PER_DOMAIN } from '@shared/todoistSync/todoistSync.contract';
 import type {
   TodoDataUpdatedEvent,
   TodoMutationContext,
@@ -442,7 +442,7 @@ export class TodoistSyncRepository {
       "SELECT COUNT(*) AS count FROM todos WHERE customer_id=? AND domain_id=? AND status=0 AND deleted_flag='' AND reconcile_pending=0",
       [this.customerId, domainId],
     );
-    if (active.count >= 77) return undefined;
+    if (active.count >= TODO_MAX_INCOMPLETE_PER_DOMAIN) return undefined;
     const id = this.ids.generate();
     const position = await this.nextPosition(this.db, 'todos', "customer_id=? AND domain_id=? AND deleted_flag=''", [this.customerId, domainId]);
     const business = {

@@ -14,12 +14,21 @@
   background: rgb(var(--gray-1));
   padding: 8px 10px;
 }
+/**
+ * 答完整体降到 70%(沿用 `ChatConfirm` 已回答态的做法):等待态与已回答态现在是同一个主题蓝,
+ * 只靠图标和字样分不清哪张还在等你(#3,审查 F8)。
+ */
+.decision-record--answered { opacity: 0.7; }
+/**
+ * 等待态与审批卡片(`ChatConfirm.less`)同一个主题蓝:同一个对话里的「等你决定」不能一张黄一张蓝
+ * (docs/features/decision-maker-naming-and-approval-card.md #3)。
+ */
 .decision-record__rail {
   width: 3px;
   flex-shrink: 0;
   align-self: stretch;
   border-radius: 999px;
-  background: rgb(var(--warning-5));
+  background: rgb(var(--primary-6));
 }
 .decision-record--answered .decision-record__rail { background: rgb(var(--primary-6)); }
 .decision-record--declined .decision-record__rail { background: rgb(var(--gray-4)); }
@@ -30,7 +39,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  color: rgb(var(--warning-7));
+  color: rgb(var(--primary-6));
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -51,6 +60,20 @@
   font-weight: 600;
 }
 .decision-record__prompt { min-width: 0; color: rgb(var(--gray-10)); font-size: 12px; font-weight: 500; line-height: 1.45; }
+
+/**
+ * 被操作元素的截图(#4.1,只有 `ui_act` 的不可逆闸会带)。等比完整显示在 120×120 以内:宽图宽顶到 120,
+ * 高图高顶到 120,小图不放大 —— 所以只给上限、不给固定宽高。圆角、无边框。
+ */
+.decision-record__image {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 120px;
+  max-height: 120px;
+  margin-top: 4px;
+  border-radius: 4px;
+}
 
 .decision-record__answers { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .decision-record__answer {

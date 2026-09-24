@@ -1,17 +1,22 @@
+/**
+ * 等待态穿主题蓝(docs/features/decision-maker-naming-and-approval-card.md #3,Ral 2026-09-24:不要黄 / 橙),
+ * 由 BL 的 Royal Blue 主题接管:底色 primary-1,色条 / 图标 / 标题前缀与说明 primary-6,正文 primary-7。
+ * 同一个对话里「等你决定」的卡片统一这一个颜色。无边框 —— 层次靠底色 + 左侧色条(CLAUDE.md 的 Borderless UI)。
+ */
 .chat-confirm {
   display: flex;
   width: 100%;
   gap: 8px;
-  border: 1px solid rgb(var(--warning-3));
   border-radius: 9px;
-  background: rgb(var(--warning-1));
+  background: rgb(var(--primary-1));
   padding: 8px 10px;
-  color: rgb(var(--warning-8));
+  color: rgb(var(--primary-7));
 }
-.chat-confirm--answered { opacity: 0.72; }
+/* 答完整体降到 70%,和等待中的蓝区分开 —— `DecisionRecord.less` 同一个值(#3,审查 F8)。 */
+.chat-confirm--answered { opacity: 0.7; }
 /**
- * 失效态(重启后读回)。**整套换成中性灰**,不是把琥珀调淡 —— 琥珀在这套界面里的意思是
- * 「挡住流程、快来看」,而这张卡已经什么都挡不住了。留一个淡琥珀会让人以为还要处理它。
+ * 失效态(重启后读回)。**整套换成中性灰**,不是把主题蓝调淡 —— 主题蓝在这套界面里的意思是
+ * 「挡住流程、快来看」,而这张卡已经什么都挡不住了。留一个淡蓝会让人以为还要处理它。
  * 边框一并去掉:它现在是历史条目,靠背景和留白分层就够(见 CLAUDE.md 的 Borderless UI)。
  */
 .chat-confirm--expired { border: 0; background: rgb(var(--gray-2)); color: rgb(var(--gray-8)); }
@@ -19,10 +24,10 @@
 .chat-confirm--expired .chat-confirm__head { color: rgb(var(--gray-6)); }
 .chat-confirm--expired .chat-confirm__detail { color: rgb(var(--gray-6)); }
 .chat-confirm__answer--expired { color: rgb(var(--gray-6)); font-weight: 500; }
-.chat-confirm__rail { width: 3px; flex-shrink: 0; align-self: stretch; border-radius: 999px; background: rgb(var(--warning-5)); }
+.chat-confirm__rail { width: 3px; flex-shrink: 0; align-self: stretch; border-radius: 999px; background: rgb(var(--primary-6)); }
 .chat-confirm__content { min-width: 0; flex: 1; }
-.chat-confirm__head { display: flex; align-items: center; gap: 6px; color: rgb(var(--warning-7)); font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.chat-confirm__head { display: flex; align-items: center; gap: 6px; color: rgb(var(--primary-6)); font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
 .chat-confirm__title { margin-top: 4px; font-size: 12px; font-weight: 650; line-height: 1.45; }
-.chat-confirm__detail { margin-top: 2px; color: rgb(var(--warning-7)); font-size: 11px; line-height: 1.45; white-space: pre-wrap; }
+.chat-confirm__detail { margin-top: 2px; color: rgb(var(--primary-6)); font-size: 11px; line-height: 1.45; white-space: pre-wrap; }
 .chat-confirm__answer,
-.chat-confirm__waiting { display: flex; align-items: center; gap: 4px; margin-top: 6px; color: rgb(var(--warning-7)); font-size: 11px; font-weight: 650; }
+.chat-confirm__waiting { display: flex; align-items: center; gap: 4px; margin-top: 6px; color: rgb(var(--primary-6)); font-size: 11px; font-weight: 650; }

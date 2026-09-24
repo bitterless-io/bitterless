@@ -12,6 +12,12 @@ to the user's real personal Todo store; Bitterless, rather than the MCP helper, 
 device synchronization. Agents must treat these records as durable personal follow-ups, not as a
 project issue tracker or scratch space for steps the agent can complete itself.
 
+Each Domain allows up to **200 incomplete Todos**. Completed and deleted Todos do not consume
+this allowance. The renderer and SQLite repository share the same limit. If creation returns no
+Todo, the MCP bridge checks the current incomplete count: a full Domain gets an explicit capacity
+message, rather than the generic SQLite-unavailable error. The renderer also checks this count
+after a rejected create so a stale local list still shows the localized capacity warning.
+
 ## Instance routing
 
 ```text

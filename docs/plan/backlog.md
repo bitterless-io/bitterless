@@ -234,3 +234,23 @@ From [review 189-1](reviews/bitterless-provider-readiness-189-1.md), all non-blo
 - **F5 — wiring test.** Nothing fails when `maestroWindow.controller.ts` stops calling `watchAccountSession()`; add a
   construction-level assertion.
 
+
+## snapshot-loading-203 follow-ups (2026-09-24)
+
+- Same two unpinned positions as Cowork: `# LOADING:` before `# INCOMPLETE`, and the other NOTEs keeping the
+  FULL-snapshot suffix when segmented ([review snapshot-loading-203-1](reviews/snapshot-loading-203-1.md)).
+- `tests/maestro/pageSnapshotLoading.test.mjs` is not wired into any package script (same as the stale
+  `maestroAgentBrowserSession.test.mjs`, which no longer loads: `Dynamic require of "fs"`).
+
+## decision-helper-199 follow-ups (2026-09-24)
+
+From [review 199-1](reviews/decision-helper-199-1.md) — not done by lead decision:
+- R7: `JevFailure` is declared in `decisionHelper.ts` and `jevDecision.service.ts`, and `decision.api.ts` spells the same `Extract` a third time.
+- O1: a successful `judge()` hands the relay's `model` (e.g. `jev-1.13`) to scripts as the contract says; a script returning the whole result shows it.
+- O3: `score` does not range-check the level. O4: `check`'s `1 − noul` can print float noise in a low-confidence `message`.
+- O5: `choose / check / score(question, state, options?)` take three positional parameters (the contract's signature, same as Cowork) — for Ral's review.
+
+## builtin-tool-results-204 / agent-io-tool-results-206 follow-ups (2026-09-24)
+
+- The wiring cases in `tests/maestro/builtinToolResultHook.test.mjs` hand-build `new pi.AgentSession`; Cowork's call the real `createAgentSession`.
+  Switch BL's to the same for parity.

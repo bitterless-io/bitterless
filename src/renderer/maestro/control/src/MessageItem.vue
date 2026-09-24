@@ -397,7 +397,7 @@ watch(artifactPathKey, () => void refreshFileStatuses(), { immediate: true })
           :aria-label="i18nHelper.maestroControl.responseStatus.takeBack"
           :disabled="withdrawing"
           @click="withdraw"
-        ><IconArrowBackUp :size="14" /></IconBtn>
+        ><IconArrowBackUp :size="12" /></IconBtn>
       </div>
     </div>
   </div>

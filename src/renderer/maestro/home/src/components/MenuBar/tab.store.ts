@@ -259,6 +259,7 @@ class TabStoreState {
       const rect = targetEl.getBoundingClientRect()
       if (event.clientX > rect.left + rect.width / 2) insertAt += 1
     }
+    if (insertAt === from) return
     next.splice(insertAt, 0, moved)
     this.tabs = next
     this.dragOrderDirty = this.dragStartOrder.join('\0') !== this.tabs.map((t) => t.id).join('\0')

@@ -33,7 +33,7 @@ import type {
   TodoMcpDaoApi
 } from '@shared/mcp/todoMcpDao.type';
 import { ONLY_PREVIEW_MAX_ABSOLUTE_PATH_LENGTH } from '@shared/onlypreview/onlyPreview.types';
-import { assertTodoistSyncEntityId } from '@shared/todoistSync/todoistSync.contract';
+import { assertTodoistSyncEntityId, TODO_MAX_INCOMPLETE_PER_DOMAIN } from '@shared/todoistSync/todoistSync.contract';
 import { todoSqliteClient } from './todoSqlite.client';
 import type { TrenchRepository } from '@main/trench/trenchRepository.service';
 import { trenchRepository } from '@main/trench/trench.runtime';
@@ -1391,13 +1391,26 @@ export class McpBridgeServer {
     if (requestedUpdate.remind_at === null) delete requestedUpdate.remind_at;
     await this.requireActiveDomain(domainId);
 
+    const createdTodo = await todoDataClient.createTodo({
+      domainId,
+      title,
+      source: 'ai',
+      actor: 'ai'
+    });
+    if (createdTodo === null || createdTodo === undefined) {
+      const activeTodos = requireTodoRows(
+        await todoDataClient.getTodosByDomain({ domainId, status: 0 }),
+        'TodoistSyncRepository.getTodosByDomain',
+        domainId
+      );
+      if (activeTodos.length >= TODO_MAX_INCOMPLETE_PER_DOMAIN) {
+        throw new Error(
+          `This domain has reached the limit of ${TODO_MAX_INCOMPLETE_PER_DOMAIN} incomplete todos. Complete or move a todo before adding another.`
+        );
+      }
+    }
     let todo = requireTodoRow(
-      await todoDataClient.createTodo({
-        domainId,
-        title,
-        source: 'ai',
-        actor: 'ai'
-      }),
+      createdTodo,
       'TodoistSyncRepository.createTodo',
       undefined,
       domainId

@@ -66,12 +66,13 @@ test('ordinary web tabs retain page favicons and the generic fallback', () => {
   assert.match(menuBarSource, /@error="markFaviconFailed\(tab\.favicon\)"/)
 })
 
-test('Workbench About keeps Maestro branding', () => {
+test('Workbench About uses the Bitterless runtime icon', () => {
   assert.match(
     workbenchAboutSource,
-    /import appLogo from '@maestro-renderer\/common\/assets\/icons\/app-logo\.png'/
+    /import bitterlessIcon from '@maestro-renderer\/common\/assets\/icons\/bitterless-icon\.png'/
   )
-  assert.doesNotMatch(workbenchAboutSource, /bitterless-icon\.png/)
+  assert.match(workbenchAboutSource, /:src="bitterlessIcon"/)
+  assert.doesNotMatch(workbenchAboutSource, /app-logo\.png/)
 })
 
 test('bundled Bitterless runtime icon is byte-identical to the generated 64px icon', () => {

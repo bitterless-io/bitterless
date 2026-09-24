@@ -11,6 +11,7 @@ export type HomeShellAuthPhase =
 export interface HomeShellAuthSnapshot {
   authorityEpoch: number;
   revision: number;
+  sessionId: string | null;
   phase: HomeShellAuthPhase;
   email: string | null;
   loading: boolean;
@@ -24,6 +25,10 @@ export const HOME_SHELL_INITIAL_AUTH_PROBE = {
   timeoutMs: 500,
   retryDelayMs: 250
 } as const;
+
+export const HOME_SHELL_SESSION_REVALIDATION_INTERVAL_MS = 60_000;
+// The authority's HTTP request has a 20-second deadline; also bound an unavailable IPC owner.
+export const HOME_SHELL_SESSION_VALIDATION_TIMEOUT_MS = 22_000;
 
 export const getHomeShellInitialAuthProbeUpperBoundMs = (): number =>
   HOME_SHELL_INITIAL_AUTH_PROBE.attempts * HOME_SHELL_INITIAL_AUTH_PROBE.timeoutMs +
@@ -101,6 +106,7 @@ export interface HomeShellCommandAck {
 
 export interface HomeShellBridgeApi {
   getAuthSnapshot(): Promise<HomeShellAuthSnapshot>;
+  validateAuthSession(): Promise<HomeShellAuthCommandResult>;
   restoreAuthSession(): Promise<HomeShellAuthCommandResult>;
   cancelAuthSessionRecovery(): Promise<HomeShellAuthCommandResult>;
   loginWithPassword(request: HomeShellPasswordLoginRequest): Promise<HomeShellAuthCommandResult>;
@@ -155,6 +161,7 @@ export const parseHomeShellAuthSnapshot = (value: unknown): HomeShellAuthSnapsho
     !hasExactKeys(value, [
       'authorityEpoch',
       'revision',
+      'sessionId',
       'phase',
       'email',
       'loading',
@@ -168,6 +175,8 @@ export const parseHomeShellAuthSnapshot = (value: unknown): HomeShellAuthSnapsho
     typeof value.revision !== 'number' ||
     !Number.isSafeInteger(value.revision) ||
     value.revision <= 0 ||
+    (value.sessionId !== null &&
+      (typeof value.sessionId !== 'string' || value.sessionId.trim().length === 0)) ||
     typeof value.phase !== 'string' ||
     !AUTH_PHASES.has(value.phase as HomeShellAuthPhase) ||
     (value.email !== null && typeof value.email !== 'string') ||
@@ -189,6 +198,7 @@ export const parseHomeShellAuthSnapshot = (value: unknown): HomeShellAuthSnapsho
   return {
     authorityEpoch: value.authorityEpoch,
     revision: value.revision,
+    sessionId: value.sessionId as string | null,
     phase: value.phase as HomeShellAuthPhase,
     email: value.email as string | null,
     loading: value.loading,

@@ -18,6 +18,7 @@ import type {
 import {
   HOME_SHELL_AUTH_ERROR_MESSAGES,
   HOME_SHELL_AUTH_SNAPSHOT_CHANGED_EVENT,
+  HOME_SHELL_SESSION_REVALIDATION_INTERVAL_MS,
   parseHomeShellOtpLoginRequest,
   parseHomeShellOtpRequest,
   parseHomeShellPasswordChangeRequest,
@@ -83,6 +84,7 @@ const captureAuthSnapshot = (): HomeShellAuthSnapshot => {
   return {
     authorityEpoch,
     revision: ++authSnapshotRevision,
+    sessionId: authStore.sessionId,
     phase,
     email:
       phase === 'ready' || phase === 'password-setup' ? authStore.current?.email || null : null,
@@ -121,6 +123,12 @@ const getSafeAuthErrorMessage = (
 class HomeShellBridgeHandler extends XpcRendererHandler implements HomeShellBridgeApi {
   async getAuthSnapshot(): Promise<HomeShellAuthSnapshot> {
     return captureAuthSnapshot();
+  }
+
+  async validateAuthSession(): Promise<HomeShellAuthCommandResult> {
+    return await this._runAuthCommand(async () => {
+      await authStore.validateSession();
+    });
   }
 
   async restoreAuthSession(): Promise<HomeShellAuthCommandResult> {
@@ -234,6 +242,7 @@ class HomeShellBridgeHandler extends XpcRendererHandler implements HomeShellBrid
       await this._syncHiddenRoute();
       return { ok: true, snapshot: captureAuthSnapshot() };
     } catch (error) {
+      await this._syncHiddenRoute();
       return this._failure(isCancellationError(error) ? 'cancelled' : 'auth-failed', error);
     }
   }
@@ -277,4 +286,25 @@ export const initHomeShellBridge = (): void => {
     broadcastAuthSnapshot,
     { immediate: true, flush: 'sync' }
   );
+  let timer: ReturnType<typeof setInterval> | undefined;
+  const stopTimer = (): void => {
+    if (timer !== undefined) clearInterval(timer);
+    timer = undefined;
+  };
+  const stopWatching = watch(
+    () => readAuthPhase() === 'ready' && !authStore.loggingOut,
+    (ready) => {
+      if (!ready) stopTimer();
+      else if (timer === undefined) {
+        timer = setInterval(() => {
+          void handler?.validateAuthSession();
+        }, HOME_SHELL_SESSION_REVALIDATION_INTERVAL_MS);
+      }
+    },
+    { immediate: true, flush: 'sync' }
+  );
+  window.addEventListener('beforeunload', () => {
+    stopTimer();
+    stopWatching();
+  }, { once: true });
 };

@@ -323,6 +323,11 @@ export class TurnService extends CommonService<MessageStoreState> {
     if (!session) return []
     const { messageIds } = await coach.withdrawSteering({ sessionId, messageIds: only }).catch(() => ({ messageIds: [] as string[] }))
     const ids = new Set(messageIds)
+    // 正等回合收尾、准备顺延的那几条已不在 pi 手里(main 回过话了),pi 还不回来 —— 它们归渲染端,
+    // 就地取回。不这样做,投影上的撤回键按下去什么都不发生(requeued-steering-… F2)。
+    for (const item of session.pendingSteering || []) {
+      if (item.awaitingTurnEnd && (!only || only.includes(item.id))) ids.add(item.id)
+    }
     if (!ids.size) return []
     // **从队列里取**(#3 建议 3 之后,排队中的话从来没成为过消息)。`sendSteering` 那一侧
     // 收到 `steer-withdrawn` 时也会 dequeue —— 两处都做是**幂等**的,谁先到都对。
@@ -333,7 +338,7 @@ export class TurnService extends CommonService<MessageStoreState> {
     return texts
   }
 
-  private async sendSteering(session: MessageSession, text: string, existingMessage?: ChatMessage, capturedContext?: AgentConversationContext, snapshot?: AgentMessageSnapshot): Promise<SendResult> {
+  private async sendSteering(session: MessageSession, text: string, existingMessage?: ChatMessage, capturedContext?: AgentConversationContext, snapshot?: AgentMessageSnapshot, queuedId?: string): Promise<SendResult> {
     const store = this._state
     const turn = session.turn!
     // 【原来这里有一道「正在收尾就不投」的闸,已删。】收尾中照样收下 —— 投不进去也没关系,
@@ -351,9 +356,16 @@ export class TurnService extends CommonService<MessageStoreState> {
      * (照 pi;`message-types.html` #3 建议 3)。界面不变:`visibleMessages()` 把队列投影在
      * 时间线末尾。这样「它到底算不算数」不再是一个要维护的状态。
      */
-    const messageId = existingMessage?.id || uid()
+    // `queuedId`:插进顺延出来的那个回合时沿用原来的 id —— main 侧按 `messageId` 去重、认领,
+    // 换了 id 就认不出是同一条(docs/issues/requeued-steering-loses-identity-and-honesty.md F3)。
+    const messageId = existingMessage?.id || queuedId || uid()
     if (!existingMessage) {
-      session.pendingSteering = [...(session.pendingSteering || []), { id: messageId, text, ts: Date.now() }]
+      if ((session.pendingSteering || []).some((item) => item.id === messageId)) {
+        // 还在队列里(等回合收尾那一段没出队)→ 只是重新交给 pi,不再是「等收尾」了。
+        session.pendingSteering = session.pendingSteering!.map((item) => (item.id === messageId ? { ...item, awaitingTurnEnd: undefined } : item))
+      } else {
+        session.pendingSteering = [...(session.pendingSteering || []), { id: messageId, text, ts: Date.now() }]
+      }
     }
     /** 把这一条从队列里摘掉 —— 送达 / 取回 / 失败三条路都要走。 */
     const dequeue = (): void => {
@@ -377,10 +389,15 @@ export class TurnService extends CommonService<MessageStoreState> {
       reply = { ok: false, text: String(err), ts: Date.now(), error: String(err) }
     }
     if (reply.continueAsRoot?.turnId === turn.id) {
-      // 队列已经在上面摘掉;顺延那一路自己会建消息(或复用 `existingMessage`)。
-      dequeue()
-      const continued = await this.continueSteeringAfterCompletion(session, turn, text, existingMessage, context, reply.continueAsRoot.reply, reply.continueAsRoot.snapshot)
+      // **等回合收尾的这段时间里它还在队列里** —— 投影照常显示,只是标成 `awaitingTurnEnd`;顺延那一路
+      // 自己出队、用同一个 id 建消息(或复用 `existingMessage`)。原来这里先出队:收尾(`finishFromMain`、
+      // 落盘)那几秒里人刚打的字从屏幕上消失了(requeued-steering-loses-identity-and-honesty.md 后果 3)。
+      if (!existingMessage) {
+        session.pendingSteering = (session.pendingSteering || []).map((item) => (item.id === messageId ? { ...item, awaitingTurnEnd: true } : item))
+      }
+      const continued = await this.continueSteeringAfterCompletion(session, turn, text, existingMessage, context, reply.continueAsRoot.reply, reply.continueAsRoot.snapshot, messageId)
       if (!isRejection(continued)) return continued
+      dequeue()
       reply = { ok: false, text: 'Another turn took ownership before this message could continue. Send it again.', ts: Date.now(), error: 'steer-failed' }
     }
     // 回合已经被别处收尾(stop / 超时 / 它自己跑完了)→ 留痕无处可挂,但回复照样如实返回。
@@ -428,7 +445,16 @@ export class TurnService extends CommonService<MessageStoreState> {
     // 这里不需要等:停止是**同步**的(`forceStop` 当场清掉 `session.turn`),自然跑完那一档
     // 走的是上面的 `continueAsRoot`。所以走到这里而 `session.turn` 已空,就是「回合真的没了」。
     if (!session.turn && !session.archivedAt && store.getSession(session.id) === session) {
-      const resent = await this.send(session.id, text, undefined, existingMessage, context, snapshot)
+      // 顺延成下一个回合:它**此刻**才成为一条消息 —— 用同一个 id,先标「模型还没看见」,作为「顺延回来的
+      // 消息」交给 `send()`,由它在 dispatch 发出去那一刻才转正。并且**先出队**:原来这里交的是
+      // `existingMessage`(第一次排队时为 undefined)、也不出队 —— `send()` 新建一条同内容的消息,投影和它
+      // 并排出现,之后投影带着撤回键一直留在时间线上(requeued-steering-loses-identity-and-honesty.md 后果 1、2、4)。
+      dequeue()
+      const requeued = existingMessage || this.appendTimelineEntry(
+        session,
+        store.withTokenCount({ id: messageId, source: 'cowork', role: 'human', content: text, promptExcluded: true, streaming: false, ts: Date.now() })
+      )
+      const resent = await this.send(session.id, text, undefined, requeued, context, snapshot)
       if (resent && !isRejection(resent)) {
         void store.persistSession(session)
         return resent
@@ -471,7 +497,7 @@ export class TurnService extends CommonService<MessageStoreState> {
    * `text` 与 `existing` 分开传:队列模型之后,**排队中的话不一定有对应的消息** ——
    * 第一次入队的那条从来没成为过条目,只有顺延回来的那条才有(见 `sendSteering` 开头那段)。
    */
-  private continueSteeringAfterCompletion(session: MessageSession, previous: Turn, text: string, existing: ChatMessage | undefined, context: AgentConversationContext, reply: AgentReply, snapshot: AgentMessageSnapshot): Promise<SendResult> {
+  private continueSteeringAfterCompletion(session: MessageSession, previous: Turn, text: string, existing: ChatMessage | undefined, context: AgentConversationContext, reply: AgentReply, snapshot: AgentMessageSnapshot, queuedId?: string): Promise<SendResult> {
     let continuation = this.steeringContinuations.get(previous.id)
     if (!continuation) {
       continuation = { tail: Promise.resolve(), previousFinished: false, requests: 0 }
@@ -490,9 +516,23 @@ export class TurnService extends CommonService<MessageStoreState> {
         finish({ ok: false, reason: 'busy-here' })
         return
       }
+      // 等收尾的这段时间里人把它取回了(`withdrawSteering` 就地摘掉了它)→ 不顺延、不留失败气泡。
+      if (!existing && queuedId && !(session.pendingSteering || []).some((item) => item.id === queuedId)) {
+        finish({ ok: false, text: '', error: 'steer-withdrawn', ts: Date.now() })
+        return
+      }
+      // 插进顺延出来的回合 → 沿用同一个 id;顺延成下一个回合 → 此刻才用同一个 id 建消息,先标「模型还没看见」。
+      let requeued = existing
+      if (!session.turn && !requeued) {
+        session.pendingSteering = (session.pendingSteering || []).filter((item) => item.id !== queuedId)
+        requeued = this.appendTimelineEntry(
+          session,
+          this._state.withTokenCount({ id: queuedId || uid(), source: 'cowork', role: 'human', content: text, promptExcluded: true, streaming: false, ts: Date.now() })
+        )
+      }
       const sending = session.turn
-        ? this.sendSteering(session, text, existing, context, snapshot)
-        : this.send(session.id, text, undefined, existing, context, snapshot, previous.id)
+        ? this.sendSteering(session, text, existing, context, snapshot, queuedId)
+        : this.send(session.id, text, undefined, requeued, context, snapshot, previous.id)
       current.ownerId = session.turn?.id
       void sending.then(value => finish(value || { ok: false, reason: 'not-sendable' }), () => finish({ ok: false, reason: 'not-sendable' }))
     }).catch(() => finish({ ok: false, reason: 'not-sendable' }))
@@ -603,7 +643,10 @@ export class TurnService extends CommonService<MessageStoreState> {
         session,
         store.withTokenCount({ id: uid(), source: 'cowork', role: 'human', content: text, streaming: false, ts: Date.now() })
       )
-      humanMessage.promptExcluded = undefined
+      // **顺延回来的那条消息(`existingMessage`)此刻还没进过提示词** —— 它要等 dispatch 真的发出去才转正。
+      // 无条件清掉的话,准备阶段再失败一次,时间线上就留下一条「模型看过」的人类消息,而模型一个字都没收到
+      // (docs/issues/requeued-steering-loses-identity-and-honesty.md 后果 2)。
+      if (!existingMessage) humanMessage.promptExcluded = undefined
       turn.rootHumanMessageId = humanMessage.id
       const generateTitle = titleFromFirstMessage(session, humanMessage)
       store.updateSessionContextUsage(session)
@@ -662,6 +705,11 @@ export class TurnService extends CommonService<MessageStoreState> {
        *
        * 投递**之前**那四档 `withStageTimeout` 保留:它们守的是跨进程 await 不回,不是模型工作。
        */
+      // 真的要发出去了 —— 顺延回来的那条消息到这一刻才转正(见上面 `existingMessage` 那段)。
+      if (existingMessage) {
+        humanMessage.promptExcluded = undefined
+        store.withTokenCount(humanMessage)
+      }
       reply = await store.dispatch(
         session,
         text,

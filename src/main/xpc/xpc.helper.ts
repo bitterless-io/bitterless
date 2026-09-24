@@ -41,7 +41,8 @@ import './diagnostics.handler';
 import './notification.handler';
 import './onlyPreview.handler';
 import './onlyPreviewAlert.handler';
-import './jev.handler';
+// decision helper 的渲染进程门面(`xpc:DecisionHandler/*`,docs/features/decision-helper.md #4)。
+import './decision.handler';
 import { initMaestroXpc } from '@maestro-main/xpc/xpc.helper';
 
 export const initXpc = (): void => {

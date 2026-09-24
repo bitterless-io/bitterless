@@ -42,7 +42,9 @@
 .response-status__retry-button:hover { background: #323955; }
 
 .response-status__agents { min-height: 22px; color: #4e5882; }
-.response-status__agents--wait { color: #b25e09; }
+/* 「等你」的色调是主题蓝:同一个对话里「等你决定」只有一种颜色(Ral 2026-09-24,
+   docs/features/decision-maker-naming-and-approval-card.md #3)。与 run 靠深浅、脉冲和行尾的时钟区分。 */
+.response-status__agents--wait { color: rgb(var(--primary-7)); }
 .response-status__agents-text { min-width: 0; flex: 1; overflow: hidden; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .response-status__agents-meta { flex-shrink: 0; color: var(--color-text-4); font-size: 10.5px; font-variant-numeric: tabular-nums; }
 
@@ -59,14 +61,14 @@
   height: 6px;
   flex-shrink: 0;
   border-radius: 999px;
-  background: #f7ba1e;
+  background: rgb(var(--primary-6));
 }
 .response-status__dot--run { background: #606b9d; animation: response-status-pulse 1.55s ease-in-out infinite; }
-.response-status__dot--wait { background: #f7ba1e; }
+.response-status__dot--wait { background: rgb(var(--primary-6)); }
 .response-status__copy { min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; }
 .response-status__text { font-size: 11.5px; font-weight: 650; }
 .response-status__text--run { color: #4e5882; }
-.response-status__text--wait { color: #b25e09; }
+.response-status__text--wait { color: rgb(var(--primary-7)); }
 .response-status__meta { margin-left: 6px; color: var(--color-text-4); font-size: 10.5px; font-variant-numeric: tabular-nums; }
 
 

@@ -57,7 +57,10 @@
   button:focus-visible, &__list:focus-visible { outline: 0; box-shadow: inset 0 0 0 2px #8b97bc70; }
   [data-status='failed'] &__state, [data-status='failed'] &__state-icon { color: #b23b44; }
   [data-status='completed'] &__state, [data-status='completed'] &__state-icon { color: #35765b; }
-  [data-status='waiting'] &__state, [data-status='approval'] &__state, [data-status='retrying'] &__state { color: #b25e09; }
+  [data-status='waiting'] &__state, [data-status='retrying'] &__state { color: #b25e09; }
+  // `approval` = "Waiting for you": the one agent state that waits on the person, so it takes the chat's single
+  // "waiting on you" colour, the theme blue (Ral 2026-09-24, docs/features/decision-maker-naming-and-approval-card.md #3).
+  [data-status='approval'] &__state { color: rgb(var(--primary-7)); }
   [data-status='queued'] &__state, [data-status='stopping'] &__state, [data-status='stopped'] &__state { color: #858d9d; }
   @media (prefers-reduced-motion: no-preference) {
     [data-status='running'] &__state-icon, [data-status='stopping'] &__state-icon {

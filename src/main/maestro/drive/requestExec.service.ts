@@ -10,7 +10,7 @@ import {
   type NetworkInterceptionRule
 } from '@maestro-main/capture/networkInterception'
 import { clipText } from '@maestro-main/capture/traceTimeline'
-import type { DebuggerCapture } from '@maestro-main/capture/debuggerCapture'
+import { captureElementShot, type DebuggerCapture } from '@maestro-main/capture/debuggerCapture'
 import {
   type ApiCallResult,
   type AuthHint,
@@ -328,6 +328,9 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     const capture = tab ? tab.capture : this.targetCapture
     const url = tab ? tab.url : this.targetUrl
     if (!capture) return 'ERROR: page capture is not ready.'
+    // 与 list_tabs 同一个 `loading`,拍之前取(冷 tab 已在上面 warmAndLoad 过)。只看传进来的 tab:`activeTabId` 是前台 tab,
+    // 不一定是 agent 在拍的那个;没有 tab 就不报(docs/issues/page-snapshot-silent-while-loading.md)。
+    const loading = tab?.loading === true
     const snapshot = await capture.snapshot()
     if (!snapshot.ok) {
       this._state.broadcastActivity('observe', 'snapshot failed', false)
@@ -350,6 +353,10 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
       // 世代号。ref 只在同一世代内有效;ui_act 带着它来,对不上就报错而不是照点错的元素。
       `# snapshot: ${snapshot.epoch || ''}`,
       '',
+      // 还在加载:树可能是半截的。只说不等,等不等由 agent 决定;放在 5 行头部之外,splitHead 才不会把世代号挤成 NOTE。
+      ...(loading
+        ? ['# LOADING: this tab is still loading, so the tree below may be incomplete. Wait a few seconds, then page_snapshot this tab again before concluding that anything is missing.']
+        : []),
       snapshot.yaml
     ].join('\n')
     // BJ1 —— 有目标才选段;没目标、判不准、块不够、写盘失败一律原样返回(fail-open)。
@@ -371,7 +378,7 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     }
     const actions = parseAgentUiActions(parsed)
     if (actions.length === 0) {
-      return 'ERROR: no valid actions. Each needs {"action":"click|fill|select|check|submit","ref":"<eN from the snapshot>", ...} (or "selector":"<css>").'
+      return 'ERROR: no valid actions. Each needs {"action":"click|fill|select|check|submit|hover","ref":"<eN from the snapshot>", ...} (or "selector":"<css>").'
     }
     // 世代校验 —— 必须在 BJ3 之前:一批指向过期世代的动作连判都不该判,更不该执行。
     //
@@ -395,7 +402,24 @@ export class RequestExecService extends CommonService<RequestExecServiceState> {
     // BJ3 —— 这里是整条回路唯一「已校验的整批动作在手,而页面还没被碰过」的位置。
     // 闸放进 replayEngine 就晚了:它逐条执行,第一条的副作用已经发生。
     const gate = await gateUiActions(actions, {
-      readText: (selector) => this.targetReplay!.readText(selector),
+      readLabel: (selector) => this.targetReplay!.readLabel(selector),
+      // 审批卡片上的元素截图(docs/features/decision-maker-naming-and-approval-card.md #4.1):与点击同一份
+      // 定位拿框,裁剪走录制缩略图那一份 `captureElementShot`。`targetReplay` 是**这一次 ui_act 绑定的 tab**
+      // 的引擎(`withBrowserTarget`,与下面 runUiActions 同一个),截图的 CDP 就打在它的 webContents 上 ——
+      // 不读前台 tab。裁剪放在这个闭包里而不是 ReplayEngine 里:那个文件被严格的测试夹具加载。
+      // `beyondViewport: false`:截图就在批准的点击之前、同一页面上,`true` 会让视口缩一下再恢复(审查 F2)。
+      shootTarget: async (selector, { maxEdge, signal }) => {
+        const engine = this.targetReplay!
+        const box = await engine.locateTargetBox(selector)
+        // 闸已经不等这张图了(2 秒到点)—— 迟到的截图不再执行,更不能落在批准后的点击进行中。
+        if (!box || signal.aborted) return undefined
+        return await captureElementShot(engine.webContents, {
+          rect: box.rect,
+          maxEdge,
+          devicePixelRatio: box.devicePixelRatio,
+          beyondViewport: false
+        })
+      },
       sessionId: this.browserTarget.getStore()?.sessionId || 'ui-act',
       pageUrl: this.targetUrl
     })

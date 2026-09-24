@@ -129,8 +129,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onDrawerKeydown, tru
           <!-- 数据源是 `sessionListItems` 而不是 `historySessions`:后者只有库里的概要,
                **刚新建、还没发过消息的会话不在里面** —— 那会让「新建后它不在列表里」。
                排序是未读 → 进行中 → 已读(store 的 getter 负责)。
-               行内右侧只有一个指示物:转圈(在跑)或蓝点(未读),两者不会同时出现 ——
-               回合结束的那一刻才置未读。 -->
+               行内右侧只有一个指示物:「待确认」小字(等你确认)、转圈(在跑)或蓝点(未读),
+               按这个优先级只显示一个 —— 回合结束的那一刻才置未读。 -->
           <div
             v-for="(item, index) in messageStore.sessionListItems"
             :key="item.id"
@@ -158,7 +158,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onDrawerKeydown, tru
               name="maestro__history-item-confirm"
               class="chat-panel__history-item-confirm"
               :title="i18nHelper.maestroControl.chat.awaitingConfirmSession"
-            ></span>
+            >{{ i18nHelper.maestroControl.chat.awaitingConfirmTag }}</span>
             <span
               v-else-if="item.running"
               name="maestro__history-item-running"

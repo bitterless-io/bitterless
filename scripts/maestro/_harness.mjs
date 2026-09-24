@@ -99,7 +99,10 @@ const hostAliasPrefixAllowlist = [
   // 以前这是逐文件放行(4 条),而守卫自 2026 年某时起整套没执行过 ⇒ 漂移到 13 处没人发现。
   // 改成前缀:是规则就不会随文件增加而腐烂。
   '@renderer/common/i18n/',
-  '@renderer/common/assets/style/'
+  '@renderer/common/assets/style/',
+  // timerHelper(`await timerHelper.delay(ms)`)是跨切面的公共工具，宿主与 Maestro 共用一份;
+  // 挪进 src/shared/maestro/ 它就不是公共的了(docs/features/ui-act-wait-hover-jev.md #1)。
+  '@shared/timerHelper/'
 ]
 
 export const assertMaestroAliasBoundary = () => {

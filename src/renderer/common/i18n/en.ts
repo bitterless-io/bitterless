@@ -128,9 +128,9 @@ export const en = {
       hidePanel: 'Hide panel',
       resizePanel: 'Drag to resize',
       providerUnavailable: 'This provider is no longer available in Maestro Control. Choose another provider to continue.',
-      showWorkbench: 'Show Workbench',
-      workbenchTab: 'Workbench',
-      hideWorkbench: 'Hide Workbench',
+      showWorkbench: 'Show Settings',
+      workbenchTab: 'Settings',
+      hideWorkbench: 'Hide Settings',
       update: 'Update',
       updating: 'Updating',
       downloadingVersion: 'Downloading {version}'
@@ -424,7 +424,7 @@ export const en = {
     },
     maestro: {
       name: 'Maestro',
-      subtitle: 'Browser automation, agents, capture, and Workbench'
+      subtitle: 'Browser automation, agents, capture, and Settings'
     },
     coin: {
       name: 'trench',
@@ -546,8 +546,8 @@ export const en = {
     }
 },
   maestroWorkbench: {
-    title: 'Maestro Workbench',
-    close: 'Close Workbench',
+    title: 'Settings',
+    close: 'Close Settings',
     panes: {
       recording: 'Capture',
       skills: 'Skills',
@@ -556,7 +556,7 @@ export const en = {
       models: 'Models',
       apps: 'Apps',
       connectors: 'Connectors',
-      settings: 'Settings',
+      settings: 'General',
       about: 'About',
       log: 'Log'
     }
@@ -613,6 +613,7 @@ export const en = {
       runningSessions: '{count} session(s) still working',
       awaitingConfirmSessions: '{count} session(s) waiting for your confirmation',
       awaitingConfirmSession: 'Waiting for your confirmation',
+      awaitingConfirmTag: 'To confirm',
       browserTabs: {
         operating: 'Agent operating {count} tabs',
         associated: 'Session tabs {count}',
@@ -1092,7 +1093,7 @@ export const en = {
     stepPlaceholder: 'enter to save',
     domainDescriptionPlaceholder: 'Add domain description...',
     emptyDomain: 'Drop tasks here from other lists',
-    todoLimitReached: 'A domain can have at most 77 incomplete tasks',
+    todoLimitReached: 'This domain has reached the limit of 200 incomplete tasks. Complete or move a task before adding another.',
     domainLimitReached: 'You can create at most 17 domains',
     runtimeUnavailable: 'Todo is unavailable. Its local data runtime could not be opened.',
     sessionRequired:

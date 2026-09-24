@@ -218,7 +218,11 @@ function fixedTabClass(tab: TabInfo): string {
       <!-- Tabs COMPRESS to fit (no scroll): each shrinks toward its 48px min; when they
            can't shrink further, overflowing tabs are clipped (not shown). The new-tab
            button lives OUTSIDE this region so it stays visible no matter the tab count. -->
-      <div class="maestro-menu-bar__tab-list">
+      <TransitionGroup
+        tag="div"
+        class="maestro-menu-bar__tab-list"
+        move-class="maestro-menu-bar__tab-move"
+      >
         <template v-for="(tab, i) in tabStore.tabs" :key="tab.id">
           <div
             :title="tabLabel(tab)"
@@ -286,11 +290,12 @@ function fixedTabClass(tab: TabInfo): string {
               <IconX :size="14" stroke="2" aria-hidden="true" />
             </IconBtn>
           </div>
-          <template v-if="workbenchStore.open && i === workbenchChipAfterIndex">
-            <div class="maestro-menu-bar__tab-divider-wrap" aria-hidden="true">
+          <template v-if="workbenchStore.open && i === workbenchChipAfterIndex" key="workbench">
+            <div key="workbench-divider" class="maestro-menu-bar__tab-divider-wrap" aria-hidden="true">
               <div class="maestro-menu-bar__tab-divider"></div>
             </div>
             <div
+              key="workbench-tab"
               name="menubar__workbench__tab"
               class="maestro-menu-bar__tab maestro-menu-bar__tab--workbench"
               :class="workbenchStore.visible ? 'maestro-menu-bar__tab--pinned-active' : 'maestro-menu-bar__tab--pinned'"
@@ -322,12 +327,13 @@ function fixedTabClass(tab: TabInfo): string {
                pinnedGroupDivider(). -->
           <div
             v-if="pinnedGroupDivider(tab, i)"
+            key="pinned-divider"
             class="maestro-menu-bar__tab-divider-wrap"
           >
             <div class="maestro-menu-bar__tab-divider"></div>
           </div>
         </template>
-      </div>
+      </TransitionGroup>
       <!-- New-tab button — circular, vertically centered to the tab row, always visible.
            Click opens a blank operation view (empty, editable address bar) ready for a URL;
            hovering opens the mini-app menu, so several Zellij tabs can be opened. -->

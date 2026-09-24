@@ -7,6 +7,8 @@
 > 2. 在自动化操作网页时，下载完资源之后，应该把资源下载成功的消息放到上下文中告诉 Agent，
 >    这样 Agent 才能进行后续的操作，不像这里已经卡住了。一直 tooling。
 
+**2026-09-24 追加:** #6 下载记录与 `download_history`(分页读取)—— specced,实现中。等待用独立的通用 `wait` 工具(`builtin-wait-tool.md`)。
+
 两条是**同一个故障的两半**：第一条决定文件去哪，第二条决定 agent 知不知道它去了哪。
 Paired with `micromeet-cowork`（同一份规格，见
 [`micromeet-cowork/docs/features/browser-downloads.md`](../../../micromeet-cowork/docs/features/browser-downloads.md)）。
@@ -96,12 +98,21 @@ NOTE: Invoice-0CSZ9QB2-0007.pdf is still downloading into /Users/ral/Downloads. 
 NOTE: the download of Invoice-0CSZ9QB2-0007.pdf did not finish (interrupted). Nothing was saved.
 ```
 
-**挂在哪：** `executeHostTool()` —— 每一个 host 工具的返回都经过它，所以无论 agent 下一步调的是
-`page_snapshot`、`bash` 还是 `read_file`，消息都送得到。**失败路径也要挂**：抛错结束的那次返回
-（被中止、被宿主闸拒绝、工具自己炸了）同样是 agent 下一眼看到的东西。实录里的 `read_file` 并不属于
-这一类 —— 它把超时**作为文本返回**（`fileReader.service.ts` 的 `You can retry once…`），走的是成功路径。
+**挂在哪：** 两条路，合起来覆盖 agent 能调的每一个工具，所以无论它下一步调的是 `page_snapshot`、
+`bash` 还是 `read_file`，消息都送得到：
 
-**等待：** 台账里有在途下载时，`executeHostTool` 最多等 **15 秒**让它落地，好让同一次工具返回就带上
+- **host 工具经 `executeHostTool()`**（`bindPiTools` 包过的那些，每一个的返回都经过它）。**失败路径也要挂**：
+  抛错结束的那次返回（被中止、被宿主闸拒绝、工具自己炸了）同样是 agent 下一眼看到的东西。实录里的
+  `read_file` 并不属于这一类 —— 它把超时**作为文本返回**（`fileReader.service.ts` 的 `You can retry once…`），
+  走的是成功路径。
+- **pi 自带工具经 `builtinToolResultHook.ts`**（`read` / `bash` / `edit` / `write` / `grep` / `find` / `ls`，
+  其中 `bash` 是宿主的可中断替身；它们不经 `executeHostTool`）。pi 会话建好后包一层 `agent.afterToolCall`
+  （先调 pi 自己的那一个），只处理名字不在本会话 host 工具集里的工具：在结果文本末尾追加同一段 NOTE，用默认等待预算；
+  报错的结果同样追加（pi 把抛错也交给 `afterToolCall`）。host 工具原样放过，不重复排空。
+  立即返回的结果（工具不存在、参数不合法、被阻止、被中止，以及 `stopReason: "length"` 时的那批调用）不经 `afterToolCall`，与 host 工具相同。
+  钩子文件两仓逐字节相同。
+
+**等待：** 台账里有在途下载时，两条路(`executeHostTool` 与 `builtinToolResultHook.ts`)都最多等 **15 秒**让它落地，好让同一次工具返回就带上
 最终路径；没有在途下载时**一秒都不等**（常态零开销）。等待有上限 —— 一个 500 MB 的下载不该把
 每一次工具调用都拖住。
 
@@ -222,3 +233,123 @@ Ral 明确说的是"系统下载的目录"。而且 app 专属目录对人是隐
 **还差的一步（只能人做）：** 重启应用 → 在任意网页上点一次下载，确认 ① 不弹保存框、文件进了系统
 「下载」；② 设置里改目录后再下一次，文件进了新目录；③ 让 agent 点一次下载按钮，它的下一个工具返回里
 出现 `NOTE: 1 file finished downloading:` 和那个绝对路径。
+
+## 6 · 下载记录与 `download_history`(2026-09-24)
+
+**状态:** Specced 2026-09-24,实现中(任务见 #6.9)。**来源:** Ral 2026-09-24「下载感知能力要实现下」;同日 10:51 当面改定 D1–D3
+(见 #6.10)。设计全文、推理与否决理由在 overmind `areas/agent-runtime/browser-use/browser-use-tools.html` #2.2。
+本节是本仓的实现契约，两仓逐字相同，只有 #6.8 的路径不同。
+
+### 6.1 · 缺口
+
+#1.2 的台账只在内存里，已结束的**报一次就清**:重启就没了;报过之后 agent 再也查不到「刚才那份文件在哪」;
+台账里也没有 URL 和开始 / 结束时间。
+
+### 6.2 · 目录与文件
+
+- `paths/appData.ts` 的 `APP_DATA_DIRS` 加 `downloadHistory: 'download-history'`,`APP_DATA_DIR_PURPOSE` 同时写用途。
+  启动时 `ensureAppData()` 建目录、`appDataRules()` 把它写进会话提示词，都是现成的;取路径用 `appDataDir('downloadHistory')`
+  (底层是 pathHelper),**不加专用 getter,不手拼 `join(homedir(), …)`**。
+- 文件:`download-history/downloads.jsonl`,权限 `0600`。
+- `net/downloadManager.ts` 是两仓逐字节相同的共享件，不认识 pathHelper:目录经 `configureDownloadManager({ downloadDir, historyDir })` 注入。
+
+### 6.3 · 一行一条记录
+
+```json
+{"id": "dl_mudyx7fj_3", "url": "https://invoice.stripe.com/…/pdf", "complete": true,
+ "started_at": 1790160877000, "ended_at": 1790160879411,
+ "path": "/Users/ral/Downloads/Invoice-0CSZ9QB2-0007.pdf",
+ "filename": "Invoice-0CSZ9QB2-0007.pdf", "bytes": 37054, "total_bytes": 37054, "mime": "application/pdf"}
+```
+
+| 字段 | 含义 | 取自 |
+|---|---|---|
+| `id` | 这次下载的编号;NOTE 与 `download_history` 用它指同一次下载 | 生成 |
+| `url` | 下载的**完整 URL**(含查询串;D3) | `item.getURL()` |
+| `complete` | 布尔：`true` = 下完了;`false` = 没下完(还在下，或结束了但没成功;D1) | `DownloadItem` 结束状态是 `completed` 才为 `true` |
+| `started_at` / `ended_at` | Unix 毫秒;还在下时 `ended_at: null` | `will-download` / `done` |
+| `path` | 本地绝对路径 | `item.getSavePath()` |
+| `filename` · `bytes` · `total_bytes` · `mime` | 台账现成的 | `DownloadItem` |
+| `fell_back_from` | 配置目录不可用、回落到系统目录时的原目录(对应现有 `fellBackFrom`) | 台账 |
+
+### 6.4 · `complete` + `ended_at` 的三种组合(D1)
+
+| complete | ended_at | 意思 | agent 该做什么 |
+|---|---|---|---|
+| `true` | 有 | 下完了，文件在 `path` | 按 `path` 读，不要猜文件名 |
+| `false` | `null` | 还在下 | 等:`wait {ms}`,醒来再 `download_history {id}` |
+| `false` | 有 | 结束了但没下完：取消、中断、`deep_fetch` 拦截、应用中途退出 | 不要等;需要就重新触发，或告诉人 |
+
+- 取消和中断不再区分(Electron 的 `cancelled` / `interrupted` 不落盘);以后要区分再加字段。
+- **启动恢复:** 给遗留的 `ended_at: null` 补上发现它的时刻，让它读作「结束了但没下完」。用布尔之后这一步是必须的，
+  不补就会被当成永远在下。这个时刻只是近似值。
+
+### 6.5 · 写入
+
+- 开始时写一条 `complete: false`、`ended_at: null`;结束时补上 `ended_at` 和 `complete`。中途进度不落盘，读时从内存补。
+- 整文件原子重写：写 `downloads.jsonl.tmp` → `rename` 覆盖;所有写入串行排队。不只追加(一次下载会变两行)。
+- 超过 1000 条按 `started_at` 丢最旧的。
+
+### 6.6 · 读取工具 `download_history`(只读，立刻返回，分页)
+
+| 参数 | 类型 | 说明 |
+|---|---|---|
+| `id` | string,可选 | 只看这一条(给了就不分页) |
+| `complete` | boolean,可选 | `true` 只看下完的,`false` 只看没下完的，不传就是全部 |
+| `query` | string,可选 | 在 `url` / `filename` / `path` 里不区分大小写的子串匹配 |
+| `page` | number,可选 | 第几页，从 1 开始，默认 1。**每页固定 20 条，由近到远**:第 1 页是最近的 20 条，第 2 页是再往前的 20 条(D6) |
+
+- 返回 `{"items": [...], "page": 1, "page_size": 20, "total": 57, "has_more": true}`:`items` 最新在前;`total` 是过滤后的总条数;
+  `has_more` = 后面还有更早的页;页码越界时 `items` 为空、`has_more: false`。每条多一个 `file_exists`(读的那一刻 `path` 上有没有文件);在途的附内存里的已收字节。
+  时间在工具返回里转成本地 ISO 字符串(如 `2026-09-23T18:54:37+08:00`),文件里仍是毫秒整数。
+- **不带任何等待参数，也不吃宿主那 15 秒的下载等待**(`downloadSettleMs: 0`,见 #6.7):看的就是此刻的状态。
+- #1.2 的 NOTE 顺带改：已完成与在途的 NOTE 都带 `id`;在途的提示「要等就先 `wait {ms}`,醒来再 `download_history {id}`」。
+
+### 6.7 · 等下载：用通用 `wait`(D2)
+
+通用 `wait` 是独立功能，契约在 [`builtin-wait-tool.md`](builtin-wait-tool.md)(Ral 2026-09-24:「我们需要单独的 wait 内置技能，这样任何场景都能用了」)。
+下载这边只是它的一个使用方:
+
+- **等下载的标准动作:** NOTE 说还在下 → `wait {ms}` → `download_history {id}` 看 `complete`。点完下载按钮要等下载开始，就先等足：
+  点击到 `will-download` 实测 6–7 秒(9-24 6.2 s,9-23 7 s)。
+- **09-23 的否决仍然成立**(#3.1):模型不一定记得调，所以宿主照样把下载 NOTE 推进每个工具返回;`wait` 只是 agent 已经知道要等时的显式手段。
+- `download_history` 与 `wait` 一样声明 `downloadSettleMs: 0`(字段由 builtin-wait 引入),读的就是此刻的状态。
+
+### 6.8 · 范围与改动点
+
+- **记:** 所有经 `downloadManager` 接管的下载。**不记:** cowork 录制期被 `downloadGuard` 拦掉的(没落盘);OnlyPreview 分区的下载。
+  `deep_fetch` 拦掉的记成 `complete: false` 且有 `ended_at`。不按会话或 tab 归属(同 #3.6)。
+
+| 件 | `bitterless` | `micromeet-cowork`(`apps/cowork/`) |
+|---|---|---|
+| 目录登记 + 用途 | `src/main/paths/appData.ts` | `src/main/paths/appData.ts` |
+| 记录读写、1000 上限、启动恢复(**新，两仓逐字节相同**) | `src/main/net/downloadHistory.ts` | `src/main/net/downloadHistory.ts` |
+| 开始 / 结束写记录;NOTE 带 id;注入 `historyDir`(**共享件，改完两仓仍逐字节相同**) | `src/main/net/downloadManager.ts` | `src/main/net/downloadManager.ts` |
+| 注入目录 | `src/main/app.main.ts`(`configureDownloadManager` 调用处) | `src/main/modules/window-manager/windows/main/mainWindow.controller.ts`(同上) |
+| `download_history` 工具注册 + 目录条目 | `src/main/maestro/windows/main/maestroWindow.controller.ts` 工具表 + `src/main/agent/hostToolCatalog.ts` | `mainWindow.controller.ts` 工具表 + `src/main/agent/hostToolCatalog.ts` |
+
+通用 `wait`、`downloadSettleMs` 字段、`timerHelper.delay` 的中止支持都在 `builtin-wait-tool.md` #3,不在本节;本节的任务依赖它先完成。
+
+### 6.9 · 验证与任务
+
+- 单测:1000 条上限、原子写、启动恢复(补 `ended_at`)、`complete` × `ended_at` 三种组合、NOTE 带 id、分页(每页 20、由近到远、`total` / `has_more` 正确、越界页为空、`id` 不分页);
+  有在途下载时 `download_history` 不多等 15 秒;appData 目录契约测试加上新目录。(`wait` 本身的测试在 `builtin-wait-tool.md` #4。)
+- `check:download-destination` 守卫补两条：开始和结束都写记录;写入走 tmp + rename。
+- 两仓 `cmp` 确认 `downloadHistory.ts` 与 `downloadManager.ts` 逐字节相同。两边 typecheck。不跑 E2E。
+- 人做一次：真实下载一个文件，看 JSONL 多一行;再让 agent 调一次 `download_history`。
+- 任务:bitterless `docs/plan/tasks/download-history-196.md` → micromeet-cowork `docs/plan/tasks/download-history-001.md`(共享件从 BL 逐字节复制);
+  两者都排在各自的 builtin-wait 任务之后。
+
+### 6.10 · 已定
+
+| 编号 | 结论 |
+|---|---|
+| D1 | 布尔 `complete`(Ral:「先简化用 bool」) |
+| D2 | 通用的内置 `wait` 工具，单位毫秒，上限 60000(Ral 确认),**独立功能**,见 `builtin-wait-tool.md`;`ui_act` 不含 wait / wait_for 动作,`download_history` 不带 `wait_ms` |
+| D3 | 完整 URL(「完整 url 链接」),文件 `0600`。带签名的直链本身就是取文件的凭证，会明文落在 home 目录 |
+| D4 | 作废(随 D2):原「无 id 时 `wait_ms` 等什么」;6–7 秒的实测挪进 #6.7 |
+| D5 | 并入 `wait`(`builtin-wait-tool.md` #1):超过上限带 `timedOut: true` 和一句可行动的说明 |
+| D6 | **分页读取**:每页固定 20 条、由近到远，默认第 1 页 = 最近的 20 条;文件照留 1000 条。Ral:「最好支持分页读取，不要一次性读取 1000 条。可以先读取最近的分页，按 20 条的方式进行分页，遵循由近到远的读取规则」 |
+
+- 相关但不在本节：agent-io 的 `tool_result` 记录写在拼接下载 NOTE **之前**(cowork `agent/runtime/hostToolRegistry.ts:73` 的计量壳先记，
+  `hostToolExecution.ts:30` 之后才追加),日志里看不到模型实际收到的 NOTE。已记待办(overmind `browser-use-tools.html` #3.5)。

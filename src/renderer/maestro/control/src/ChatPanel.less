@@ -449,25 +449,35 @@
   animation: chat-panel-spin 0.9s linear infinite;
 }
 
-/* 待答 confirm 的琥珀点 —— 与确认卡/状态条同一套色,表示「卡在你这儿」。 */
+/* 待答 confirm 的主题蓝点 —— 与确认卡/状态条同一套色,表示「卡在你这儿」
+   (原来是琥珀色;Ral 2026-09-24「颜色先都用蓝色的主题色」,decision-maker-naming-and-approval-card.md #3)。 */
 .chat-panel__sessions-confirm {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: rgb(var(--warning-6));
+  color: rgb(var(--primary-6));
   font-size: 11px;
   font-weight: 600;
 }
 
-.chat-panel__sessions-confirm-dot,
-.chat-panel__history-item-confirm {
+.chat-panel__sessions-confirm-dot {
   width: 8px;
   height: 8px;
   border-radius: 999px;
-  background: rgb(var(--warning-6));
+  background: rgb(var(--primary-6));
 }
 
-.chat-panel__history-item-confirm { flex: 0 0 auto; }
+// 会话列表里的待答 confirm 是蓝色小字「待确认」/ `To confirm`,不再是圆点:主题蓝之后它和未读点都是蓝色圆点,
+// 一眼分不出「等你确认」和「有新回复」(审查 N1,Ral 2026-09-24「1A」,decision-maker-naming-and-approval-card.md #3)。
+// 普通提示文字:无底色、无边框(有底色会像按钮)。不换行、不收缩 —— 由标题那一栏截断给它让位
+// (`SessionsDrawer.less` 的 `__history-item-body` 是 `min-width: 0`,`__history-item-title` 带省略号)。
+.chat-panel__history-item-confirm {
+  flex: 0 0 auto;
+  color: rgb(var(--primary-6));
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
 
 .chat-panel__sessions-running-count {
   font-variant-numeric: tabular-nums;

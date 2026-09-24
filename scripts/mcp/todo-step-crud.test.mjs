@@ -77,6 +77,8 @@ const state = {
   persistUpdate: true,
   persistStatus: true,
   persistDelete: true,
+  rejectTodoCreate: false,
+  activeTodosOverride: undefined,
   calls: {
     createStep: [],
     updateStep: [],
@@ -161,6 +163,7 @@ const deleteSubTodo = async ({ id }) => {
 
 const createTodoCall = async (params) => {
   state.calls.createTodo.push(params);
+  if (state.rejectTodoCreate) return undefined;
   const todo = createTodo({
     id: OTHER_TODO_ID,
     domain_id: params.domainId,
@@ -194,6 +197,11 @@ installMcpSourceHooks({
     getSubTodoById,
     getSubTodosByTodoId,
     getTodoById,
+    getTodosByDomain: async ({ domainId, status }) => {
+      assert.equal(domainId, DOMAIN_ID);
+      assert.equal(status, 0);
+      return clone(state.activeTodosOverride);
+    },
     setSubTodoStatus,
     updateSubTodoTitle,
     updateTodo
@@ -442,6 +450,28 @@ try {
     );
     assert.equal(state.calls.createTodo.length, before);
   }
+  state.rejectTodoCreate = true;
+  const beforeRejectedCreateUpdateCalls = state.calls.updateTodo.length;
+  for (const count of [77, 199, 200, 201]) {
+    state.activeTodosOverride = Array.from({ length: count }, (_, index) => createTodo({
+      id: String(index + 1).padStart(20, '0')
+    }));
+    await assert.rejects(
+      client.callTool('todo.create', { domainId: DOMAIN_ID, title: 'Rejected create' }),
+      count >= 200
+        ? /This domain has reached the limit of 200 incomplete todos\. Complete or move a todo/
+        : /core SQLite store is not ready/
+    );
+  }
+  state.activeTodosOverride = null;
+  await assert.rejects(
+    client.callTool('todo.create', { domainId: DOMAIN_ID, title: 'Unavailable store' }),
+    /core SQLite store is not ready/
+  );
+  assert.equal(state.calls.updateTodo.length, beforeRejectedCreateUpdateCalls);
+  state.rejectTodoCreate = false;
+  state.activeTodosOverride = undefined;
+
   const beforeCompatibleNullUpdateCalls = state.calls.updateTodo.length;
   const compatibleNullCreate = assertEnvelope(
     await client.callTool('todo.create', {

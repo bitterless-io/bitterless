@@ -32,6 +32,12 @@ export interface PendingSteering {
   id: string
   text: string
   ts: number
+  /**
+   * 没送进这一回合,正**等回合收尾后顺延**(`continueAsRoot` 那一支)。这时它已不在 pi 手里 ——
+   * main 回过话了 —— 所以取回由渲染端就地完成,而不是去问 main
+   * (`docs/issues/requeued-steering-loses-identity-and-honesty.md` F2)。
+   */
+  awaitingTurnEnd?: boolean
 }
 
 export interface ChatMessage {

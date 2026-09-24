@@ -60,6 +60,8 @@ export const bindPiTools = (pi: PiModule, Type: TypeBoxFactory, options: AgentRu
     label: spec.name,
     description: spec.description,
     parameters: buildSchema(Type, spec.params),
+    // pi runs a whole message's tool calls in order as soon as one of them is `sequential`.
+    executionMode: spec.executionMode,
     execute: async (_toolCallId: string, params: Record<string, unknown>, signal?: AbortSignal) => {
       const { text, durationMs } = await executeHostTool(spec, params, (event) => {
         const { status, ...detail } = event

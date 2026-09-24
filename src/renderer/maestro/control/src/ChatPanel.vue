@@ -742,8 +742,8 @@ async function stopUsingWorkspace(): Promise<void> {
             </span>
           </Tooltip>
         </div>
-        <!-- 待答 confirm —— 琥珀点 + 数字(Ral 2026-09-18)。和在跑的灰色并排但颜色不同:
-             在跑是「还没轮到你」,这个是**卡在你这儿**,用确认卡/状态条同一套琥珀色。
+        <!-- 待答 confirm —— 主题蓝点 + 数字(Ral 2026-09-18;颜色 2026-09-24 由琥珀改为主题蓝)。和在跑的灰色并排但颜色不同:
+             在跑是「还没轮到你」,这个是**卡在你这儿**,用确认卡/状态条同一套主题蓝。
              数字是**会话数**,计数与按钮、状态条同源,答完自动归零。 -->
         <span
           v-if="messageStore.awaitingConfirmSessionCount"

@@ -1556,6 +1556,36 @@ test('encrypted pre-parent v1 upgrades to the exact v2 ledger without losing sta
   }
 });
 
+test('a Domain accepts 200 incomplete Todos and rejects the next without a partial write', { concurrency: false }, async () => {
+  const runtime = await createRuntime('bitterless-todo-capacity');
+  try {
+    const domain = await runtime.repository.createDomain({ title: 'Capacity' });
+    assert(domain);
+    for (let index = 0; index < 200; index += 1) {
+      assert(await runtime.repository.createTodo({ domainId: domain.id, title: `Todo ${index + 1}` }));
+    }
+    const active = await runtime.repository.getTodosByDomain({ domainId: domain.id, status: 0 });
+    assert.equal(active.length, 200);
+    const beforeOutbox = await outboxRows(runtime.database);
+    const beforeEvents = await runtime.repository.listAfter({});
+    assert.equal(await runtime.repository.createTodo({ domainId: domain.id, title: 'Over capacity' }), undefined);
+    assert.equal((await runtime.repository.getTodosByDomain({ domainId: domain.id, status: 0 })).length, 200);
+    assert.deepEqual(await outboxRows(runtime.database), beforeOutbox);
+    assert.deepEqual(await runtime.repository.listAfter({}), beforeEvents);
+
+    const otherDomain = await runtime.repository.createDomain({ title: 'Separate capacity' });
+    assert(otherDomain);
+    assert(await runtime.repository.createTodo({ domainId: otherDomain.id, title: 'Other domain' }));
+    await runtime.repository.completeTodo({ id: active[0].id });
+    assert(await runtime.repository.createTodo({ domainId: domain.id, title: 'After completing' }));
+    await runtime.repository.deleteTodo(active[1].id);
+    assert(await runtime.repository.createTodo({ domainId: domain.id, title: 'After deleting' }));
+    assert.equal((await runtime.repository.getTodosByDomain({ domainId: domain.id, status: 0 })).length, 200);
+  } finally {
+    closeRuntime(runtime);
+  }
+});
+
 test('real repository CRUD is atomic with outbox, events, and soft-delete cascades', { concurrency: false }, async () => {
   const runtime = await createRuntime('bitterless-todoist-crud');
   try {

@@ -29,6 +29,7 @@ const loader = (mocks, serviceDependencies) => {
       else if (name.startsWith('@main/')) next = join(root, 'src/main', name.slice(6))
       else if (name.startsWith('@maestro-main/')) next = join(root, 'src/main/maestro', name.slice(14))
       else if (name.startsWith('@maestro-shared/')) next = join(root, 'src/shared/maestro', name.slice(16))
+      else if (name.startsWith('@shared/')) next = join(root, 'src/shared', name.slice(8))
       if (next) { if (!existsSync(next)) next += '.ts'; return load(next) }
       return nodeRequire(name)
     }, module, module.exports)

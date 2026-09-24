@@ -1,5 +1,7 @@
 # Bitterless Delivery Plan
 
+- [Settings, General and built-in menu/manual](tasks/settings-menu-manual-001.md) — implemented; focused tests passed, typecheck limitations recorded in the feature; human UI/Chat acceptance pending.
+
 - [Pi native compaction](tasks/pi-native-compaction-001.md) — done; native automatic compaction, /compact and /test_auto_compact, queued delivery and child compaction off; owner desktop UI testing pending.
 
 - [control-login-002](tasks/control-login-002.md) — done; Control-only login, anonymous browsing and Control-frame parity code-verified. Human acceptance pending; E2E cancelled.

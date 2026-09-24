@@ -16,6 +16,7 @@ import type {
 export const TODOIST_SYNC_PATH = '/todo/sync';
 export const TODOIST_SYNC_TOKEN_HEADER = '-x-bl-token';
 export const TODOIST_SYNC_MAX_COMMANDS = 100;
+export const TODO_MAX_INCOMPLETE_PER_DOMAIN = 200;
 export const TODOIST_SYNC_MAX_REQUEST_BYTES = 8 * 1024 * 1024;
 export const TODOIST_SYNC_MAX_FUTURE_MS = 180_000;
 export const TODOIST_SYNC_INTERVAL_MIN_SECONDS = 10;

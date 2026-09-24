@@ -74,7 +74,7 @@ const taskMeta = (task: MaestroTask): string => {
  * compacting 这一类统一就叫做 status」)。先匹配先赢。细节搬到下面的 `action`。
  *
  * **tone 的判据换成「要不要人动手」**:只有拍板和审批是 `wait`;压缩、重试、任务在等外部环节
- * 都会自己往前走,用琥珀色是在喊一个不需要人处理的狼。
+ * 都会自己往前走,用「等你」的颜色(主题蓝,原来是琥珀色)是在喊一个不需要人处理的狼。
  *
  * **没有「正在停止」这一档了**(「停止失败 就不该有 stop 必须能停止成功」)。停止现在是同步的,
  * 生命周期 0ms —— `stopError` / `stopStalledAt` 连同按钮一起删掉了。
@@ -332,7 +332,7 @@ onUnmounted(() => {
           'response-status__dot--run': status.tone === 'run'
         }"
       ></span>
-      <!-- 没有警示三角。`wait` 仍有两条通道:琥珀色的圆点/文字,以及行尾那个时钟。 -->
+      <!-- 没有警示三角。`wait` 仍有两条通道:主题蓝的圆点/文字(不脉冲),以及行尾那个时钟。 -->
       <div class="response-status__copy">
         <span class="response-status__text" :class="`response-status__text--${status.tone}`" :title="status.text">
           {{ status.text }}

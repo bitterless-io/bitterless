@@ -6,7 +6,8 @@ import { xpcMain } from 'electron-xpc/main'
 import { injectable } from 'inversify'
 import { join } from 'path'
 import { CommonService } from '@maestro-shared/iocHelper/ioc.helper'
-import type { ViewRect, WorkbenchTabState } from '@maestro-shared/coach.api'
+import type { ViewRect, WorkbenchPane, WorkbenchTabState } from '@maestro-shared/coach.api'
+import { isWorkbenchPane, SETTINGS_PANE_REQUEST_EVENT } from '@maestro-shared/settingsNavigation'
 import type { TraceEvent } from '@maestro-shared/trace.types'
 import { MAESTRO_PARTITION } from '@maestro-main/data/maestroDataRoot'
 import { createBoundsApplier } from './viewBounds'
@@ -26,6 +27,7 @@ export class MaestroWorkbenchViewService extends CommonService<MaestroWorkbenchV
   private view: WebContentsView | null = null
   private open = false
   private visible = false
+  private requestedPane: WorkbenchPane | null = null
   private readonly applyBounds = createBoundsApplier()
 
   create(): Promise<void> {
@@ -84,6 +86,21 @@ export class MaestroWorkbenchViewService extends CommonService<MaestroWorkbenchV
     return this.getState()
   }
 
+  openPane(pane: WorkbenchPane): WorkbenchTabState {
+    if (!isWorkbenchPane(pane)) throw new Error('Unknown Settings tab.')
+    // Retain the request until the renderer consumes it, including before its first mount.
+    this.requestedPane = pane
+    const state = this.openTab()
+    xpcMain.broadcast(SETTINGS_PANE_REQUEST_EVENT, {})
+    return state
+  }
+
+  consumePaneRequest(): WorkbenchPane | null {
+    const pane = this.requestedPane
+    this.requestedPane = null
+    return pane
+  }
+
   // Switching tabs preserves the Workbench chip and its renderer's in-memory recording state.
   backgroundTab(): WorkbenchTabState {
     if (!this.visible) return this.getState()
@@ -98,6 +115,7 @@ export class MaestroWorkbenchViewService extends CommonService<MaestroWorkbenchV
     const wasVisible = this.visible
     this.open = false
     this.visible = false
+    this.requestedPane = null
     this.applyVisibility()
     if (wasVisible) {
       const wc = this._state.operationView?.webContents
@@ -136,6 +154,7 @@ export class MaestroWorkbenchViewService extends CommonService<MaestroWorkbenchV
     this.view = null
     this.open = false
     this.visible = false
+    this.requestedPane = null
     if (!view || view.webContents.isDestroyed()) return
     try {
       view.webContents.close()

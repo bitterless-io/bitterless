@@ -8,6 +8,7 @@ import { Message } from '@arco-design/web-vue';
 import { playSuccessSound } from '@renderer/common/utils/sound.util';
 import { todoSettingStore } from './todoSetting.store';
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper';
+import { TODO_MAX_INCOMPLETE_PER_DOMAIN } from '@shared/todoistSync/todoistSync.contract';
 import {
   hasNumberFields,
   hasStringFields,
@@ -572,7 +573,7 @@ class TodoState {
 
   async createTodo(domainId: string, title: string): Promise<void> {
     const activeCount = (this.todosByDomain[domainId] ?? []).length;
-    if (activeCount >= 77) {
+    if (activeCount >= TODO_MAX_INCOMPLETE_PER_DOMAIN) {
       Message.warning(i18nHelper.todo.todoLimitReached);
       return;
     }
@@ -581,6 +582,17 @@ class TodoState {
       'Todo create',
       isTodoItem,
     );
+    if (!todo) {
+      const activeTodos = requireArray(
+        await todoEmitter.getByDomainId({ domainId, status: 0 }),
+        'Todo create capacity check',
+        isTodoItem,
+      );
+      if (activeTodos.length >= TODO_MAX_INCOMPLETE_PER_DOMAIN) {
+        Message.warning(i18nHelper.todo.todoLimitReached);
+      }
+      return;
+    }
     if (todo) {
       await this._appendToSortOrder(domainId, todo.id);
       const activeList = this.todosByDomain[domainId] ?? [];

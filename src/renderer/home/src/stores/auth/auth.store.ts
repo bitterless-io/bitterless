@@ -85,6 +85,7 @@ class AuthStore {
   sendingOtp = false;
   resettingPassword = false;
   checking = false;
+  private sessionValidation: { sessionId: string; promise: Promise<void> } | null = null;
   private readonly installationDeviceId = getOrCreateDeviceId();
   private readonly todoistSyncActivation = markRaw(new TodoistSyncActivationService(
     async (params) => await todoistSyncSessionEmitter.activate(params),
@@ -186,7 +187,7 @@ class AuthStore {
       // token 只存在渲染层的 localStorage,而 `web_search` 这类 agent 工具跑在主进程。
       // 登录、验证码登录、密码设置、启动时恢复会话都汇到这里,所以推送只放这一处。
       scheduleBestEffort(
-        () => authEmitter.setCustomerSession({ token: coreToken, baseUrl: getCoreBaseUrl() }),
+        () => authEmitter.setCustomerSession({ token: coreToken, baseUrl: getCoreBaseUrl(), sessionId }),
         (err) => {
           console.warn('[AuthStore] Failed to hand the Core session to the main process:', err);
         },
@@ -328,6 +329,7 @@ class AuthStore {
 
   async fetchMe(signal?: AbortSignal): Promise<CurrentCustomer> {
     const token = getCustomerToken();
+    const sessionId = getCustomerSessionId();
     if (!token) {
       throw new Error('Missing token');
     }
@@ -335,19 +337,47 @@ class AuthStore {
     this.checking = true;
     try {
       const me = await this.fetchValidatedCustomer(token, signal);
-      if (getCustomerToken() !== token) {
+      if (getCustomerToken() !== token || getCustomerSessionId() !== sessionId) {
         throw new SessionPayloadError('登录状态已变更，请重试');
       }
       this.current = me;
       return me;
     } catch (err) {
-      if (getCustomerToken() === token && shouldInvalidateCustomerSession(err)) {
+      if (getCustomerSessionId() === sessionId && getCustomerToken() === token && shouldInvalidateCustomerSession(err)) {
         this.clearLocalSession();
       }
       throw err;
     } finally {
       this.checking = false;
     }
+  }
+
+  validateSession(): Promise<void> {
+    const token = getCustomerToken();
+    const sessionId = getCustomerSessionId();
+    if (!token || !sessionId || this.loggingOut || !this.current) {
+      return Promise.reject(new Error('Sign in to Bitterless to use chat.'));
+    }
+    if (this.sessionValidation?.sessionId === sessionId) return this.sessionValidation.promise;
+
+    // Quiet validation never enters `checking`: a healthy check must keep Control chat mounted.
+    const promise = this.fetchValidatedCustomer(token).then((current) => {
+      if (getCustomerSessionId() !== sessionId || getCustomerToken() !== token || this.loggingOut) {
+        throw new Error('Session changed during validation');
+      }
+      this.current = current;
+      if (customerNeedsPasswordSetup(current)) throw new Error('Complete password setup to use chat.');
+    }).catch((error) => {
+      if (getCustomerSessionId() === sessionId && getCustomerToken() === token && shouldInvalidateCustomerSession(error)) {
+        this.clearLocalSession();
+        scheduleBestEffort(() => authEmitter.deactivateSession({ sessionId }), () => undefined);
+      }
+      throw error;
+    }).finally(() => {
+      if (this.sessionValidation?.promise === promise) this.sessionValidation = null;
+    });
+    this.sessionValidation = markRaw({ sessionId, promise });
+    return promise;
   }
 
   async restoreSession(signal?: AbortSignal): Promise<CurrentCustomer> {
@@ -369,7 +399,7 @@ class AuthStore {
     }
     this.todoistSyncActivation.invalidate();
     scheduleBestEffort(
-      () => authEmitter.clearCustomerSession(),
+      () => sessionId ? authEmitter.clearCustomerSession({ sessionId }) : Promise.resolve(),
       (err) => {
         console.warn('[AuthStore] Failed to clear the Core session in the main process:', err);
       },
@@ -381,10 +411,11 @@ class AuthStore {
   async logout(): Promise<void> {
     if (this.loggingOut) return;
 
+    const sessionId = getCustomerSessionId();
     const cleanup = this.prepareExternalLogout();
     scheduleBestEffort(async () => {
       await settleBestEffort([
-        () => authEmitter.deactivateSession(),
+        () => authEmitter.deactivateSession(sessionId ? { sessionId } : undefined),
         cleanup,
       ]);
     }, (err) => {

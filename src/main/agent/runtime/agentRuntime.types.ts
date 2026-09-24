@@ -34,6 +34,21 @@ export interface AgentToolSpec {
   timeoutMs?: number
   /** Replaces the default timeout advice ("reading a very large file…") when that would mislead. */
   timeoutHint?: string
+  /**
+   * How long the host may hold this tool's result for in-flight downloads before appending the
+   * download NOTE — passed to `drainDownloadNote(budgetMs)`. Omitted = the default 15 s
+   * (`DOWNLOAD_SETTLE_BUDGET_MS`). `wait` declares 0 so `wait {ms}` lasts exactly `ms`: the NOTE
+   * is still appended, just without the extra wait (docs/features/builtin-wait-tool.md #2).
+   */
+  downloadSettleMs?: number
+  /**
+   * How pi schedules this tool against the other calls in the same assistant message; passed through
+   * unchanged by `bindPiTools`. Omitted = pi's default, which runs one message's calls in parallel.
+   * One `sequential` tool makes pi run that whole message's batch in order (`pi-agent-core`
+   * `agent-loop.js` `executeToolCalls`). `wait` declares it: otherwise `[wait, page_snapshot]` in one
+   * message snapshots at once and the pause is wasted (docs/features/builtin-wait-tool.md #2).
+   */
+  executionMode?: 'sequential' | 'parallel'
 }
 
 export interface AgentRuntimeTarget {

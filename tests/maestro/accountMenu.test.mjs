@@ -52,7 +52,7 @@ test('password response cannot reactivate an account cleared or replaced while a
     let token = 'original', activated = 0;
     const updating = deferred(), validating = deferred();
     const store = methods('src/renderer/home/src/stores/auth/auth.store.ts', ['changePassword', 'fetchMe'], {
-      getCustomerToken: () => token, changePasswordApi: () => updating.promise,
+      getCustomerToken: () => token, getCustomerSessionId: () => token, changePasswordApi: () => updating.promise,
       customerNeedsPasswordSetup: () => false, SessionPayloadError: Error, shouldInvalidateCustomerSession: () => false, Message: { error() {} }
     });
     store.fetchValidatedCustomer = () => validating.promise;
@@ -70,7 +70,7 @@ test('logout uses XPC to invalidate Control, clear the authority, and refresh ev
   const contract = load('src/shared/home/homeShellBridge.contract.ts');
   const callbacks = {}, calls = [], received = [];
   let token = 'fixture';
-  let snapshot = { authorityEpoch: 1, revision: 1, phase: 'ready', email: 'test@example.invalid', loading: false, loggingOut: false, sendingOtp: false, resettingPassword: false };
+  let snapshot = { authorityEpoch: 1, revision: 1, sessionId: 'session-a', phase: 'ready', email: 'test@example.invalid', loading: false, loggingOut: false, sendingOtp: false, resettingPassword: false };
   const emitters = {
     ApplicationAuthHandler: { invalidate: async () => calls.push('invalidate') },
     HomeShellBridgeHandler: {
@@ -100,7 +100,7 @@ test('logout uses XPC to invalidate Control, clear the authority, and refresh ev
 test('password update applies the validated profile to the same signed-in session', async () => {
   const current = { status: 'active', email: 'test@example.invalid' }, activated = [];
   const store = methods('src/renderer/home/src/stores/auth/auth.store.ts', ['changePassword', 'fetchMe'], {
-    getCustomerToken: () => 'fixture', changePasswordApi: async () => {},
+    getCustomerToken: () => 'fixture', getCustomerSessionId: () => 'session-fixture', changePasswordApi: async () => {},
     customerNeedsPasswordSetup: () => false, SessionPayloadError: Error, shouldInvalidateCustomerSession: () => false, Message: { error() {} }
   });
   store.fetchValidatedCustomer = async () => current;

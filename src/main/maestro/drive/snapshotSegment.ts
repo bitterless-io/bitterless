@@ -1,10 +1,9 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { app } from 'electron';
-import { jevJudge } from '@main/decision/jevDecision.service';
+import { decisionHelper } from '@main/decision/decisionHelper';
 import { chunkSnapshot } from '@maestro-main/drive/snapshotChunker';
 import { PRUNE_MIN_BYTES, pruneSnapshot } from '@maestro-main/drive/snapshotPrune';
-import type { JevChoiceAnswer } from '@shared/decision/jev.api';
 
 /**
  * 快照瘦身的**唯一**出口。两级,顺序固定:
@@ -25,7 +24,6 @@ import type { JevChoiceAnswer } from '@shared/decision/jev.api';
  */
 
 const SNAPSHOT_DIR_NAME = 'snapshots';
-const CONFIDENCE_FLOOR = 0.7;
 let sequence = 0;
 
 const snapshotDir = (): string => join(app.getPath('userData'), SNAPSHOT_DIR_NAME);
@@ -108,30 +106,37 @@ export const segmentSnapshot = async (composed: string, goal?: string): Promise<
     else {
       const criteria: Record<string, string> = { none: 'no block contains what the goal describes' };
       for (const block of blocks) criteria[block.id] = block.label;
-      const verdict = await jevJudge({
-        state: { goal: wanted, blocks: blocks.map((block) => ({ id: block.id, label: block.label })) },
-        questions: {
-          block: {
-            type: 'choice',
-            instructions:
-              'Which block contains the elements and text needed to carry out the goal? Judge by whether the controls/text the goal names would be inside that block, not by which block looks most important.',
-            criteria
-          }
-        }
-      });
-      const answer = verdict.ok ? (verdict.answers.block as JevChoiceAnswer | undefined) : undefined;
+      // 显式 0.7:大于它才采信选段 —— 保持迁移前的线,不跟着默认值变成 0.5(docs/features/decision-helper.md #4)。
+      const outcome = await decisionHelper.choose(
+        {
+          name: 'block',
+          instructions:
+            'Which block contains the elements and text needed to carry out the goal? Judge by whether the controls/text the goal names would be inside that block, not by which block looks most important.',
+          criteria
+        },
+        { goal: wanted, blocks: blocks.map((block) => ({ id: block.id, label: block.label })) },
+        { threshold: 0.7 }
+      );
+      // 把握不够时 helper 也带回它选的那一块,所以先看选了哪块、再看把握够不够 —— 与迁移前的判断顺序相同。
       const picked =
-        answer && answer.choice !== 'none' ? blocks.find((block) => block.id === answer.choice) : undefined;
-      if (verdict.ok === false) segNote = `not segmented (jev ${verdict.reason}: ${verdict.message})`;
-      else if (!picked) segNote = 'not segmented (jev picked none)';
-      else if ((answer?.confidence ?? 0) < CONFIDENCE_FLOOR) segNote = `not segmented (confidence ${answer?.confidence})`;
+        outcome.value && outcome.value !== 'none' ? blocks.find((block) => block.id === outcome.value) : undefined;
+      // 这句只进 page_snapshot 的一条 `info` trace(requestExec.service.ts),不回模型,录制也不收
+      // (capture.service.ts 的 `emitTrace` 丢掉 info);照样叫 decision maker(decision-maker-naming-and-approval-card.md #2)。
+      // 拿不到判定就不选段、原样往下走(fail-open)—— 这是选段自己的决定,不在 helper 里。
+      // 没过阈值(`low-confidence`)也算答了;没答时只写原因和 HTTP 状态,不带 message,relay 的原始报错只进日志
+      // (docs/features/decision-helper.md #3 #4)。
+      const answered = outcome.decided === true || outcome.reason === 'low-confidence';
+      if (!answered)
+        segNote = `not segmented (decision maker ${outcome.reason}${outcome.status ? ` ${outcome.status}` : ''})`;
+      else if (!picked) segNote = 'not segmented (decision maker picked none)';
+      else if (!outcome.decided) segNote = `not segmented (confidence ${outcome.confidence})`;
       else {
         working = lines.slice(picked.start, picked.end).join('\n');
         const savedPct = (((totalBytes - picked.bytes) / totalBytes) * 100).toFixed(0);
         what.push(
           `# SEGMENTED: showing 1 of ${blocks.length} page sections (${picked.label.split(' — ')[0]}), selected for: ${wanted}. The other sections are NOT shown.`
         );
-        segNote = `segmented to ${picked.id} (${savedPct}% saved, confidence ${answer?.confidence})`;
+        segNote = `segmented to ${picked.id} (${savedPct}% saved, confidence ${outcome.confidence})`;
       }
     }
   }
@@ -146,8 +151,8 @@ export const segmentSnapshot = async (composed: string, goal?: string): Promise<
     ...header.filter((line) => !line.startsWith('# elements:')),
     `# elements: ${shown} shown here (full page has ${fullElements})`,
     // 原始 NOTE / INCOMPLETE 的计数与样例串都是按**全树**算的,样例甚至可能已被削掉 ——
-    // 原样抄等于让 agent 去它拿到的文本里找一个必然找不到的串。
-    ...notes.map((line) => `${line}   (applies to the FULL snapshot, not to the reduced view below)`),
+    // 原样抄等于让 agent 去它拿到的文本里找一个必然找不到的串。`# LOADING:` 例外:它不带计数,对削过的正文同样成立,原样保留。
+    ...notes.map((line) => (line.startsWith('# LOADING:') ? line : `${line}   (applies to the FULL snapshot, not to the reduced view below)`)),
     ...what,
     `# Full snapshot: ${path}  — read it with read_file (offset/limit supported) when something you expect is missing.`,
     '',

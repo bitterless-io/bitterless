@@ -69,6 +69,22 @@ pi 里**未投递的 steering 根本不是 entry**：它在队列里，投递那
 守卫：`steeringWithdraw.test.mjs` 最后一条 —— 钉住「建消息晚于 `mergedIntoTurn`」「入队那一步不许造
 `promptExcluded` 消息」「队列不落库」。
 
+## 2026-09-24 撤回按钮那一栏的尺寸（Ral 指定）
+
+> 「将这个撤回按钮的消息操作栏的高度限制为 14px，只有顶部有个 2px padding，而且它要和用户的消息之间
+>  没有 margin 间距」「撤回的按钮应该是靠在最右」
+
+| 项 | 规格 | 为什么这样落 |
+| --- | --- | --- |
+| 操作栏高度 | **14px**（含 padding，两端都是 `box-sizing: border-box`） | 原来里面是 32px 的 `IconBtn`，一个撤回键把消息下方撑出一整行 |
+| padding | **只有顶部 2px**，其余为 0 | —— |
+| 与消息的间距 | **0** | 间距来自消息那一列的 `gap: 4px`。那一列里「任务 / 确认 / 拍板 / 气泡」是同一条 `v-if` 链，只会出现一个，`gap` 实际只作用在「消息和操作栏之间」，所以去掉 `gap` 就是零间距，不影响别的元素。以后这一列若再加并列元素，要自己带间距 |
+| 按钮位置 | **靠最右** | 操作栏撑满这一列（`align-self: stretch`）+ `justify-content: flex-end`，不依赖这一列的 `align-items` |
+| 按钮尺寸 | **12×12**，图标 12px（原 14px） | 14px 高、顶部 2px padding，留给按钮的只有 12px；图标保持 14px 会溢出操作栏 |
+
+两个仓的 `IconBtn` 实现不同（cowork 是 Tailwind 的 `h-8 w-8`，bitterless 是 `.icon-btn.arco-btn` 固定 32px），
+所以覆盖分别写在各自的 `MessageItem` 样式里，选择器都比 `IconBtn` 自己的更具体。无边框（Borderless UI）。
+
 ## 落点
 
 | 层 | 文件 |

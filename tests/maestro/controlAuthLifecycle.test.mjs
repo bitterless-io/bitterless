@@ -18,6 +18,7 @@ const deferred = () => {
 const snapshot = (revision, phase = 'ready', extra = {}) => ({
   authorityEpoch: 100,
   revision,
+  sessionId: phase === 'signed-out' ? null : 'session-a',
   phase,
   email: phase === 'ready' ? 'test@example.invalid' : null,
   loading: false,
@@ -44,8 +45,9 @@ const methods = (path, names, context = {}) => {
 const loadAuth = () => {
   const callbacks = [];
   let read = async () => snapshot(1, 'signed-out');
+  let validate = async () => ({ ok: true, snapshot: await read() });
   const xpc = {
-    createXpcMainEmitter: () => ({ getAuthSnapshot: () => read() }),
+    createXpcMainEmitter: () => ({ getAuthSnapshot: () => read(), validateAuthSession: () => validate() }),
     XpcMainHandler: class {},
     xpcMain: { subscribe: (_name, cb) => callbacks.push(cb) }
   };
@@ -59,6 +61,7 @@ const loadAuth = () => {
         ? xpc
         : {
             ...contract,
+            HOME_SHELL_SESSION_VALIDATION_TIMEOUT_MS: 15,
             HOME_SHELL_INITIAL_AUTH_PROBE: { attempts: 2, timeoutMs: 5, retryDelayMs: 1 }
           },
     module,
@@ -69,6 +72,9 @@ const loadAuth = () => {
     hint: () => callbacks[0]({ params: snapshot(999) }),
     setRead: (value) => {
       read = value;
+    },
+    setValidate: (value) => {
+      validate = value;
     }
   };
 };
@@ -102,6 +108,70 @@ test('application authority requires addressed ready, rejects setup/spoof/stale 
   setRead(async () => snapshot(6));
   await auth.requireReady();
   assert.equal(auth.ready, true);
+});
+
+test('all providers require live validation; concurrent sends share one check without readiness churn', async () => {
+  const { auth, setRead, setValidate } = loadAuth();
+  setRead(async () => snapshot(1));
+  await auth.refresh();
+  const events = [];
+  auth.subscribe(ready => events.push(ready));
+  const pending = deferred();
+  let validations = 0;
+  setValidate(() => { validations += 1; return pending.promise; });
+  const first = auth.requireReady();
+  const second = auth.requireReady();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(validations, 1);
+  pending.resolve({ ok: true, snapshot: snapshot(2) });
+  assert.equal(await first, await second);
+  assert.deepEqual(events, []);
+
+  setRead(async () => snapshot(3));
+  setValidate(async () => ({ ok: false, snapshot: snapshot(4), error: {
+    code: 'auth-failed', message: contract.HOME_SHELL_AUTH_ERROR_MESSAGES.unavailable
+  } }));
+  await assert.rejects(auth.requireReady(), /application auth/);
+  assert.equal(auth.ready, true, 'transient failure cannot log out or unmount an established chat');
+  setValidate(() => new Promise(() => {}));
+  await assert.rejects(auth.requireReady(), /timed out/);
+  assert.equal(auth.ready, true);
+});
+
+test('live rejection returns to login and stale validation cannot adopt a replacement account', async () => {
+  const { auth, setRead, setValidate } = loadAuth();
+  setRead(async () => snapshot(1));
+  await auth.refresh();
+  setValidate(async () => ({ ok: false, snapshot: snapshot(2, 'signed-out'), error: {
+    code: 'auth-failed', message: contract.HOME_SHELL_AUTH_ERROR_MESSAGES.credentialsRejected
+  } }));
+  await assert.rejects(auth.requireReady());
+  assert.equal(auth.ready, false);
+
+  setRead(async () => snapshot(3));
+  await auth.refresh();
+  const pending = deferred();
+  setValidate(() => pending.promise);
+  const checking = auth.requireReady();
+  await new Promise(resolve => setImmediate(resolve));
+  setRead(async () => snapshot(4, 'ready', { sessionId: 'session-b' }));
+  await auth.refresh();
+  const newGeneration = auth.generation;
+  pending.resolve({ ok: true, snapshot: snapshot(5, 'ready', { sessionId: 'session-b' }) });
+  await assert.rejects(checking, /Session changed/);
+  assert.equal(auth.ready, true);
+  assert.equal(auth.generation, newGeneration);
+});
+
+test('account replacement while resuming cannot send a message through the replacement account', async () => {
+  let generation = 1;
+  const subject = methods(controller, ['sendAgentMessage'], { applicationAuth: {
+    requireReady: async () => generation,
+    assertGeneration: value => { if (value !== generation) throw Error('session changed'); }
+  } });
+  subject.resumeAuthenticatedSession = async () => { generation += 1; };
+  subject.agentService = { sendAgentMessage: () => assert.fail('stale send must not reach provider') };
+  await assert.rejects(subject.sendAgentMessage({ intent: 'steering' }), /session changed/);
 });
 
 test('authority timeout is bounded and retry restores the same current snapshot', async () => {

@@ -3,8 +3,8 @@ import { z } from 'zod'
 import type { ApiCall, ApiCallResult, AuthHint, ReplayEngine } from './replayEngine'
 import type { SkillRecipe } from '@maestro-main/skills/skillRecipe.types'
 import type { SkillApiSafetyDecision } from './apiSafety'
-import { isJevEnabled, jevJudge } from '@main/decision/jevDecision.service'
-import type { JevRequest, JevResult } from '@shared/decision/jev.api'
+import { decisionHelper } from '@main/decision/decisionHelper'
+import type { DecisionHelper } from '@shared/decision/decision.api'
 
 // Build a zod schema from a skill's declarative input constraints and validate `vars` BEFORE
 // running. Unknown vars pass through (the script may use helpers). Returns coerced data or errors.
@@ -185,7 +185,7 @@ export async function runSkillScript(opts: {
       const normalized: ApiCall = { ...call, url: target }
       const decision = await onApiBeforeFetch?.(normalized)
       ck()
-      if (decision?.safety === 'unsafe') throw new Error(`api ${decision.method} ${decision.path} blocked: ${decision.reason}`)
+      if (decision && decision.safety === 'unsafe') throw new Error(`api ${decision.method} ${decision.path} blocked: ${decision.reason}`)
       const r = await replay.apiFetch(normalized, call.auth ?? auth ?? null)
       ck()
       onApiFetch?.(normalized, r)
@@ -197,25 +197,47 @@ export async function runSkillScript(opts: {
   })
 
   // 生成的技能够不到 xpc —— 这个沙箱里没有 require / import / process,拿不到 emitter。
-  // 所以 Jev 对它们的唯一入口是这里多出来的一个绑定,背后是**同一个**主进程服务
-  // (开关、凭证、失败方向都只有一份实现)。
+  // 所以 decision maker 对它们的唯一入口是这里多出来的一个绑定,背后是**同一个**主进程的 decision helper
+  // (开关、凭证、阈值、失败方向都只有一份实现;docs/features/decision-helper.md #4)。
   //
   // 它只回结构化答案,不回凭证:凭证留在主进程,而且技能入库前会过
   // `sanitizeSkillScriptForStorage` —— 脚本里出现疑似密钥的字面量会让整段脚本被丢弃。
-  const jev = lock({
-    async judge(request: JevRequest): Promise<JevResult> {
+  //
+  // 变量不叫脚本里的名字 `decision`:`api.fetch` 里的局部变量(接口安全判定)也叫 `decision`,
+  // 同名的话它会在那里遮蔽这个绑定,读的时候分不清是哪一个。
+  const decisionBinding = lock<DecisionHelper>({
+    async enabled() {
       ck()
-      const out = await jevJudge(request)
+      return await decisionHelper.enabled()
+    },
+    async judge(request, options) {
+      ck()
+      const out = await decisionHelper.judge(request, options)
       ck()
       return out
     },
-    async enabled(): Promise<boolean> {
+    async choose(question, state, options) {
       ck()
-      return await isJevEnabled()
+      const out = await decisionHelper.choose(question, state, options)
+      ck()
+      return out
+    },
+    async check(question, state, options) {
+      ck()
+      const out = await decisionHelper.check(question, state, options)
+      ck()
+      return out
+    },
+    async score(question, state, options) {
+      ck()
+      const out = await decisionHelper.score(question, state, options)
+      ck()
+      return out
     }
   })
 
-  const ctx = vm.createContext({ page, api, jev, vars: vars ?? {}, console })
+  // 脚本里叫 `decision`。`jev` 是同一个对象的旧名字:已经生成、存下来的技能脚本可能还在调 `jev.judge()` / `jev.enabled()`。
+  const ctx = vm.createContext({ page, api, decision: decisionBinding, jev: decisionBinding, vars: vars ?? {}, console })
   try {
     // `timeout` here only bounds SYNCHRONOUS parse/exec — async waits are bounded by the
     // driver methods (waitFor) + the caller's AbortSignal watchdog.

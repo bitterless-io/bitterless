@@ -220,7 +220,7 @@ export const parseAgentUiActions = (
   value: unknown
 ): AgentUiAction[] => {
   const rawList = Array.isArray(value) ? value : [value]
-  const allowed = ['click', 'fill', 'select', 'check', 'submit']
+  const allowed = ['click', 'fill', 'select', 'check', 'submit', 'hover']
   const actions: AgentUiAction[] = []
   for (const entry of rawList) {
     if (!entry || typeof entry !== 'object') continue

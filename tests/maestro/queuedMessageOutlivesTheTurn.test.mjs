@@ -36,8 +36,16 @@ test('收尾中的回车不再被任何一道闸挡回去', () => {
 
 test('没投出去 ≠ 失败:回合已经没了就把同一条消息作为下一回合发出去', () => {
   assert.match(steering, /if \(!session\.turn && !session\.archivedAt && store\.getSession\(session\.id\) === session\) \{/);
-  assert.match(steering, /this\.send\(session\.id, text, undefined, humanMessage, context, snapshot\)/,
-    '发的是**同一条** humanMessage —— 不重建气泡,不重复一条人类消息');
+  // 9-22 二次改造后排队中的话不是消息;顺延那一刻才用**同一个 id** 建消息,先标「模型还没看见」,
+  // 作为「顺延回来的消息」交给 send()(requeued-steering-loses-identity-and-honesty.md F3)。
+  assert.match(steering, /const requeued = existingMessage \|\| this\.appendTimelineEntry\(\s*session,\s*store\.withTokenCount\(\{ id: messageId, [^}]*promptExcluded: true/,
+    '顺延时沿用排队时的 id(main 按 messageId 去重),且在 dispatch 之前不许声称模型看过');
+  assert.match(steering, /this\.send\(session\.id, text, undefined, requeued, context, snapshot\)/,
+    '交给 send() 的是这条顺延回来的消息 —— 交 undefined 就成了一次普通发送:新 id、当场转正');
+  const requeueAt = steering.indexOf('const requeued = existingMessage');
+  const dequeueBefore = steering.lastIndexOf('dequeue()', requeueAt);
+  assert.ok(dequeueBefore > 0 && requeueAt - dequeueBefore < 900,
+    '顺延那一支必须先出队 —— 原来不出队,投影与新消息并排,之后投影带着撤回键一直留在时间线上');
   assert.match(steering, /if \(resent && !isRejection\(resent\)\) \{/);
 });
 

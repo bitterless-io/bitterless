@@ -43,6 +43,7 @@ import { DelegateAgent } from '@main/agent/DelegateAgent'
 import { readHostToolCatalog } from '@main/agent/hostToolCatalog'
 import { DEEP_FETCH_BUILTIN_SKILL } from '@main/agent/deepFetch.skill'
 import { RELOAD_SKILLS_BUILTIN_SKILL } from '@main/agent/reloadSkills.skill'
+import { MENU_BUILTIN_SKILL, MANUAL_BUILTIN_SKILL } from '@main/agent/settings.skill'
 import { DRILL_BUILTIN_SKILL } from '@main/agent/drill.skill'
 import { extractVariablesFromMessage } from '@main/agent/naturalLanguageVariables'
 import {
@@ -340,7 +341,10 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
           }
         })
         registry.add(...buildWebSearchTools(signal), ...buildWebFetchTools(undefined, signal).filter((tool) => tool.name === 'web_fetch'))
-        return registry.toRuntimeTools()
+        // 不计量:这些结果已由工作流 worker 记进聊天那一份 agent-io(piAgentSession.ts → supervisor.ts →
+        // hostIntegration.ts)。再计量就是同一次调用记两份、算进聊天回合的账本,还会给每个工作流 agent
+        // 新建一个 agent-io 目录,挤掉保留名额(20 个)里的旧聊天记录。
+        return registry.toUnmeasuredTools()
       }
     })
     return this.workflowHost
@@ -2024,6 +2028,8 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
       DRILL_BUILTIN_SKILL,
       DEEP_FETCH_BUILTIN_SKILL,
       RELOAD_SKILLS_BUILTIN_SKILL,
+      MENU_BUILTIN_SKILL,
+      MANUAL_BUILTIN_SKILL,
       ...recordings.map((skill) => {
       const recipe = skill.recipePath ? registry.readRecipe(skill.id) : null
       const seed = recipe ? extractVariablesFromMessage(message, recipe) : {}
@@ -2055,7 +2061,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     // 一个和 cwd 不同的目录(cowork 2026-09-22 实测)。
     const registry = this._state.existingSkillRegistry() || this._state.ensureServices().registry
     return buildSessionSkillGuidance({
-      briefs: [DRILL_BUILTIN_SKILL, DEEP_FETCH_BUILTIN_SKILL, RELOAD_SKILLS_BUILTIN_SKILL],
+      briefs: [DRILL_BUILTIN_SKILL, DEEP_FETCH_BUILTIN_SKILL, RELOAD_SKILLS_BUILTIN_SKILL, MENU_BUILTIN_SKILL, MANUAL_BUILTIN_SKILL],
       skillAuthoring: skillAuthoringRuntime(registry.scopeStorage.shared),
       workspacePath: projectRoot
     })
@@ -2398,7 +2404,22 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
     return JSON.stringify(payload, null, 2)
   }
 
+  /** 给聊天 agent 的工具表(`buildPiTools`):每个结果都进 agent-io 与本轮账本(`toRuntimeTools()`)。 */
   wrapHostTools(scope: HostToolScope, tools: PiToolSpec[]): PiToolSpec[] {
+    return this.buildHostToolRegistry(scope, tools).toRuntimeTools()
+  }
+
+  /**
+   * 只套策略、不计量(`toUnmeasuredTools()`),给界面直接调用的工具(Skills 页的 `manageSkillInstallation`):
+   * 那不是模型输入,计量会写进 agent-io 的 `unattributed` 桶,还会算进正在跑的回合的统计。
+   * 交给聊天 agent 的工具必须走 `wrapHostTools`,否则它们的结果又一条都不记。
+   */
+  wrapHostToolsUnmeasured(scope: HostToolScope, tools: PiToolSpec[]): PiToolSpec[] {
+    return this.buildHostToolRegistry(scope, tools).toUnmeasuredTools()
+  }
+
+  /** 上面两个共用这一个 registry:两个变体只差最后一步,策略与告警不会各改各的。 */
+  private buildHostToolRegistry(scope: HostToolScope, tools: PiToolSpec[]): HostToolRegistry {
     const registry = new HostToolRegistry({
       scope,
       policies: this.hostToolPolicies,
@@ -2411,7 +2432,7 @@ export class MaestroAgentService extends CommonService<MaestroAgentServiceState>
         })
     })
     registry.add(...tools)
-    return registry.toRuntimeTools()
+    return registry
   }
 
   private async confirmHostToolCall(request: HostToolConfirmRequest, signal?: AbortSignal, sessionId?: string): Promise<boolean> {

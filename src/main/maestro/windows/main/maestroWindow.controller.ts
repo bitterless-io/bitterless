@@ -43,6 +43,8 @@ import { buildFileTools } from '@main/agent/tools/fileTools'
 import { buildDecisionTools } from '@main/agent/tools/decisionTools'
 import { buildSkillCreatorTools } from '@main/agent/tools/skillCreatorTools'
 import { buildReloadSkillsTool } from '@main/agent/tools/reloadSkillsTool'
+import { buildWaitTool } from '@main/agent/tools/waitTool'
+import { buildSettingsTools } from '@main/agent/tools/settingsTools'
 import { skillAuthoringRuntime } from '@main/agent/runtime/skillAuthoring'
 import { buildArchiveTools } from '@main/agent/tools/archiveTools'
 import { buildWebFetchTools } from '@main/agent/tools/webFetchTools'
@@ -749,6 +751,15 @@ class MaestroWindowController
     return this.workbenchView.openTab()
   }
 
+  async openWorkbenchPane(params: Parameters<CoachXpcContract['openWorkbenchPane']>[0]): ReturnType<CoachXpcContract['openWorkbenchPane']> {
+    this.historyView.hide()
+    return this.workbenchView.openPane(params.pane)
+  }
+
+  async consumeWorkbenchPaneRequest(): ReturnType<CoachXpcContract['consumeWorkbenchPaneRequest']> {
+    return this.workbenchView.consumePaneRequest()
+  }
+
   async backgroundWorkbenchTab(): ReturnType<CoachXpcContract['backgroundWorkbenchTab']> {
     return this.workbenchView.backgroundTab()
   }
@@ -923,7 +934,8 @@ class MaestroWindowController
   async setSkillEnabled(params: { reference: string; enabled: boolean; sessionId?: string }): Promise<void> { return this.skillService.setSkillEnabled(params) }
   async manageSkillInstallation(params: SkillInstallationRequest): Promise<SkillInstallationResult> {
     const sessionKey = params.sessionId || this.skillService.currentViewSessionId()
-    const tool = this.agentService.wrapHostTools('cowork', this.skillInstallationTools(sessionKey))[0]
+    // 界面直接调用,不是模型输入:只套策略、不计量(见 wrapHostToolsUnmeasured)。
+    const tool = this.agentService.wrapHostToolsUnmeasured('cowork', this.skillInstallationTools(sessionKey))[0]
     if (!tool) throw new Error('skill_install is disabled by host tool policy')
     return JSON.parse(await tool.execute({ action: params.action, scope: params.scope, installation_id: params.installationId }))
   }
@@ -1138,6 +1150,7 @@ class MaestroWindowController
   async sendAgentMessage(params: AgentMessageRequest): Promise<AgentReply> {
     const authGeneration = await applicationAuth.requireReady();
     await this.resumeAuthenticatedSession();
+    applicationAuth.assertGeneration(authGeneration);
     const reply = await this.agentService.sendAgentMessage(params)
     applicationAuth.assertGeneration(authGeneration);
     /**
@@ -1645,6 +1658,10 @@ class MaestroWindowController
           return { skills: snapshot.skills.length, revision: registry.resourceRevision(workspace) }
         }
       }),
+      // `wait {ms}` —— 本轮之内停一下再继续,和 reload_skills 一样常驻(docs/features/builtin-wait-tool.md)。
+      // 不绑 tab:不进下面浏览器目标的 scoped 列表，也不取浏览器锁。
+      buildWaitTool(),
+      ...buildSettingsTools({ openPane: async (pane) => { await this.openWorkbenchPane({ pane }) } }),
       ...buildSkillCreatorTools({
         workspace: () => this.workspaceFile.projectRootForSession(sessionKey),
         sharedRoot: () => this.ensureServices().registry.scopeStorage.shared,
@@ -1849,10 +1866,13 @@ class MaestroWindowController
         name: 'ui_act',
         description:
           'ACT on the live page with UI actions YOU choose from the latest page_snapshot. actions_json is a JSON array, run in order, each: ' +
-          '{"action":"click"|"fill"|"select"|"check"|"submit","ref":"<eN from the snapshot>","value":"<for fill/select>","checked":true|false,"snapshot":"<the # snapshot: sN value from the snapshot you read>"}. ' +
+          '{"action":"click"|"fill"|"select"|"check"|"submit"|"hover","ref":"<eN from the snapshot>","value":"<for fill/select>","checked":true|false,"snapshot":"<the # snapshot: sN value from the snapshot you read>"}. ' +
           'Pass `snapshot` — it is how the host can tell a live ref from a stale one. Refs are renumbered from e1 every time the page is observed, so a ref from an older snapshot usually still matches SOME element, just the wrong one. With `snapshot` the host returns an error instead of clicking the wrong thing. ' +
+          'Use the same `tab_id` as the page_snapshot you read the refs from (omit it only if that snapshot omitted it too): a ref is valid only on the page whose snapshot produced it, and the `snapshot` check cannot reliably catch a ref used on another tab. ' +
           'For select, pass the option [value="…"] when present, otherwise the visible option text; if the ref points directly to an option, value can be omitted. Native selects match both value and text; custom comboboxes try to open and click the matching visible option. ' +
           'Use the [ref=eN] of the element from the latest snapshot (a raw "selector":"<css>" also works). ' +
+          'hover moves the pointer onto the element without pressing — use it to open hover-only menus, row actions and tooltips, then page_snapshot. ' +
+          'ui_act has no wait action — to pause, call the wait tool between ui_act calls. ' +
           'Execution STOPS at the first failing action so you can page_snapshot again and re-decide. Never guess a ref — use only refs the latest snapshot returned.',
         params: [{ name: 'actions_json', required: true, description: 'JSON array of UI actions to perform in order.' }],
         execute: async (args) => this.toolUiAct(String(args.actions_json ?? ''))

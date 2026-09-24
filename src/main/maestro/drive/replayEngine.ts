@@ -1,7 +1,9 @@
 import type { WebContents } from 'electron'
 import { HumanMouse } from './humanMouse'
+import type { Box } from '@maestro-main/drive/algorithm/algorithm.type'
 import type { ReplayResult } from '@maestro-shared/coach.api'
 import type { RecipeStep, SkillRecipe } from '@maestro-main/skills/skillRecipe.types'
+import { timerHelper } from '@shared/timerHelper/timer.helper'
 
 type RecipeNetwork = SkillRecipe['network'][number]
 type HeaderPolicyRule = RecipeNetwork['headerPolicy'][number]
@@ -51,7 +53,7 @@ export interface CommandResult {
 // A single UI action the AGENT chooses from a live page snapshot (the observe→
 // act→observe loop), as opposed to a pre-recorded recipe step.
 export interface AgentUiAction {
-  action: 'click' | 'fill' | 'select' | 'check' | 'submit'
+  action: 'click' | 'fill' | 'select' | 'check' | 'submit' | 'hover'
   selector: string
   value?: string
   checked?: boolean
@@ -65,6 +67,10 @@ export interface AgentUiActionResult {
   /** The resolved element's tag / id / name attribute, for display in the activity log. */
   target?: { tag: string; id: string; name: string }
 }
+
+// A step that acts on one target element: a recorded recipe step, or an agent `hover`
+// (recipes never record a hover). Mapped over RecipeStep so each field keeps its modifiers.
+type UiStep = { [K in keyof RecipeStep]: K extends 'action' ? RecipeStep[K] | 'hover' : RecipeStep[K] }
 
 // Value-free auth scheme for api.fetch — resolved LIVE in-page at call time (never a stored value).
 export interface AuthHint {
@@ -106,6 +112,15 @@ export class ReplayEngine {
   }
 
   constructor(private readonly wc: WebContents) {}
+
+  /**
+   * 这台引擎驱动的那个 tab 的 webContents,只读地给出去。`ui_act` 审批卡片的元素截图
+   * (`RequestExecService.toolUiAct` 的 `shootTarget`)要打在**这次调用绑定的 tab** 上,那正是这台引擎。
+   * 裁剪本身不放进这个文件:它被 `tests/skillScopes/execution.test.mjs` 的严格夹具加载,多一个依赖就红。
+   */
+  get webContents(): WebContents {
+    return this.wc
+  }
 
   async replay(recipe: SkillRecipe, variables: Record<string, string>, guard?: () => Promise<void>): Promise<ReplayResult> {
     await guard?.()
@@ -152,7 +167,7 @@ export class ReplayEngine {
       await guard?.()
       if (!result.ok) errors.push(result.error || `Step failed: ${step.action} ${step.target.selector}`)
       else stepsRun += 1
-      await wait(220)
+      await timerHelper.delay(220)
     }
     return { ok: errors.length === 0, skillId: recipe.id, stepsRun, errors, mode: 'ui' }
   }
@@ -166,7 +181,7 @@ export class ReplayEngine {
   async runUiActions(actions: AgentUiAction[]): Promise<{ ok: boolean; results: AgentUiActionResult[] }> {
     const results: AgentUiActionResult[] = []
     for (const action of actions) {
-      const step: RecipeStep = {
+      const step: UiStep = {
         action: action.action,
         target: { tag: 'element', selector: action.selector, selectors: [action.selector] },
         valueTemplate: action.value,
@@ -175,7 +190,7 @@ export class ReplayEngine {
       const result = await this.runStep(step)
       results.push({ action: action.action, selector: action.selector, ok: result.ok, error: result.error, target: result.desc })
       if (!result.ok) break
-      await wait(180)
+      await timerHelper.delay(180)
     }
     return { ok: results.length > 0 && results.every((r) => r.ok), results }
   }
@@ -194,7 +209,7 @@ export class ReplayEngine {
       }
       if (r.result?.value) return true
       if (Date.now() >= end) throw new Error('waitFor timeout: ' + selector)
-      await wait(120)
+      await timerHelper.delay(120)
     }
   }
 
@@ -227,6 +242,64 @@ export class ReplayEngine {
     return r.result?.value ?? ''
   }
 
+  /**
+   * 元素上**人看得见的标签**,给 `ui_act` 审批闸写描述用:`aria-label` → 可见文字(`innerText`,空白规整)
+   * → `value` → `title`,截 120 字。'' = 读不到。
+   *
+   * 与 `readText` 刻意分开,而且**不改 `readText`**:它「有 `value` 就取 `value`」是技能脚本
+   * `page.read()` 读输入框的语义;而 `<button>` 天生有 `value`、默认空串 —— 拿它读按钮上的字只会拿到
+   * 空串,审批描述回落成 `click [data-coach-ref="e25"]`(docs/issues/approval-card-shows-selector-instead-of-button-text.md)。
+   * 找元素用与点击同一份 `deepFindElement`(穿 open shadow root 与同源 frame),标签和点击的目标才不会分叉。
+   */
+  async readLabel(selector: string): Promise<string> {
+    const expr = `(()=>{const hit=(${deepFindElement})(document, ${JSON.stringify(selector)}, []); const e=hit&&hit.el; if(!e) return ''; const t=(v)=>String(v==null?'':v).replace(/\\s+/g,' ').trim(); return (t(e.getAttribute('aria-label'))||t(e.innerText)||t('value' in e?e.value:'')||t(e.getAttribute('title'))).slice(0,120)})()`
+    const r = (await this.wc.debugger.sendCommand('Runtime.evaluate', { expression: expr, returnByValue: true })) as {
+      result?: { value?: string }
+    }
+    return r.result?.value ?? ''
+  }
+
+  /**
+   * 这一条动作目标元素**看得见的那部分**的框:**文档坐标**里的 CSS 像素 + 页面的 `devicePixelRatio`。
+   * 给审批卡片截图用(docs/features/decision-maker-naming-and-approval-card.md #4.1),裁剪在共用的
+   * `captureElementShot`。
+   *
+   * 定位**就是** click 的那一次定位(`locateTarget`,click 与 hover 共用)。它给的是**顶层视口**里的中心点;
+   * 闸的截图用 `captureBeyondViewport: false`,只截得到可视区域,所以先与视口求交 —— 定位已把元素滚到正中,
+   * 常见情况下整个元素都在里面;比视口还大的只截看得见的那部分;**一点都看不见就不给框**。
+   * 裁剪框仍要文档坐标:加上顶层滚动偏移。像素比让输出图的最长边压得准。
+   *
+   * 定位不到、没有框(0×0)、不在视口里、读不到视口尺寸、CDP 抛错 → undefined:截图是给人的增益,
+   * 绝不能变成审批的失败路径。时间上限由调用方(审批闸)负责 —— 定位本身最多会轮询 6 秒。
+   */
+  async locateTargetBox(
+    selector: string
+  ): Promise<{ rect: { x: number; y: number; width: number; height: number }; devicePixelRatio: number } | undefined> {
+    try {
+      const located = await this.locateTarget({ target: { tag: 'element', selector, selectors: [selector] } })
+      if (located.ok === false || !(located.box.width > 0 && located.box.height > 0)) return undefined
+      const page = (await this.wc.debugger.sendCommand('Runtime.evaluate', {
+        expression: '[window.scrollX, window.scrollY, window.devicePixelRatio, window.innerWidth, window.innerHeight]',
+        returnByValue: true
+      })) as { result?: { value?: unknown } }
+      const metrics = page.result?.value
+      const [scrollX, scrollY, ratio, viewWidth, viewHeight] = Array.isArray(metrics) ? metrics.map(Number) : []
+      const { x, y, width, height } = located.box
+      // 与视口求交。读不到视口尺寸时是 NaN,比较全为假 —— 看不出在不在视口里,就不截。
+      const left = Math.max(0, x - width / 2)
+      const top = Math.max(0, y - height / 2)
+      const right = Math.min(viewWidth, x + width / 2)
+      const bottom = Math.min(viewHeight, y + height / 2)
+      if (!(right > left && bottom > top)) return undefined
+      return {
+        rect: { x: left + (scrollX || 0), y: top + (scrollY || 0), width: right - left, height: bottom - top },
+        devicePixelRatio: ratio > 0 ? ratio : 1
+      }
+    } catch {
+      return undefined
+    }
+  }
+
   async elementExists(selector: string): Promise<boolean> {
     const r = (await this.wc.debugger.sendCommand('Runtime.evaluate', {
       expression: `!!document.querySelector(${JSON.stringify(selector)})`,
@@ -253,12 +326,13 @@ export class ReplayEngine {
   }
 
   private async runStep(
-    step: RecipeStep
+    step: UiStep
   ): Promise<{ ok: boolean; error?: string; desc?: { tag: string; id: string; name: string } }> {
     // Clicks use a REAL coordinate mouse press (not el.click()): the page often binds the
     // handler on an ancestor, and only a hit-tested move→press→release at the element's
     // point fires the full pointer sequence that bubbles to whichever ancestor listens.
     if (step.action === 'click') return this.clickStep(step)
+    if (step.action === 'hover') return this.hoverStep(step)
     try {
       const response = (await this.wc.debugger.sendCommand('Runtime.evaluate', {
         expression: `(${browserStepRunner})(${JSON.stringify(step)}, ${deepFindElement})`,
@@ -277,31 +351,11 @@ export class ReplayEngine {
   // sequence — unlike a synthetic el.click(), which only fires a (bubbling) click event
   // on the target itself.
   private async clickStep(
-    step: RecipeStep
+    step: Pick<RecipeStep, 'target'>
   ): Promise<{ ok: boolean; error?: string; desc?: { tag: string; id: string; name: string } }> {
     try {
-      const located = (await this.wc.debugger.sendCommand('Runtime.evaluate', {
-        expression: `(${clickLocator})(${JSON.stringify(step)}, ${deepFindElement})`,
-        awaitPromise: true,
-        returnByValue: true
-      })) as {
-        result?: {
-          value?: {
-            ok: boolean
-            x?: number
-            y?: number
-            width?: number
-            height?: number
-            error?: string
-            desc?: { tag: string; id: string; name: string }
-          }
-        }
-      }
-      const v = located.result?.value
-      if (!v || !v.ok || typeof v.x !== 'number' || typeof v.y !== 'number') {
-        return { ok: false, error: v?.error || 'click target not located', desc: v?.desc }
-      }
-      const { x, y, desc } = v
+      const located = await this.locateTarget(step)
+      if (located.ok === false) return { ok: false, error: located.error || 'click target not located', desc: located.desc }
       /**
        * **拟人指针**:沿 Bézier 轨迹逐点 `mouseMoved` 走过去,**到位之后**才 press/release
        * (`humanMouse.ts`;Ral 2026-09-10「cowork 钻探有虚拟鼠标和鼠标轨迹的彗星尾巴,bl 也缺失了」)。
@@ -311,11 +365,65 @@ export class ReplayEngine {
        * 自动化特征。同一条轨迹还会被画成可见的蓝光标 + 彗星尾巴 ——
        * "看到的"与"页面收到的"因此是同一条线,而不是两回事。
        */
-      await this.mouse.click({ x, y, width: v.width ?? 1, height: v.height ?? 1 })
-      return { ok: true, desc }
+      await this.mouse.click(located.box)
+      return { ok: true, desc: located.desc }
     } catch (err) {
       return { ok: false, error: (err as Error).message }
     }
+  }
+
+  // `hover`: the same located target and the same human pointer path as a click, stopping
+  // short of the press — hover-only menus, row actions and tooltips open because the page
+  // receives every move along the way.
+  private async hoverStep(
+    step: Pick<RecipeStep, 'target'>
+  ): Promise<{ ok: boolean; error?: string; desc?: { tag: string; id: string; name: string } }> {
+    try {
+      const located = await this.locateTarget(step)
+      if (located.ok === false) {
+        // clickLocator words the zero-size case for a click; say what it means for a hover.
+        const reason = located.error?.replace('cannot click by coordinate', 'nothing on screen to move the pointer onto')
+        return {
+          ok: false,
+          error: reason ? `hover target not located: ${reason}` : 'hover target not located',
+          desc: located.desc
+        }
+      }
+      await this.mouse.moveTo(located.box)
+      return { ok: true, desc: located.desc }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message }
+    }
+  }
+
+  // The clickLocator evaluation shared by click and hover: the target's box (center point +
+  // size) in TOP-LEVEL viewport space, after the page scrolled it and its frames into view.
+  private async locateTarget(step: Pick<RecipeStep, 'target'>): Promise<
+    | { ok: true; box: Box; desc?: { tag: string; id: string; name: string } }
+    | { ok: false; error?: string; desc?: { tag: string; id: string; name: string } }
+  > {
+    const located = (await this.wc.debugger.sendCommand('Runtime.evaluate', {
+      expression: `(${clickLocator})(${JSON.stringify(step)}, ${deepFindElement})`,
+      awaitPromise: true,
+      returnByValue: true
+    })) as {
+      result?: {
+        value?: {
+          ok: boolean
+          x?: number
+          y?: number
+          width?: number
+          height?: number
+          error?: string
+          desc?: { tag: string; id: string; name: string }
+        }
+      }
+    }
+    const v = located.result?.value
+    if (!v || !v.ok || typeof v.x !== 'number' || typeof v.y !== 'number') {
+      return { ok: false, error: v?.error, desc: v?.desc }
+    }
+    return { ok: true, box: { x: v.x, y: v.y, width: v.width ?? 1, height: v.height ?? 1 }, desc: v.desc }
   }
 
   /**
@@ -390,10 +498,6 @@ function applyVariables(step: RecipeStep, variables: Record<string, string>): Re
     return variables[key] ?? ''
   })
   return { ...step, valueTemplate: rendered }
-}
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 // Recorded mutating API calls (the "actions" the agent may author bodies for).

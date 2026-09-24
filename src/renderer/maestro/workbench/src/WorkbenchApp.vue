@@ -3,7 +3,8 @@ import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import { IconX } from '@tabler/icons-vue'
 import { createXpcRendererEmitter, xpcRenderer } from 'electron-xpc/renderer'
-import type { WorkbenchPane } from '@maestro-shared/coach.api'
+import type { CoachXpcContract, WorkbenchPane } from '@maestro-shared/coach.api'
+import { SETTINGS_PANE_REQUEST_EVENT } from '@maestro-shared/settingsNavigation'
 import { isWorkbenchPane, workbenchPanes, workbenchStore as store } from './workbench.store'
 import { i18nHelper } from '@renderer/common/i18n/i18n.helper'
 import { settingNavStore } from '@/views/setting/store/settingNav.store'
@@ -13,6 +14,12 @@ import './WorkbenchApp.less'
 const router = useRouter()
 const route = useRoute()
 const zellij = createXpcRendererEmitter<ZellijApi>(ZELLIJ_HANDLER_NAME)
+const coach = createXpcRendererEmitter<CoachXpcContract>('CoachXpcHandler')
+
+const openRequestedPane = async (): Promise<void> => {
+  const pane = await coach.consumeWorkbenchPaneRequest()
+  if (isWorkbenchPane(pane)) await router.push({ name: pane })
+}
 
 const openTerminalSettings = async (): Promise<void> => {
   if (!await zellij.consumeSettingsRequest()) return
@@ -62,6 +69,8 @@ watch(
 )
 
 onMounted(() => {
+  xpcRenderer.subscribe(SETTINGS_PANE_REQUEST_EVENT, () => void openRequestedPane())
+  void openRequestedPane()
   xpcRenderer.subscribe(ZELLIJ_SETTINGS_OPEN_EVENT, () => void openTerminalSettings())
   void openTerminalSettings()
   xpcRenderer.subscribe('coach/workbench-pane', (payload) => {

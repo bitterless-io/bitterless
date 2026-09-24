@@ -196,7 +196,7 @@ test('auth invalidation applies only to the exact current session identity', () 
       subscriber.indexOf('authStore.clearLocalSession()'),
     'renderer must fence stale invalidation before clearing the current token',
   );
-  assert.match(subscriber, /authEmitter\.deactivateSession\(\)/);
+  assert.match(subscriber, /authEmitter\.deactivateSession\(\{ sessionId: params\.sessionId!/);
   assert.match(login, /sessionRecoveryAbortController/);
   assert.match(login, /authStore\.restoreSession\(controller\.signal\)/);
   const cancel = login.match(
@@ -633,7 +633,7 @@ test('manual logout clears locally, navigates, and launches Main teardown withou
   const handler = read('src/main/xpc/auth.handler.ts');
   const logout = store.match(/  async logout\(\): Promise<void> \{[\s\S]*?\n  \}/);
   const deactivate = handler.match(
-    /  async deactivateSession\(\): Promise<void> \{[\s\S]*?\n  \}(?=\n\n  async invalidateSession)/
+    /  async deactivateSession\(params\?: \{ sessionId: string \}\): Promise<void> \{[\s\S]*?\n  \}(?=\n\n  async invalidateSession)/
   );
   const teardown = handler.match(
     /  private async _deactivateSession\(\): Promise<void> \{[\s\S]*?\n  \}(?=\n\n  private async _closeSecondaryWindows)/
@@ -650,7 +650,7 @@ test('manual logout clears locally, navigates, and launches Main teardown withou
     logout[0].indexOf('this.clearLocalSession()') < logout[0].indexOf('scheduleBestEffort'),
     'local session must clear before remote cleanup is launched'
   );
-  assert.match(logout[0], /\(\) => authEmitter\.deactivateSession\(\)/);
+  assert.match(logout[0], /\(\) => authEmitter\.deactivateSession\(sessionId \? \{ sessionId \} : undefined\)/);
   assert.match(logout[0], /scheduleBestEffort\(async \(\) => \{/);
   assert.match(logout[0], /await settleBestEffort\(\[[\s\S]*cleanup/);
   assert.ok(
