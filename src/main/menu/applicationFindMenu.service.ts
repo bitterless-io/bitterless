@@ -10,6 +10,17 @@ export interface ApplicationFindDispatch {
 let dispatch: ApplicationFindDispatch | null = null;
 const fileTabDispatches = new Set<ApplicationFindDispatch>();
 let sessionSearchDispatch: ((window: BaseWindow | null) => boolean) | null = null;
+/**
+ * ⌘W 的仲裁者,由 Maestro 的 shortcuts helper 在 `activateShortcuts()` 里注册。
+ *
+ * 走注册而不是直接 import:`shortcuts.helper` 已经 import 本模块的
+ * `dispatchApplicationFindCommand`,反过来再 import 就是一个环,而且那会让宿主的菜单模块反向依赖
+ * maestro 这棵树(别名边界不允许)。菜单可能先于 helper 安装,所以下面留了兜底。
+ */
+let windowCloseDispatch: (() => void) | null = null;
+export const registerWindowCloseShortcut = (run: () => void): void => {
+  windowCloseDispatch = run;
+};
 let installedMenu: Menu | null = null;
 
 export const setApplicationFindDispatch = (next: ApplicationFindDispatch | null): void => {
@@ -126,7 +137,34 @@ const editSubmenu = (): MenuItemConstructorOptions[] => [
 // which keeps Command+C, Command+Q, Command+R and the rest exactly where they were.
 export const buildApplicationFindMenuTemplate = (): MenuItemConstructorOptions[] => [
   { role: 'appMenu' },
-  { role: 'fileMenu' },
+  /**
+   * File 写成显式模板,**不能**用 `{ role: 'fileMenu' }`。
+   *
+   * macOS 上默认 `fileMenu` 的全部内容就是一个 `role: 'close'`,而它绑着 ⌘W —— 那正是
+   * 「Cmd+W 关掉整扇窗」的兜底。macOS 把 ⌘W 当作窗口的原生关闭键当量,**在它到达任何
+   * webContents 之前**就消费掉;`before-input-event` 之所以平时能赢,只是因为通常有某个 view
+   * 持焦并先拿到它。焦点交接的空档里没人持焦,键就直达这里。
+   *
+   * 由菜单项**拥有**这个加速键,仲裁就不再依赖「有没有人持焦」。判据全在
+   * `dispatchWindowCloseShortcut()` 里:Omni cell 不动、终端转投、有 tab 的窗关 tab、
+   * 其余窗关窗口(即原来 `role: 'close'` 的行为)。
+   * 见 docs/issues/cmd-w-falls-through-to-the-menu-when-focus-is-nowhere.md。
+   */
+  {
+    label: 'File',
+    submenu: [
+      {
+        label: 'Close',
+        accelerator: 'Command+W',
+        click: () => {
+          // 还没注册(菜单先于 shortcuts helper 安装)时退回原来的 `role: 'close'` 行为,
+          // 而不是让 ⌘W 变成哑键。
+          if (windowCloseDispatch) windowCloseDispatch();
+          else BaseWindow.getFocusedWindow()?.close();
+        }
+      }
+    ]
+  },
   { label: 'Edit', submenu: editSubmenu() },
   { role: 'viewMenu' },
   { role: 'windowMenu' }

@@ -136,6 +136,17 @@ export class MaestroHistoryViewService {
     xpcMain.broadcast(BROWSER_HISTORY_CLOSED_EVENT, { session: closed });
   }
 
+  /**
+   * 原生焦点交回宿主页。由渲染层在**它自己处理完这次动作之后**调用。
+   *
+   * 为什么不由 main 在 `action()` 里顺手做:那会赶在 Home 处理这次点击之前把焦点挪走,地址栏的
+   * `@focus` 会把下拉重新弹开(`action()` 里那句「Home accepts the identity before restoring focus」
+   * 说的就是它)。渲染层知道自己什么时候做完,而且它在 `focusSuppressed` 之内调用,重开那一路被压住。
+   */
+  focusHost(): void {
+    if (this.win && !this.win.isDestroyed()) this.win.webContents.focus();
+  }
+
   blur(): void {
     if (this.blurTimer) clearTimeout(this.blurTimer);
     this.blurTimer = setTimeout(() => {

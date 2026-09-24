@@ -444,7 +444,8 @@ function fixedTabClass(tab: TabInfo): string {
       <span v-if="browserHistoryStore.error && !browserHistoryStore.open" class="maestro-menu-bar__history-error" role="status">{{ i18nHelper.browserHistory.error }}</span>
 
       <!-- Trailing actions (data-slot="actions"): a hairline divider sets the cluster off from the
-           address field, then Snapshot, panel, Workbench, and the conditional Update pill. -->
+           address field, then Snapshot, panel, Settings, account, and the conditional
+           Update pill. -->
       <div data-slot="actions" class="maestro-menu-bar__actions">
         <div class="maestro-menu-bar__actions-divider" aria-hidden="true"></div>
 
@@ -473,6 +474,17 @@ function fixedTabClass(tab: TabInfo): string {
         >
           <IconSparklesFilled v-if="layoutStore.sidebarOpen" :size="18" stroke="1.8" />
           <IconSparkles v-else :size="18" stroke="1.8" />
+        </button>
+
+        <button
+          name="menubar__workbench__open"
+          :class="navBtn"
+          :title="i18nHelper.menuBar.maestro.showWorkbench"
+          :aria-label="i18nHelper.menuBar.maestro.showWorkbench"
+          type="button"
+          @click="workbenchStore.openTab()"
+        >
+          <IconSettings :size="18" stroke="1.8" />
         </button>
 
         <UserAvatar />

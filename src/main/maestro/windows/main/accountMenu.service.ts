@@ -13,7 +13,6 @@ export const showAccountMenu = (window: BaseWindow, params: AccountMenuParams): 
     const labels = i18nHelper.getMessages().setting.account;
     const menu = Menu.buildFromTemplate([
       { label: params.signedIn ? params.email || labels.unavailable : labels.signedOut, enabled: false },
-      { label: 'Workbench', click: () => finish('workbench') },
       { label: labels.changePassword, enabled: params.signedIn, click: () => finish('password') },
       { label: labels.logout, enabled: params.signedIn, click: () => finish('logout') }
     ]);

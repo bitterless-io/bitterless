@@ -38,9 +38,13 @@ const createModelRuntime = async (
   options?: { refreshOnCreate?: boolean }
 ) => {
   const runtime = await pi.ModelRuntime.create({ authPath, modelsPath, ...options })
-  // `bitterless` provider 在这里注册,而不是在 `createSession` 里 —— `checkTarget()` 也建 runtime,
-  // 只在建会话时注册会让"这个 target 可用吗"对 Bitterless 永远答 false,UI 上表现为模型灰着
-  // 但点下去又能跑(或反过来)。baseUrl 与会话 token 都是运行时值,每次建 runtime 重注册一次。
+  // `bitterless` provider 在这里注册,而不是只在 `createSession` 里 —— 本适配器建的每个 runtime
+  // (建会话、自动压缩自测、上下文窗口查表)都因此认得它。注册只落在这个 runtime 实例上:在本适配器
+  // 之外自建 runtime 的地方(如 `compaction.handler.ts` 的 `resolveTarget()`)得自己注册。
+  // **UI 的就绪不从这里来**:`checkTarget()` 没有调用方,Control 的就绪是 `MaestroLlmService`
+  // `checkLlmProviderReady()` 纯读应用账号会话,不建 runtime
+  // (docs/issues/bitterless-provider-asks-to-sign-in-inside-chat.md)。
+  // baseUrl 与会话 token 都是运行时值,每次建 runtime 重注册一次。
   await registerBitterlessProvider(runtime as unknown as Parameters<typeof registerBitterlessProvider>[0])
   return runtime
 }

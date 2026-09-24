@@ -1,5 +1,21 @@
 # Bitterless Documentation
 
+- [Control 自己的登录表单 —— 与 Cowork 的 `ControlLogin` 对齐，不再借用 Home 的登录页](features/control-login-form.md) —
+  in progress 2026-09-24。Ral：「home 页面的登录页面不再使用了，转而直接使用 CTRL 里面的登录……未登录的状态下，直接显示这个登录页面」。
+  原生控件 + Less 逐项照 Cowork 的尺寸，状态全部由隐藏 Home 权威的快照驱动，en/zh，垂直居中用渲染实测验收。Paired with `micromeet-cowork`。
+
+- [选 Bitterless 模型时聊天里提示「Sign in to Bitterless」—— 就绪探测从来没注册过这个 provider](issues/bitterless-provider-asks-to-sign-in-inside-chat.md) —
+  fixed 2026-09-24（单测 8/8 + 独立复核 pass；应用内真实一轮待 Ral）。`checkLlmProviderReady` 自建 pi runtime 却不注册 bitterless，
+  于是它永远 not ready；卡片的 Login 调 `loginLlm('bitterless')` 直接抛 `Unknown LLM provider`。改成纯读应用账号会话
+  （与 Cowork 的 ai-crms 分支同形），会话变化重播配置，卡片动作改为重新验证应用会话。
+
+- [地址栏最右侧的设置按钮被删了 —— 找回来，头像菜单回到「邮箱 / 修改密码 / 退出登录」](issues/address-bar-settings-button-removed.md) —
+  fix in progress 2026-09-24。`6bf96d09` 把齿轮换成了头像；Ral：「这个设置按钮不能去掉」。Paired with `micromeet-cowork`。
+
+- [头像菜单「修改密码」对已设过密码的账号总是失败 —— 客户端没发旧密码](issues/change-password-rejected-without-current-password.md) —
+  root cause confirmed 2026-09-24，fix in progress。服务端 `POST /auth/change-password` 对 active 账号要求 `old_password`，
+  客户端只发 `new_password` → 每次 400；页面加「当前密码」，契约增加可选 `oldPassword`。服务端不改，补契约测试。
+
 - [`ui_act` 在后台 tab 上：每步光标卡 5 秒，点击无效，还报 ok](issues/ui-act-on-background-tab-stalls-and-click-has-no-effect.md) —
   root cause confirmed 2026-09-23（先 activate_tab 再点就生效），fix not started。agent 开出的弹窗 tab 从不激活，于是它在看不见的 view 上操作：
   每个 `mouseMoved` 要约 5 秒才回（一次点击 145–181 秒），按下和松开也不生效，`ui_act` 却照样报 ok；没有看门狗。

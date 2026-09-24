@@ -121,13 +121,15 @@ const nativeMenu = () => {
   return { showAccountMenu, window, template: () => template, options: () => popupOptions };
 };
 
-test('native account menu presents the four requested rows and returns each selected action', async () => {
-  for (const [index, action] of [[1, 'workbench'], [2, 'password'], [3, 'logout']]) {
+test('native account menu presents the three requested rows and returns each selected action', async () => {
+  for (const [index, action] of [[1, 'password'], [2, 'logout']]) {
     const f = nativeMenu();
     const result = f.showAccountMenu(f.window, { x: 400.4, y: 58.2, email: 'test@example.invalid', signedIn: true });
-    assert.deepEqual(f.template().map(item => item.label), ['test@example.invalid', 'Workbench', 'Change password', 'Log out']);
+    assert.deepEqual(f.template().map(item => item.label), ['test@example.invalid', 'Change password', 'Log out']);
     assert.equal(f.template()[0].enabled, false);
     assert.equal(f.template()[0].click, undefined);
+    assert.equal(f.template()[1].enabled, true);
+    assert.equal(f.template()[2].enabled, true);
     assert.equal(f.options().window, f.window); assert.equal(f.options().x, 400); assert.equal(f.options().y, 58);
     f.template()[index].click(); f.options().callback();
     assert.equal(await result, action);
@@ -135,31 +137,39 @@ test('native account menu presents the four requested rows and returns each sele
   }
 });
 
-test('signed-out users can still reach Workbench, while dismissal and window closure perform no action', async () => {
+test('a signed-in account without an email shows the unavailable label in the email row', async () => {
+  const f = nativeMenu();
+  const result = f.showAccountMenu(f.window, { x: 0, y: 40, email: '', signedIn: true });
+  assert.equal(f.template()[0].label, 'No email');
+  assert.equal(f.template()[0].enabled, false);
+  f.options().callback();
+  assert.equal(await result, null);
+});
+
+test('signed-out users see both account actions disabled, while dismissal and window closure perform no action', async () => {
   for (const close of ['dismiss', 'window']) {
     const f = nativeMenu();
     const result = f.showAccountMenu(f.window, { x: 0, y: 40, email: '', signedIn: false });
+    assert.equal(f.template().length, 3);
     assert.equal(f.template()[0].label, 'Not signed in');
-    assert.notEqual(f.template()[1].enabled, false);
-    assert.equal(f.template()[2].enabled, false); assert.equal(f.template()[3].enabled, false);
+    assert.equal(f.template()[1].enabled, false); assert.equal(f.template()[2].enabled, false);
     if (close === 'dismiss') f.options().callback(); else f.window.emit('closed');
     assert.equal(await result, null); assert.equal(f.window.listenerCount('closed'), 0);
   }
 });
 
-test('native menu selection dispatches the existing Workbench, password and logout actions once', async () => {
+test('native menu selection dispatches the existing password and logout actions once', async () => {
   const calls = [], pending = deferred();
-  let selected = 'workbench';
+  let selected = 'password';
   const coach = { showAccountMenu: async () => selected, openAccountPassword: async () => calls.push('password'), logoutAiCrms: async () => { calls.push('logout'); await pending.promise; } };
   const homeShellBridge = { logout: coach.logoutAiCrms, requestLogin: async () => calls.push('login') };
   const { accountMenuStore: store } = load('src/renderer/maestro/home/src/store/accountMenu.store.ts', {
     vue: { reactive: v => v }, 'electron-xpc/renderer': { createXpcRendererEmitter: () => coach },
-    './workbench.store': { workbenchStore: { openTab: async () => calls.push('workbench') } },
     '@renderer/common/homeShellBridge.client': { homeShellBridge }
   });
   const params = { x: 0, y: 40, email: 'test@example.invalid', signedIn: true };
-  await store.show(params); selected = 'password'; await store.show(params);
-  assert.deepEqual(calls, ['workbench', 'password']); calls.length = 0;
+  await store.show(params);
+  assert.deepEqual(calls, ['password']); calls.length = 0;
   selected = null; await store.show(params); assert.deepEqual(calls, []);
   selected = 'logout'; const loggingOut = store.show(params); await Promise.resolve(); await store.show(params);
   assert.equal(store.pending, true); assert.deepEqual(calls, ['logout']);
@@ -167,4 +177,24 @@ test('native menu selection dispatches the existing Workbench, password and logo
   assert.deepEqual(calls, ['logout', 'login']);
   homeShellBridge.logout = async () => { throw Error('storage failed'); };
   await store.show(params); assert.equal(store.error, 'logoutFailed'); assert.equal(store.pending, false);
+});
+
+// docs/issues/address-bar-settings-button-removed.md: the gear is the Workbench entry, not an account-menu row.
+test('address bar keeps the Settings gear between the Control-panel toggle and the avatar', () => {
+  const menuBar = read('src/renderer/maestro/home/src/components/MenuBar/MenuBar.vue');
+  const template = menuBar.slice(menuBar.indexOf('<template>'));
+  const gearPattern = /<button\b[^>]*name="menubar__workbench__open"[^>]*>[\s\S]*?<\/button>/;
+  const gear = template.match(gearPattern)?.[0];
+  assert.ok(gear, 'MenuBar.vue must render the Settings gear (name="menubar__workbench__open")');
+  assert.match(gear, /:class="navBtn"/);
+  assert.match(gear, /:title="i18nHelper\.menuBar\.maestro\.showWorkbench"/);
+  assert.match(gear, /:aria-label="i18nHelper\.menuBar\.maestro\.showWorkbench"/);
+  assert.match(gear, /type="button"/);
+  assert.match(gear, /@click="workbenchStore\.openTab\(\)"/);
+  assert.match(gear, /<IconSettings :size="18" stroke="1\.8" \/>/);
+  assert.doesNotMatch(gear, /aria-pressed|Filled/);
+  const at = template.indexOf(gear);
+  const toggle = template.indexOf('@click="layoutStore.toggleSidebar()"');
+  assert.ok(toggle !== -1 && toggle < at, 'the gear must come after the Control-panel toggle');
+  assert.ok(template.indexOf('<UserAvatar />') > at, 'the gear must come before <UserAvatar />');
 });

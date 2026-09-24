@@ -216,3 +216,21 @@ Non-blocking review findings are recorded here after task verification.
 ## Workflow/Skill review inherited file-size debt (2026-09-16)
 
 The independent [Workflow/Skill review](reviews/workbench-institution-workflows-001-01.md) records eleven TS-1 file-size findings that already exceeded 800 lines before this task. They are non-blocking baseline debt; split them only in separately scoped maintenance, preserving the verified behavior.
+
+## Bitterless provider readiness follow-ups (2026-09-24)
+
+From [review 189-1](reviews/bitterless-provider-readiness-189-1.md), all non-blocking:
+
+- **F1 — phase-neutral session re-push.** The Control card's Bitterless Login runs `restoreSession()`, so Home goes
+  `ready → restoring → ready`: Control remounts chat and main suspends/resumes the authenticated session (active turns
+  aborted, workflow host rebuilt). Only reachable when the app is ready but main lost `customerSessionService`
+  (failed best-effort push; an invalidation whose session id Home ignores while main clears unconditionally). Fix
+  shape: a Home command that re-pushes the current session without a phase change, plus an explicit
+  `getLlmConfig()` refresh in Control — and consider making main's `invalidateSession` stop clearing a session Home
+  keeps.
+- **F4 — broadcast ordering.** latest-wins guards only `getAndBroadcastLlmConfig()`; `performLlmLogin`'s failure branch
+  and `logoutLlm` broadcast without bumping the generation, a failed newest evaluation suppresses the previous
+  success, and Control's RPC replies are unordered against broadcasts.
+- **F5 — wiring test.** Nothing fails when `maestroWindow.controller.ts` stops calling `watchAccountSession()`; add a
+  construction-level assertion.
+

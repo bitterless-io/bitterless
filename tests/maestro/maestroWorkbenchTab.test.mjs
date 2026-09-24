@@ -25,7 +25,7 @@ const binding = (node, directive, name) => node.props.find((prop) =>
   prop.type === 7 && prop.name === directive && prop.arg?.content === name)?.exp?.content;
 const named = (name) => nodes.find((node) => attr(node, 'name') === name);
 
-test('Workbench chrome compiles with the account menu replacing the standalone gear', async () => {
+test('Workbench menu compiles and gear has no toggle, pressed style, or filled icon', async () => {
   assert.deepEqual(errors, []);
   const script = compileScript(descriptor, { id: 'workbench-tab' });
   assert.deepEqual(compileTemplate({
@@ -36,7 +36,11 @@ test('Workbench chrome compiles with the account menu replacing the standalone g
   }).errors, []);
   await transform(script.content, { loader: 'ts' });
   await less.render(read('src/renderer/maestro/home/src/components/MenuBar/MenuBar.less'));
-  assert.equal(named('menubar__workbench__open'), undefined);
+  const gear = named('menubar__workbench__open');
+  assert.equal(binding(gear, 'on', 'click'), 'workbenchStore.openTab()');
+  assert.equal(binding(gear, 'bind', 'class'), 'navBtn');
+  assert.equal(binding(gear, 'bind', 'aria-pressed'), undefined);
+  assert.doesNotMatch(gear.loc.source, /IconSettingsFilled|workbenchStore\.visible|toggle/u);
   assert(nodes.some(node => node.tag === 'UserAvatar'));
 });
 

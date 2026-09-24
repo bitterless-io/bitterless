@@ -1,4 +1,4 @@
-export type AccountMenuAction = 'workbench' | 'password' | 'logout';
+export type AccountMenuAction = 'password' | 'logout';
 
 export interface AccountMenuParams {
   x: number;

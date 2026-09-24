@@ -40,4 +40,13 @@ export interface BrowserHistoryPopupApi {
   blur(): Promise<void>;
   snapshot(): Promise<BrowserHistoryPopupSnapshot | null>;
   action(params: BrowserHistoryPopupAction): Promise<void>;
+  /**
+   * 把**原生**键盘焦点交回宿主页。
+   *
+   * 渲染层自己 `input.focus()` 只设 DOM 焦点 —— 弹窗是另一个 webContents,点过它之后原生焦点在它
+   * 身上,它一被摘掉就落空,这时 DOM 焦点是一个"看着有、打字不进"的假象,而且窗口里没有任何
+   * webContents 能收到 `before-input-event`(⌘W 因此落到菜单上关掉整扇窗)。
+   * 见 docs/issues/history-accept-leaves-the-window-without-keyboard-focus.md。
+   */
+  focusHost(): Promise<void>;
 }

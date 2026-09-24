@@ -204,6 +204,8 @@
     "test:drag-region-ownership": "node --test tests/app/dragRegionOwnership.test.mjs",
     "test:release-baseline": "node --test scripts/release/publishReleaseBaseline.test.mjs",
     "test:page-context-menu": "node --test tests/maestro/pageContextMenuSections.test.mjs",
+    "test:cmd-w-accelerator": "node --test tests/maestro/cmdWOwnsTheAccelerator.test.mjs",
+    "test:history-focus-handback": "node --test tests/maestro/historyAcceptRestoresFocus.test.mjs",
     "test:steering-withdraw": "node --test tests/maestro/steeringWithdraw.test.mjs",
     "test:message-class": "node --test tests/maestro/messageEntryClass.test.mjs",
     "typecheck:skill-scopes": "tsc --noEmit -p tests/skillScopes/tsconfig.node.json && vue-tsc --noEmit -p tests/skillScopes/tsconfig.web.json"

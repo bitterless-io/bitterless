@@ -59,7 +59,8 @@ export const LLM_PROVIDERS: LlmProviderDefinition[] = [
    * 与 Codex 的关键差别:**它不走 pi 的 OAuth**,凭据是用户在本应用里登录 Bitterless 拿到的
    * Core 会话 token(`customerSessionService`)。所以它**不进 `LLM_LOGIN_PROVIDERS`** ——
    * 那张表驱动的是 pi 的浏览器/设备码登录流程,给它挂一个按钮只会把人送进一条不存在的流程。
-   * 没登录时由 `registerBitterlessProvider()` 抛出指明"去登录 Bitterless"的错误。
+   * 没登录时 `registerBitterlessProvider()` **静默跳过、不抛**(用户可能正在用 Codex);就绪由
+   * `MaestroLlmService.checkLlmProviderReady()` 纯读应用账号会话判定。
    *
    * 对照 micromeet-cowork 的 `ai-crms` provider:形状相同(relay + 会话 token + Qwen),
    * 区别只在后端是谁家的 relay,以及登录入口是宿主应用自己的。

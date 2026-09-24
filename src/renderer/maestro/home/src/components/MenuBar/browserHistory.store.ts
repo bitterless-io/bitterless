@@ -222,9 +222,14 @@ class BrowserHistoryState {
         // 也不成立,地址栏会留着刚才那串查询词而下面还是原来那一页(#3.2)。放在 await 之后
         // 还多一个竞态:人可以在开 tab 的空档里重新输入,那一下会被抹掉。
         this.restoreAddress?.();
+        // 焦点交还 —— 与同一个 `action()` 里的 `remove` / `retry` 一致。**这一支原来漏了**,
+        // 于是选完一条历史记录之后窗口里没有任何 webContents 持焦(见 `focusInput()` 的注释)。
+        void this.focusInput();
         await coach.openTab({ url, background: true });
         return;
       }
+      // Google 候选行:当前 tab 会真的导航过去,焦点归那一页,所以这里**不**抢回地址栏 ——
+      // 导航本身把原生焦点交给操作区的 view,窗口不会落空。
       await coach.backgroundWorkbenchTab();
       const active = (await coach.getTabs()).find((tab) => tab.active);
       if (active?.kind === 'browser') await coach.navigate({ url });
@@ -245,8 +250,21 @@ class BrowserHistoryState {
     }
   }
 
+  /**
+   * 焦点交回地址栏 —— **原生焦点先回宿主页,再设 DOM 焦点**。
+   *
+   * 只 `input.focus()` 是不够的:弹窗是另一个 webContents,点过它之后原生焦点在它身上,而
+   * `hide()` 会把它从窗口里摘掉 —— 焦点就落空了。那种状态下 DOM 焦点环画得出来,打字进不去,
+   * 窗口里也没有任何 webContents 能收到 `before-input-event`(⌘W 因此落到菜单上关掉整扇窗,
+   * Ral 2026-09-23)。
+   *
+   * 两步都在 `focusSuppressed` 之内:地址栏重新得到焦点会触发 `@focus` → `this.focus()`,
+   * 而那正是「刚选完一行、下拉又弹开」的来路。
+   */
   async focusInput(): Promise<void> {
-    this.focusSuppressed = true; await nextTick(); this.input?.focus(); this.focusSuppressed = false;
+    this.focusSuppressed = true;
+    await popup.focusHost().catch(() => undefined);
+    await nextTick(); this.input?.focus(); this.focusSuppressed = false;
   }
 
   private cycle(delta: number): void {

@@ -238,6 +238,7 @@ class MaestroWindowController
   ) {
     super()
     this.llmService.setState(this)
+    this.llmService.watchAccountSession()
     this.browserView.setState(this)
     this.controlView.setState(this)
     this.workbenchView.setState(this)

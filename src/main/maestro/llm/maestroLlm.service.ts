@@ -37,6 +37,11 @@ import {
   type LlmStoredTarget
 } from './llmModels'
 import { PiRuntimeAdapter } from '@main/agent/runtime/piRuntimeAdapter'
+import {
+  BITTERLESS_PROVIDER_ID,
+  isBitterlessProvider
+} from '@main/agent/runtime/bitterlessProvider'
+import { customerSessionService } from '@main/auth/customerSession.service'
 import { maestroAgentDir, maestroAuthPath, maestroModelsPath } from './llmPaths'
 import { codexCredentialService } from '../../codex/codexCredential.runtime'
 
@@ -143,6 +148,8 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
   private activeLlmLoginProvider = ''
   private anthropicIpv6Server: ReturnType<typeof createServer> | null = null
   private anthropicCaptureResolve: ((url: string) => void) | null = null
+  private llmConfigBroadcastGeneration = 0
+  private unwatchAccountSession: (() => void) | null = null
 
   private async readStoredLlmTarget(): Promise<LlmStoredTarget> {
     const fallback = this._state.readMaestroSettings()
@@ -172,6 +179,16 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
   private async checkLlmProviderReady(provider: string, model: string): Promise<boolean> {
     if (provider === 'openai-codex') {
       return (await codexCredentialService.getStatus()).connected
+    }
+    // Bitterless 的凭据就是应用账号会话:就绪 = 会话在 main 里 + 模型属于 Bitterless 预设。**纯读** ——
+    // 不建 runtime、不进锁、不走网络(与 cowork `checkLlmProviderReady` 的 ai-crms 分支同形)。
+    // 不能走下面那条自建 runtime 的路:pi 没有内置 `bitterless`,注册只落在建会话的那个 runtime 上,
+    // 这里新建的从没注册过,于是永远 not ready(docs/issues/bitterless-provider-asks-to-sign-in-inside-chat.md)。
+    if (isBitterlessProvider(provider)) {
+      const known = LLM_PRESETS.some(
+        (preset) => preset.provider === BITTERLESS_PROVIDER_ID && preset.model === model
+      )
+      return known && Boolean(customerSessionService.current)
     }
     try {
       const pi = await loadPiAuthModule()
@@ -217,9 +234,33 @@ export class MaestroLlmService extends CommonService<MaestroLlmServiceState> {
   }
 
   private async getAndBroadcastLlmConfig(): Promise<LlmConfig> {
+    // 最后开始的那次求值说了算:两次求值重叠(连着两次会话变化、会话变化撞上切模型)时,先开始的
+    // 那次晚到也不再广播,免得旧的就绪状态盖掉新的。返回值照旧交给各自的调用方。
+    const generation = ++this.llmConfigBroadcastGeneration
     const cfg = await this.getLlmConfig()
-    xpcMain.broadcast('coach/llm-config', cfg)
+    if (generation === this.llmConfigBroadcastGeneration) {
+      xpcMain.broadcast('coach/llm-config', cfg)
+    }
     return cfg
+  }
+
+  /**
+   * 应用账号会话一变(登录、恢复、登出、失效)就重算并广播一次 `coach/llm-config` —— Bitterless 的就绪
+   * 读的正是这份会话,不重播的话 Control 里它的就绪要等下一次别的原因取配置才会跟上。
+   *
+   * 幂等,只订阅一次。监听器**绝不向外抛**:`customerSessionService` 是同步遍历监听器的,
+   * 这里一抛就打断这次通知,其余订阅者(skillCloud、institutionScope 等)可能收不到这次变化。
+   */
+  watchAccountSession(): void {
+    if (this.unwatchAccountSession) return
+    this.unwatchAccountSession = customerSessionService.subscribe(() => {
+      void this.getAndBroadcastLlmConfig().catch((err) => {
+        console.warn(
+          '[maestro llm] re-broadcast after account session change failed:',
+          err instanceof Error ? err.message : err
+        )
+      })
+    })
   }
 
   private broadcastLlmLoginState(provider: string, loading: boolean): void {

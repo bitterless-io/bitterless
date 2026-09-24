@@ -45,11 +45,34 @@ Two consequences, both deliberate:
 
 ## Where it registers, and why there
 
-Inside `createModelRuntime()` in `piRuntimeAdapter.ts` — **not** in `createSession()`. `checkTarget()`
-builds a runtime too, and registering only at session time would make "is this target available?"
-answer `false` for Bitterless forever: the model would sit greyed out while actually working when
-selected. `registerProvider` is upsert, and both `baseUrl` and the token are runtime values, so
-re-registering per runtime is the correct cost.
+Inside `createModelRuntime()` in `piRuntimeAdapter.ts` — not only in `createSession()` — so every
+runtime that adapter builds (sessions, the auto-compaction self-test, the context-window lookup)
+knows the provider. `registerProvider` is upsert, and both `baseUrl` and the token are runtime
+values, so re-registering per runtime is the correct cost.
+
+Registration lives on that runtime **instance**: pi has no built-in `bitterless`, so a runtime built
+anywhere else has never heard of it. This section used to claim that registering here made
+`checkTarget()` answer correctly; `checkTarget()` has no callers, and the readiness Control gates on
+came from a different path that built its own, never-registered runtime — so Bitterless was never
+ready and chat asked the user to "Sign in to Bitterless" while they were signed in
+([bitterless-provider-asks-to-sign-in-inside-chat.md](../issues/bitterless-provider-asks-to-sign-in-inside-chat.md)).
+Hence:
+
+- **Readiness is a pure session read, not a runtime lookup.** `MaestroLlmService.checkLlmProviderReady()`
+  answers `bitterless` as ready iff the app-account session is in main (`customerSessionService.current`,
+  which exists only with both token and base URL) and the model is a Bitterless preset — no runtime,
+  no lock, no network; the same shape as Cowork's `ai-crms` branch. Main re-broadcasts
+  `coach/llm-config` whenever that session changes (sign-in, restore, sign-out, invalidation), so
+  readiness follows it without re-selecting the model. Control's "Sign in to Bitterless" card never
+  calls `loginLlm` for this provider: its Login button re-validates the app-account session, and an
+  invalid session lands on the login form.
+- **Main-process runtimes built outside the adapter must register it too.** The compaction handler's
+  `resolveTarget()` (`compaction.handler.ts`, which serves `shouldCompact` — the automatic compaction's
+  real-usage veto; `/compact` itself runs on the session's own, already-registered runtime) builds its own
+  runtime, so for a Bitterless target it calls `registerBitterlessProvider()` before looking the model up.
+  **Known gap:** workflow agents run in a utilityProcess with their own runtime and a relay descriptor that only
+  knows `ai-crms`, so a Bitterless target there reports `Workflow model authentication unavailable`
+  (review [189-1](../plan/reviews/bitterless-provider-readiness-189-1.md) F2; tracked separately).
 
 ## Relay endpoint
 

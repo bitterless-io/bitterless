@@ -8,6 +8,7 @@ export class BrowserHistoryPopupHandler extends XpcMainHandler implements Browse
   async blur(): Promise<void> { maestroWindowHelper.historyView.blur(); }
   async snapshot(): Promise<BrowserHistoryPopupSnapshot | null> { return maestroWindowHelper.historyView.snapshot(); }
   async action(params: BrowserHistoryPopupAction): Promise<void> { maestroWindowHelper.historyView.action(params); }
+  async focusHost(): Promise<void> { maestroWindowHelper.historyView.focusHost(); }
 }
 
 export const browserHistoryPopupHandler = new BrowserHistoryPopupHandler();

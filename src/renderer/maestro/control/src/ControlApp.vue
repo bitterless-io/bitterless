@@ -255,9 +255,34 @@ const onSwitchLlmEffort = async (value: unknown): Promise<void> => {
   }
 }
 
+/**
+ * Bitterless has no pi login (it is not in `LLM_LOGIN_PROVIDERS`): its credential is the app-account
+ * session. So its card re-validates that session instead — valid → Home re-pushes the token and main's
+ * `coach/llm-config` broadcast makes the provider ready; invalid → Home clears it and the gate swaps in
+ * the login form (docs/issues/bitterless-provider-asks-to-sign-in-inside-chat.md).
+ */
+const revalidateAccountSession = async (provider: string): Promise<void> => {
+  llmLoginProvider.value = provider
+  try {
+    await localHomeAuthStore.restoreSession()
+  } catch (err) {
+    // Signed out now: the gate already shows the login form, which is the visible outcome.
+    // Not gated on `subscriptions.active` — Home passes through `restoring`, so this mount is usually
+    // gone by the time the failure arrives, and a failure nobody sees is the bug being fixed here.
+    if (!localHomeAuthStore.isAuthenticated()) return
+    Message.warning(err instanceof Error && err.message ? err.message : String(err))
+  } finally {
+    if (llmLoginProvider.value === provider) llmLoginProvider.value = ''
+  }
+}
+
 const loginActiveProvider = async (): Promise<void> => {
   const cfg = llmConfig.value
   if (!cfg || !activeLlmProviderAllowed.value || llmLoginProvider.value) return
+  if (cfg.provider === 'bitterless') {
+    await revalidateAccountSession(cfg.provider)
+    return
+  }
   const next = await coach.loginLlm({ provider: cfg.provider, method: 'browser' })
   if (!subscriptions.active) return
   llmConfig.value = next

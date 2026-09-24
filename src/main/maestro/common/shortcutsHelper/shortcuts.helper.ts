@@ -1,6 +1,6 @@
-import { app, webContents } from 'electron'
+import { BrowserWindow, app, webContents } from 'electron'
 import type { WebContents } from 'electron'
-import { dispatchApplicationFindCommand } from '@main/menu/applicationFindMenu.service'
+import { dispatchApplicationFindCommand, registerWindowCloseShortcut } from '@main/menu/applicationFindMenu.service'
 
 export interface ShortcutActions {
   newTab: () => void
@@ -71,6 +71,63 @@ export const guardWindowCloseShortcut = (contents: WebContents): void => {
   windowCloseGuards.add(contents)
 }
 
+/**
+ * 同一个键在同一个瞬间只算一次。
+ *
+ * 菜单项与 `before-input-event` **都可能**到达(菜单项拥有加速键,但持焦的 view 仍会收到按键),
+ * 两条路共用这一个窗口,所以一次 Cmd+W 关不掉两个 tab。
+ */
+const claimShortcut = (key: string): boolean => {
+  const now = Date.now()
+  const last = lastShortcutAt.get(key) || 0
+  if (now - last < shortcutDedupeMs) return false
+  lastShortcutAt.set(key, now)
+  return true
+}
+
+/** 当前持有键盘焦点的 view;没有任何 view 持焦时退回窗口自己的页面。 */
+const focusedContentsOf = (window: BrowserWindow): WebContents => {
+  const focused = webContents.getFocusedWebContents()
+  return focused && !focused.isDestroyed() ? focused : window.webContents
+}
+
+// 终端自己要这个键:原样转投过去,由它的页面处理器决定怎么编码(不在这里翻译成字节序列)。
+const forwardCloseToTerminal = (contents: WebContents): void => {
+  contents.sendInputEvent({ type: 'keyDown', keyCode: 'w', modifiers: ['meta'] })
+  contents.sendInputEvent({ type: 'keyUp', keyCode: 'w', modifiers: ['meta'] })
+}
+
+let installedActions: ShortcutActions | null = null
+
+/**
+ * 菜单项 `File ▸ Close` 的落点 —— **Cmd+W 的最后仲裁者**。
+ *
+ * 为什么必须有这一条:`before-input-event` 只在**某个 webContents 持有键盘焦点**时才触发,而这套 UI
+ * 自己会造出「谁都不持焦」的空档 —— 历史下拉的 `accept` 分支摘掉持焦的 view 却不恢复焦点,
+ * `activateTab` 里 `previous.view.setVisible(false)` 又「把焦点丢掉」,焦点要等到
+ * `focusAddressBarForBlankTab()` 才回来。键落在那个空档里就直达菜单,而菜单继承的
+ * `role: 'close'` 关的是整扇窗(Ral 2026-09-23,
+ * docs/issues/cmd-w-falls-through-to-the-menu-when-focus-is-nowhere.md)。
+ *
+ * 下面四条判据**一条都不问「有没有人持焦」**,所以那个空档不再是漏洞。次序是判据本身:
+ * 守卫要在终端之前(Omni cell 里什么都不该发生),终端要在本窗之前(它把键要走了)。
+ */
+export const dispatchWindowCloseShortcut = (): void => {
+  const window = BrowserWindow.getFocusedWindow()
+  const actions = installedActions
+  if (!window || window.isDestroyed() || !actions) return
+  const contents = focusedContentsOf(window)
+  if (windowCloseGuards.has(contents)) return
+  if (terminalKeyboardOwners.has(contents)) {
+    forwardCloseToTerminal(contents)
+    return
+  }
+  if (!claimShortcut('w')) return
+  // 有 tab 的那扇窗关 tab;其余每一扇窗关窗口 —— 这正是原来 `role: 'close'` 的行为,一字不差。
+  if (actions.ownsFocusedWindow()) actions.closeActiveTab()
+  else window.close()
+}
+
 const runShortcut = (key: string, actions: ShortcutActions, contents: WebContents): boolean => {
   // Find is already window-resolved by its own dispatchers (`dispatchApplicationFindCommand` picks
   // the foreground owner, and `searchSessions` refuses unless the Maestro window is focused), so it
@@ -83,10 +140,9 @@ const runShortcut = (key: string, actions: ShortcutActions, contents: WebContent
   // Not the tabbed window ⇒ not our key. Returning false (no preventDefault) is the POINT: the menu
   // then closes that window, which is what every other window wants.
   if (!actions.ownsFocusedWindow()) return false
-  const now = Date.now()
-  const last = lastShortcutAt.get(key) || 0
-  if (now - last < shortcutDedupeMs) return true
-  lastShortcutAt.set(key, now)
+  // 去重与菜单项那一路共用 —— 见 `claimShortcut`。已经被算过的那一次仍然 `true`,
+  // 因为这一下必须被 preventDefault 掉,否则它会再落到菜单上。
+  if (!claimShortcut(key)) return true
   if (key === 't') actions.newTab()
   else actions.closeActiveTab()
   return true
@@ -115,6 +171,9 @@ const installShortcutsForWebContents = (contents: WebContents, actions: Shortcut
 export const activateShortcuts = (actions: ShortcutActions): void => {
   if (activated) return
   activated = true
+  // 菜单项的 click 只有一个入口,没有参数可传,所以它从这里取 actions。
+  installedActions = actions
+  registerWindowCloseShortcut(dispatchWindowCloseShortcut)
   app.on('web-contents-created', (_event, contents) => installShortcutsForWebContents(contents, actions))
   for (const contents of webContents.getAllWebContents()) installShortcutsForWebContents(contents, actions)
 }

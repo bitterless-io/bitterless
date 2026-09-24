@@ -127,6 +127,11 @@ const loadHandler = (opts = {}) => {
     },
     '@main/agent/runtime/usageLedger': {
       usageLedger: { get: () => opts.ledger ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, costUsd: 0 } }
+    },
+    // 这里的目标是 Codex,Bitterless 的注册不会被走到;真的那条路径在 bitterlessProviderReadiness.test.mjs。
+    '@main/agent/runtime/bitterlessProvider': {
+      isBitterlessProvider: (id) => id === 'bitterless',
+      registerBitterlessProvider: async () => false
     }
   });
   return { handler: handler.compactionHandler, seen, piStub };

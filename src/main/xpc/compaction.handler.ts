@@ -3,6 +3,10 @@ import { maestroWindowHelper } from '@maestro-main/windows/main/maestroWindow.co
 import { maestroAuthPath, maestroModelsPath } from '@maestro-main/llm/llmPaths'
 import { DEFAULT_CONTEXT_WINDOW_TOKENS } from '@maestro-main/llm/llmModels'
 import { usageLedger } from '@main/agent/runtime/usageLedger'
+import {
+  isBitterlessProvider,
+  registerBitterlessProvider
+} from '@main/agent/runtime/bitterlessProvider'
 import { compactionBoundary, toCompactionUsage, toPiUsage } from '@main/agent/compaction/compactionEntries'
 import { computeCutPoint } from '@main/agent/compaction/compactionRun'
 import type { AgentRuntimeContextSurface } from '@main/agent/runtime/agentRuntime.types'
@@ -49,6 +53,12 @@ class CompactionHandler extends XpcMainHandler implements MaestroCompactionApi {
       const pi: PiModule = await import('@earendil-works/pi-coding-agent')
       const target = mainCtl().getLlmRuntimeTarget()
       const modelRuntime = await pi.ModelRuntime.create({ authPath: maestroAuthPath(), modelsPath: maestroModelsPath() })
+      // pi 没有内置的 `bitterless`,它只存在于注册过它的 runtime 上 —— 这里是自建的 runtime,先注册再找模型。
+      if (isBitterlessProvider(target.provider)) {
+        await registerBitterlessProvider(
+          modelRuntime as unknown as Parameters<typeof registerBitterlessProvider>[0]
+        )
+      }
       const modelRegistry = new pi.ModelRegistry(modelRuntime)
       const model = modelRegistry.find(target.provider, target.model)
       if (!model) return { ok: false, error: `model not found: ${target.provider}/${target.model}` }
