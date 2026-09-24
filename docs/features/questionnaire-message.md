@@ -19,7 +19,7 @@ schema(`src/shared/questionnaire.type.ts`)· 事件名常量 · `sqliteWriteLock
 | 关注点 | Cowork | bitterless |
 |---|---|---|
 | DAO 与建表 | `apps/cowork/src/preload/sqlite/` | **`src/preload/maestro/sqlite/`**(Maestro 会话所在的那个加密库,与 `maestroChat.dao.ts` 同库) |
-| JEV | `main/decision/jevDecision.service.ts`(micromeet relay) | 同路径同名(bitterless 自家 relay,鉴权头不同,已封装在 `jevJudge` 里) |
+| JEV | **只经 `main/decision/decisionHelper.ts`**,传 `{ threshold: 0.6 }`(合同 #6.0) | 同左;由 `decision-helper-199` 实现,**Ral review 过它的代码之后**才能接 |
 | 上下文挂点 | `main/agent/runtime/piRuntimeSession.ts` · `keepLatestSkillCatalog.ts` | 同路径同名 |
 | 工具先例 | `main/agent/tools/decisionTools.ts` | 同路径同名 |
 | 消息列表 | `renderer/control/src/MessageItem.vue` | **`renderer/maestro/control/src/MessageItem.vue`** |
@@ -32,6 +32,8 @@ schema(`src/shared/questionnaire.type.ts`)· 事件名常量 · `sqliteWriteLock
 - 遍历用 `for` / `for...of` / `map`,**不用 `forEach`**;语句带分号;只用顶部静态 import 与别名路径。
 - xpc handler 方法只收 0 或 1 个参数。
 - SQLite 时间字段一律整数。
+- **会话里一律叫 decision maker**(Ral 2026-09-24):卡片、展开面、工具返回、上下文正文里不出现 `Jev`;
+  BL 的英文文案同样写 "decision maker"。代码标识符与接口字段(如 `by: 'jev'`)不改。
 
 ## 3 · 验证
 
